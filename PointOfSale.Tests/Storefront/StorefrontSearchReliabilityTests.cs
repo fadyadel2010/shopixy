@@ -7,7 +7,6 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Storefront;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -83,13 +82,6 @@ public sealed class StorefrontSearchReliabilityTests
         using var listener = CreateCounterListener(
             "search_failure_total",
             measurement => Interlocked.Add(ref searchFailureCount, measurement));
-        var projectionReadiness = new Mock<ICommerceHubProjectionReadinessService>();
-        projectionReadiness
-            .Setup(service => service.EnsurePublicProductReadModelsReadyAsync(
-                tenantId,
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         var controller = new StorefrontProductsController(
             Mock.Of<IStorefrontProductService>(),
@@ -97,7 +89,6 @@ public sealed class StorefrontSearchReliabilityTests
             Mock.Of<IProductDiscoveryService>(),
             Mock.Of<ICategoryReadRepository>(),
             CreateDbContext(),
-            projectionReadiness.Object,
             telemetry,
             NullLogger<StorefrontProductsController>.Instance)
         {
@@ -115,45 +106,6 @@ public sealed class StorefrontSearchReliabilityTests
         Assert.Equal("SEARCH_UNAVAILABLE", error.Code);
         Assert.Equal("Search is temporarily unavailable", error.Message);
         Assert.Equal(1, searchFailureCount);
-    }
-
-    [Fact]
-    public async Task ProductSearch_WhenProjectionAuthorityIsBlocked_Returns503_BeforeSearch()
-    {
-        var tenantId = Guid.NewGuid();
-        var searchService = new Mock<IProductSearchService>(MockBehavior.Strict);
-        var projectionReadiness = new Mock<ICommerceHubProjectionReadinessService>();
-        projectionReadiness
-            .Setup(service => service.EnsurePublicProductReadModelsReadyAsync(
-                tenantId,
-                "storefront.product.search",
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new ProjectionReadModelUnavailableException("projection blocked"));
-
-        using var telemetry = new CommerceReliabilityTelemetry();
-        var controller = new StorefrontProductsController(
-            Mock.Of<IStorefrontProductService>(),
-            searchService.Object,
-            Mock.Of<IProductDiscoveryService>(),
-            Mock.Of<ICategoryReadRepository>(),
-            CreateDbContext(),
-            projectionReadiness.Object,
-            telemetry,
-            NullLogger<StorefrontProductsController>.Instance)
-        {
-            ControllerContext = new ControllerContext
-            {
-                HttpContext = CreateTenantHttpContext(tenantId)
-            }
-        };
-
-        var result = await controller.SearchProducts("chair", cancellationToken: CancellationToken.None);
-
-        var unavailable = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(StatusCodes.Status503ServiceUnavailable, unavailable.StatusCode);
-        var error = Assert.IsType<ApiErrorResponse>(unavailable.Value);
-        Assert.Equal("SERVICE_UNAVAILABLE", error.Code);
-        searchService.VerifyNoOtherCalls();
     }
 
     private static MeterListener CreateCounterListener(string instrumentName, Action<long> onMeasurement)

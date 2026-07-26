@@ -21,6 +21,7 @@ import {
 import StorefrontStatusCard from '../components/StorefrontStatusCard'
 import WishlistAnalyticsCard from '../components/WishlistAnalyticsCard'
 import { hasCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
+import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { useAuthStore } from '../store/authStore'
 
 const PAGE_CARDS = [
@@ -59,7 +60,7 @@ export default function StorefrontDashboard() {
     const navigate = useNavigate()
     const user = useAuthStore((state) => state.user)
     const canViewAnalytics = hasCommerceHubVendorNavigationCapability(user, 'commercehub.analytics.view')
-    const canManageCms = hasCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.cms.manage')
+    const canManageCms = canManageStorefrontSettings(user)
 
     return (
         <div className="mx-auto max-w-6xl">

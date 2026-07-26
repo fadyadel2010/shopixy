@@ -219,13 +219,16 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.storefront', 'Storefront'),
             icon: '🎨',
             children: [
-                { path: '/storefront', label: t('storefront.settings', 'Settings'), icon: '⚙️', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/builder?page=home', label: t('storefront.homePage', 'Home Page'), icon: '🏠', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/builder?page=product', label: t('storefront.productPage', 'Product Page'), icon: '📦', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/builder?page=category', label: t('storefront.categoryPage', 'Category Page'), icon: '📂', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/themes', label: t('storefront.themeLibrary', 'Themes'), icon: '🛍️', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/theme', label: t('storefront.theme', 'Theme Editor'), icon: '🎨', capability: 'commercehub.storefront.manage' },
-                { path: '/storefront/versions', label: t('storefront.versions', 'Version History'), icon: '📜', capability: 'commercehub.storefront.manage' }
+                { path: '/storefront', label: t('storefront.settings', 'Settings'), icon: '⚙️', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/builder?page=home', label: t('storefront.homepageBuilder', 'Homepage Builder'), icon: '🏠', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/builder?page=product', label: t('storefront.productPage', 'Product Page'), icon: '📦', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/builder?page=category', label: t('storefront.categoryPage', 'Category Page'), icon: '📂', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/themes', label: t('storefront.themeLibrary', 'Themes'), icon: '🛍️', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/theme', label: t('storefront.theme', 'Theme Editor'), icon: '🎨', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/cms/navigation', label: t('storefront.navigation', 'Navigation'), icon: '🔗', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/cms/pages', label: t('storefront.pages', 'Pages'), icon: '📄', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/cms/footer', label: t('storefront.footer', 'Footer'), icon: '🔻', requiredRoles: ['Owner', 'Admin'] },
+                { path: '/storefront/versions', label: t('storefront.versions', 'Version History'), icon: '📜', requiredRoles: ['Owner', 'Admin'] }
             ]
         },
         // 10) Reports

@@ -327,7 +327,7 @@ function App() {
                                             <Route path="ecommerce/pixel-tracking" element={<PixelTrackingConfigPage />} />
                                         </Route>
                                         {/* Storefront Builder Routes */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
+                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
                                             <Route path="storefront" element={<StorefrontDashboard />} />
                                             <Route path="storefront/builder" element={<StorefrontBuilderPage />} />
                                             <Route path="storefront/themes" element={<ThemeMarketplacePage />} />
@@ -335,7 +335,7 @@ function App() {
                                             <Route path="storefront/versions" element={<VersionHistoryPage />} />
                                         </Route>
                                         {/* CMS Pages & Navigation (Phase 9.11) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.cms.manage" />}>
+                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
                                             <Route path="storefront/cms/pages" element={<CmsPagesList />} />
                                             <Route path="storefront/cms/pages/:pageId" element={<CmsPageEditor />} />
                                             <Route path="storefront/cms/navigation" element={<NavigationEditor />} />

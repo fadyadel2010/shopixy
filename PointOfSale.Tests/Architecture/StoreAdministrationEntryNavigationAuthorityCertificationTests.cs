@@ -3,16 +3,15 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class StoreAdministrationEntryNavigationAuthorityCertificationTests
 {
     [Fact]
-    public void StoreAdministrationRoutes_MustUseBackendIssuedNavigationCapabilities()
+    public void StoreAdministrationRoutes_MustUseOwningBackendAuthorization()
     {
         var app = ReadRepoFile("PointOfSale.Web/src/App.jsx");
         var guard = "CommerceHubVendorRouteGuard capability=";
 
-        Assert.Contains($"{guard}\"commercehub.storefront.manage\"", app, StringComparison.Ordinal);
-        Assert.Contains($"{guard}\"commercehub.storefront.cms.manage\"", app, StringComparison.Ordinal);
         Assert.Contains($"{guard}\"commercehub.orders.view\"", app, StringComparison.Ordinal);
         Assert.Contains($"{guard}\"commercehub.payments.view\"", app, StringComparison.Ordinal);
         Assert.Contains($"{guard}\"commercehub.analytics.view\"", app, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", app, StringComparison.Ordinal);
 
         foreach (var route in new[]
                  {
@@ -60,9 +59,13 @@ public sealed class StoreAdministrationEntryNavigationAuthorityCertificationTest
         Assert.Contains("['/ecommerce/coupons', 'commercehub.storefront.manage']", sidebar, StringComparison.Ordinal);
         Assert.Contains("['/ecommerce/promotions', 'commercehub.storefront.manage']", sidebar, StringComparison.Ordinal);
         Assert.Contains("['/ecommerce/commerce-ai', 'commercehub.storefront.manage']", sidebar, StringComparison.Ordinal);
-        Assert.Contains("['/admin/shipping/setup', 'commercehub.storefront.manage']", sidebar, StringComparison.Ordinal);
         Assert.Contains("['/ecommerce/whatsapp', 'commercehub.orders.view']", sidebar, StringComparison.Ordinal);
         Assert.Contains("['/ecommerce/abandoned-checkouts', 'commercehub.orders.view']", sidebar, StringComparison.Ordinal);
+        Assert.Contains("/storefront/builder?page=home", sidebar, StringComparison.Ordinal);
+        Assert.Contains("/storefront/cms/navigation", sidebar, StringComparison.Ordinal);
+        Assert.Contains("/storefront/cms/pages", sidebar, StringComparison.Ordinal);
+        Assert.Contains("/storefront/cms/footer", sidebar, StringComparison.Ordinal);
+        Assert.Contains("requiredRoles: ['Owner', 'Admin']", sidebar, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage.getItem('tenantId')", sidebar, StringComparison.Ordinal);
     }
 

@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Helpers;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.DTOs;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -32,7 +31,6 @@ public class StorefrontProductsController : ControllerBase
     private readonly IProductDiscoveryService _discoveryService;
     private readonly ICategoryReadRepository _categoryRepository;
     private readonly ApplicationDbContext _dbContext;
-    private readonly ICommerceHubProjectionReadinessService _projectionReadinessService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontProductsController> _logger;
     private const string TenantIdHeader = "X-Tenant-Id";
@@ -43,7 +41,6 @@ public class StorefrontProductsController : ControllerBase
         IProductDiscoveryService discoveryService,
         ICategoryReadRepository categoryRepository,
         ApplicationDbContext dbContext,
-        ICommerceHubProjectionReadinessService projectionReadinessService,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<StorefrontProductsController> logger)
     {
@@ -52,7 +49,6 @@ public class StorefrontProductsController : ControllerBase
         _discoveryService = discoveryService;
         _categoryRepository = categoryRepository;
         _dbContext = dbContext;
-        _projectionReadinessService = projectionReadinessService;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
     }
@@ -107,16 +103,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.slug",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             // Step 4: Get product from service (handles Redis + MongoDB)
             var product = await _productService.GetProductBySlugAsync(tenantId, slug, affiliateMode, cancellationToken);
 
@@ -196,16 +182,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.id",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             // Get product from service by ID
             var product = await _productService.GetProductByIdAsync(tenantId, id, affiliateMode, cancellationToken);
 
@@ -263,16 +239,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.variant-resolution",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             var result = await _productService.ResolveProductVariantAsync(
                 tenantId,
                 id,
@@ -399,16 +365,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.list",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             // Step 5: Get products - use category tree if available
             DTOs.Storefront.PagedResult<ProductListItemDto> result;
             
@@ -642,16 +598,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.search",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             // Step 4: Execute search candidate retrieval and SQL authority recomposition
             var result = await _searchService.SearchProductsAsync(
                 tenantId,
@@ -834,16 +780,6 @@ public class StorefrontProductsController : ControllerBase
 
         try
         {
-            var readinessError = await EnsurePublicProductProjectionReadyAsync(
-                tenantId,
-                "storefront.product.discovery",
-                traceId,
-                cancellationToken);
-            if (readinessError != null)
-            {
-                return readinessError;
-            }
-
             // Step 6: Execute discovery search
             var result = await _discoveryService.DiscoverAsync(tenantId, query, affiliateMode, cancellationToken);
 
@@ -933,35 +869,6 @@ public class StorefrontProductsController : ControllerBase
         return StatusCode(
             StatusCodes.Status503ServiceUnavailable,
             ApiErrorResponse.SearchUnavailable(traceId));
-    }
-
-    private async Task<IActionResult?> EnsurePublicProductProjectionReadyAsync(
-        Guid tenantId,
-        string surface,
-        string traceId,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _projectionReadinessService.EnsurePublicProductReadModelsReadyAsync(
-                tenantId,
-                surface,
-                cancellationToken);
-            return null;
-        }
-        catch (ProjectionReadModelUnavailableException ex)
-        {
-            _logger.LogError(
-                ex,
-                "Public storefront product read blocked because projection authority is not ready | TenantId: {TenantId} | Surface: {Surface} | TraceId: {TraceId}",
-                tenantId,
-                surface,
-                traceId);
-
-            return StatusCode(
-                StatusCodes.Status503ServiceUnavailable,
-                ApiErrorResponse.ServiceUnavailable(traceId));
-        }
     }
 
     /// <summary>

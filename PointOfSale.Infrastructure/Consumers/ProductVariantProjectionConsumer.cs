@@ -55,6 +55,7 @@ public class ProductVariantProjectionConsumer :
     private readonly IMongoCollection<ProductDocument> _collection;
     private readonly IConnectionMultiplexer _redis;
     private readonly IProductSearchIndexService _searchIndexService;
+    private readonly IProductSqlAuthorityProjectionWriter? _productProjectionWriter;
     private readonly ILogger<ProductVariantProjectionConsumer> _logger;
     private readonly string _redisInstanceName;
     private readonly ApplicationDbContext? _dbContext;
@@ -65,11 +66,13 @@ public class ProductVariantProjectionConsumer :
         IProductSearchIndexService searchIndexService,
         IOptions<RedisSettings> redisSettings,
         ILogger<ProductVariantProjectionConsumer> logger,
-        ApplicationDbContext? dbContext = null)
+        ApplicationDbContext? dbContext = null,
+        IProductSqlAuthorityProjectionWriter? productProjectionWriter = null)
     {
         _collection = database.GetCollection<ProductDocument>("products");
         _redis = redis;
         _searchIndexService = searchIndexService;
+        _productProjectionWriter = productProjectionWriter;
         _redisInstanceName = redisSettings.Value.InstanceName ?? "pos";
         _logger = logger;
         _dbContext = dbContext;
@@ -241,16 +244,31 @@ public class ProductVariantProjectionConsumer :
                     return;
                 }
 
+                if (_productProjectionWriter == null)
+                {
+                    _logger.LogWarning(
+                        "ProductVariantCreatedEvent: Product not found in MongoDB, will retry | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                        @event.ProductId, @event.VariantId, @event.TenantId);
+
+                    throw new InvalidOperationException(
+                        $"Product {@event.ProductId} not found in MongoDB. ProductCreatedEvent may not have been processed yet. Retrying...");
+                }
+
                 _logger.LogWarning(
-                    "ProductVariantCreatedEvent: Product not found in MongoDB, will retry | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                    "ProductVariantCreatedEvent: Product missing from MongoDB; recomposing parent projection from SQL authority | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
                     @event.ProductId, @event.VariantId, @event.TenantId);
-                
-                throw new InvalidOperationException(
-                    $"Product {@event.ProductId} not found in MongoDB. ProductCreatedEvent may not have been processed yet. Retrying...");
             }
 
             // Invalidate cache
             await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+
+            await RecomposeParentProductProjectionAsync(
+                @event.TenantId.Value,
+                @event.ProductId,
+                @event.EventId,
+                @event.OccurredAtUtc,
+                @event.EventVersion,
+                context.CancellationToken);
             
             // CRITICAL: Sync HasVariants=true to Elasticsearch for header search
             // This ensures "Multiple options" is shown instead of price
@@ -464,8 +482,39 @@ public class ProductVariantProjectionConsumer :
                             @event.EventVersion,
                             context.CancellationToken))
                     {
-                        throw new ProjectionNotReadyException(
-                            $"Product variant projection {@event.VariantId} is not ready for update event {@event.EventId}.");
+                        if (_productProjectionWriter == null)
+                        {
+                            throw new ProjectionNotReadyException(
+                                $"Product variant projection {@event.VariantId} is not ready for update event {@event.EventId}.");
+                        }
+
+                        _logger.LogWarning(
+                            "ProductVariantUpdatedEvent: Variant missing from MongoDB; recomposing parent projection from SQL authority | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId} | EventId: {EventId}",
+                            @event.ProductId,
+                            @event.VariantId,
+                            @event.TenantId,
+                            @event.EventId);
+
+                        await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+                        await RecomposeParentProductProjectionAsync(
+                            @event.TenantId.Value,
+                            @event.ProductId,
+                            @event.EventId,
+                            @event.OccurredAtUtc,
+                            @event.EventVersion,
+                            context.CancellationToken);
+
+                        if (fence != null && _dbContext != null)
+                        {
+                            await fence.CompleteAsync(
+                                @event,
+                                VariantUpdatedConsumerName,
+                                typeof(ProductVariantUpdatedEvent).FullName ?? nameof(ProductVariantUpdatedEvent),
+                                @event.VariantId,
+                                context.CancellationToken);
+                        }
+
+                        return;
                     }
 
                     _logger.LogWarning(
@@ -533,6 +582,14 @@ public class ProductVariantProjectionConsumer :
 
             // Invalidate cache
             await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+
+            await RecomposeParentProductProjectionAsync(
+                @event.TenantId.Value,
+                @event.ProductId,
+                @event.EventId,
+                @event.OccurredAtUtc,
+                @event.EventVersion,
+                context.CancellationToken);
 
             _logger.LogInformation(
                 "ProductVariantUpdatedEvent processed | VariantId: {VariantId} | ProductId: {ProductId} | UpdatedFields: {FieldCount} | TenantId: {TenantId}",
@@ -836,8 +893,39 @@ public class ProductVariantProjectionConsumer :
                         @event.VariantId,
                         context.CancellationToken))
                 {
-                    throw new ProjectionNotReadyException(
-                        $"Product projection {@event.ProductId} is not ready for stock event {@event.EventId}.");
+                    if (_productProjectionWriter == null)
+                    {
+                        throw new ProjectionNotReadyException(
+                            $"Product projection {@event.ProductId} is not ready for stock event {@event.EventId}.");
+                    }
+
+                    _logger.LogWarning(
+                        "ProductVariantStockChangedEvent: Product missing from MongoDB; recomposing parent projection from SQL authority | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId} | EventId: {EventId}",
+                        @event.ProductId,
+                        @event.VariantId,
+                        @event.TenantId,
+                        @event.EventId);
+
+                    await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+                    await RecomposeParentProductProjectionAsync(
+                        @event.TenantId.Value,
+                        @event.ProductId,
+                        @event.EventId,
+                        stockUpdatedAtUtc,
+                        @event.EventVersion,
+                        context.CancellationToken);
+
+                    if (fence != null)
+                    {
+                        await fence.CompleteAsync(
+                            @event,
+                            VariantStockConsumerName,
+                            eventType,
+                            @event.VariantId,
+                            context.CancellationToken);
+                    }
+
+                    return;
                 }
 
                 _logger.LogWarning(
@@ -944,6 +1032,14 @@ public class ProductVariantProjectionConsumer :
 
             // Invalidate cache
             await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+
+            await RecomposeParentProductProjectionAsync(
+                @event.TenantId.Value,
+                @event.ProductId,
+                @event.EventId,
+                stockUpdatedAtUtc,
+                @event.EventVersion,
+                context.CancellationToken);
 
             // PHASE 11.8: Structured logging for stock sync (matching CheckoutService log format)
             _logger.LogInformation(
@@ -1170,6 +1266,25 @@ public class ProductVariantProjectionConsumer :
                 _logger.LogWarning(
                     "ProductVariantDeletedEvent: Product not found in MongoDB | ProductId: {ProductId} | TenantId: {TenantId}",
                     @event.ProductId, @event.TenantId);
+
+                await RecomposeParentProductProjectionAsync(
+                    @event.TenantId.Value,
+                    @event.ProductId,
+                    @event.EventId,
+                    @event.OccurredAtUtc,
+                    @event.EventVersion,
+                    context.CancellationToken);
+
+                if (fence != null)
+                {
+                    await fence.CompleteAsync(
+                        @event,
+                        VariantDeletedConsumerName,
+                        eventType,
+                        @event.VariantId,
+                        context.CancellationToken);
+                }
+
                 return;
             }
 
@@ -1276,6 +1391,14 @@ public class ProductVariantProjectionConsumer :
 
             // Invalidate cache
             await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
+
+            await RecomposeParentProductProjectionAsync(
+                @event.TenantId.Value,
+                @event.ProductId,
+                @event.EventId,
+                @event.OccurredAtUtc,
+                @event.EventVersion,
+                context.CancellationToken);
             
             // CRITICAL: Sync HasVariants to Elasticsearch (may change to false if only 1 variant left)
             await SyncHasVariantsToElasticsearchAsync(@event.TenantId.Value, @event.ProductId, false, context.CancellationToken);
@@ -1689,6 +1812,75 @@ public class ProductVariantProjectionConsumer :
                 "Exception syncing HasVariants to Elasticsearch | ProductId: {ProductId}",
                 productId);
         }
+    }
+
+    private async Task RecomposeParentProductProjectionAsync(
+        Guid tenantId,
+        Guid productId,
+        Guid eventId,
+        DateTime eventOccurredAtUtc,
+        int eventVersion,
+        CancellationToken cancellationToken)
+    {
+        if (_productProjectionWriter == null)
+        {
+            return;
+        }
+
+        var appliedVersion = eventVersion;
+        var appliedOccurredAtUtc = eventOccurredAtUtc;
+
+        if (_dbContext != null)
+        {
+            var sqlProduct = await _dbContext.Products
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(product => product.TenantId == tenantId && product.Id == productId)
+                .Select(product => new
+                {
+                    product.CreatedAt,
+                    product.UpdatedAt,
+                    product.ProjectionMutationVersion
+                })
+                .SingleOrDefaultAsync(cancellationToken);
+
+            if (sqlProduct != null)
+            {
+                appliedVersion = Math.Max(
+                    eventVersion,
+                    ProductEventVersionHelper.ToProductEventVersion(sqlProduct.ProjectionMutationVersion));
+
+                var sqlOccurredAtUtc = sqlProduct.UpdatedAt ?? sqlProduct.CreatedAt;
+                if (sqlOccurredAtUtc > appliedOccurredAtUtc)
+                {
+                    appliedOccurredAtUtc = sqlOccurredAtUtc;
+                }
+            }
+        }
+
+        var writeResult = await _productProjectionWriter.ApplyAsync(
+            new ProductSqlAuthorityProjectionWriteRequest(
+                tenantId,
+                productId,
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = productId,
+                    CreatedAtUtc = appliedOccurredAtUtc
+                },
+                eventId,
+                appliedOccurredAtUtc,
+                appliedVersion),
+            cancellationToken);
+
+        _logger.LogInformation(
+            "Parent product projection recomposed from variant lifecycle event | ProductId: {ProductId} | TenantId: {TenantId} | EventId: {EventId} | EventVersion: {EventVersion} | AppliedVersion: {AppliedVersion} | Result: {Result}",
+            productId,
+            tenantId,
+            eventId,
+            eventVersion,
+            appliedVersion,
+            writeResult.Disposition);
     }
 
     private sealed record SqlVariantAuthoritySnapshot(

@@ -107,7 +107,7 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("return <Navigate to=\"/\" replace />", customerGuard, StringComparison.Ordinal);
 
         Assert.Contains("COMMERCEHUB_VENDOR_NAVIGATION_CAPABILITIES", vendorAuthority, StringComparison.Ordinal);
-        Assert.Contains("hasCommerceHubVendorNavigationCapability", vendorSidebar, StringComparison.Ordinal);
+        Assert.Contains("canAccessCommerceHubVendorNavigationCapability", vendorSidebar, StringComparison.Ordinal);
         Assert.DoesNotContain("requiredRoles: ['Owner', 'Admin', 'Accountant']", vendorSidebar, StringComparison.Ordinal);
         Assert.Contains("return <Navigate to=\"/\" replace />", vendorGuard, StringComparison.Ordinal);
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.catalog.manage\"", appRoutes, StringComparison.Ordinal);
@@ -116,10 +116,12 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.payments.view\"", appRoutes, StringComparison.Ordinal);
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.analytics.view\"", appRoutes, StringComparison.Ordinal);
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.manage\"", appRoutes, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.cms.manage\"", appRoutes, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", appRoutes, StringComparison.Ordinal);
+        Assert.Contains("path=\"storefront/cms/navigation\"", appRoutes, StringComparison.Ordinal);
 
         Assert.Contains("SUPER_ADMIN_NAVIGATION_CAPABILITIES", superAdminAuthority, StringComparison.Ordinal);
-        Assert.Contains("session.navigationCapabilities.length === SUPER_ADMIN_NAVIGATION_CAPABILITIES.size", superAdminAuthority, StringComparison.Ordinal);
+        Assert.Contains("session.navigationCapabilities.length > 0", superAdminAuthority, StringComparison.Ordinal);
+        Assert.Contains("new Set(session.navigationCapabilities).size === session.navigationCapabilities.length", superAdminAuthority, StringComparison.Ordinal);
         Assert.Contains("hasSuperAdminNavigationCapability", superAdminLayout, StringComparison.Ordinal);
         Assert.Contains("return <Navigate to=\"/super-admin/finance\" replace />", superAdminGuard, StringComparison.Ordinal);
         Assert.Contains("SuperAdminCapabilityRoute capability=\"super-admin.users.govern\"", appRoutes, StringComparison.Ordinal);

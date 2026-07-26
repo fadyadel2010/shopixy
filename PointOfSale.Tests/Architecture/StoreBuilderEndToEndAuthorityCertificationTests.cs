@@ -14,8 +14,8 @@ public sealed class StoreBuilderEndToEndAuthorityCertificationTests
         var store = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/store/builderStore.js");
         var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/services/storeConfigService.js");
 
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.manage\"", app, StringComparison.Ordinal);
-        Assert.Contains("capability: 'commercehub.storefront.manage'", sidebar, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", app, StringComparison.Ordinal);
+        Assert.Contains("requiredRoles: ['Owner', 'Admin']", sidebar, StringComparison.Ordinal);
 
         Assert.Contains("deriveCurrentStoreIdentityPresentation(response, currentUser)", builder, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedDto(", builder, StringComparison.Ordinal);

@@ -3,15 +3,15 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class StoreBuilderEntryWorkspaceAuthorityCertificationTests
 {
     [Fact]
-    public void StoreBuilderRoute_MustEnterThroughBackendCapabilityAdmission()
+    public void StoreBuilderRoute_MustEnterThroughPosAdminOwnerAdminAdmission()
     {
         var app = ReadRepoFile("PointOfSale.Web/src/App.jsx");
         var sidebar = ReadRepoFile("PointOfSale.Web/src/components/Sidebar.jsx");
 
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.manage\"", app, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", app, StringComparison.Ordinal);
         Assert.Contains("path=\"storefront/builder\"", app, StringComparison.Ordinal);
         Assert.Contains("/storefront/builder?page=home", sidebar, StringComparison.Ordinal);
-        Assert.Contains("capability: 'commercehub.storefront.manage'", sidebar, StringComparison.Ordinal);
+        Assert.Contains("requiredRoles: ['Owner', 'Admin']", sidebar, StringComparison.Ordinal);
     }
 
     [Fact]

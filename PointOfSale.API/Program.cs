@@ -1695,6 +1695,7 @@ builder.Services.AddMassTransit(x =>
     x.AddConsumer<ProductSearchIndexConsumer>();
     x.AddConsumer<ProductUpdatedSearchIndexConsumer>();
     x.AddConsumer<ProductDeletedSearchIndexConsumer>();
+    x.AddConsumer<ProductStockPriceSearchIndexConsumer, ProductStockPriceSearchIndexConsumerDefinition>();
     // Product stock projection consumer (for storefront stock display)
     x.AddConsumer<ProductStockChangedConsumer, ProductStockChangedConsumerDefinition>();
     // Storefront Config Projection Consumer (SQL -> Mongo)

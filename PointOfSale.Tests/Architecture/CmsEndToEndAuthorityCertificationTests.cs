@@ -11,7 +11,7 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         var list = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/pages/CmsPagesList.jsx");
         var admission = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/cmsPageIdentityAuthority.js");
 
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.cms.manage\"", app, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", app, StringComparison.Ordinal);
         Assert.Contains("api.get('/admin/pages', noStoreOptions)", frontendService, StringComparison.Ordinal);
         Assert.Contains("api.get(`/admin/pages/${pageId}/versions`, noStoreOptions)", frontendService, StringComparison.Ordinal);
         Assert.Contains("api.post(`/admin/pages/${pageId}/preview-link`, undefined, noStoreOptions)", frontendService, StringComparison.Ordinal);

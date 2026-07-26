@@ -52,15 +52,20 @@ public sealed class MongoProjectionConvergenceCertificationTests
         var productCreated = ReadRepoFile("PointOfSale.Infrastructure/Consumers/ProductCreatedEventConsumer.cs");
         var productUpdated = ReadRepoFile("PointOfSale.Infrastructure/Consumers/ProductUpdatedEventConsumer.cs");
         var productLifecycle = ReadRepoFile("PointOfSale.Infrastructure/Consumers/ProductVisibilityLifecycleProjectionConsumer.cs");
+        var productVariantProjection = ReadRepoFile("PointOfSale.Infrastructure/Consumers/ProductVariantProjectionConsumer.cs");
         var productWriter = ReadRepoFile("PointOfSale.Infrastructure/MongoDB/Services/ProductSqlAuthorityProjectionWriter.cs");
         var mutationBoundary = ReadRepoFile("PointOfSale.Infrastructure/MongoDB/Services/StorefrontProductProjectionMutationBoundary.cs");
         var adminDataSync = ReadRepoFile("PointOfSale.API/Controllers/AdminDataSyncController.cs");
+        var program = ReadRepoFile("PointOfSale.API/Program.cs");
         var cmsConsumer = ReadRepoFile("PointOfSale.Infrastructure/Consumers/CmsPageProjectionConsumer.cs");
         var marketplaceProjection = ReadRepoFile("PointOfSale.Infrastructure/ReadModels/Marketplace/MarketplaceReadModelProjectionServices.cs");
 
         Assert.Contains("IProductSqlAuthorityProjectionWriter", productCreated, StringComparison.Ordinal);
         Assert.Contains("IProductSqlAuthorityProjectionWriter", productUpdated, StringComparison.Ordinal);
         Assert.Contains("IProductSqlAuthorityProjectionWriter", productLifecycle, StringComparison.Ordinal);
+        Assert.Contains("IProductSqlAuthorityProjectionWriter", productVariantProjection, StringComparison.Ordinal);
+        Assert.Contains("RecomposeParentProductProjectionAsync", productVariantProjection, StringComparison.Ordinal);
+        Assert.Contains("ProductStockPriceSearchIndexConsumer, ProductStockPriceSearchIndexConsumerDefinition", program, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productWriter, StringComparison.Ordinal);
         Assert.Contains("ReviewedVisibilityTombstone", productWriter, StringComparison.Ordinal);
         Assert.Contains("ReviewedFullDocumentUpsert", mutationBoundary, StringComparison.Ordinal);
