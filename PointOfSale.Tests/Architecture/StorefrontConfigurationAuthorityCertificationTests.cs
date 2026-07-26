@@ -82,6 +82,25 @@ public sealed class StorefrontConfigurationAuthorityCertificationTests
     }
 
     [Fact]
+    public void StorefrontSettingsManagement_MustUsePosAdminAuthorityNotCommerceHubLifecycleNavigation()
+    {
+        var primary = ReadRepoFile("PointOfSale.API/Controllers/AdminStoreConfigController.cs");
+        var settingsShell = ReadRepoFile("PointOfSale.Web/src/pages/Settings.jsx");
+        var settingsPage = ReadRepoFile("PointOfSale.Web/src/pages/StorefrontSettings.jsx");
+        var authority = ReadRepoFile("PointOfSale.Web/src/auth/storefrontAdminAuthority.js");
+        var statusCard = ReadRepoFile("PointOfSale.Web/src/components/StorefrontStatusCard.jsx");
+
+        Assert.Contains("Roles = \"Owner,Admin\"", primary, StringComparison.Ordinal);
+        Assert.Contains("canManageStorefrontSettings(user)", settingsShell, StringComparison.Ordinal);
+        Assert.Contains("canManageStorefrontSettings(user)", settingsPage, StringComparison.Ordinal);
+        Assert.Contains("new Set(['Owner', 'Admin'])", authority, StringComparison.Ordinal);
+        Assert.Contains("navigate('/settings?tab=storefront')", statusCard, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')", settingsShell, StringComparison.Ordinal);
+        Assert.DoesNotContain("canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')", settingsPage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StoreConfigurationReadAuthority_MustFailClosedAndAvoidCacheAuthority()
     {
         var adminController = ReadRepoFile("PointOfSale.API/Controllers/AdminStoreConfigController.cs");
@@ -148,19 +167,26 @@ public sealed class StorefrontConfigurationAuthorityCertificationTests
         Assert.Contains("DbUpdateConcurrencyException", primaryService, StringComparison.Ordinal);
         Assert.Contains("RowVersion = config.RowVersion.ToString", primaryService, StringComparison.Ordinal);
 
-        Assert.Contains("storeConfigService.updateStoreConfig", settingsPage, StringComparison.Ordinal);
+        Assert.Contains("[HttpPut(\"status\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("UpdateStorefrontStatusAsync", primaryService, StringComparison.Ordinal);
+        Assert.Contains("config!.StorefrontStatus = requestedStorefrontStatus", primaryService, StringComparison.Ordinal);
+        Assert.Contains("storeConfigService.updateStorefrontStatus", settingsPage, StringComparison.Ordinal);
         Assert.Contains("rowVersion: candidateConfig.rowVersion", settingsPage, StringComparison.Ordinal);
         Assert.Contains("saveInFlightRef.current", settingsPage, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentStoreIdentityPresentation(acceptedResponse, user)", settingsPage, StringComparison.Ordinal);
         Assert.Contains("setBaselineConfig(acceptedConfig)", settingsPage, StringComparison.Ordinal);
         Assert.Contains("setCandidateConfig(acceptedConfig)", settingsPage, StringComparison.Ordinal);
         Assert.DoesNotContain("api.put('/admin/store-config'", settingsPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("commerceAi", settingsPage, StringComparison.Ordinal);
 
         Assert.Contains("'If-Match': `\"${rowVersion}\"`", storeConfigService, StringComparison.Ordinal);
+        Assert.Contains("api.put('/admin/store-config/status'", storeConfigService, StringComparison.Ordinal);
         Assert.Contains("submits candidate intent with backend rowVersion evidence", settingsTest, StringComparison.Ordinal);
+        Assert.Contains("not.toHaveBeenCalledWith(expect.objectContaining({", settingsTest, StringComparison.Ordinal);
         Assert.Contains("does not replace baseline when the mutation fails or returns malformed acceptance evidence", settingsTest, StringComparison.Ordinal);
         Assert.Contains("suppresses duplicate save clicks while one mutation is in flight", settingsTest, StringComparison.Ordinal);
         Assert.Contains("submits store configuration mutations with If-Match rowVersion evidence", serviceTest, StringComparison.Ordinal);
+        Assert.Contains("submits storefront status mutations to the status-only authority endpoint", serviceTest, StringComparison.Ordinal);
     }
 
     [Fact]

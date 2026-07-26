@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useToast } from '../components/Toast'
 import { useAuthStore } from '../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../auth/commerceHubVendorIdentityAuthority'
-import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
+import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { storeConfigService } from '../modules/storefront/services'
 
 /**
@@ -29,7 +29,7 @@ export default function StorefrontSettings() {
 
     // Get tenant ID from logged-in user
     const tenantId = user?.tenantId
-    const canManageStorefront = canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')
+    const canManageStorefront = canManageStorefrontSettings(user)
 
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
@@ -115,8 +115,7 @@ export default function StorefrontSettings() {
         saveInFlightRef.current = true
         setSaving(true)
         try {
-            const acceptedResponse = await storeConfigService.updateStoreConfig({
-                ...candidateConfig,
+            const acceptedResponse = await storeConfigService.updateStorefrontStatus({
                 storefrontStatus: candidateConfig.storefrontStatus,
                 maintenanceMessage: candidateConfig.maintenanceMessage,
                 rowVersion: candidateConfig.rowVersion,

@@ -136,6 +136,48 @@ public class AdminStoreConfigResponse
     public AdminThemeViewDto LiveTheme { get; set; } = new();
 }
 
+/// <summary>
+/// Request DTO for updating the storefront operational status only.
+/// PUT /api/admin/store-config/status
+/// </summary>
+public class AdminStorefrontStatusRequest
+{
+    /// <summary>
+    /// Storefront operational status: "live", "maintenance", "disabled".
+    /// Controls whether customers can access the online store.
+    /// </summary>
+    [StringLength(20)]
+    public string StorefrontStatus { get; set; } = "live";
+
+    /// <summary>
+    /// Optional message to display on maintenance page.
+    /// </summary>
+    [StringLength(500)]
+    public string? MaintenanceMessage { get; set; }
+
+    /// <summary>
+    /// Required optimistic concurrency token for admin mutations.
+    /// Accepts the current RowVersion returned by GET or the If-Match ETag value.
+    /// </summary>
+    public string? RowVersion { get; set; }
+
+    private static readonly HashSet<string> AllowedStorefrontStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "live", "maintenance", "disabled"
+    };
+
+    public string? Validate()
+    {
+        if (string.IsNullOrWhiteSpace(StorefrontStatus))
+            return "StorefrontStatus is required";
+
+        if (!AllowedStorefrontStatuses.Contains(StorefrontStatus))
+            return $"StorefrontStatus must be one of: {string.Join(", ", AllowedStorefrontStatuses)}";
+
+        return null;
+    }
+}
+
 public class AdminThemeViewDto
 {
     public string PresetKey { get; set; } = "default";

@@ -87,6 +87,27 @@ describe('storeConfigService', () => {
         })
     })
 
+    it('submits storefront status mutations to the status-only authority endpoint', async () => {
+        apiPut.mockResolvedValue({ data: { rowVersion: '43', storefrontStatus: 'live' } })
+
+        const result = await storeConfigService.updateStorefrontStatus({
+            storefrontStatus: 'live',
+            maintenanceMessage: '',
+            rowVersion: '42',
+        })
+
+        expect(result).toEqual({ rowVersion: '43', storefrontStatus: 'live' })
+        expect(apiPut).toHaveBeenCalledWith('/admin/store-config/status', {
+            storefrontStatus: 'live',
+            maintenanceMessage: '',
+            rowVersion: '42',
+        }, {
+            headers: {
+                'If-Match': '"42"',
+            },
+        })
+    })
+
     it('loads real version history from the admin versions endpoint', async () => {
         apiGet.mockResolvedValue({
             data: {

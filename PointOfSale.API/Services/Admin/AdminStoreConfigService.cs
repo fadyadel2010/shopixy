@@ -165,27 +165,12 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         // =====================================================================
         // Phase 8.4: Enforce email verification for storefront publishing
         // =====================================================================
-        var requestedStorefrontStatus = string.IsNullOrWhiteSpace(request.StorefrontStatus) 
-            ? "live" 
-            : request.StorefrontStatus.ToLowerInvariant();
-        
-        if (requestedStorefrontStatus == "live")
-        {
-            // Check if owner (tenant creator) has verified email
-            var owner = await _dbContext.Users
-                .Where(u => u.TenantId == tenantId && u.Role == UserRole.Owner)
-                .FirstOrDefaultAsync(cancellationToken);
-            
-            if (owner != null && owner.EmailVerificationStatus == EmailVerificationStatus.Unverified)
-            {
-                _logger.LogWarning(
-                    "StorefrontPublishBlocked | TenantId: {TenantId} | OwnerId: {OwnerId} | Reason: Email not verified | TraceId: {TraceId}",
-                    tenantId, owner.Id, traceId);
-                
-                throw new StorefrontVerificationException(
-                    "Please verify your email before publishing your storefront.");
-            }
-        }
+        var requestedStorefrontStatus = NormalizeStorefrontStatus(request.StorefrontStatus);
+        await EnsureStorefrontCanPublishLiveAsync(
+            tenantId,
+            requestedStorefrontStatus,
+            traceId,
+            cancellationToken);
 
         var config = await _dbContext.StoreConfigs
             .FirstOrDefaultAsync(c => c.TenantId == tenantId, cancellationToken);
@@ -246,6 +231,68 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         _logger.LogInformation(
             "StoreConfig {Operation} | TenantId: {TenantId} | ConfigId: {ConfigId} | ThemeId: {ThemeId} | TraceId: {TraceId}",
             isNew ? "CREATED" : "UPDATED", tenantId, config.Id, config.ThemeId, traceId);
+
+        return await MapToResponseAsync(config, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminStoreConfigResponse> UpdateStorefrontStatusAsync(
+        Guid tenantId,
+        AdminStorefrontStatusRequest request,
+        string traceId,
+        CancellationToken cancellationToken = default,
+        uint? expectedRowVersion = null)
+    {
+        var requestedStorefrontStatus = NormalizeStorefrontStatus(request.StorefrontStatus);
+
+        _logger.LogInformation(
+            "UpdateStorefrontStatus | TenantId: {TenantId} | StorefrontStatus: {StorefrontStatus} | TraceId: {TraceId}",
+            tenantId, requestedStorefrontStatus, traceId);
+
+        await EnsureStorefrontCanPublishLiveAsync(
+            tenantId,
+            requestedStorefrontStatus,
+            traceId,
+            cancellationToken);
+
+        var config = await _dbContext.StoreConfigs
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId, cancellationToken);
+
+        var isNew = config == null;
+
+        if (isNew)
+        {
+            if (expectedRowVersion.HasValue && expectedRowVersion.Value != 0)
+            {
+                _logger.LogWarning(
+                    "Storefront status concurrency conflict - expected version {ExpectedVersion} but config does not exist | TenantId: {TenantId} | TraceId: {TraceId}",
+                    expectedRowVersion.Value,
+                    tenantId,
+                    traceId);
+                throw new ConcurrencyConflictException("StoreConfig", tenantId);
+            }
+
+            config = BuildDefaultConfig(tenantId);
+            _dbContext.StoreConfigs.Add(config);
+        }
+        else
+        {
+            ApplyExpectedRowVersion(config!, expectedRowVersion);
+        }
+
+        config!.StorefrontStatus = requestedStorefrontStatus;
+        config.MaintenanceMessage = request.MaintenanceMessage;
+        config.UpdatedAtUtc = DateTime.UtcNow;
+
+        await PersistStoreConfigChangeAsync(
+            config,
+            isNew ? StoreConfigPublishAction.Created : StoreConfigPublishAction.Updated,
+            traceId,
+            cancellationToken);
+
+        _logger.LogInformation(
+            "StorefrontStatus UPDATED | TenantId: {TenantId} | ConfigId: {ConfigId} | StorefrontStatus: {StorefrontStatus} | TraceId: {TraceId}",
+            tenantId, config.Id, config.StorefrontStatus, traceId);
 
         return await MapToResponseAsync(config, cancellationToken);
     }
@@ -813,6 +860,40 @@ public class AdminStoreConfigService : IAdminStoreConfigService
     }
 
     #region Private Helpers
+
+    private static string NormalizeStorefrontStatus(string? storefrontStatus)
+    {
+        return string.IsNullOrWhiteSpace(storefrontStatus)
+            ? "live"
+            : storefrontStatus.Trim().ToLowerInvariant();
+    }
+
+    private async Task EnsureStorefrontCanPublishLiveAsync(
+        Guid tenantId,
+        string requestedStorefrontStatus,
+        string traceId,
+        CancellationToken cancellationToken)
+    {
+        if (requestedStorefrontStatus != "live")
+        {
+            return;
+        }
+
+        // Check if owner (tenant creator) has verified email.
+        var owner = await _dbContext.Users
+            .Where(u => u.TenantId == tenantId && u.Role == UserRole.Owner)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (owner != null && owner.EmailVerificationStatus == EmailVerificationStatus.Unverified)
+        {
+            _logger.LogWarning(
+                "StorefrontPublishBlocked | TenantId: {TenantId} | OwnerId: {OwnerId} | Reason: Email not verified | TraceId: {TraceId}",
+                tenantId, owner.Id, traceId);
+
+            throw new StorefrontVerificationException(
+                "Please verify your email before publishing your storefront.");
+        }
+    }
 
     private static StoreConfig BuildDefaultConfig(Guid tenantId)
     {

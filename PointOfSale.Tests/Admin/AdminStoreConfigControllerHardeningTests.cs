@@ -95,6 +95,101 @@ public sealed class AdminStoreConfigControllerHardeningTests
         Assert.Equal("CONCURRENCY_CONFLICT", error.Code);
     }
 
+    [Fact]
+    public async Task UpdateStorefrontStatus_WithoutExpectedRowVersion_ReturnsPreconditionRequired()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["X-Tenant-Id"] = tenantId.ToString("D");
+
+        var result = await controller.UpdateStorefrontStatus(new AdminStorefrontStatusRequest
+        {
+            StorefrontStatus = "live"
+        }, CancellationToken.None);
+
+        var precondition = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status428PreconditionRequired, precondition.StatusCode);
+        var error = Assert.IsType<AdminStoreConfigApiErrorResponse>(precondition.Value);
+        Assert.Equal("PRECONDITION_REQUIRED", error.Code);
+    }
+
+    [Fact]
+    public async Task UpdateStorefrontStatus_WithInvalidStatus_ReturnsValidationErrorWithoutFullConfigValidation()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["X-Tenant-Id"] = tenantId.ToString("D");
+
+        var result = await controller.UpdateStorefrontStatus(new AdminStorefrontStatusRequest
+        {
+            StorefrontStatus = "archived",
+            RowVersion = "7"
+        }, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var error = Assert.IsType<AdminStoreConfigApiErrorResponse>(badRequest.Value);
+        Assert.Equal("INVALID_STORE_CONFIG", error.Code);
+        Assert.Contains("StorefrontStatus", error.Message, StringComparison.Ordinal);
+        service.Verify(
+            item => item.UpdateStoreConfigAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<AdminStoreConfigRequest>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<uint?>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task UpdateStorefrontStatus_ValidRequest_UsesStatusOnlyServiceContract()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        service
+            .Setup(item => item.UpdateStorefrontStatusAsync(
+                tenantId,
+                It.Is<AdminStorefrontStatusRequest>(request =>
+                    request.StorefrontStatus == "live" &&
+                    request.MaintenanceMessage == string.Empty &&
+                    request.RowVersion == "7"),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                7))
+            .ReturnsAsync(new AdminStoreConfigResponse
+            {
+                TenantId = tenantId,
+                RowVersion = "8",
+                StoreName = "Status Store",
+                ThemeId = "default",
+                StorefrontStatus = "live"
+            });
+
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["X-Tenant-Id"] = tenantId.ToString("D");
+
+        var result = await controller.UpdateStorefrontStatus(new AdminStorefrontStatusRequest
+        {
+            StorefrontStatus = "live",
+            MaintenanceMessage = string.Empty,
+            RowVersion = "7"
+        }, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<AdminStoreConfigResponse>(ok.Value);
+        Assert.Equal("live", response.StorefrontStatus);
+        service.VerifyAll();
+        service.Verify(
+            item => item.UpdateStoreConfigAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<AdminStoreConfigRequest>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<uint?>()),
+            Times.Never);
+    }
+
     private static AdminStoreConfigController CreateController(IAdminStoreConfigService service, Guid tenantId)
     {
         return new AdminStoreConfigController(

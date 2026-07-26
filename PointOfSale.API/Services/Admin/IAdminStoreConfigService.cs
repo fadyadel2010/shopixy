@@ -44,6 +44,16 @@ public interface IAdminStoreConfigService
         uint? expectedRowVersion = null);
 
     /// <summary>
+    /// Updates only the storefront operational status for a tenant.
+    /// </summary>
+    Task<AdminStoreConfigResponse> UpdateStorefrontStatusAsync(
+        Guid tenantId,
+        AdminStorefrontStatusRequest request,
+        string traceId,
+        CancellationToken cancellationToken = default,
+        uint? expectedRowVersion = null);
+
+    /// <summary>
     /// Update a specific page layout (Draft mode).
     /// </summary>
     Task<AdminStoreConfigResponse> UpdatePageLayoutAsync(

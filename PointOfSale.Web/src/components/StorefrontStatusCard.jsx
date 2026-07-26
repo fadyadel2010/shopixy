@@ -127,7 +127,7 @@ export default function StorefrontStatusCard() {
     }
 
     const goToSettings = () => {
-        navigate('/settings')
+        navigate('/settings?tab=storefront')
     }
 
     if (loading) {

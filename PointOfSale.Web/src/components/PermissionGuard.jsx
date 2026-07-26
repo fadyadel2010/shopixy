@@ -10,6 +10,7 @@
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Lock } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
+import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 
 /**
  * Check if user has required role
@@ -27,7 +28,8 @@ export function useHasPermission(requiredRoles = []) {
  * Check if user can access storefront admin
  */
 export function useCanAccessStorefront() {
-    return useHasPermission(['Owner', 'Admin'])
+    const user = useAuthStore((s) => s.user)
+    return canManageStorefrontSettings(user)
 }
 
 /**

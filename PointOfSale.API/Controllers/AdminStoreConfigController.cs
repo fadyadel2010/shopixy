@@ -197,6 +197,84 @@ public class AdminStoreConfigController : ControllerBase
     }
 
     /// <summary>
+    /// Updates only the storefront operational status for the tenant.
+    /// This endpoint intentionally does not bind unrelated StoreConfig domains such as Commerce AI.
+    /// </summary>
+    [HttpPut("status")]
+    [ProducesResponseType(typeof(AdminStoreConfigResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AdminStoreConfigApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> UpdateStorefrontStatus(
+        [FromBody] AdminStorefrontStatusRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        var validationError = request.Validate();
+        if (validationError != null)
+        {
+            _logger.LogWarning(
+                "UpdateStorefrontStatus validation failed | TenantId: {TenantId} | Error: {Error} | TraceId: {TraceId}",
+                validation.TenantId, validationError, traceId);
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(validationError, traceId));
+        }
+
+        var precondition = RequireExpectedRowVersion(traceId, request.RowVersion);
+        if (precondition.Error != null)
+        {
+            return precondition.Error;
+        }
+
+        try
+        {
+            var result = await _storeConfigService.UpdateStorefrontStatusAsync(
+                validation.TenantId!.Value,
+                request,
+                traceId,
+                cancellationToken,
+                expectedRowVersion: precondition.RowVersion);
+
+            ApplyConcurrencyHeaders(result.RowVersion);
+            return Ok(result);
+        }
+        catch (StorefrontVerificationException ex)
+        {
+            _logger.LogWarning(
+                "UpdateStorefrontStatus | TenantId: {TenantId} | Blocked: Email not verified | TraceId: {TraceId}",
+                validation.TenantId, traceId);
+            return BadRequest(new AdminStoreConfigApiErrorResponse
+            {
+                Code = "EMAIL_NOT_VERIFIED",
+                Message = ex.Message,
+                TraceId = traceId
+            });
+        }
+        catch (ConcurrencyConflictException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "UpdateStorefrontStatus concurrency conflict | TenantId: {TenantId} | TraceId: {TraceId}",
+                validation.TenantId,
+                traceId);
+            RecordAdminConflict("store-config", "stale_row_version");
+            return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "UpdateStorefrontStatus | TenantId: {TenantId} | Error | TraceId: {TraceId}",
+                validation.TenantId, traceId);
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                AdminStoreConfigApiErrorResponse.InternalError(traceId));
+        }
+    }
+
+    /// <summary>
     /// Updates a specific page layout (Draft mode).
     /// </summary>
     [HttpPut("pages/{pageId}")]

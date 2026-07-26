@@ -57,6 +57,21 @@ export const storeConfigService = {
     },
 
     /**
+     * Update storefront operational status without replacing unrelated config domains.
+     */
+    async updateStorefrontStatus(statusConfig, options = {}) {
+        const rowVersion = typeof statusConfig?.rowVersion === 'string' ? statusConfig.rowVersion.trim() : ''
+        const response = await api.put('/admin/store-config/status', statusConfig, {
+            ...options,
+            headers: {
+                ...(options.headers || {}),
+                ...(rowVersion ? { 'If-Match': `"${rowVersion}"` } : {}),
+            },
+        })
+        return response.data
+    },
+
+    /**
      * Update page layout (DRAFT ONLY)
      * CRITICAL: This does NOT affect live storefront
      */

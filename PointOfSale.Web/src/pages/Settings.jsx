@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useSearchParams } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
 import ResetDatabase from './ResetDatabase'
 import StorefrontSettings from './StorefrontSettings'
 import { useRTL } from '../hooks/useRTL'
 import { formatCurrency } from '../utils/dateFormat'
-import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
+import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { useAuthStore } from '../store/authStore'
 
 export default function Settings() {
@@ -14,9 +15,11 @@ export default function Settings() {
     const { dir, isRTL } = useRTL()
     const { showSuccess, showError, showWarning } = useToast()
     const user = useAuthStore((state) => state.user)
+    const [searchParams] = useSearchParams()
+    const requestedTab = searchParams.get('tab')
     const [loading, setLoading] = useState(true)
     const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
-    const [activeTab, setActiveTab] = useState('company')
+    const [activeTab, setActiveTab] = useState(() => requestedTab === 'storefront' ? 'storefront' : 'company')
     const [settings, setSettings] = useState(null)
     const [defaultCountry, setDefaultCountry] = useState({
         countryCode: '',
@@ -28,7 +31,7 @@ export default function Settings() {
     const tabLabelDirectionClass = isRTL ? 'flex-row-reverse' : ''
     const previewTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const fileSpacingClass = isRTL ? 'file:ml-4' : 'file:mr-4'
-    const canManageStorefront = canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')
+    const canManageStorefront = canManageStorefrontSettings(user)
 
     const countryOptions = [
         { code: '', label: t('settings.selectCountry') },
@@ -154,6 +157,14 @@ export default function Settings() {
         fetchSettings()
         fetchDefaultCountry()
     }, [])
+
+    useEffect(() => {
+        if (requestedTab !== 'storefront') {
+            return
+        }
+
+        setActiveTab(canManageStorefront ? 'storefront' : 'company')
+    }, [requestedTab, canManageStorefront])
 
     useEffect(() => {
         if (activeTab === 'storefront' && !canManageStorefront) {
