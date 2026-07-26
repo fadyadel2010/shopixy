@@ -1,0 +1,94 @@
+{
+  "uid": "stripe-sandbox-operational",
+  "title": "Stripe Sandbox Operational Readiness",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "tags": ["payments", "stripe", "sandbox"],
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Payment Duration p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(stripe_payment_duration_ms_bucket[10m])) by (le, operation, outcome))",
+          "legendFormat": "{{operation}} {{outcome}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Stripe Provider Latency p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(stripe_provider_latency_ms_bucket[10m])) by (le, operation, outcome))",
+          "legendFormat": "{{operation}} {{outcome}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Webhook Processing p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(stripe_webhook_processing_ms_bucket[10m])) by (le, event_type, outcome))",
+          "legendFormat": "{{event_type}} {{outcome}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Webhook Replay and Failures",
+      "targets": [
+        {
+          "expr": "sum(rate(stripe_webhook_replay_total[5m])) by (event_type, reason_code)",
+          "legendFormat": "replay {{event_type}} {{reason_code}}"
+        },
+        {
+          "expr": "sum(rate(stripe_webhook_failures_total[5m])) by (event_type, reason_code)",
+          "legendFormat": "failure {{event_type}} {{reason_code}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Provider Availability and Retries",
+      "targets": [
+        {
+          "expr": "sum(rate(stripe_provider_availability_total[5m])) by (operation, available, reason_code)",
+          "legendFormat": "availability {{operation}} {{available}} {{reason_code}}"
+        },
+        {
+          "expr": "sum(rate(stripe_provider_retries_total[5m])) by (operation, reason_code)",
+          "legendFormat": "retry {{operation}} {{reason_code}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Refund Latency p95",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(stripe_refund_latency_ms_bucket[10m])) by (le, source, outcome))",
+          "legendFormat": "{{source}} {{outcome}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+BEGIN;
+
+ALTER TABLE "CommerceHubCarts"
+    ADD COLUMN IF NOT EXISTS "Version" integer NOT NULL DEFAULT 1;
+
+COMMIT;

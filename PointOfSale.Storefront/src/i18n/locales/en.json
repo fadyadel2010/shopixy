@@ -1,0 +1,741 @@
+{
+    "common": {
+        "loading": "Loading...",
+        "error": "Error",
+        "retry": "Retry",
+        "cancel": "Cancel",
+        "save": "Save",
+        "delete": "Delete",
+        "edit": "Edit",
+        "close": "Close",
+        "search": "Search",
+        "noResults": "No results found",
+        "viewAll": "View All",
+        "home": "Home",
+        "products": "Products",
+        "categories": "Categories",
+        "pages": "Pages",
+        "back": "Back",
+        "next": "Next",
+        "previous": "Previous",
+        "submit": "Submit",
+        "required": "Required",
+        "optional": "Optional",
+        "page": "Page",
+        "yes": "Yes",
+        "no": "No",
+        "notAvailable": "N/A",
+        "dismiss": "Dismiss"
+    },
+    "header": {
+        "menu": "Menu",
+        "closeMenu": "Close menu",
+        "searchProducts": "Search products...",
+        "viewCart": "View Cart",
+        "allProducts": "All Products",
+        "login": "Login",
+        "register": "Sign Up",
+        "account": "Account",
+        "logout": "Logout"
+    },
+    "footer": {
+        "copyright": "© {year} {storeName}. All rights reserved.",
+        "quickLinks": "Quick Links",
+        "customerService": "Customer Service",
+        "followUs": "Follow Us",
+        "stayUpdated": "Stay Updated",
+        "subscribeText": "Subscribe to our newsletter for exclusive offers and updates.",
+        "enterEmail": "Enter your email",
+        "subscribe": "Subscribe",
+        "privacyPolicy": "Privacy Policy",
+        "termsOfService": "Terms of Service",
+        "aboutUs": "About Us",
+        "contact": "Contact"
+    },
+    "search": {
+        "placeholder": "Search products, categories...",
+        "searching": "Searching...",
+        "noResultsFor": "No results found for \"{query}\"",
+        "viewAllResults": "View all results for \"{query}\"",
+        "products": "Products",
+        "categories": "Categories",
+        "pages": "Pages",
+        "unavailable": "Search service unavailable",
+        "minChars": "Enter at least 2 characters",
+        "results": "{count} results",
+        "pressEnter": "Press Enter to search"
+    },
+    "cart": {
+        "title": "Shopping Cart",
+        "empty": "Your cart is empty",
+        "emptyDescription": "Looks like you haven't added any items to your cart yet.",
+        "continueShopping": "Continue Shopping",
+        "subtotal": "Subtotal",
+        "discount": "Discount",
+        "tax": "Tax",
+        "total": "Total",
+        "previewTotal": "Preview Total",
+        "beforeShipping": "Before shipping",
+        "shippingCalculated": "Calculated at checkout",
+        "previewShippingNotice": "Checkout recalculates shipping and overrides this preview total.",
+        "checkout": "Proceed to Checkout",
+        "remove": "Remove",
+        "quantity": "Quantity",
+        "updateQuantity": "Update quantity",
+        "itemAdded": "Item added to cart",
+        "itemRemoved": "Item removed from cart",
+        "cartCleared": "Cart cleared",
+        "quantityUpdated": "Quantity updated",
+        "updateFailed": "Failed to update quantity",
+        "removeFailed": "Failed to remove item",
+        "clearFailed": "Failed to clear cart",
+        "clearCart": "Clear Cart",
+        "clearConfirmMessage": "Are you sure you want to remove all items from your cart? This action cannot be undone.",
+        "itemCount": "{count} items",
+        "orderSummary": "Order Summary",
+        "shipping": "Shipping",
+        "freeShipping": "Free",
+        "freeShippingThreshold": "Free shipping on orders over {{amount}}",
+        "signInToCheckout": "Sign in to Checkout",
+        "signInToUseCoupons": "Sign in to apply coupons.",
+        "guestCheckoutHint": "You need to sign in to complete your order",
+        "secure": "Secure",
+        "protected": "Protected",
+        "itemSavings": "Item Savings",
+        "degradedAuth": {
+            "message": "We are reconnecting to verify your account. Coupons and checkout stay paused until that finishes.",
+            "verifying": "Verifying account..."
+        },
+        "coupon": {
+            "title": "Have a coupon?",
+            "placeholder": "Enter coupon code",
+            "apply": "Apply",
+            "applying": "Applying...",
+            "remove": "Remove",
+            "applied": "Coupon applied!",
+            "removed": "Coupon removed",
+            "savedAmount": "You save {{amount}}",
+            "autoRemoved": "Coupon was removed because it's no longer valid",
+            "errors": {
+                "COUPON_INVALID": "Invalid coupon code",
+                "COUPON_EXPIRED": "This coupon has expired",
+                "COUPON_NOT_YET_VALID": "This coupon is not yet active",
+                "COUPON_INACTIVE": "This coupon is no longer active",
+                "COUPON_MIN_NOT_MET": "Minimum order amount not met",
+                "COUPON_USAGE_EXCEEDED": "This coupon has reached its usage limit",
+                "COUPON_CUSTOMER_USAGE_EXCEEDED": "You have already used this coupon the maximum number of times",
+                "COUPON_FIRST_ORDER_ONLY": "This coupon is only valid for first-time orders",
+                "COUPON_NOT_APPLICABLE": "This coupon cannot be applied to your cart",
+                "COUPON_REMOVED_AUTOMATICALLY": "Coupon was removed automatically",
+                "COUPON_NOT_APPLIED": "No coupon is applied",
+                "COUPON_CART_EMPTY": "Cannot apply coupon to an empty cart",
+                "COUPON_RATE_LIMITED": "Too many attempts. Please wait and try again."
+            }
+        }
+    },
+    "checkout": {
+        "title": "Checkout",
+        "shippingInfo": "Shipping Information",
+        "paymentMethod": "Payment Method",
+        "orderSummary": "Order Summary",
+        "placeOrder": "Place Order",
+        "processing": "Processing...",
+        "firstName": "First Name",
+        "lastName": "Last Name",
+        "email": "Email",
+        "phone": "Phone",
+        "address": "Address",
+        "city": "City",
+        "postalCode": "Postal Code",
+        "country": "Country",
+        "shippingMethod": "Shipping Method",
+        "cashOnDelivery": "Cash on Delivery",
+        "review": "Review Order",
+        "reviewOrder": "Review Order",
+        "backToCart": "Back to Cart",
+        "backToShipping": "Back to Shipping",
+        "backToPayment": "Back to Payment",
+        "confirmOrder": "Confirm Order",
+        "orderConfirmed": "Order Confirmed",
+        "paymentPending": "Payment Pending",
+        "previousSelection": "Previous selection",
+        "staleSelection": "Your previous selection is no longer available.",
+        "staleSelectionHelp": "Your previous selection is no longer valid. Please confirm or update.",
+        "payment": {
+            "cod": {
+                "title": "Cash on Delivery",
+                "description": "Pay when your order is delivered",
+                "pending": "Payment pending on delivery",
+                "badge": "Pay on Delivery"
+            },
+            "stripe": {
+                "title": "Credit/Debit Card",
+                "description": "Secure payment with Stripe",
+                "processing": "Processing payment...",
+                "failed": "Payment failed. Please try again.",
+                "success": "Payment successful!",
+                "cardNumber": "Card Number",
+                "expiry": "Expiry",
+                "cvc": "CVC",
+                "payNow": "Pay Now",
+                "securePayment": "Your payment is secured by Stripe",
+                "redirecting": "Redirecting to payment...",
+                "authenticating": "Authenticating payment...",
+                "errors": {
+                    "cardDeclined": "Your card was declined. Please try a different card.",
+                    "expiredCard": "Your card has expired. Please use a different card.",
+                    "incorrectCvc": "Incorrect CVC. Please check and try again.",
+                    "processingError": "Payment processing error. Please try again.",
+                    "insufficientFunds": "Insufficient funds. Please use a different card.",
+                    "cardNotSupported": "This card type is not supported.",
+                    "genericDecline": "Payment was declined. Please try a different payment method.",
+                    "tryAgain": "Please try again or use a different card."
+                }
+            },
+            "paymob": {
+                "title": "Online Payment",
+                "description": "Secure payment with Paymob"
+            },
+            "fee": "Fee",
+            "noMethods": "No payment methods available",
+            "minOrder": "Minimum order",
+            "maxOrder": "Maximum order",
+            "manualWalletWarning": "Select the wallet type, enter the transfer phone number, and upload the proof before continuing.",
+            "manualWalletErrors": {
+                "MANUAL_WALLET_TYPE_REQUIRED": "Wallet type is required",
+                "MANUAL_WALLET_TYPE_INVALID": "Please choose a supported wallet type",
+                "MANUAL_WALLET_PHONE_REQUIRED": "Wallet phone number is required",
+                "INVALID_MANUAL_WALLET_PHONE": "Please enter a valid wallet phone number",
+                "MANUAL_WALLET_PROOF_REQUIRED": "Transfer proof is required"
+            }
+        },
+        "paymobPayment": "Paymob Payment",
+        "paymobDescription": "Pay securely with Paymob",
+        "orderNumber": "Order",
+        "verifyingPayment": "Verifying payment...",
+        "pleaseWait": "Please wait while we confirm your payment",
+        "payWithPaymob": "Pay with Paymob",
+        "securePayment": "Your payment is secured by Paymob",
+        "completePayment": "Complete Payment",
+        "paymentFailed": "Payment Failed",
+        "paymentDeclined": "Your payment was declined",
+        "paymentFailedDescription": "Please check your card details and try again, or use a different payment method.",
+        "amountDue": "Amount Due",
+        "tryAgain": "Try Again",
+        "chooseAnotherMethod": "Choose Another Payment Method",
+        "promotionCalculationFailed": "Some promotions could not be applied. Final price shown.",
+        "errors": {
+            "phoneNotVerified": {
+                "title": "Phone verification required",
+                "message": "Please verify your phone number via WhatsApp before placing your order.",
+                "help": "Look for the verification section above."
+            },
+            "phoneBlocked": {
+                "title": "Phone number blocked",
+                "message": "This phone number cannot place new storefront orders.",
+                "help": "Please contact the store if you believe this is a mistake."
+            },
+            "recoveryReviewRequired": {
+                "title": "Checkout restored for review",
+                "message": "Your checkout session has been restored.",
+                "help": "Review the latest cart state, pricing, and payment details before placing the order."
+            },
+            "recoveryCartChanged": {
+                "title": "Recovered cart changed",
+                "message": "Your cart was updated during recovery.",
+                "help": "The system refreshed your recovered cart with the latest available items and pricing. Confirm the new totals before placing the order."
+            },
+            "manualWalletIncomplete": {
+                "title": "Manual wallet details are incomplete",
+                "message": "Payment details are missing or invalid.",
+                "help": "Go back to the payment step, complete the transfer details, and upload the proof before placing the order."
+            },
+            "generic": {
+                "title": "Checkout could not be completed",
+                "message": "An error occurred during checkout.",
+                "help": "Please review your details, confirm the latest totals, and try again. Contact support if the problem continues."
+            }
+        },
+        "button": {
+            "placeOrder": "Place Order",
+            "processing": "Processing...",
+            "tooltips": {
+                "verifyPhone": "Please verify your phone number first",
+                "waitingPricing": "Waiting for updated pricing",
+                "completeDetails": "Complete the required checkout details first"
+            }
+        },
+        "pending": {
+            "title": "Your payment is being processed",
+            "description": "We have your order and we're waiting for backend payment confirmation before showing success.",
+            "loading": "Checking the latest payment status...",
+            "waitingTitle": "Still waiting for final confirmation",
+            "waitingDescription": "We will keep checking for a short time. You can refresh this page safely without losing the order.",
+            "timeoutTitle": "Payment confirmation is taking longer than expected",
+            "timeoutDescription": "Your order is still safe. Please check again shortly from order tracking.",
+            "pollingError": "We could not verify the latest status right now. Staying in pending until backend confirms the result.",
+            "trackOrder": "Track Order",
+            "refreshStatus": "Refresh Status",
+            "continueShopping": "Continue Shopping",
+            "redirectingTitle": "Redirecting to secure payment tracking",
+            "redirectingDescription": "We are moving you to the backend-confirmed payment status screen.",
+            "failedTitle": "Payment failed",
+            "failedDescription": "Payment failed - retry or change method from checkout. Your cart is still saved there.",
+            "missingOrderTitle": "Order reference missing",
+            "missingOrderDescription": "We couldn't find an order to confirm. Return to checkout and try again.",
+            "returnToCheckout": "Return to Checkout",
+            "orderNumber": "Order Number",
+            "backendStatus": "Backend status",
+            "paymobUnavailable": "Paymob payment is currently unavailable.",
+            "reviewTitle": "Payment requires review",
+            "reviewDescription": "We received a payment signal that must be reconciled before this order can be confirmed or safely failed. Do not retry payment from checkout.",
+            "reviewStatusTitle": "Payment is under manual review",
+            "reviewStatusDescription": "POS quarantined this payment because provider cash may already exist but cannot yet be recognized safely. Track the order or refresh later; do not retry payment."
+        }
+    },
+    "checkoutSuccess": {
+        "title": "Thank you for your order!",
+        "subtitle": "Great news! Your order has been confirmed. We're already getting things ready for you.",
+        "orderNumber": "Order Number",
+        "totalAmount": "Total Amount",
+        "paymentMethod": "Payment Method",
+        "orderProgress": "Order Progress",
+        "continueShopping": "Continue Shopping",
+        "trackOrder": "Track Order",
+        "home": "Home",
+        "supportNote": "Questions about your order? Contact our support team anytime.",
+        "paymentMethods": {
+            "cod": "Cash on Delivery",
+            "stripe": "Credit/Debit Card",
+            "paymob": "Online Payment",
+            "online": "Online Payment"
+        },
+        "codNotice": {
+            "title": "Pay on Delivery",
+            "description": "Please have {{amount}} ready when your order arrives. Our delivery partner accepts cash."
+        },
+        "timeline": {
+            "orderPlaced": "Order Placed",
+            "preparing": "Preparing",
+            "shipped": "Shipped",
+            "delivered": "Delivered"
+        },
+        "whatsNext": {
+            "title": "What happens next?",
+            "step1": "You'll receive a confirmation email shortly with all the details",
+            "step2": "We'll send you a tracking link once your order ships",
+            "step3": "Sit back and relax – we've got it from here!"
+        }
+    },
+    "order": {
+        "confirmation": "Order Confirmation",
+        "thankYou": "Thank you for your order!",
+        "orderNumber": "Order Number",
+        "orderPlaced": "Your order has been placed successfully.",
+        "emailSent": "A confirmation email has been sent to {email}.",
+        "trackOrder": "Track Order",
+        "continueShopping": "Continue Shopping",
+        "status": "Order Status",
+        "pending": "Pending",
+        "processing": "Processing",
+        "shipped": "Shipped",
+        "delivered": "Delivered",
+        "cancelled": "Cancelled"
+    },
+    "product": {
+        "addToCart": "Add to Cart",
+        "outOfStock": "Out of Stock",
+        "inStock": "In Stock",
+        "price": "Price",
+        "quantity": "Quantity",
+        "description": "Description",
+        "specifications": "Specifications",
+        "relatedProducts": "Related Products",
+        "category": "Category",
+        "sku": "SKU",
+        "barcode": "Barcode",
+        "selectVariant": "Select Option",
+        "notFound": "Product not found",
+        "notFoundDesc": "The product you're looking for doesn't exist or has been removed.",
+        "variant": {
+            "selectOption": "Select {name}",
+            "unavailable": "Currently unavailable",
+            "lowStock": "Only {count} left",
+            "selected": "Selected: {value}",
+            "combination": "This combination is not available"
+        }
+    },
+    "category": {
+        "all": "All Categories",
+        "products": "Products",
+        "noProducts": "No products in this category",
+        "notFound": "Category not found",
+        "shopByCategory": "Shop by Category",
+        "subcategories": "Subcategories"
+    },
+    "promotion": {
+        "endsIn": "Ends in",
+        "onAllProducts": "On all {category} products",
+        "availableIn": "Promotion available in",
+        "viewCategory": "View {category}",
+        "limitedTime": "Limited Time Offer",
+        "hurryUp": "Hurry! Offer ends soon",
+        "expired": "This promotion has ended"
+    },
+    "cms": {
+        "pageNotFound": "Page Not Found",
+        "pageNotFoundDesc": "The page you're looking for doesn't exist.",
+        "goHome": "Go Home",
+        "about": {
+            "title": "About Us",
+            "defaultContent": "Learn more about our company and mission."
+        },
+        "privacy": {
+            "title": "Privacy Policy",
+            "lastUpdated": "Last Updated"
+        },
+        "terms": {
+            "title": "Terms of Service",
+            "lastUpdated": "Last Updated"
+        },
+        "placeholders": {
+            "name": "John Doe",
+            "email": "email@example.com",
+            "phone": "+1 (555) 123-4567",
+            "subject": "How can we help?",
+            "message": "Tell us more about your inquiry..."
+        }
+    },
+    "contact": {
+        "title": "Contact Us",
+        "subtitle": "We'd love to hear from you. Fill out the form below and we'll get back to you as soon as possible.",
+        "name": "Full Name",
+        "email": "Email Address",
+        "phone": "Phone Number",
+        "subject": "Subject",
+        "message": "Your Message",
+        "send": "Send Message",
+        "sending": "Sending...",
+        "success": "Message Sent Successfully!",
+        "successDesc": "Thank you for reaching out. We'll get back to you within 24 hours.",
+        "sendAnother": "Send Another Message"
+    },
+    "errors": {
+        "general": "Something went wrong. Please try again.",
+        "network": "Network error. Please check your connection.",
+        "notFound": "Not Found",
+        "unauthorized": "Unauthorized",
+        "serverError": "Server error. Please try again later."
+    },
+    "language": {
+        "select": "Select Language",
+        "english": "English",
+        "arabic": "Arabic"
+    },
+    "accessibility": {
+        "skipToContent": "Skip to content",
+        "mainNavigation": "Main navigation",
+        "searchSuggestions": "Search suggestions",
+        "closeDialog": "Close dialog"
+    },
+    "account": {
+        "title": "My Account",
+        "welcome": "Welcome back, {name}!",
+        "profile": {
+            "title": "Profile",
+            "description": "View and edit your info",
+            "edit": "Edit Profile",
+            "update": "Update Profile",
+            "updateSuccess": "Profile updated successfully",
+            "updateError": "Failed to update profile"
+        },
+        "orders": {
+            "title": "Orders",
+            "description": "View your order history",
+            "comingSoon": "Order history will be available soon.",
+            "orderNumber": "Order Number",
+            "count": "{count} orders",
+            "empty": "No orders yet",
+            "startShopping": "Start Shopping",
+            "viewDetails": "View Details",
+            "loadError": "Failed to load orders",
+            "items": "Items",
+            "date": "Date",
+            "shipping": "Shipping",
+            "paymentMethod": "Payment",
+            "total": "Total",
+            "standard": "Standard Delivery",
+            "status": {
+                "pending": "Pending",
+                "confirmed": "Confirmed",
+                "processing": "Processing",
+                "shipped": "Shipped",
+                "delivered": "Delivered",
+                "cancelled": "Cancelled",
+                "refunded": "Refunded"
+            },
+            "payment": {
+                "label": "Payment",
+                "pending": "Pending",
+                "paid": "Paid",
+                "failed": "Failed",
+                "refunded": "Refunded",
+                "partiallyrefunded": "Partially Refunded"
+            }
+        },
+        "security": {
+            "title": "Security",
+            "description": "Password & sessions",
+            "provider": "Login method",
+            "password": "Password",
+            "emailVerified": "Email verified",
+            "changePassword": "Change Password",
+            "currentPassword": "Current Password",
+            "newPassword": "New Password",
+            "confirmPassword": "Confirm Password",
+            "passwordChanged": "Password changed successfully. You have been logged out from all devices.",
+            "passwordChangeFailed": "Failed to change password",
+            "passwordRequirements": "Password must be at least 8 characters with one uppercase, one lowercase, and one number"
+        },
+        "sessions": {
+            "title": "Sessions",
+            "description": "Manage your active sessions",
+            "currentSession": "Current Session",
+            "revokeSession": "End Session",
+            "revokeAll": "End All Other Sessions",
+            "revokedSuccess": "Session ended successfully",
+            "revokedAllSuccess": "Logged out from {count} device(s)",
+            "noOtherSessions": "No other active sessions"
+        },
+        "status": {
+            "active": "Active",
+            "inactive": "Inactive",
+            "memberSince": "Member since"
+        }
+    },
+    "home": {
+        "welcome": "Welcome to {storeName}",
+        "heroTitle": "Discover Quality Products at",
+        "heroTitleHighlight": "Great Prices",
+        "heroSubtitle": "Explore our curated collection of premium products. From everyday essentials to special finds, we've got you covered.",
+        "shopNow": "Shop Now",
+        "builderHint": "Configure your homepage sections in the",
+        "storefrontBuilder": "Storefront Builder",
+        "featuredProducts": "Featured Products",
+        "noProductsYet": "No products yet",
+        "productsWillAppear": "Products will appear here once they are added.",
+        "failedToLoad": "Failed to load products",
+        "noCategoriesYet": "No categories yet",
+        "categoriesWillAppear": "Categories will appear here once they are added.",
+        "failedToLoadCategories": "Failed to load categories",
+        "whatCustomersSay": "What Our Customers Say",
+        "guestBanner": {
+            "message": "Sign in to access your account and track your orders."
+        },
+        "guestInline": {
+            "message": "Already have an account?"
+        },
+        "guestCTA": {
+            "title": "Join Our Community",
+            "description": "Create an account to enjoy personalized shopping, order tracking, and exclusive member benefits.",
+            "createAccount": "Create Account",
+            "signIn": "Sign In",
+            "benefit1": "Track your orders",
+            "benefit2": "Save your favorites",
+            "benefit3": "Faster checkout"
+        }
+    },
+    "auth": {
+        "login": {
+            "title": "Welcome back",
+            "subtitle": "Sign in to your account to continue",
+            "submit": "Sign in",
+            "signingIn": "Signing in...",
+            "forgotPassword": "Forgot password?",
+            "noAccount": "Don't have an account?",
+            "registerLink": "Sign up"
+        },
+        "register": {
+            "title": "Create an account",
+            "subtitle": "Join us and start shopping today",
+            "submit": "Create account",
+            "creating": "Creating account...",
+            "hasAccount": "Already have an account?",
+            "loginLink": "Sign in",
+            "passwordHint": "At least 8 characters with uppercase, lowercase, and a number",
+            "success": "Account created!",
+            "successMessage": "Welcome! Your account has been created successfully.",
+            "redirecting": "Redirecting you to the store..."
+        },
+        "forgotPassword": {
+            "title": "Forgot your password?",
+            "subtitle": "Enter your email and we'll send you a reset link",
+            "submit": "Send reset link",
+            "sending": "Sending...",
+            "successTitle": "Check your email",
+            "successMessage": "If an account exists with this email, you will receive a password reset link shortly.",
+            "backToLogin": "Back to login"
+        },
+        "resetPassword": {
+            "title": "Reset your password",
+            "subtitle": "Enter your new password below",
+            "submit": "Reset password",
+            "resetting": "Resetting...",
+            "successTitle": "Password updated!",
+            "successMessage": "Your password has been reset successfully. You can now sign in with your new password.",
+            "goToLogin": "Sign in",
+            "redirecting": "Redirecting to login...",
+            "invalidToken": "Invalid or missing reset token. Please request a new password reset.",
+            "invalidTokenTitle": "Invalid link",
+            "invalidTokenMessage": "This password reset link is invalid or has expired. Please request a new one.",
+            "requestNewLink": "Request new link"
+        },
+        "fields": {
+            "email": "Email",
+            "emailPlaceholder": "you@example.com",
+            "password": "Password",
+            "newPassword": "New Password",
+            "confirmPassword": "Confirm Password",
+            "displayName": "Full Name",
+            "namePlaceholder": "John Doe",
+            "phone": "Phone",
+            "showPassword": "Show password",
+            "hidePassword": "Hide password"
+        },
+        "validation": {
+            "emailRequired": "Email is required",
+            "emailInvalid": "Please enter a valid email",
+            "passwordRequired": "Password is required",
+            "passwordTooShort": "Password must be at least 8 characters",
+            "passwordWeak": "Password must include uppercase, lowercase, and a number",
+            "confirmPasswordRequired": "Please confirm your password",
+            "passwordMismatch": "Passwords do not match",
+            "nameRequired": "Name is required",
+            "nameTooShort": "Name must be at least 2 characters"
+        },
+        "verifyEmail": {
+            "title": "Verify your email",
+            "description": "We sent a verification link to {email}. Please check your inbox.",
+            "resendButton": "Resend verification email",
+            "resendCooldown": "Resend in {seconds}s",
+            "resendSuccess": "Verification email sent!",
+            "resendError": "Could not send verification email. Please try again later."
+        },
+        "social": {
+            "orContinueWith": "Or continue with",
+            "loginWithGoogle": "Sign in with Google",
+            "loginWithFacebook": "Sign in with Facebook",
+            "googleNotLoaded": "Google Sign-In is not available. Please try again later.",
+            "googleFailed": "Google Sign-In failed. Please try again.",
+            "facebookNotLoaded": "Facebook Login is not available. Please try again later.",
+            "facebookFailed": "Facebook Login failed. Please try again."
+        },
+        "errors": {
+            "INVALID_CREDENTIALS": "Invalid email or password. Please try again.",
+            "EMAIL_NOT_VERIFIED": "Please verify your email address to continue.",
+            "ACCOUNT_DEACTIVATED": "Your account has been deactivated. Please contact support.",
+            "EMAIL_ALREADY_EXISTS": "An account with this email already exists.",
+            "WEAK_PASSWORD": "Password is too weak. Please choose a stronger password.",
+            "INVALID_TOKEN": "Invalid or expired token. Please try again.",
+            "TOKEN_EXPIRED": "Your session has expired. Please sign in again.",
+            "TOKEN_REVOKED": "Your session has been revoked. Please sign in again.",
+            "TOKEN_REUSE_DETECTED": "Security alert: Your session may have been compromised.",
+            "TOO_MANY_ATTEMPTS": "Too many attempts. Please wait before trying again.",
+            "PROVIDER_DISABLED": "This login method is currently unavailable.",
+            "NETWORK_ERROR": "Network error. Please check your connection.",
+            "UNKNOWN_ERROR": "Something went wrong. Please try again.",
+            "retryAfter": "Please try again in {seconds} seconds.",
+            "securityAlert": "For your security, please log in again."
+        },
+        "guard": {
+            "checking": "Verifying authentication..."
+        },
+        "reconnecting": "Reconnecting...",
+        "loading": "Loading..."
+    },
+    "wishlist": {
+        "title": "My Wishlist",
+        "empty": "Your wishlist is empty",
+        "emptyDescription": "Save items you love for later. Products you add will appear here.",
+        "add": "Add to Wishlist",
+        "remove": "Remove from Wishlist",
+        "addToWishlist": "Add to wishlist",
+        "removeFromWishlist": "Remove from wishlist",
+        "addToCart": "Add to Cart",
+        "moveToCart": "Move to Cart",
+        "movedToCart": "Moved to cart",
+        "clear": "Clear Wishlist",
+        "clearConfirm": "Are you sure you want to clear your wishlist?",
+        "itemAdded": "Added to wishlist",
+        "itemRemoved": "Removed from wishlist",
+        "cleared": "Wishlist cleared",
+        "count": "{count} items",
+        "loginRequired": "Please log in to save items to your wishlist",
+        "continueShopping": "Continue Shopping",
+        "reconnecting": "We are reconnecting to verify your session. Please try again in a moment.",
+        "reconnectingShort": "We are reconnecting to verify your session.",
+        "errors": {
+            "addFailed": "Failed to add to wishlist",
+            "removeFailed": "Failed to remove from wishlist",
+            "clearFailed": "Failed to clear wishlist",
+            "loadFailed": "Failed to load wishlist",
+            "moveToCartFailed": "Failed to move to cart"
+        }
+    },
+    "filters": {
+        "title": "Filters",
+        "brand": "Brand",
+        "category": "Category",
+        "priceRange": "Price Range",
+        "availability": "Availability",
+        "offers": "Offers",
+        "showLess": "Show less",
+        "showMore": "Show all ({count})",
+        "allPrices": "All prices",
+        "inStockOnly": "In stock only",
+        "onSaleOnly": "On sale",
+        "clearAll": "Clear all",
+        "apply": "Apply",
+        "removeFilter": "Remove filter"
+    },
+    "sort": {
+        "sortBy": "Sort by",
+        "relevance": "Relevance",
+        "priceLowToHigh": "Price: Low to High",
+        "priceHighToLow": "Price: High to Low",
+        "newest": "Newest",
+        "highestDiscount": "Biggest Discount"
+    },
+    "chat": {
+        "title": "Shopping Assistant",
+        "open": "Open chat",
+        "close": "Close",
+        "minimize": "Minimize",
+        "clear": "Clear chat",
+        "status": {
+            "online": "Online",
+            "offline": "Offline"
+        },
+        "welcome": "Hi! How can I help you today?",
+        "input": {
+            "placeholder": "Type your message...",
+            "send": "Send"
+        },
+        "suggestion": {
+            "products": "Tell me about your products",
+            "shipping": "What are the shipping options?",
+            "returns": "What is your return policy?"
+        },
+        "draft": {
+            "dismiss": "Dismiss",
+            "product": "Product",
+            "checkout": "Proceed to Checkout",
+            "edit": "Edit Cart"
+        },
+        "errors": {
+            "unavailable": "The assistant is currently unavailable",
+            "timeout": "Request timed out. Please try again.",
+            "general": "Something went wrong. Please try again."
+        }
+    }
+}

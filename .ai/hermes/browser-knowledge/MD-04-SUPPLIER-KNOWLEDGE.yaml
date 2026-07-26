@@ -1,0 +1,131 @@
+module:
+  module_name: Supplier Master
+  page_name: Suppliers
+  related_pages:
+    - SupplierOpeningBalance
+    - StatementOfAccount
+    - PurchasesBySupplierReport
+  business_entity: Supplier
+
+business_rules:
+  - Supplier Name is required and must be 200 characters or fewer.
+  - Supplier Phone is optional and capped at 50 characters.
+  - Supplier Email is optional and capped at 200 characters.
+  - Supplier TaxNumber is optional and capped at 50 characters.
+  - Supplier is tenant-scoped; TenantId is mandatory and not null.
+  - Supplier Balance is read-only; it is a shadow maintained by the ledger and never edited directly.
+  - Opening Balance is one-time per supplier.
+  - Opening Balance amount must be greater than zero.
+  - Opening Balance BalanceType must be Debit or Credit.
+  - Supplier payment amount must be greater than zero.
+  - Supplier payment must use a concrete funding method (Cash, Card, or BankTransfer); Credit and Mixed are rejected.
+  - Supplier payment requires an Idempotency-Key header.
+  - Funding account must exist for the chosen payment method.
+  - Funding account must be active to accept payments.
+  - Funding account must have sufficient balance for the payment amount.
+  - A cash payment requires an active cashbox configured for the tenant.
+  - Supplier cannot be deleted if it has a non-zero balance (SUPPLIER_HAS_BALANCE).
+  - Supplier cannot be deleted if it has purchase-invoice history (SUPPLIER_HAS_INVOICES).
+  - Supplier cannot be deleted if it has transaction history (SUPPLIER_HAS_TRANSACTIONS).
+  - Deleted suppliers are excluded from all reads and mutations.
+  - Supplier has no duplicate-phone or duplicate-email guard (two suppliers may share a phone).
+  - Supplier has no credit limit and no credit-purchasing gate (PaymentTermsDays is descriptive only).
+  - Supplier has no deactivate/inactive flag; only soft delete exists.
+  - Supplier merge is not supported.
+  - Purchases reference Supplier but are not owned by Supplier.
+  - Purchase records ledger credit (increases what is owed).
+  - Supplier payment and purchase return record ledger debit (reduces what is owed).
+
+preconditions:
+  - Valid authenticated tenant context (RequiredTenantId).
+  - Role Owner, Admin, or Manager for create, update, delete, opening balance, and payment.
+  - For opening balance: supplier exists and is not deleted, and opening balance not already created.
+  - For payment: supplier exists and is not deleted, Idempotency-Key header present, amount greater than zero, concrete funding method, funding account exists and is active, sufficient account balance, cashbox configured if Cash.
+  - For delete: supplier exists and is not deleted, balance zero, no purchase-invoice history, no transaction history.
+  - For search: valid tenant; returns page, pageSize, search query.
+
+user_journey:
+  - Create Supplier: open Suppliers page, click add, fill name and optional contact fields, submit, expect created and list refreshed.
+  - Edit Supplier: open Suppliers page, click edit on a supplier, change identity/contact fields, submit, expect updated.
+  - Search Supplier: type in search box, submit, expect filtered list by name, email, or phone.
+  - Create Opening Balance: open SupplierOpeningBalance page, set amount and BalanceType for one or more suppliers, save, expect recorded.
+  - Record Supplier Payment: open supplier, record payment with amount, funding method, and Idempotency-Key, expect payment recorded and balance reduced.
+  - View Statement of Account: open statement for the supplier, expect payable computed from ledger.
+  - View Supplier Details: open supplier detail, expect identity fields and balance displayed.
+  - Delete Supplier: open supplier, attempt delete, if guarded expect reason modal, otherwise expect soft deleted and removed from list.
+
+expected_runtime_after_success:
+  - Supplier created with balance 0 and openingBalanceAmount null.
+  - Supplier updated; balance unchanged.
+  - Supplier searchable by name, email, or phone.
+  - Opening balance recorded; one ledger opening-balance row and one SupplierTransaction with IsOpeningBalance true.
+  - Supplier payment recorded; SupplierPayment row created, ledger debited, shadow balance synchronized.
+  - Purchase recorded; ledger credited (payable increases).
+  - Purchase return recorded; ledger debited (payable decreases).
+  - Manual adjustment (credit/debit note) recorded; PartyLedgerAdjustment and ledger updated.
+  - Ledger updated and GL posting enqueued via accounting outbox.
+  - Supplier soft deleted; disappears from list and searches.
+  - Cross-tenant access returns 404.
+
+browser_assertions:
+  - New supplier appears in the Suppliers list.
+  - Supplier search by name, email, or phone returns the expected supplier.
+  - Supplier detail shows correct name, phone, email, address, tax number, payment terms, and balance.
+  - Opening balance is displayed for suppliers that have one.
+  - Supplier payment is visible in supplier payment history.
+  - Statement of Account shows payable equal to sum of ledger debits minus credits.
+  - Validation messages appear for missing name, zero payment, invalid funding method, insufficient funds, inactive account, and no cashbox.
+  - Delete guard modal shows SUPPLIER_HAS_BALANCE, SUPPLIER_HAS_INVOICES, or SUPPLIER_HAS_TRANSACTIONS reasons.
+  - After soft delete the supplier no longer appears in the list.
+  - Two suppliers with the same phone are both allowed (no duplicate-phone block).
+
+negative_tests:
+  - Create supplier with missing Name: expect 400.
+  - Submit opening balance twice for the same supplier: expect "Opening balance already exists".
+  - Replay opening balance with the same Idempotency-Key: expect stored response replay, no duplicate posting.
+  - Record payment with amount 0: expect "Payment amount must be greater than zero".
+  - Record payment with PaymentMethod Credit or Mixed: expect "must use a concrete funding method".
+  - Record payment with Cash when no cashbox configured: expect NO_CASHBOX_CONFIGURED.
+  - Record payment exceeding funding account balance: expect INSUFFICIENT_FUNDS.
+  - Record payment against an inactive funding account: expect ACCOUNT_INACTIVE.
+  - Delete supplier with outstanding balance: expect SUPPLIER_HAS_BALANCE and can-delete false.
+  - Delete supplier with purchase-invoice history: expect SUPPLIER_HAS_INVOICES.
+  - Delete supplier with transaction history: expect SUPPLIER_HAS_TRANSACTIONS.
+  - Auth as Tenant B and access Tenant A supplier id: expect 404.
+  - Create two suppliers with the same phone: expect both succeed (no dedupe).
+  - Attempt to deactivate a supplier: not supported (no UI control); only delete exists.
+
+critical_invariants:
+  - Supplier is the Identity Authority only; it never owns financial truth.
+  - Ledger (AccountLedger) is the Financial Authority for supplier balances.
+  - Supplier.Balance is never authoritative; the ledger aggregation is the read authority.
+  - Opening balance is one-time and guarded by application, service, and unique index.
+  - Ledger owns financial truth; money never mutates Supplier directly.
+  - Payment always mutates the ledger through LedgerService.
+  - Purchase references Supplier but Supplier never owns PurchaseInvoice.
+  - Tenant isolation is enforced via query filter, tenant context, and row locks.
+  - Deleted suppliers are excluded from reads and mutations.
+  - Supplier payment is immutable and idempotent via Idempotency-Key.
+  - No duplicate-phone/email invariant exists for Supplier (unlike Customer).
+  - Supplier has no credit limit and no deactivate state.
+
+browser_test_scenarios:
+  - Create Supplier: valid name, expect 201 and list refresh.
+  - Update Supplier: change contact fields, expect 204.
+  - Search Supplier: by name/email/phone, expect filtered results.
+  - Opening Balance: record Debit amount, expect success, then repeat and expect one-time rejection.
+  - Record Supplier Payment: valid amount, Cash/Card/BankTransfer, expect debit and reduced payable.
+  - View Statement of Account: expect payable from ledger.
+  - Delete Supplier: clean supplier soft deleted; guarded supplier shows reason.
+  - Delete Validation: balance/invoice/transaction guards produce correct messages.
+  - Payment Validation: zero amount, invalid method, insufficient funds, inactive account, no cashbox.
+  - Cross Tenant Protection: Tenant B cannot access Tenant A supplier.
+  - Opening Balance UI: SupplierOpeningBalance page prefills existing and prevents second save.
+
+success_definition:
+  - UI behaves correctly for create, update, search, opening balance, payment, statement, and delete.
+  - All Business Rules hold during browser interaction.
+  - All Critical Invariants hold and are never violated.
+  - Expected runtime outcomes succeed (ledger updated, shadow synced, supplier searchable, soft delete works).
+  - Financial authority remains with the Ledger; Supplier.Balance shadow is never treated as truth.
+  - Supplier identity integrity preserved; tenant isolation enforced; purchases only reference Supplier.

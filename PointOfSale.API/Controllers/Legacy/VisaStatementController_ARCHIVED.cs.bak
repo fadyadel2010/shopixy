@@ -1,0 +1,531 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using PointOfSale.Core.Entities;
+using PointOfSale.Core.Interfaces;
+using PointOfSale.Infrastructure.Data;
+
+namespace PointOfSale.API.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class VisaStatementController : ControllerBase
+{
+    private readonly ApplicationDbContext _context;
+    private readonly ITenantContext _tenantContext;
+    private static readonly Guid VisaAccountId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+
+    public VisaStatementController(ApplicationDbContext context, ITenantContext tenantContext)
+    {
+        _context = context;
+        _tenantContext = tenantContext;
+    }
+
+    /// <summary>
+    /// Get Visa account statement with filters
+    /// </summary>
+    [HttpPost("statement")]
+    public async Task<ActionResult> GetStatement([FromBody] VisaStatementRequest request)
+    {
+        try
+        {
+            var query = _context.VisaTransactions.AsNoTracking();
+
+            // Apply date filters
+            if (request.FromDate.HasValue)
+            {
+                var fromDate = request.FromDate.Value.Date;
+                query = query.Where(t => t.TransactionDate >= fromDate);
+            }
+
+            if (request.ToDate.HasValue)
+            {
+                var toDate = request.ToDate.Value.Date.AddDays(1);
+                query = query.Where(t => t.TransactionDate < toDate);
+            }
+
+            // Apply transaction type filter
+            if (request.TransactionType > 0)
+            {
+                query = query.Where(t => t.TransactionType == request.TransactionType);
+            }
+
+            // Search by reference number
+            if (!string.IsNullOrWhiteSpace(request.SearchTerm))
+            {
+                var searchTerm = request.SearchTerm.Trim().ToLower();
+                query = query.Where(t =>
+                    (t.ReferenceNumber != null && t.ReferenceNumber.ToLower().Contains(searchTerm)) ||
+                    (t.Description != null && t.Description.ToLower().Contains(searchTerm)));
+            }
+
+            // Get all transactions ordered by date
+            var transactions = await query
+                .OrderBy(t => t.TransactionDate)
+                .ThenBy(t => t.CreatedAt)
+                .ToListAsync();
+
+            // Calculate opening balance (balance before the first transaction in the range)
+            decimal openingBalance = 0;
+            if (request.FromDate.HasValue)
+            {
+                var fromDate = request.FromDate.Value.Date;
+                var lastTransactionBefore = await _context.VisaTransactions
+                    .Where(t => t.TransactionDate < fromDate)
+                    .OrderByDescending(t => t.TransactionDate)
+                    .ThenByDescending(t => t.CreatedAt)
+                    .FirstOrDefaultAsync();
+
+                if (lastTransactionBefore != null)
+                {
+                    openingBalance = lastTransactionBefore.BalanceAfter;
+                }
+            }
+
+            // Calculate totals
+            decimal totalDebit = transactions.Where(t => t.IsDebit).Sum(t => t.Amount);
+            decimal totalCredit = transactions.Where(t => !t.IsDebit).Sum(t => t.Amount);
+            decimal closingBalance = transactions.Any() 
+                ? transactions.Last().BalanceAfter 
+                : openingBalance;
+
+            // Map to response items
+            var items = transactions.Select(t => new VisaStatementItem
+            {
+                Id = t.Id,
+                TransactionDate = t.TransactionDate,
+                TransactionType = GetTransactionTypeName(t.TransactionType),
+                TransactionTypeId = t.TransactionType,
+                ReferenceNumber = t.ReferenceNumber ?? "-",
+                Description = t.Description ?? "",
+                DebitAmount = t.IsDebit ? t.Amount : 0,
+                CreditAmount = !t.IsDebit ? t.Amount : 0,
+                BalanceAfter = t.BalanceAfter,
+                SourceEntityId = t.SourceEntityId,
+                SourceEntityType = t.SourceEntityType
+            }).ToList();
+
+            // Add opening balance row if needed
+            if (request.IncludeOpeningBalance && request.FromDate.HasValue)
+            {
+                items.Insert(0, new VisaStatementItem
+                {
+                    Id = Guid.Empty,
+                    TransactionDate = request.FromDate.Value,
+                    TransactionType = "Balance Brought Forward",
+                    TransactionTypeId = 0,
+                    ReferenceNumber = "-",
+                    Description = "Opening Balance",
+                    DebitAmount = openingBalance > 0 ? openingBalance : 0,
+                    CreditAmount = openingBalance < 0 ? Math.Abs(openingBalance) : 0,
+                    BalanceAfter = openingBalance,
+                    RowType = "OpeningBalance"
+                });
+            }
+
+            return Ok(new VisaStatementResponse
+            {
+                Items = items,
+                Summary = new VisaStatementSummary
+                {
+                    OpeningBalance = openingBalance,
+                    TotalDebit = totalDebit,
+                    TotalCredit = totalCredit,
+                    ClosingBalance = closingBalance
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error generating Visa statement: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Get transaction details for drill-down
+    /// </summary>
+    [HttpGet("transaction/{id}")]
+    public async Task<ActionResult> GetTransactionDetails(Guid id)
+    {
+        try
+        {
+            var transaction = await _context.VisaTransactions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == id);
+
+            if (transaction == null)
+            {
+                return NotFound("Transaction not found");
+            }
+
+            // Get source entity details based on type
+            object? sourceDetails = null;
+            if (transaction.SourceEntityId.HasValue && !string.IsNullOrEmpty(transaction.SourceEntityType))
+            {
+                sourceDetails = await GetSourceDetails(transaction.SourceEntityType, transaction.SourceEntityId.Value);
+            }
+
+            return Ok(new
+            {
+                transaction.Id,
+                transaction.TransactionDate,
+                TransactionTypeName = GetTransactionTypeName(transaction.TransactionType),
+                TransactionTypeId = transaction.TransactionType,
+                transaction.ReferenceNumber,
+                transaction.Description,
+                transaction.Amount,
+                transaction.IsDebit,
+                DebitAmount = transaction.IsDebit ? transaction.Amount : 0,
+                CreditAmount = !transaction.IsDebit ? transaction.Amount : 0,
+                transaction.BalanceAfter,
+                transaction.Notes,
+                transaction.SourceEntityId,
+                transaction.SourceEntityType,
+                SourceDetails = sourceDetails,
+                transaction.CreatedAt
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error fetching transaction details: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Get current Visa balance
+    /// </summary>
+    [HttpGet("balance")]
+    public async Task<ActionResult> GetBalance()
+    {
+        try
+        {
+            var lastTransaction = await _context.VisaTransactions
+                .OrderByDescending(t => t.TransactionDate)
+                .ThenByDescending(t => t.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            decimal balance = lastTransaction?.BalanceAfter ?? 0;
+
+            // Also get from FinancialAccount for verification
+            var visaAccount = await _context.FinancialAccounts
+                .FirstOrDefaultAsync(a => a.Id == VisaAccountId);
+
+            return Ok(new
+            {
+                Balance = balance,
+                AccountBalance = visaAccount?.Balance ?? 0,
+                LastTransactionDate = lastTransaction?.TransactionDate
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error fetching Visa balance: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Record a new Visa transaction
+    /// </summary>
+    [HttpPost("transaction")]
+    public async Task<ActionResult> RecordTransaction([FromBody] RecordVisaTransactionRequest request)
+    {
+        try
+        {
+            // Get current balance
+            var lastTransaction = await _context.VisaTransactions
+                .OrderByDescending(t => t.TransactionDate)
+                .ThenByDescending(t => t.CreatedAt)
+                .FirstOrDefaultAsync();
+
+            decimal currentBalance = lastTransaction?.BalanceAfter ?? 0;
+
+            // Calculate new balance
+            decimal newBalance = request.IsDebit
+                ? currentBalance + request.Amount
+                : currentBalance - request.Amount;
+
+            // Create new transaction
+            var transaction = new VisaTransaction
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantContext.RequiredTenantId,  // Multi-tenant
+                TransactionDate = request.TransactionDate ?? DateTime.UtcNow,
+                TransactionType = request.TransactionType,
+                Amount = request.Amount,
+                IsDebit = request.IsDebit,
+                BalanceAfter = newBalance,
+                ReferenceNumber = request.ReferenceNumber,
+                Description = request.Description,
+                Notes = request.Notes,
+                SourceEntityId = request.SourceEntityId,
+                SourceEntityType = request.SourceEntityType,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.VisaTransactions.Add(transaction);
+
+            // Update FinancialAccount balance
+            var visaAccount = await _context.FinancialAccounts
+                .FirstOrDefaultAsync(a => a.Id == VisaAccountId);
+
+            if (visaAccount != null)
+            {
+                visaAccount.Balance = newBalance;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                transaction.Id,
+                transaction.TransactionDate,
+                transaction.Amount,
+                transaction.IsDebit,
+                transaction.BalanceAfter,
+                Message = "Transaction recorded successfully"
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error recording transaction: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Set opening balance for Visa account
+    /// </summary>
+    [HttpPost("opening-balance")]
+    public async Task<ActionResult> SetOpeningBalance([FromBody] VisaSetOpeningBalanceRequest request)
+    {
+        try
+        {
+            // Check if opening balance already exists
+            var existingOpeningBalance = await _context.VisaTransactions
+                .AnyAsync(t => t.TransactionType == 8); // 8 = Opening Balance
+
+            if (existingOpeningBalance)
+            {
+                return BadRequest("Opening balance already set for Visa account");
+            }
+
+            // Create opening balance transaction
+            var transaction = new VisaTransaction
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantContext.RequiredTenantId,  // Multi-tenant
+                TransactionDate = request.Date ?? DateTime.UtcNow,
+                TransactionType = 8, // Opening Balance
+                Amount = Math.Abs(request.Amount),
+                IsDebit = request.Amount >= 0,
+                BalanceAfter = request.Amount,
+                ReferenceNumber = "OB-VISA",
+                Description = "Opening Balance",
+                Notes = request.Notes,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            _context.VisaTransactions.Add(transaction);
+
+            // Update FinancialAccount balance
+            var visaAccount = await _context.FinancialAccounts
+                .FirstOrDefaultAsync(a => a.Id == VisaAccountId);
+
+            if (visaAccount != null)
+            {
+                visaAccount.Balance = request.Amount;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { Message = "Opening balance set successfully", Balance = request.Amount });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, $"Error setting opening balance: {ex.Message}");
+        }
+    }
+
+    private async Task<object?> GetSourceDetails(string sourceType, Guid sourceId)
+    {
+        switch (sourceType)
+        {
+            case "SalesInvoice":
+                var sale = await _context.SalesInvoices
+                    .Include(s => s.Customer)
+                    .FirstOrDefaultAsync(s => s.Id == sourceId);
+                if (sale != null)
+                {
+                    return new
+                    {
+                        Type = "Sales Invoice",
+                        sale.InvoiceNumber,
+                        Customer = sale.Customer?.Name ?? "Walk-in",
+                        sale.TotalAmount,
+                        sale.CreatedAt
+                    };
+                }
+                break;
+
+            case "Return":
+                var returnDoc = await _context.Returns
+                    .FirstOrDefaultAsync(r => r.Id == sourceId);
+                if (returnDoc != null)
+                {
+                    return new
+                    {
+                        Type = "Return",
+                        returnDoc.ReturnNumber,
+                        returnDoc.ReturnType,
+                        returnDoc.TotalAmount,
+                        returnDoc.CreatedAt
+                    };
+                }
+                break;
+
+            case "CashboxTransaction":
+                var cashboxTx = await _context.CashboxTransactions
+                    .FirstOrDefaultAsync(c => c.Id == sourceId);
+                if (cashboxTx != null)
+                {
+                    return new
+                    {
+                        Type = "Cashbox Transaction",
+                        cashboxTx.TransactionType,
+                        cashboxTx.Amount,
+                        cashboxTx.Description,
+                        cashboxTx.CreatedAt
+                    };
+                }
+                break;
+
+            case "TreasuryTransaction":
+                var treasuryTx = await _context.TreasuryTransactions
+                    .FirstOrDefaultAsync(t => t.Id == sourceId);
+                if (treasuryTx != null)
+                {
+                    return new
+                    {
+                        Type = "Treasury Transaction",
+                        treasuryTx.TransactionNumber,
+                        treasuryTx.TransactionType,
+                        treasuryTx.Amount,
+                        treasuryTx.CreatedAt
+                    };
+                }
+                break;
+
+            case "BankTransaction":
+                var bankTx = await _context.BankTransactions
+                    .Include(b => b.Bank)
+                    .FirstOrDefaultAsync(b => b.Id == sourceId);
+                if (bankTx != null)
+                {
+                    return new
+                    {
+                        Type = "Bank Transaction",
+                        Bank = bankTx.Bank?.BankName,
+                        bankTx.TransactionType,
+                        bankTx.Amount,
+                        bankTx.CreatedAt
+                    };
+                }
+                break;
+
+            case "Expense":
+                var expense = await _context.Expenses
+                    .Include(e => e.Category)
+                    .FirstOrDefaultAsync(e => e.Id == sourceId);
+                if (expense != null)
+                {
+                    return new
+                    {
+                        Type = "Expense",
+                        Category = expense.Category?.Name,
+                        expense.Amount,
+                        expense.Description,
+                        expense.CreatedAt
+                    };
+                }
+                break;
+        }
+
+        return null;
+    }
+
+    private static string GetTransactionTypeName(int type)
+    {
+        return type switch
+        {
+            1 => "Sale by Visa",
+            2 => "Cash Transfer to Visa",
+            3 => "Cash Transfer from Visa",
+            4 => "Bank Transfer to Visa",
+            5 => "Bank Transfer from Visa",
+            6 => "Return (Refund)",
+            7 => "Expense",
+            8 => "Opening Balance",
+            9 => "Adjustment",
+            10 => "Purchase",
+            _ => "Unknown"
+        };
+    }
+}
+
+// Request/Response DTOs
+public class VisaStatementRequest
+{
+    public DateTime? FromDate { get; set; }
+    public DateTime? ToDate { get; set; }
+    public int TransactionType { get; set; }
+    public string? SearchTerm { get; set; }
+    public bool IncludeOpeningBalance { get; set; } = true;
+}
+
+public class VisaStatementResponse
+{
+    public List<VisaStatementItem> Items { get; set; } = new();
+    public VisaStatementSummary Summary { get; set; } = new();
+}
+
+public class VisaStatementItem
+{
+    public Guid Id { get; set; }
+    public DateTime TransactionDate { get; set; }
+    public string TransactionType { get; set; } = "";
+    public int TransactionTypeId { get; set; }
+    public string ReferenceNumber { get; set; } = "";
+    public string Description { get; set; } = "";
+    public decimal DebitAmount { get; set; }
+    public decimal CreditAmount { get; set; }
+    public decimal BalanceAfter { get; set; }
+    public Guid? SourceEntityId { get; set; }
+    public string? SourceEntityType { get; set; }
+    public string RowType { get; set; } = "Transaction";
+}
+
+public class VisaStatementSummary
+{
+    public decimal OpeningBalance { get; set; }
+    public decimal TotalDebit { get; set; }
+    public decimal TotalCredit { get; set; }
+    public decimal ClosingBalance { get; set; }
+}
+
+public class RecordVisaTransactionRequest
+{
+    public DateTime? TransactionDate { get; set; }
+    public int TransactionType { get; set; }
+    public decimal Amount { get; set; }
+    public bool IsDebit { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public string? Description { get; set; }
+    public string? Notes { get; set; }
+    public Guid? SourceEntityId { get; set; }
+    public string? SourceEntityType { get; set; }
+}
+
+public class VisaSetOpeningBalanceRequest
+{
+    public decimal Amount { get; set; }
+    public DateTime? Date { get; set; }
+    public string? Notes { get; set; }
+}

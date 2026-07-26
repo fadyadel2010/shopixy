@@ -1,0 +1,261 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
+using PointOfSale.API.Exceptions;
+using PointOfSale.API.Services.Pricing;
+using PointOfSale.API.Services.Storefront;
+using PointOfSale.Core.Constants;
+using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.ShippingAdministration;
+using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Instrumentation;
+using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.Redis.Configuration;
+using PointOfSale.Infrastructure.Redis.Services;
+
+namespace PointOfSale.Tests.Storefront;
+
+public sealed class ShippingMethodServiceCurrencyConsistencyTests
+{
+    [Fact]
+    public async Task GetShippingMethodsAsync_UsesProjectedTenantCurrencyAcrossAllMethods()
+    {
+        var tenantId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "sar", 20m),
+                CreateShippingMethod(tenantId, "SAR", 35m)
+            });
+
+        using var redisFactory = CreateDisabledRedisFactory();
+        await using var dbContext = CreateDbContext();
+        var service = new ShippingMethodService(
+            repository.Object,
+            dbContext,
+            redisFactory,
+            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance);
+
+        var result = await service.GetShippingMethodsAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "currency-ok",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, method => Assert.Equal("SAR", method.Currency));
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAsync_WhenProjectedCurrenciesMismatch_ThrowsOutOfSync()
+    {
+        var tenantId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m),
+                CreateShippingMethod(tenantId, "USD", 35m)
+            });
+
+        using var redisFactory = CreateDisabledRedisFactory();
+        await using var dbContext = CreateDbContext();
+        var service = new ShippingMethodService(
+            repository.Object,
+            dbContext,
+            redisFactory,
+            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance);
+
+        await Assert.ThrowsAsync<StorefrontConfigOutOfSyncException>(() =>
+            service.GetShippingMethodsAsync(
+                tenantId,
+                cartSubtotal: 100m,
+                totalWeight: 0m,
+                correlationId: "currency-mismatch",
+                cancellationToken: CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAsync_WithWarehouse_FiltersCarrierBackedMethodsByEnabledOriginReadyAssignment()
+    {
+        var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var bostaAccountId = Guid.NewGuid();
+        var fedExAccountId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.Bosta),
+                CreateShippingMethod(tenantId, "SAR", 35m, CarrierCodes.FedEx),
+                CreateShippingMethod(tenantId, "SAR", 10m, null)
+            });
+
+        await using var dbContext = CreateDbContext();
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        dbContext.CarrierAccounts.AddRange(
+            new CarrierAccount
+            {
+                Id = bostaAccountId,
+                TenantId = tenantId,
+                CarrierCode = CarrierCodes.Bosta,
+                State = CarrierAccountState.Active,
+                OperationalState = CarrierOperationalState.Ready
+            },
+            new CarrierAccount
+            {
+                Id = fedExAccountId,
+                TenantId = tenantId,
+                CarrierCode = CarrierCodes.FedEx,
+                State = CarrierAccountState.Active,
+                OperationalState = CarrierOperationalState.Ready
+            });
+        dbContext.CarrierWarehouseAssignments.AddRange(
+            new CarrierWarehouseAssignment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                CarrierAccountId = bostaAccountId,
+                WarehouseId = warehouseId,
+                IsEnabled = true,
+                OriginReadinessPublished = true
+            },
+            new CarrierWarehouseAssignment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                CarrierAccountId = fedExAccountId,
+                WarehouseId = warehouseId,
+                IsEnabled = true,
+                OriginReadinessPublished = false
+            });
+        await dbContext.SaveChangesAsync();
+
+        using var redisFactory = CreateDisabledRedisFactory();
+        var service = new ShippingMethodService(
+            repository.Object,
+            dbContext,
+            redisFactory,
+            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance);
+
+        var result = await service.GetShippingMethodsAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "warehouse-filter",
+            warehouseId: warehouseId,
+            cancellationToken: CancellationToken.None);
+
+        var method = Assert.Single(result);
+        Assert.Equal("Bosta", method.CarrierName);
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAsync_WithWarehouseAndNoAssignment_FailsClosed()
+    {
+        var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx)
+            });
+
+        await using var dbContext = CreateDbContext();
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        using var redisFactory = CreateDisabledRedisFactory();
+        var service = new ShippingMethodService(
+            repository.Object,
+            dbContext,
+            redisFactory,
+            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance);
+
+        var result = await service.GetShippingMethodsAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "warehouse-missing-assignment",
+            warehouseId: warehouseId,
+            cancellationToken: CancellationToken.None);
+
+        Assert.Empty(result);
+    }
+
+    private static ShippingMethodDocument CreateShippingMethod(
+        Guid tenantId,
+        string currency,
+        decimal baseRate,
+        string? carrierCode = null)
+    {
+        return new ShippingMethodDocument
+        {
+            TenantId = tenantId,
+            ShippingMethodId = Guid.NewGuid(),
+            Name = "Standard",
+            BaseRate = baseRate,
+            PerKgRate = 0m,
+            Currency = currency,
+            EstimatedDeliveryDaysMin = 1,
+            EstimatedDeliveryDaysMax = 3,
+            IsActive = true,
+            CarrierCode = carrierCode,
+            CarrierName = carrierCode switch
+            {
+                CarrierCodes.Bosta => "Bosta",
+                CarrierCodes.FedEx => "FedEx",
+                _ => null
+            }
+        };
+    }
+
+    private static ApplicationDbContext CreateDbContext()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        return new ApplicationDbContext(options);
+    }
+
+    private static RedisConnectionFactory CreateDisabledRedisFactory()
+    {
+        return new RedisConnectionFactory(
+            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            NullLogger<RedisConnectionFactory>.Instance);
+    }
+}

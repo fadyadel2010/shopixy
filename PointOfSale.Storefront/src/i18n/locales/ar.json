@@ -1,0 +1,741 @@
+{
+    "common": {
+        "loading": "جاري التحميل...",
+        "error": "خطأ",
+        "retry": "إعادة المحاولة",
+        "cancel": "إلغاء",
+        "save": "حفظ",
+        "delete": "حذف",
+        "edit": "تعديل",
+        "close": "إغلاق",
+        "search": "بحث",
+        "noResults": "لا توجد نتائج",
+        "viewAll": "عرض الكل",
+        "home": "الرئيسية",
+        "products": "المنتجات",
+        "categories": "الأقسام",
+        "pages": "الصفحات",
+        "back": "رجوع",
+        "next": "التالي",
+        "previous": "السابق",
+        "submit": "إرسال",
+        "required": "مطلوب",
+        "optional": "اختياري",
+        "page": "صفحة",
+        "yes": "نعم",
+        "no": "لا",
+        "notAvailable": "غير متوفر",
+        "dismiss": "إغلاق"
+    },
+    "header": {
+        "menu": "القائمة",
+        "closeMenu": "إغلاق القائمة",
+        "searchProducts": "ابحث عن المنتجات...",
+        "viewCart": "عرض السلة",
+        "allProducts": "جميع المنتجات",
+        "login": "تسجيل الدخول",
+        "register": "إنشاء حساب",
+        "account": "الحساب",
+        "logout": "تسجيل الخروج"
+    },
+    "footer": {
+        "copyright": "© {year} {storeName}. جميع الحقوق محفوظة.",
+        "quickLinks": "روابط سريعة",
+        "customerService": "خدمة العملاء",
+        "followUs": "تابعنا",
+        "stayUpdated": "ابقى على اطلاع",
+        "subscribeText": "اشترك في نشرتنا الإخبارية للحصول على عروض وتحديثات حصرية.",
+        "enterEmail": "أدخل بريدك الإلكتروني",
+        "subscribe": "اشتراك",
+        "privacyPolicy": "سياسة الخصوصية",
+        "termsOfService": "شروط الخدمة",
+        "aboutUs": "من نحن",
+        "contact": "اتصل بنا"
+    },
+    "search": {
+        "placeholder": "ابحث عن منتجات، أقسام...",
+        "searching": "جاري البحث...",
+        "noResultsFor": "لا توجد نتائج لـ \"{query}\"",
+        "viewAllResults": "عرض جميع النتائج لـ \"{query}\"",
+        "products": "المنتجات",
+        "categories": "الأقسام",
+        "pages": "الصفحات",
+        "unavailable": "خدمة البحث غير متوفرة",
+        "minChars": "أدخل حرفين على الأقل",
+        "results": "{count} نتيجة",
+        "pressEnter": "اضغط Enter للبحث"
+    },
+    "cart": {
+        "title": "سلة التسوق",
+        "empty": "سلة التسوق فارغة",
+        "emptyDescription": "يبدو أنك لم تضف أي منتجات إلى سلة التسوق بعد.",
+        "continueShopping": "متابعة التسوق",
+        "subtotal": "المجموع الفرعي",
+        "discount": "الخصم",
+        "tax": "الضريبة",
+        "total": "المجموع",
+        "previewTotal": "المجموع المبدئي",
+        "beforeShipping": "قبل الشحن",
+        "shippingCalculated": "يُحسب عند الدفع",
+        "previewShippingNotice": "سيتم إعادة حساب الشحن عند الدفع وتحديث المجموع النهائي.",
+        "checkout": "إتمام الشراء",
+        "remove": "إزالة",
+        "quantity": "الكمية",
+        "updateQuantity": "تحديث الكمية",
+        "itemAdded": "تمت إضافة المنتج إلى السلة",
+        "itemRemoved": "تمت إزالة المنتج من السلة",
+        "cartCleared": "تم تفريغ السلة",
+        "quantityUpdated": "تم تحديث الكمية",
+        "updateFailed": "فشل تحديث الكمية",
+        "removeFailed": "فشل إزالة المنتج",
+        "clearFailed": "فشل تفريغ السلة",
+        "clearCart": "تفريغ السلة",
+        "clearConfirmMessage": "هل أنت متأكد من إزالة جميع المنتجات من السلة؟ لا يمكن التراجع عن هذا الإجراء.",
+        "itemCount": "{count} منتج",
+        "orderSummary": "ملخص الطلب",
+        "shipping": "الشحن",
+        "freeShipping": "مجاني",
+        "freeShippingThreshold": "شحن مجاني للطلبات التي تزيد عن {{amount}}",
+        "signInToCheckout": "سجل الدخول لإتمام الشراء",
+        "signInToUseCoupons": "\u0633\u062c\u0644 \u0627\u0644\u062f\u062e\u0648\u0644 \u0644\u062a\u0637\u0628\u064a\u0642 \u0642\u0633\u0627\u0626\u0645 \u0627\u0644\u062e\u0635\u0645.",
+        "guestCheckoutHint": "يجب تسجيل الدخول لإتمام طلبك",
+        "secure": "آمن",
+        "protected": "محمي",
+        "itemSavings": "وفورات المنتجات",
+        "degradedAuth": {
+            "message": "نحن نعيد الاتصال للتحقق من حسابك. ستبقى القسائم والدفع متوقفة حتى ينتهي ذلك.",
+            "verifying": "جاري التحقق من الحساب..."
+        },
+        "coupon": {
+            "title": "هل لديك كوبون؟",
+            "placeholder": "أدخل رمز الكوبون",
+            "apply": "تطبيق",
+            "applying": "جاري التطبيق...",
+            "remove": "إزالة",
+            "applied": "تم تطبيق الكوبون!",
+            "removed": "تمت إزالة الكوبون",
+            "savedAmount": "وفرت {{amount}}",
+            "autoRemoved": "تمت إزالة الكوبون لأنه لم يعد صالحاً",
+            "errors": {
+                "COUPON_INVALID": "رمز الكوبون غير صالح",
+                "COUPON_EXPIRED": "انتهت صلاحية هذا الكوبون",
+                "COUPON_NOT_YET_VALID": "هذا الكوبون غير نشط بعد",
+                "COUPON_INACTIVE": "هذا الكوبون لم يعد نشطاً",
+                "COUPON_MIN_NOT_MET": "لم يتم الوصول للحد الأدنى للطلب",
+                "COUPON_USAGE_EXCEEDED": "وصل هذا الكوبون للحد الأقصى من الاستخدام",
+                "COUPON_CUSTOMER_USAGE_EXCEEDED": "لقد استخدمت هذا الكوبون الحد الأقصى من المرات",
+                "COUPON_FIRST_ORDER_ONLY": "هذا الكوبون صالح للطلب الأول فقط",
+                "COUPON_NOT_APPLICABLE": "لا يمكن تطبيق هذا الكوبون على سلتك",
+                "COUPON_REMOVED_AUTOMATICALLY": "تمت إزالة الكوبون تلقائياً",
+                "COUPON_NOT_APPLIED": "لا يوجد كوبون مطبق",
+                "COUPON_CART_EMPTY": "لا يمكن تطبيق الكوبون على سلة فارغة",
+                "COUPON_RATE_LIMITED": "محاولات كثيرة جداً. يرجى الانتظار والمحاولة مرة أخرى."
+            }
+        }
+    },
+    "checkout": {
+        "title": "إتمام الشراء",
+        "shippingInfo": "معلومات الشحن",
+        "paymentMethod": "طريقة الدفع",
+        "orderSummary": "ملخص الطلب",
+        "placeOrder": "تأكيد الطلب",
+        "processing": "جاري المعالجة...",
+        "firstName": "الاسم الأول",
+        "lastName": "اسم العائلة",
+        "email": "البريد الإلكتروني",
+        "phone": "رقم الهاتف",
+        "address": "العنوان",
+        "city": "المدينة",
+        "postalCode": "الرمز البريدي",
+        "country": "الدولة",
+        "shippingMethod": "طريقة الشحن",
+        "cashOnDelivery": "الدفع عند الاستلام",
+        "review": "مراجعة الطلب",
+        "reviewOrder": "مراجعة الطلب",
+        "backToCart": "العودة إلى السلة",
+        "backToShipping": "العودة للشحن",
+        "backToPayment": "العودة للدفع",
+        "confirmOrder": "تأكيد الطلب",
+        "orderConfirmed": "تم تأكيد الطلب",
+        "paymentPending": "الدفع معلق",
+        "previousSelection": "الاختيار السابق",
+        "staleSelection": "اختيارك السابق لم يعد متاحًا.",
+        "staleSelectionHelp": "اختيارك السابق لم يعد صالحًا. يرجى التأكيد أو التحديث.",
+        "payment": {
+            "cod": {
+                "title": "الدفع عند الاستلام",
+                "description": "ادفع عند استلام الطلب",
+                "pending": "الدفع معلق حتى الاستلام",
+                "badge": "الدفع عند الاستلام"
+            },
+            "stripe": {
+                "title": "بطاقة ائتمان/خصم",
+                "description": "دفع آمن عبر Stripe",
+                "processing": "جاري معالجة الدفع...",
+                "failed": "فشل الدفع. يرجى المحاولة مرة أخرى.",
+                "success": "تم الدفع بنجاح!",
+                "cardNumber": "رقم البطاقة",
+                "expiry": "تاريخ الانتهاء",
+                "cvc": "رمز الأمان",
+                "payNow": "ادفع الآن",
+                "securePayment": "دفعتك محمية بواسطة Stripe",
+                "redirecting": "جاري إعادة التوجيه للدفع...",
+                "authenticating": "جاري التحقق من الدفع...",
+                "errors": {
+                    "cardDeclined": "تم رفض بطاقتك. يرجى استخدام بطاقة أخرى.",
+                    "expiredCard": "انتهت صلاحية بطاقتك. يرجى استخدام بطاقة أخرى.",
+                    "incorrectCvc": "رمز الأمان غير صحيح. يرجى التحقق والمحاولة مرة أخرى.",
+                    "processingError": "خطأ في معالجة الدفع. يرجى المحاولة مرة أخرى.",
+                    "insufficientFunds": "رصيد غير كافٍ. يرجى استخدام بطاقة أخرى.",
+                    "cardNotSupported": "نوع البطاقة هذا غير مدعوم.",
+                    "genericDecline": "تم رفض الدفع. يرجى تجربة طريقة دفع أخرى.",
+                    "tryAgain": "يرجى المحاولة مرة أخرى أو استخدام بطاقة أخرى."
+                }
+            },
+            "paymob": {
+                "title": "دفع إلكتروني",
+                "description": "دفع آمن عبر Paymob"
+            },
+            "fee": "رسوم",
+            "noMethods": "لا توجد طرق دفع متاحة",
+            "minOrder": "الحد الأدنى للطلب",
+            "maxOrder": "الحد الأقصى للطلب",
+            "manualWalletWarning": "اختر نوع المحفظة، وأدخل رقم هاتف التحويل، وارفع إثبات الدفع قبل المتابعة.",
+            "manualWalletErrors": {
+                "MANUAL_WALLET_TYPE_REQUIRED": "نوع المحفظة مطلوب",
+                "MANUAL_WALLET_TYPE_INVALID": "يرجى اختيار نوع محفظة مدعوم",
+                "MANUAL_WALLET_PHONE_REQUIRED": "رقم هاتف المحفظة مطلوب",
+                "INVALID_MANUAL_WALLET_PHONE": "يرجى إدخال رقم هاتف محفظة صحيح",
+                "MANUAL_WALLET_PROOF_REQUIRED": "إثبات التحويل مطلوب"
+            }
+        },
+        "paymobPayment": "الدفع عبر باي موب",
+        "paymobDescription": "ادفع بأمان عبر باي موب",
+        "orderNumber": "الطلب",
+        "verifyingPayment": "جاري التحقق من الدفع...",
+        "pleaseWait": "يرجى الانتظار بينما نؤكد دفعتك",
+        "payWithPaymob": "ادفع عبر باي موب",
+        "securePayment": "دفعتك محمية بواسطة باي موب",
+        "completePayment": "إتمام الدفع",
+        "paymentFailed": "فشل الدفع",
+        "paymentDeclined": "تم رفض عملية الدفع",
+        "paymentFailedDescription": "يرجى التحقق من بيانات بطاقتك والمحاولة مرة أخرى، أو استخدام طريقة دفع أخرى.",
+        "amountDue": "المبلغ المستحق",
+        "tryAgain": "حاول مرة أخرى",
+        "chooseAnotherMethod": "اختر طريقة دفع أخرى",
+        "promotionCalculationFailed": "تعذر تطبيق بعض العروض الترويجية. السعر النهائي المعروض هو المعتمد.",
+        "errors": {
+            "phoneNotVerified": {
+                "title": "التحقق من رقم الهاتف مطلوب",
+                "message": "يرجى التحقق من رقم هاتفك عبر واتساب قبل تقديم طلبك.",
+                "help": "ابحث عن قسم التحقق أعلاه."
+            },
+            "phoneBlocked": {
+                "title": "رقم الهاتف محظور",
+                "message": "لا يمكن لرقم الهاتف هذا تقديم طلبات جديدة في المتجر.",
+                "help": "يرجى الاتصال بالمتجر إذا كنت تعتقد أن هذا خطأ."
+            },
+            "recoveryReviewRequired": {
+                "title": "تم استعادة الدفع للمراجعة",
+                "message": "تم استعادة جلسة الدفع الخاصة بك.",
+                "help": "راجع أحدث حالة للسلة والأسعار وتفاصيل الدفع قبل تقديم الطلب."
+            },
+            "recoveryCartChanged": {
+                "title": "تم تغيير السلة المستعادة",
+                "message": "تم تحديث سلتك أثناء الاستعادة.",
+                "help": "قام النظام بتحديث سلتك المستعادة بأحدث المنتجات والأسعار المتاحة. تأكد من الإجماليات الجديدة قبل تقديم الطلب."
+            },
+            "manualWalletIncomplete": {
+                "title": "تفاصيل المحفظة اليدوية غير مكتملة",
+                "message": "تفاصيل الدفع مفقودة أو غير صالحة.",
+                "help": "ارجع إلى خطوة الدفع، أكمل تفاصيل التحويل، وقم بتحميل إثبات الدفع قبل تقديم الطلب."
+            },
+            "generic": {
+                "title": "تعذر إتمام الدفع",
+                "message": "حدث خطأ أثناء الدفع.",
+                "help": "يرجى مراجعة تفاصيلك، وتأكيد أحدث الإجماليات، والمحاولة مرة أخرى. اتصل بالدعم إذا استمرت المشكلة."
+            }
+        },
+        "button": {
+            "placeOrder": "تقديم الطلب",
+            "processing": "جارٍ المعالجة...",
+            "tooltips": {
+                "verifyPhone": "يرجى التحقق من رقم هاتفك أولاً",
+                "waitingPricing": "في انتظار تحديث الأسعار",
+                "completeDetails": "أكمل تفاصيل الدفع المطلوبة أولاً"
+            }
+        },
+        "pending": {
+            "title": "دفعتك قيد المعالجة",
+            "description": "استلمنا طلبك وننتظر تأكيد الدفع من الخادم قبل عرض شاشة النجاح.",
+            "loading": "جارٍ التحقق من أحدث حالة للدفع...",
+            "waitingTitle": "ما زلنا ننتظر التأكيد النهائي",
+            "waitingDescription": "سنواصل التحقق لفترة قصيرة. يمكنك تحديث هذه الصفحة بأمان من دون فقدان الطلب.",
+            "timeoutTitle": "تأكيد الدفع يستغرق وقتاً أطول من المتوقع",
+            "timeoutDescription": "طلبك ما زال محفوظاً. يُرجى التحقق مرة أخرى بعد قليل من صفحة تتبع الطلب.",
+            "pollingError": "تعذر التحقق من أحدث حالة الآن. سنبقي الحالة معلقة حتى يؤكد الخادم النتيجة.",
+            "trackOrder": "تتبع الطلب",
+            "refreshStatus": "تحديث الحالة",
+            "continueShopping": "متابعة التسوق",
+            "redirectingTitle": "جارٍ تحويلك إلى شاشة تتبع الدفع الآمنة",
+            "redirectingDescription": "ننقلك الآن إلى شاشة حالة الدفع المعتمدة من الخادم.",
+            "failedTitle": "فشل الدفع",
+            "failedDescription": "فشل الدفع - يمكنك إعادة المحاولة أو تغيير طريقة الدفع من صفحة الدفع. سلتك ما زالت محفوظة.",
+            "missingOrderTitle": "مرجع الطلب غير موجود",
+            "missingOrderDescription": "لم نتمكن من العثور على طلب لتأكيده. ارجع إلى الدفع وحاول مرة أخرى.",
+            "returnToCheckout": "العودة إلى الدفع",
+            "orderNumber": "رقم الطلب",
+            "backendStatus": "حالة الخادم",
+            "paymobUnavailable": "خدمة Paymob غير متاحة حالياً.",
+            "reviewTitle": "الدفع يتطلب مراجعة",
+            "reviewDescription": "استلمنا إشارة دفع يجب تسويتها قبل تأكيد هذا الطلب أو رفضه بأمان. لا تعد محاولة الدفع من صفحة الدفع.",
+            "reviewStatusTitle": "الدفع قيد المراجعة اليدوية",
+            "reviewStatusDescription": "عزل النظام هذا الدفع لأن الأموال قد تكون موجودة بالفعل لدى مزود الخدمة ولكن لا يمكن التعرف عليها بأمان بعد. تتبع الطلب أو حدّث الصفحة لاحقاً؛ لا تعد محاولة الدفع."
+        }
+    },
+    "checkoutSuccess": {
+        "title": "شكراً لطلبك!",
+        "subtitle": "أخبار رائعة! تم تأكيد طلبك. نحن نجهز كل شيء لك الآن.",
+        "orderNumber": "رقم الطلب",
+        "totalAmount": "المبلغ الإجمالي",
+        "paymentMethod": "طريقة الدفع",
+        "orderProgress": "تقدم الطلب",
+        "continueShopping": "متابعة التسوق",
+        "trackOrder": "تتبع الطلب",
+        "home": "الرئيسية",
+        "supportNote": "أسئلة حول طلبك؟ تواصل مع فريق الدعم في أي وقت.",
+        "paymentMethods": {
+            "cod": "الدفع عند الاستلام",
+            "stripe": "بطاقة ائتمان/خصم",
+            "paymob": "دفع إلكتروني",
+            "online": "دفع إلكتروني"
+        },
+        "codNotice": {
+            "title": "الدفع عند الاستلام",
+            "description": "يرجى تجهيز مبلغ {{amount}} عند وصول طلبك. شريك التوصيل يقبل الدفع النقدي."
+        },
+        "timeline": {
+            "orderPlaced": "تم الطلب",
+            "preparing": "قيد التجهيز",
+            "shipped": "تم الشحن",
+            "delivered": "تم التسليم"
+        },
+        "whatsNext": {
+            "title": "ماذا سيحدث بعد ذلك؟",
+            "step1": "ستتلقى بريداً إلكترونياً للتأكيد قريباً مع جميع التفاصيل",
+            "step2": "سنرسل لك رابط التتبع بمجرد شحن طلبك",
+            "step3": "استرخِ - نحن نتولى الأمر من هنا!"
+        }
+    },
+    "order": {
+        "confirmation": "تأكيد الطلب",
+        "thankYou": "شكراً لطلبك!",
+        "orderNumber": "رقم الطلب",
+        "orderPlaced": "تم تقديم طلبك بنجاح.",
+        "emailSent": "تم إرسال رسالة تأكيد إلى {email}.",
+        "trackOrder": "تتبع الطلب",
+        "continueShopping": "متابعة التسوق",
+        "status": "حالة الطلب",
+        "pending": "قيد الانتظار",
+        "processing": "قيد المعالجة",
+        "shipped": "تم الشحن",
+        "delivered": "تم التسليم",
+        "cancelled": "ملغي"
+    },
+    "product": {
+        "addToCart": "إضافة إلى السلة",
+        "outOfStock": "غير متوفر",
+        "inStock": "متوفر",
+        "price": "السعر",
+        "quantity": "الكمية",
+        "description": "الوصف",
+        "specifications": "المواصفات",
+        "relatedProducts": "منتجات ذات صلة",
+        "category": "القسم",
+        "sku": "رمز المنتج",
+        "barcode": "الباركود",
+        "selectVariant": "اختر الخيار",
+        "notFound": "المنتج غير موجود",
+        "notFoundDesc": "المنتج الذي تبحث عنه غير موجود أو تم إزالته.",
+        "variant": {
+            "selectOption": "اختر {name}",
+            "unavailable": "غير متوفر حالياً",
+            "lowStock": "متبقي {count} فقط",
+            "selected": "المحدد: {value}",
+            "combination": "هذا التركيب غير متوفر"
+        }
+    },
+    "category": {
+        "all": "جميع الأقسام",
+        "products": "المنتجات",
+        "noProducts": "لا توجد منتجات في هذا القسم",
+        "notFound": "القسم غير موجود",
+        "shopByCategory": "تسوق حسب القسم",
+        "subcategories": "الأقسام الفرعية"
+    },
+    "promotion": {
+        "endsIn": "ينتهي خلال",
+        "onAllProducts": "على جميع منتجات {category}",
+        "availableIn": "عروض متوفرة في",
+        "viewCategory": "عرض {category}",
+        "limitedTime": "عرض لفترة محدودة",
+        "hurryUp": "أسرع! العرض ينتهي قريباً",
+        "expired": "انتهى هذا العرض"
+    },
+    "cms": {
+        "pageNotFound": "الصفحة غير موجودة",
+        "pageNotFoundDesc": "الصفحة التي تبحث عنها غير موجودة.",
+        "goHome": "العودة للرئيسية",
+        "about": {
+            "title": "من نحن",
+            "defaultContent": "تعرف على المزيد عن شركتنا ورسالتنا."
+        },
+        "privacy": {
+            "title": "سياسة الخصوصية",
+            "lastUpdated": "آخر تحديث"
+        },
+        "terms": {
+            "title": "شروط الخدمة",
+            "lastUpdated": "آخر تحديث"
+        },
+        "placeholders": {
+            "name": "محمد أحمد",
+            "email": "email@example.com",
+            "phone": "+20 123 456 7890",
+            "subject": "كيف يمكننا مساعدتك؟",
+            "message": "أخبرنا المزيد عن استفسارك..."
+        }
+    },
+    "contact": {
+        "title": "اتصل بنا",
+        "subtitle": "نحن نحب أن نسمع منك. املأ النموذج أدناه وسنرد عليك في أقرب وقت ممكن.",
+        "name": "الاسم الكامل",
+        "email": "البريد الإلكتروني",
+        "phone": "رقم الهاتف",
+        "subject": "الموضوع",
+        "message": "رسالتك",
+        "send": "إرسال الرسالة",
+        "sending": "جاري الإرسال...",
+        "success": "تم إرسال الرسالة بنجاح!",
+        "successDesc": "شكراً لتواصلك معنا. سنرد عليك خلال 24 ساعة.",
+        "sendAnother": "إرسال رسالة أخرى"
+    },
+    "errors": {
+        "general": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
+        "network": "خطأ في الشبكة. يرجى التحقق من اتصالك.",
+        "notFound": "غير موجود",
+        "unauthorized": "غير مصرح",
+        "serverError": "خطأ في الخادم. يرجى المحاولة لاحقاً."
+    },
+    "language": {
+        "select": "اختر اللغة",
+        "english": "الإنجليزية",
+        "arabic": "العربية"
+    },
+    "accessibility": {
+        "skipToContent": "تخطي إلى المحتوى",
+        "mainNavigation": "التنقل الرئيسي",
+        "searchSuggestions": "اقتراحات البحث",
+        "closeDialog": "إغلاق الحوار"
+    },
+    "account": {
+        "title": "حسابي",
+        "welcome": "مرحباً بعودتك، {name}!",
+        "profile": {
+            "title": "الملف الشخصي",
+            "description": "عرض وتحرير معلوماتك",
+            "edit": "تعديل الملف الشخصي",
+            "update": "تحديث الملف الشخصي",
+            "updateSuccess": "تم تحديث الملف الشخصي بنجاح",
+            "updateError": "فشل في تحديث الملف الشخصي"
+        },
+        "orders": {
+            "title": "الطلبات",
+            "description": "عرض سجل طلباتك",
+            "comingSoon": "سجل الطلبات سيكون متاحاً قريباً.",
+            "orderNumber": "رقم الطلب",
+            "count": "{count} طلب",
+            "empty": "لا توجد طلبات حتى الآن",
+            "startShopping": "ابدأ التسوق",
+            "viewDetails": "عرض التفاصيل",
+            "loadError": "فشل في تحميل الطلبات",
+            "items": "المنتجات",
+            "date": "التاريخ",
+            "shipping": "الشحن",
+            "paymentMethod": "الدفع",
+            "total": "الإجمالي",
+            "standard": "توصيل عادي",
+            "status": {
+                "pending": "قيد الانتظار",
+                "confirmed": "تم التأكيد",
+                "processing": "قيد المعالجة",
+                "shipped": "تم الشحن",
+                "delivered": "تم التسليم",
+                "cancelled": "ملغي",
+                "refunded": "مسترد"
+            },
+            "payment": {
+                "label": "حالة الدفع",
+                "pending": "معلق",
+                "paid": "مدفوع",
+                "failed": "فشل",
+                "refunded": "مسترد",
+                "partiallyrefunded": "مسترد جزئياً"
+            }
+        },
+        "security": {
+            "title": "الأمان",
+            "description": "كلمة المرور والجلسات",
+            "provider": "طريقة تسجيل الدخول",
+            "password": "كلمة المرور",
+            "emailVerified": "تم التحقق من البريد",
+            "changePassword": "تغيير كلمة المرور",
+            "currentPassword": "كلمة المرور الحالية",
+            "newPassword": "كلمة المرور الجديدة",
+            "confirmPassword": "تأكيد كلمة المرور",
+            "passwordChanged": "تم تغيير كلمة المرور بنجاح. تم تسجيل خروجك من جميع الأجهزة.",
+            "passwordChangeFailed": "فشل في تغيير كلمة المرور",
+            "passwordRequirements": "يجب أن تكون كلمة المرور 8 أحرف على الأقل مع حرف كبير وحرف صغير ورقم واحد"
+        },
+        "sessions": {
+            "title": "الجلسات",
+            "description": "إدارة جلساتك النشطة",
+            "currentSession": "الجلسة الحالية",
+            "revokeSession": "إنهاء الجلسة",
+            "revokeAll": "إنهاء جميع الجلسات الأخرى",
+            "revokedSuccess": "تم إنهاء الجلسة بنجاح",
+            "revokedAllSuccess": "تم تسجيل الخروج من {count} جهاز(أجهزة)",
+            "noOtherSessions": "لا توجد جلسات نشطة أخرى"
+        },
+        "status": {
+            "active": "نشط",
+            "inactive": "غير نشط",
+            "memberSince": "عضو منذ"
+        }
+    },
+    "home": {
+        "welcome": "مرحباً بك في {storeName}",
+        "heroTitle": "اكتشف منتجات عالية الجودة بـ",
+        "heroTitleHighlight": "أسعار رائعة",
+        "heroSubtitle": "استكشف مجموعتنا المنتقاة من المنتجات المميزة. من الأساسيات اليومية إلى المنتجات المميزة.",
+        "shopNow": "تسوق الآن",
+        "builderHint": "قم بتكوين أقسام صفحتك الرئيسية في",
+        "storefrontBuilder": "منشئ الواجهة",
+        "featuredProducts": "المنتجات المميزة",
+        "noProductsYet": "لا توجد منتجات بعد",
+        "productsWillAppear": "ستظهر المنتجات هنا بمجرد إضافتها.",
+        "failedToLoad": "فشل تحميل المنتجات",
+        "noCategoriesYet": "لا توجد أقسام بعد",
+        "categoriesWillAppear": "ستظهر الأقسام هنا بمجرد إضافتها.",
+        "failedToLoadCategories": "فشل تحميل الأقسام",
+        "whatCustomersSay": "ماذا يقول عملاؤنا",
+        "guestBanner": {
+            "message": "سجل الدخول للوصول إلى حسابك ومتابعة طلباتك."
+        },
+        "guestInline": {
+            "message": "هل لديك حساب بالفعل؟"
+        },
+        "guestCTA": {
+            "title": "انضم إلى مجتمعنا",
+            "description": "أنشئ حسابًا للاستمتاع بتجربة تسوق مخصصة، ومتابعة الطلبات، ومزايا حصرية للأعضاء.",
+            "createAccount": "إنشاء حساب",
+            "signIn": "تسجيل الدخول",
+            "benefit1": "تتبع طلباتك",
+            "benefit2": "احفظ منتجاتك المفضلة",
+            "benefit3": "إتمام الشراء بشكل أسرع"
+        }
+    },
+    "auth": {
+        "login": {
+            "title": "مرحباً بعودتك",
+            "subtitle": "قم بتسجيل الدخول لحسابك للمتابعة",
+            "submit": "تسجيل الدخول",
+            "signingIn": "جارِ تسجيل الدخول...",
+            "forgotPassword": "نسيت كلمة المرور؟",
+            "noAccount": "ليس لديك حساب؟",
+            "registerLink": "إنشاء حساب"
+        },
+        "register": {
+            "title": "إنشاء حساب جديد",
+            "subtitle": "انضم إلينا وابدأ التسوق اليوم",
+            "submit": "إنشاء حساب",
+            "creating": "جارِ إنشاء الحساب...",
+            "hasAccount": "لديك حساب بالفعل؟",
+            "loginLink": "تسجيل الدخول",
+            "passwordHint": "8 أحرف على الأقل مع أحرف كبيرة وصغيرة ورقم",
+            "success": "تم إنشاء الحساب!",
+            "successMessage": "مرحباً! تم إنشاء حسابك بنجاح.",
+            "redirecting": "جارِ إعادة توجيهك إلى المتجر..."
+        },
+        "forgotPassword": {
+            "title": "نسيت كلمة المرور؟",
+            "subtitle": "أدخل بريدك الإلكتروني وسنرسل لك رابط إعادة التعيين",
+            "submit": "إرسال رابط إعادة التعيين",
+            "sending": "جارِ الإرسال...",
+            "successTitle": "تحقق من بريدك الإلكتروني",
+            "successMessage": "إذا كان هناك حساب بهذا البريد الإلكتروني، ستتلقى رابط إعادة تعيين كلمة المرور قريباً.",
+            "backToLogin": "العودة لتسجيل الدخول"
+        },
+        "resetPassword": {
+            "title": "إعادة تعيين كلمة المرور",
+            "subtitle": "أدخل كلمة المرور الجديدة أدناه",
+            "submit": "إعادة تعيين كلمة المرور",
+            "resetting": "جارِ إعادة التعيين...",
+            "successTitle": "تم تحديث كلمة المرور!",
+            "successMessage": "تم إعادة تعيين كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول بكلمة المرور الجديدة.",
+            "goToLogin": "تسجيل الدخول",
+            "redirecting": "جارِ إعادة التوجيه لتسجيل الدخول...",
+            "invalidToken": "رمز غير صالح أو مفقود. يرجى طلب إعادة تعيين كلمة مرور جديدة.",
+            "invalidTokenTitle": "رابط غير صالح",
+            "invalidTokenMessage": "رابط إعادة تعيين كلمة المرور هذا غير صالح أو منتهي الصلاحية. يرجى طلب رابط جديد.",
+            "requestNewLink": "طلب رابط جديد"
+        },
+        "fields": {
+            "email": "البريد الإلكتروني",
+            "emailPlaceholder": "you@example.com",
+            "password": "كلمة المرور",
+            "newPassword": "كلمة المرور الجديدة",
+            "confirmPassword": "تأكيد كلمة المرور",
+            "displayName": "الاسم الكامل",
+            "namePlaceholder": "محمد أحمد",
+            "phone": "رقم الهاتف",
+            "showPassword": "إظهار كلمة المرور",
+            "hidePassword": "إخفاء كلمة المرور"
+        },
+        "validation": {
+            "emailRequired": "البريد الإلكتروني مطلوب",
+            "emailInvalid": "يرجى إدخال بريد إلكتروني صالح",
+            "passwordRequired": "كلمة المرور مطلوبة",
+            "passwordTooShort": "يجب أن تكون كلمة المرور 8 أحرف على الأقل",
+            "passwordWeak": "يجب أن تحتوي كلمة المرور على أحرف كبيرة وصغيرة ورقم",
+            "confirmPasswordRequired": "يرجى تأكيد كلمة المرور",
+            "passwordMismatch": "كلمات المرور غير متطابقة",
+            "nameRequired": "الاسم مطلوب",
+            "nameTooShort": "يجب أن يكون الاسم حرفين على الأقل"
+        },
+        "verifyEmail": {
+            "title": "تحقق من بريدك الإلكتروني",
+            "description": "أرسلنا رابط التحقق إلى {email}. يرجى التحقق من صندوق الوارد.",
+            "resendButton": "إعادة إرسال بريد التحقق",
+            "resendCooldown": "إعادة الإرسال خلال {seconds} ثانية",
+            "resendSuccess": "تم إرسال بريد التحقق!",
+            "resendError": "تعذر إرسال بريد التحقق. يرجى المحاولة لاحقاً."
+        },
+        "social": {
+            "orContinueWith": "أو المتابعة باستخدام",
+            "loginWithGoogle": "تسجيل الدخول بـ Google",
+            "loginWithFacebook": "تسجيل الدخول بـ Facebook",
+            "googleNotLoaded": "تسجيل الدخول بـ Google غير متاح. يرجى المحاولة لاحقاً.",
+            "googleFailed": "فشل تسجيل الدخول بـ Google. يرجى المحاولة مرة أخرى.",
+            "facebookNotLoaded": "تسجيل الدخول بـ Facebook غير متاح. يرجى المحاولة لاحقاً.",
+            "facebookFailed": "فشل تسجيل الدخول بـ Facebook. يرجى المحاولة مرة أخرى."
+        },
+        "errors": {
+            "INVALID_CREDENTIALS": "البريد الإلكتروني أو كلمة المرور غير صحيحة. يرجى المحاولة مرة أخرى.",
+            "EMAIL_NOT_VERIFIED": "يرجى التحقق من بريدك الإلكتروني للمتابعة.",
+            "ACCOUNT_DEACTIVATED": "تم إلغاء تنشيط حسابك. يرجى التواصل مع الدعم.",
+            "EMAIL_ALREADY_EXISTS": "يوجد حساب بهذا البريد الإلكتروني بالفعل.",
+            "WEAK_PASSWORD": "كلمة المرور ضعيفة جداً. يرجى اختيار كلمة مرور أقوى.",
+            "INVALID_TOKEN": "رمز غير صالح أو منتهي الصلاحية. يرجى المحاولة مرة أخرى.",
+            "TOKEN_EXPIRED": "انتهت صلاحية جلستك. يرجى تسجيل الدخول مرة أخرى.",
+            "TOKEN_REVOKED": "تم إلغاء جلستك. يرجى تسجيل الدخول مرة أخرى.",
+            "TOKEN_REUSE_DETECTED": "تنبيه أمني: ربما تم اختراق جلستك.",
+            "TOO_MANY_ATTEMPTS": "محاولات كثيرة جداً. يرجى الانتظار قبل المحاولة مرة أخرى.",
+            "PROVIDER_DISABLED": "طريقة تسجيل الدخول هذه غير متاحة حالياً.",
+            "NETWORK_ERROR": "خطأ في الشبكة. يرجى التحقق من اتصالك.",
+            "UNKNOWN_ERROR": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
+            "retryAfter": "يرجى المحاولة مرة أخرى خلال {seconds} ثانية.",
+            "securityAlert": "لأمانك، يرجى تسجيل الدخول مرة أخرى."
+        },
+        "guard": {
+            "checking": "جارِ التحقق من المصادقة..."
+        },
+        "reconnecting": "إعادة الاتصال...",
+        "loading": "جارٍ التحميل..."
+    },
+    "wishlist": {
+        "title": "قائمة الأمنيات",
+        "empty": "قائمة الأمنيات فارغة",
+        "emptyDescription": "احفظ المنتجات التي تحبها لوقت لاحق. ستظهر المنتجات التي تضيفها هنا.",
+        "add": "أضف إلى الأمنيات",
+        "remove": "إزالة من الأمنيات",
+        "addToWishlist": "أضف إلى قائمة الأمنيات",
+        "removeFromWishlist": "إزالة من قائمة الأمنيات",
+        "addToCart": "أضف إلى السلة",
+        "moveToCart": "نقل إلى السلة",
+        "movedToCart": "تم النقل إلى السلة",
+        "clear": "مسح قائمة الأمنيات",
+        "clearConfirm": "هل أنت متأكد من رغبتك في مسح قائمة الأمنيات؟",
+        "itemAdded": "تمت الإضافة إلى الأمنيات",
+        "itemRemoved": "تمت الإزالة من الأمنيات",
+        "cleared": "تم مسح قائمة الأمنيات",
+        "count": "{count} منتج",
+        "loginRequired": "يرجى تسجيل الدخول لحفظ المنتجات في قائمة الأمنيات",
+        "continueShopping": "متابعة التسوق",
+        "reconnecting": "نحن نعيد الاتصال للتحقق من جلستك. يرجى المحاولة مرة أخرى بعد لحظة.",
+        "reconnectingShort": "نحن نعيد الاتصال للتحقق من جلستك.",
+        "errors": {
+            "addFailed": "فشل الإضافة إلى الأمنيات",
+            "removeFailed": "فشل الإزالة من الأمنيات",
+            "clearFailed": "فشل مسح قائمة الأمنيات",
+            "loadFailed": "فشل تحميل قائمة الأمنيات",
+            "moveToCartFailed": "فشل النقل إلى السلة"
+        }
+    },
+    "filters": {
+        "title": "الفلاتر",
+        "brand": "العلامة التجارية",
+        "category": "القسم",
+        "priceRange": "نطاق السعر",
+        "availability": "التوفر",
+        "offers": "العروض",
+        "showLess": "عرض أقل",
+        "showMore": "عرض الكل ({count})",
+        "allPrices": "جميع الأسعار",
+        "inStockOnly": "المتوفر فقط",
+        "onSaleOnly": "عروض فقط",
+        "clearAll": "مسح الكل",
+        "apply": "تطبيق",
+        "removeFilter": "إزالة الفلتر"
+    },
+    "sort": {
+        "sortBy": "ترتيب حسب",
+        "relevance": "الأكثر صلة",
+        "priceLowToHigh": "السعر: من الأقل للأعلى",
+        "priceHighToLow": "السعر: من الأعلى للأقل",
+        "newest": "الأحدث",
+        "highestDiscount": "أكبر خصم"
+    },
+    "chat": {
+        "title": "مساعد التسوق",
+        "open": "فتح المحادثة",
+        "close": "إغلاق",
+        "minimize": "تصغير",
+        "clear": "مسح المحادثة",
+        "status": {
+            "online": "متصل",
+            "offline": "غير متصل"
+        },
+        "welcome": "مرحباً! كيف يمكنني مساعدتك اليوم؟",
+        "input": {
+            "placeholder": "اكتب رسالتك...",
+            "send": "إرسال"
+        },
+        "suggestion": {
+            "products": "أخبرني عن منتجاتكم",
+            "shipping": "ما هي خيارات الشحن؟",
+            "returns": "ما هي سياسة الإرجاع؟"
+        },
+        "draft": {
+            "dismiss": "إلغاء",
+            "product": "المنتج",
+            "checkout": "المتابعة للدفع",
+            "edit": "تعديل السلة"
+        },
+        "errors": {
+            "unavailable": "المساعد غير متاح حالياً",
+            "timeout": "انتهت مهلة الطلب. يرجى المحاولة مرة أخرى.",
+            "general": "حدث خطأ ما. يرجى المحاولة مرة أخرى."
+        }
+    }
+}

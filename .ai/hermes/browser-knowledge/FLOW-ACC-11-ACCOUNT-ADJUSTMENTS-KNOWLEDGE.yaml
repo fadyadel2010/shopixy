@@ -1,0 +1,309 @@
+# FLOW-ACC-11 Account Adjustments — Browser Knowledge File
+# Source of truth: .ai/hermes/accounts/FLOW-ACC-11-ACCOUNT-ADJUSTMENTS.md
+# Consumed by Hermes before Browser Testing. Browser-testing knowledge ONLY.
+# Status legend: IMPL = implemented, NONE = not implemented (gap).
+
+module:
+  name: FLOW-ACC-11 Account Adjustments
+  domain_terms:
+    - Account Adjustments
+    - Party Ledger Adjustment
+    - Manual Financial Correction
+    - Statement Of Account Adjustment
+  endpoint: POST /api/StatementOfAccount/adjustment
+  route_base: api/StatementOfAccount
+  frontend_pages:
+    - src/pages/Adjustments.jsx
+    - src/components/AdjustmentModal.jsx
+    - src/services/soaApi.js
+  browser_supported_operations:
+    - Open Adjustments page
+    - Select party (Customer/Supplier)
+    - Load party balance
+    - Open adjustment modal
+    - Create adjustment (manual)
+    - Refresh balance after create
+  frontend_create_only: true
+  adjustment_types_exposed:
+    - CreditNote
+    - DebitNote
+    - CreditAdjustment
+    - DebitAdjustment
+
+business_rules:
+  - PartyLedgerAdjustment is an aggregate.
+  - Adjustment is a durable business record.
+  - Adjustment represents business intent.
+  - Adjustment never edits existing journals.
+  - Adjustment always creates a new financial posting.
+  - Adjustment uses Accounting Outbox.
+  - Adjustment uses FinancialPostingService.
+  - Adjustment updates Party Ledger.
+  - General Ledger remains the financial source of truth.
+  - Adjustment does not own balances.
+  - Adjustment does not own journals.
+  - Adjustment does not own ledger entries.
+  - Adjustment is tenant scoped.
+  - Adjustment requires idempotency.
+  - Adjustment posting is asynchronous.
+  - Adjustment posting is eventually consistent.
+  - Adjustment supports only manual creation.
+  - Adjustment has no approval workflow.
+  - Adjustment has no reversal workflow.
+  - Adjustment has no cancellation workflow.
+  - Adjustment has no delete workflow.
+  - Adjustment has no write-off workflow.
+  - Adjustment has no reclassification workflow.
+  - Adjustment correction posts a new journal against control account (1410/2010) and dedicated adjustments account (6120/6130).
+  - Adjustment does not have a status or lifecycle state machine.
+  - Adjustment does not use multi-currency.
+
+preconditions:
+  - Authenticated user ([Authorize] on controller).
+  - Authorized user (tenant context required).
+  - Active tenant (RequiredTenantId).
+  - Valid Idempotency-Key header (pattern ^[A-Za-z0-9-]+$, max 100).
+  - Valid adjustment type (CreditNote | DebitNote | CreditAdjustment | DebitAdjustment).
+  - Amount greater than zero.
+  - Existing customer or supplier (party not deleted).
+  - Party belongs to tenant (global query filter enforces isolation).
+  - Notes supplied if required (frontend marks notes required).
+  - Request passes validation (type/amount/party/idempotency).
+
+user_journeys:
+  - name: Open Adjustments Page
+    steps:
+      - Navigate to Adjustments page.
+      - Assert title accounts.accountAdjustments renders.
+      - Assert party selector (Customer/Supplier radio) available.
+    implemented: true
+  - name: Load Customer Balance
+    steps:
+      - Select PartyType = Customer.
+      - Load parties via GET /Customers.
+      - Select a customer.
+      - Balance loads via GET /StatementOfAccount/balance/Customer/{partyId}.
+      - Assert partyBalance.balance and balanceType render.
+    implemented: true
+  - name: Load Supplier Balance
+    steps:
+      - Select PartyType = Supplier.
+      - Load parties via GET /Suppliers.
+      - Select a supplier.
+      - Balance loads via GET /StatementOfAccount/balance/Supplier/{partyId}.
+      - Assert partyBalance.balance and balanceType render.
+    implemented: true
+  - name: Create Customer Adjustment
+    steps:
+      - Open adjustment modal for selected customer.
+      - Select adjustment type (CreditNote/DebitNote/CreditAdjustment/DebitAdjustment).
+      - Enter amount > 0.
+      - Enter notes.
+      - Submit -> POST /StatementOfAccount/adjustment (Idempotency-Key header required).
+      - Assert success toast accounts.adjustmentCreated.
+      - Assert balance refreshed.
+    implemented: true
+  - name: Create Supplier Adjustment
+    steps:
+      - Open adjustment modal for selected supplier.
+      - Select adjustment type.
+      - Enter amount > 0.
+      - Enter notes.
+      - Submit -> POST /StatementOfAccount/adjustment.
+      - Assert success toast.
+      - Assert balance refreshed.
+    implemented: true
+  - name: Refresh Balance
+    steps:
+      - After successful create, re-fetch party balance.
+      - Assert balance changed by adjustment amount.
+    implemented: true
+  - name: Automatic Financial Posting
+    steps:
+      - After browser receives response, background worker processes outbox.
+      - Worker posts GL journal via FinancialPostingService.
+      - Assert no browser action required for posting.
+    implemented: true
+    note: Posting is asynchronous and decoupled; browser only sees balance + reference immediately.
+
+expected_runtime_after_success:
+  adjustment_creation:
+    - Adjustment entity (PartyLedgerAdjustment) created.
+    - Party Ledger updated (AccountLedger delta written).
+    - Balance recalculated (Customer.Balance / Supplier.Balance updated).
+    - Outbox message created (AccountingOutboxMessages row).
+    - Audit created (IAuditService.LogCreate "PartyLedgerAdjustment").
+    - SupplierTransaction or CustomerTransaction row created.
+  accounting_runtime:
+    - Background worker processes outbox (PartyLedgerAdjustment message).
+    - FinancialPostingService creates journal (PostJournalAsync).
+    - Journal posted successfully (double-entry, balanced, immutable).
+    - Ledger updated (LedgerJournalEntry + LedgerLines).
+    - Adjustment accounts (6120/6130) affected.
+    - Control accounts (1410/2010) affected.
+  browser_runtime:
+    - Success notification displayed (accounts.adjustmentCreated).
+    - Updated balance displayed.
+    - Adjustment reference number returned (CN/DN/CA/DA prefix).
+    - PartyLedgerAdjustmentResponse returned with Id, ReferenceNumber, Amount, BalanceAfter, IdempotencyKey.
+
+browser_assertions:
+  adjustment_page:
+    - Page loads successfully.
+    - Party selector available (Customer/Supplier).
+    - Adjustment modal opens.
+  adjustment:
+    - Customer adjustment succeeds.
+    - Supplier adjustment succeeds.
+    - Balance updates.
+    - Reference number returned.
+    - Adjustment type displayed.
+    - Amount displayed.
+    - Notes field required and present.
+    - Four adjustment types available (CreditNote, DebitNote, CreditAdjustment, DebitAdjustment).
+  runtime:
+    - Success message displayed (accounts.adjustmentCreated).
+    - Updated balance displayed.
+    - Duplicate submission prevented (submissionLockRef).
+
+negative_tests:
+  implementation_backed:
+    - name: Missing Idempotency-Key
+      expected: HTTP 400 "{Idempotency-Key} header is required..."
+      note: Server requires header; current frontend soaApi.createAdjustment does not set it.
+    - name: Invalid Idempotency-Key
+      expected: HTTP 400 (pattern ^[A-Za-z0-9-]+$ violated).
+    - name: Duplicate Idempotency-Key
+      expected: Idempotency claim short-circuits (SOA_ADJUSTMENT_CREATE).
+    - name: Invalid adjustment type
+      expected: HTTP 400 "Invalid adjustment type".
+    - name: Amount equal zero
+      expected: HTTP 400 "Adjustment amount must be greater than zero." (frontend also blocks).
+    - name: Negative amount
+      expected: Rejected (amount must be > 0).
+    - name: Missing customer
+      expected: HTTP 400 "Customer not found".
+    - name: Missing supplier
+      expected: HTTP 400 "Supplier not found".
+    - name: Invalid tenant
+      expected: Tenant isolation enforced by global query filter; RequiredTenantId.
+  implementation_gaps:
+    - name: No approval
+      status: NONE
+    - name: No reversal
+      status: NONE
+    - name: No cancellation
+      status: NONE
+    - name: No delete
+      status: NONE
+    - name: No archive
+      status: NONE
+    - name: No write-off
+      status: NONE
+    - name: No reclassification
+      status: NONE
+    - name: No adjustment history page
+      status: NONE
+    - name: No adjustment list
+      status: NONE
+    - name: No export
+      status: NONE
+    - name: No printing
+      status: NONE
+    - name: No multi-currency
+      status: NONE
+    - name: No adjustment status
+      status: NONE
+    - name: No locked-period guard
+      status: NONE
+
+critical_invariants:
+  - PartyLedgerAdjustment owns business intent only.
+  - Adjustment never edits historical journals.
+  - Adjustment always creates new journal entries.
+  - General Ledger remains source of truth.
+  - Party Ledger owns running balances.
+  - Adjustment posting always uses Accounting Outbox.
+  - Adjustment posting always uses FinancialPostingService.
+  - Adjustment posting is asynchronous.
+  - Idempotency always enforced.
+  - Tenant isolation always enforced.
+  - Double-entry accounting always preserved.
+  - Adjustment never bypasses accounting pipeline.
+
+browser_test_scenarios:
+  - Open Adjustment Page
+  - Load Customer
+  - Load Supplier
+  - Create Credit Note
+  - Create Debit Note
+  - Create Credit Adjustment
+  - Create Debit Adjustment
+  - Duplicate Idempotency Request
+  - Missing Idempotency Header
+  - Invalid Amount
+  - Invalid Party
+  - Refresh Balance
+
+runtime_validation:
+  - Adjustment entity persisted (PartyLedgerAdjustments row).
+  - Party balance updated (AccountLedger + Customer/Supplier.Balance).
+  - AccountLedger updated (running balance delta).
+  - CustomerTransaction or SupplierTransaction created.
+  - Accounting Outbox message created (PartyLedgerAdjustment type).
+  - Background worker processes adjustment.
+  - Journal created (LedgerJournalEntry).
+  - Ledger entries created (LedgerLines, double-entry).
+  - Audit record created (LogCreate "PartyLedgerAdjustment").
+  - Reference number generated (CN/DN/CA/DA prefix or supplied value).
+
+success_definition:
+  - Adjustment entity created.
+  - Party Ledger updated.
+  - Balance updated.
+  - Outbox message created.
+  - Audit created.
+  - FinancialPostingService posts journal.
+  - New journal created.
+  - Ledger updated correctly.
+  - Reference number generated.
+  - Idempotency respected.
+  - Critical invariants remain intact.
+
+runtime_flow:
+  - Browser
+  - StatementOfAccountController
+  - PartyLedgerAdjustment
+  - LedgerService
+  - Party Balance Update
+  - Accounting Outbox
+  - Browser Response
+  - AccountingOutboxProcessor
+  - CommerceAccountingService
+  - FinancialPostingService
+  - Journal
+  - General Ledger
+
+prohibited_actions:
+  - Never treat Adjustment as a Journal editor.
+  - Never modify historical journals.
+  - Never modify historical ledger entries.
+  - Always create new financial postings.
+  - Always preserve double-entry accounting.
+  - Always treat PartyLedgerAdjustment as the business intent.
+  - Always treat Accounting Outbox as mandatory.
+  - Always treat FinancialPostingService as the journal owner.
+  - Always treat General Ledger as the financial truth.
+  - Always treat Party Ledger as the running balance authority.
+
+evidence_references:
+  document: .ai/hermes/accounts/FLOW-ACC-11-ACCOUNT-ADJUSTMENTS.md
+  sections:
+    - "2. Discovery"
+    - "3. Account Adjustment Identity"
+    - "5. Lifecycle"
+    - "9. Constraints"
+    - "12. Runtime Architecture"
+    - "13. Browser Test Specification"
+    - "14. Domain Ownership Matrix"
+    - "16. Documentation Validation"

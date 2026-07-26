@@ -1,0 +1,16 @@
+{
+    "query": {
+        "term": {
+            "hasActivePromotion": true
+        }
+    },
+    "_source": [
+        "name",
+        "hasActivePromotion",
+        "promotionDiscountValue",
+        "promotionStartDate",
+        "promotionEndDate",
+        "searchBoostOverride"
+    ],
+    "size": 10
+}

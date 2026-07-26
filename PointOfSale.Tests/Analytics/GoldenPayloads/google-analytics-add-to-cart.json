@@ -1,0 +1,23 @@
+{
+  "client_id": "checkout-session-123",
+  "timestamp_micros": 1784723696000000,
+  "non_personalized_ads": true,
+  "events": [
+    {
+      "name": "add_to_cart",
+      "params": {
+        "currency": "USD",
+        "value": 20.00,
+        "items": [
+          {
+            "item_id": "44444444-4444-4444-4444-444444444444",
+            "item_name": "Red Shirt",
+            "item_variant": "55555555-5555-5555-5555-555555555555",
+            "quantity": 2,
+            "price": 20.00
+          }
+        ]
+      }
+    }
+  ]
+}

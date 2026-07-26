@@ -1,0 +1,30 @@
+{
+  "client_id": "checkout-session-123",
+  "timestamp_micros": 1784723696000000,
+  "non_personalized_ads": true,
+  "events": [
+    {
+      "name": "purchase",
+      "params": {
+        "transaction_id": "33333333-3333-3333-3333-333333333333",
+        "currency": "USD",
+        "value": 37.50,
+        "items": [
+          {
+            "item_id": "SKU-RED",
+            "item_name": "Red Shirt",
+            "item_variant": "Red / M",
+            "price": 10.00,
+            "quantity": 2
+          },
+          {
+            "item_id": "SKU-BLUE",
+            "item_name": "Blue Hat",
+            "price": 17.50,
+            "quantity": 1
+          }
+        ]
+      }
+    }
+  ]
+}

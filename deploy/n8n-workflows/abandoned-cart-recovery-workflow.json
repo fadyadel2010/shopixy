@@ -1,0 +1,723 @@
+{
+  "name": "Abandoned Cart Recovery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "abandoned-cart",
+        "options": {
+          "rawBody": true
+        },
+        "responseMode": "responseNode"
+      },
+      "id": "adbb93c7-db50-405a-b54e-4c74343d93ad",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1408,
+        208
+      ],
+      "webhookId": "abandoned-cart"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// RECOVERY WEBHOOK SIGNATURE VERIFICATION - fail closed before work starts\n// =====================================================================\n\nconst CLOCK_SKEW_SECONDS = 5 * 60;\nconst NONCE_TTL_SECONDS = 10 * 60;\nconst IDEMPOTENCY_TTL_SECONDS = 30 * 24 * 60 * 60;\nconst enc = new TextEncoder();\n\nconst input = $input.item;\nconst headers = input.json.headers || {};\nconst body = input.json.body;\nconst binary = input.binary || {};\nconst nowSeconds = Math.floor(Date.now() / 1000);\n\nfunction fail(statusCode, reason) {\n  console.warn('[Recovery Webhook] rejected | status:', statusCode, '| reason:', reason);\n  return {\n    json: {\n      isVerified: false,\n      isDuplicate: false,\n      responseCode: statusCode,\n      reason\n    }\n  };\n}\n\nfunction header(name, aliases = []) {\n  const wanted = [name, ...aliases].map(x => x.toLowerCase());\n  for (const [key, value] of Object.entries(headers)) {\n    if (!wanted.includes(key.toLowerCase())) continue;\n    if (Array.isArray(value)) return String(value[0] || '').trim();\n    return String(value || '').trim();\n  }\n  return '';\n}\n\nfunction rawBodyUtf8() {\n  const data = binary.data?.data;\n  if (!data) return '';\n  return Buffer.from(data, 'base64').toString('utf8');\n}\n\nfunction parseSecretMap(raw) {\n  if (!raw) return {};\n  try {\n    return JSON.parse(raw);\n  } catch (error) {\n    console.error('[Recovery Webhook] invalid secret map JSON:', error.message);\n    return {};\n  }\n}\n\nfunction resolveTenantSecret(tenantId) {\n  const normalized = tenantId.toLowerCase();\n  const compact = normalized.replace(/-/g, '');\n  const envKey = 'N8N_RECOVERY_WEBHOOK_API_KEY_' + tenantId.replace(/-/g, '_').toUpperCase();\n  const secretMap = parseSecretMap($env.N8N_RECOVERY_WEBHOOK_SECRETS_JSON || $env.RECOVERY_WEBHOOK_SECRETS_JSON);\n  return secretMap[tenantId]\n    || secretMap[normalized]\n    || secretMap[compact]\n    || $env[envKey]\n    || $env.N8N_RECOVERY_WEBHOOK_API_KEY\n    || $env.RECOVERY_WEBHOOK_API_KEY\n    || '';\n}\n\nasync function hmacSha256Hex(secret, text) {\n  if (globalThis.crypto?.subtle) {\n    const key = await globalThis.crypto.subtle.importKey(\n      'raw',\n      enc.encode(secret),\n      { name: 'HMAC', hash: 'SHA-256' },\n      false,\n      ['sign']\n    );\n    const signature = await globalThis.crypto.subtle.sign('HMAC', key, enc.encode(text));\n    return [...new Uint8Array(signature)].map(b => b.toString(16).padStart(2, '0')).join('');\n  }\n\n  const nodeCrypto = require('crypto');\n  return nodeCrypto.createHmac('sha256', secret).update(text, 'utf8').digest('hex');\n}\n\nfunction constantTimeEqual(a, b) {\n  const left = String(a || '');\n  const right = String(b || '');\n  const max = Math.max(left.length, right.length);\n  let diff = left.length ^ right.length;\n  for (let i = 0; i < max; i++) {\n    const l = i < left.length ? left.charCodeAt(i) : 0;\n    const r = i < right.length ? right.charCodeAt(i) : 0;\n    diff |= l ^ r;\n  }\n  return diff === 0;\n}\n\nfunction cleanup(cache) {\n  for (const [key, entry] of Object.entries(cache)) {\n    if (!entry || entry.expiresAt <= nowSeconds) delete cache[key];\n  }\n}\n\nconst signatureVersion = header('x-recovery-signature-version');\nconst providedSignature = header('x-recovery-signature');\nconst timestamp = header('x-recovery-timestamp');\nconst nonce = header('x-recovery-nonce');\nconst tenantId = header('x-recovery-tenant-id', ['x-recovery-tenantid']);\nconst abandonedCartId = header('x-recovery-abandoned-cart-id', ['x-recovery-abandonedcartid']);\nconst cartId = header('x-recovery-cart-id', ['x-recovery-cartid']);\nconst idempotencyKey = header('idempotency-key');\n\nconst required = {\n  'X-Recovery-Signature-Version': signatureVersion,\n  'X-Recovery-Signature': providedSignature,\n  'X-Recovery-Timestamp': timestamp,\n  'X-Recovery-Nonce': nonce,\n  'X-Recovery-Tenant-Id': tenantId,\n  'X-Recovery-Abandoned-Cart-Id': abandonedCartId,\n  'X-Recovery-Cart-Id': cartId,\n  'Idempotency-Key': idempotencyKey\n};\nconst missing = Object.entries(required).filter(([, value]) => !value).map(([name]) => name);\nif (missing.length > 0) return fail(401, 'Missing required headers: ' + missing.join(', '));\nif (signatureVersion !== 'v1') return fail(401, 'Unsupported recovery signature version');\nif (!/^sha256=[0-9a-fA-F]{64}$/.test(providedSignature)) return fail(401, 'Invalid recovery signature format');\n\nconst timestampSeconds = Number(timestamp);\nif (!Number.isInteger(timestampSeconds)) return fail(401, 'Invalid recovery timestamp');\nif (Math.abs(nowSeconds - timestampSeconds) > CLOCK_SKEW_SECONDS) return fail(401, 'Expired recovery webhook timestamp');\n\nconst rawBody = rawBodyUtf8();\nif (!rawBody) return fail(401, 'Raw request body is required for signature verification');\n\nlet payload = body;\nif (!payload || typeof payload !== 'object') {\n  try {\n    payload = JSON.parse(rawBody);\n  } catch {\n    return fail(400, 'Invalid JSON body');\n  }\n}\n\nif (payload.tenantId !== tenantId) return fail(401, 'Tenant header does not match body');\nif (payload.abandonedCartId !== abandonedCartId) return fail(401, 'Abandoned cart header does not match body');\nif (payload.cartId !== cartId) return fail(401, 'Cart header does not match body');\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.recoveryNonceCache = staticData.recoveryNonceCache || {};\nstaticData.recoveryIdempotency = staticData.recoveryIdempotency || {};\ncleanup(staticData.recoveryNonceCache);\ncleanup(staticData.recoveryIdempotency);\n\nconst nonceKey = tenantId + ':' + nonce;\nif (staticData.recoveryNonceCache[nonceKey]) return fail(401, 'Replay nonce rejected');\n\nconst tenantSecret = resolveTenantSecret(tenantId);\nif (!tenantSecret) return fail(403, 'Tenant recovery webhook secret is not configured');\n\nconst canonicalPayload = [\n  tenantId,\n  abandonedCartId,\n  cartId,\n  timestamp,\n  nonce,\n  idempotencyKey,\n  rawBody\n].join('.');\nconst expectedSignature = 'sha256=' + await hmacSha256Hex(tenantSecret, canonicalPayload);\nif (!constantTimeEqual(expectedSignature.toLowerCase(), providedSignature.toLowerCase())) {\n  return fail(401, 'Recovery signature verification failed');\n}\n\nstaticData.recoveryNonceCache[nonceKey] = { expiresAt: nowSeconds + NONCE_TTL_SECONDS };\nconst idempotencyCacheKey = tenantId + ':' + idempotencyKey;\nconst existingIdempotency = staticData.recoveryIdempotency[idempotencyCacheKey];\nif (existingIdempotency && existingIdempotency.expiresAt > nowSeconds) {\n  console.log('[Recovery Webhook] duplicate accepted idempotently | tenantId:', tenantId, '| idempotencyKey:', idempotencyKey);\n  return {\n    json: {\n      isVerified: true,\n      isDuplicate: true,\n      responseCode: 200,\n      reason: 'Duplicate recovery webhook accepted idempotently',\n      payload,\n      security: { tenantId, abandonedCartId, cartId, idempotencyKey }\n    }\n  };\n}\n\nstaticData.recoveryIdempotency[idempotencyCacheKey] = {\n  status: 'accepted',\n  acceptedAt: nowSeconds,\n  expiresAt: nowSeconds + IDEMPOTENCY_TTL_SECONDS\n};\n\nconsole.log('[Recovery Webhook] verified | tenantId:', tenantId, '| abandonedCartId:', abandonedCartId, '| cartId:', cartId);\nreturn {\n  json: {\n    isVerified: true,\n    isDuplicate: false,\n    responseCode: 200,\n    reason: 'Recovery webhook verified',\n    payload,\n    security: { tenantId, abandonedCartId, cartId, idempotencyKey }\n  }\n};"
+      },
+      "id": "a70c8342-c0d8-4eb8-90f6-2b8776641075",
+      "name": "Verify Recovery Webhook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isVerified }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "cb65bbd4-1af3-4f30-a48b-f9bc11389d30",
+      "name": "Signature Verification Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isDuplicate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "a40d17db-00b5-40b3-b018-488d7eec4e64",
+      "name": "Duplicate Idempotency Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"message\": \"{{ $json.reason || 'Recovery webhook verification failed' }}\"\n}",
+        "options": {
+          "responseCode": "={{ $json.responseCode || 401 }}"
+        }
+      },
+      "id": "d99f12db-5273-4a68-8d6a-133e1567d601",
+      "name": "Reject Untrusted Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"duplicate\": true,\n  \"message\": \"Duplicate recovery webhook accepted idempotently\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e490fe61-cfc4-4f08-b781-e439e97f3207",
+      "name": "Respond Duplicate Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -592,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": true,\n  \"message\": \"Recovery webhook accepted\"\n}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "c58b585e-b21c-4438-993d-c07906671683",
+      "name": "Accept Verified Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"success\": false,\n  \"message\": \"{{ $json.reason || 'Invalid recovery payload' }}\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "f18bfab6-ddf2-4ad8-bb8e-45b3eed8492a",
+      "name": "Reject Invalid Payload",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        -400,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// VALIDATION NODE - Fail-fast if required fields missing\n// =====================================================================\n\nconst payload = $input.item.json.payload || $input.item.json.body;\nconst security = $input.item.json.security || null;\n\n// Required fields\nconst requiredFields = [\n  'tenantId',\n  'abandonedCartId',\n  'cartId',\n  'phoneNumber',\n  'recoveryLink',\n  'firstMessageDelayMinutes',\n  'secondMessageDelayMinutes',\n  'workingHoursFrom',\n  'workingHoursTo'\n];\n\n// Validate presence\nconst missingFields = requiredFields.filter(field => !payload[field]);\n\nif (missingFields.length > 0) {\n  return {\n    json: {\n      isValid: false,\n      reason: `Missing required fields: ${missingFields.join(', ')}`,\n      payload,\n      security\n    }\n  };\n}\n\n// Validate phoneNumber format (E.164)\nif (!payload.phoneNumber.startsWith('+')) {\n  return {\n    json: {\n      isValid: false,\n      reason: 'Phone number must be in E.164 format (start with +)',\n      payload,\n      security\n    }\n  };\n}\n\n// Validate delays\nif (payload.firstMessageDelayMinutes < 0) {\n  return {\n    json: {\n      isValid: false,\n      reason: 'firstMessageDelayMinutes cannot be negative',\n      payload,\n      security\n    }\n  };\n}\n\nif (payload.secondMessageDelayMinutes < 0) {\n  return {\n    json: {\n      isValid: false,\n      reason: 'secondMessageDelayMinutes cannot be negative',\n      payload,\n      security\n    }\n  };\n}\n\n// All validations passed\nconsole.log('[Phase3] Validation | PASSED | abandonedCartId:', payload.abandonedCartId);\n\nreturn {\n  json: {\n    isValid: true,\n    reason: 'All validations passed',\n    payload,\n    security\n  }\n};"
+      },
+      "id": "22a0eda3-5047-44e1-836d-506ede898070",
+      "name": "Validate Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "360716d0-1755-4798-ae31-43e6459fbdd1",
+      "name": "Validation Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -1008,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// NORMALIZATION NODE - Produce canonical object\n// =====================================================================\n\nconst payload = $input.item.json.payload;\nconst security = $input.item.json.security || null;\n\n// Parse cart snapshot\nconst cartSnapshot = payload.cartSnapshot || {};\nconst items = cartSnapshot.items || [];\nconst cartTotal = cartSnapshot.total || 0;\nconst currency = cartSnapshot.currency || 'USD';\nconst itemCount = items.length;\n\n// Parse working hours to minutes\nconst parseTime = (timeStr) => {\n  const [hours, minutes] = timeStr.split(':').map(Number);\n  return hours * 60 + minutes;\n};\n\nconst workingFromMinutes = parseTime(payload.workingHoursFrom);\nconst workingToMinutes = parseTime(payload.workingHoursTo);\n\n// Extract product names for message personalization\nconst productNames = items.slice(0, 3).map(item => item.name || 'Product').join(', ');\nconst hasMoreProducts = items.length > 3;\n\n// Build canonical object\nconst normalized = {\n  // IDs\n  tenantId: payload.tenantId,\n  abandonedCartId: payload.abandonedCartId,\n  cartId: payload.cartId,\n  \n  // Contact\n  phoneNumber: payload.phoneNumber,\n  email: payload.email || null,\n  \n  // Cart data\n  cartTotal,\n  currency,\n  itemCount,\n  productNames,\n  hasMoreProducts,\n  \n  // Recovery\n  recoveryLink: payload.recoveryLink,\n  \n  // Timing\n  firstDelay: payload.firstMessageDelayMinutes,\n  secondDelay: payload.secondMessageDelayMinutes,\n  workingFromMinutes,\n  workingToMinutes,\n  \n  // Metadata\n  triggeredAtUtc: payload.triggeredAtUtc || new Date().toISOString(),\n  \n  // Message tracking\n  firstMessageSent: false,\n  secondMessageSent: false,\n  security\n};\n\nconsole.log('[Phase3] Normalization | COMPLETE | abandonedCartId:', normalized.abandonedCartId, '| itemCount:', normalized.itemCount);\n\nreturn { json: normalized };"
+      },
+      "id": "63391418-b97a-4feb-bcbb-590871cfa316",
+      "name": "Normalize Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.firstDelay }}",
+        "unit": "minutes"
+      },
+      "id": "96f4fa4c-f481-46fd-8cff-35fb38c4f54c",
+      "name": "First Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -608,
+        112
+      ],
+      "webhookId": "f7c274ac-92ab-444a-a9df-4473373196fc"
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// WORKING HOURS GATE - Enforce working hours with overnight wrap support\n// =====================================================================\n\nconst data = $input.item.json;\n\n// Get current time in minutes since midnight\nconst now = new Date();\nconst currentMinutes = now.getHours() * 60 + now.getMinutes();\n\nconst workingFrom = data.workingFromMinutes;\nconst workingTo = data.workingToMinutes;\n\n// Check if within working hours\nlet isWithinWorkingHours = false;\nlet delayMinutes = 0;\n\nif (workingFrom <= workingTo) {\n  // Normal case: 09:00 - 21:00\n  isWithinWorkingHours = currentMinutes >= workingFrom && currentMinutes <= workingTo;\n  \n  if (!isWithinWorkingHours) {\n    if (currentMinutes < workingFrom) {\n      // Before working hours today\n      delayMinutes = workingFrom - currentMinutes;\n    } else {\n      // After working hours today, wait until tomorrow\n      delayMinutes = (24 * 60 - currentMinutes) + workingFrom;\n    }\n  }\n} else {\n  // Overnight case: 21:00 - 09:00 (next day)\n  isWithinWorkingHours = currentMinutes >= workingFrom || currentMinutes <= workingTo;\n  \n  if (!isWithinWorkingHours) {\n    // Between end and start (e.g., 09:00 - 21:00 when window is 21:00 - 09:00)\n    delayMinutes = workingFrom - currentMinutes;\n  }\n}\n\nconst shouldDelay = delayMinutes > 0;\n\nconsole.log('[Phase3] Working Hours Gate | abandonedCartId:', data.abandonedCartId, '| currentMinutes:', currentMinutes, '| isWithinWorkingHours:', isWithinWorkingHours, '| delayMinutes:', delayMinutes);\n\nreturn {\n  json: {\n    ...data,\n    isWithinWorkingHours,\n    delayMinutes,\n    shouldDelay\n  }\n};"
+      },
+      "id": "ee9c88bc-42e6-4560-882a-ad26b583b1be",
+      "name": "Working Hours Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.shouldDelay }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "adce1da6-bb33-45b0-ad7d-f6c58d971a29",
+      "name": "Should Delay?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -208,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.delayMinutes }}",
+        "unit": "minutes"
+      },
+      "id": "6647d6d0-8f38-46c7-b236-1c8fa8e21005",
+      "name": "Wait Until Working Hours",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "77aab4d1-dabe-45ba-9245-980ac47c02e0"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WHATSAPP_API_URL || 'http://localhost:3000' }}/messages/send",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "={{ { \"X-API-Key\": $env.WHATSAPP_API_KEY || '' } }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"tenantId\": \"{{ $json.tenantId }}\",\n  \"phone\": \"{{ $json.phoneNumber }}\",\n  \"text\": \"🛒 You left some items in your cart!\\n\\nItems: {{ $json.productNames }}\\nTotal: {{ $json.currency }} {{ $json.cartTotal }}\\n\\nComplete your order here: {{ $json.recoveryLink }}\"\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "d70f785e-7ea2-4fbc-8fcf-f9c7688e5e17",
+      "name": "Send First WhatsApp Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        208,
+        112
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// FIRST MESSAGE RESULT HANDLER\n// =====================================================================\n\nconst data = $input.item.json;\nconst error = $input.item.error;\n\nlet firstMessageSent = false;\nlet firstMessageError = null;\n\nif (error) {\n  console.error('[Phase3] First Message | FAILED | abandonedCartId:', data.abandonedCartId, '| error:', error.message);\n  firstMessageError = error.message;\n} else {\n  console.log('[Phase3] First Message | SENT | abandonedCartId:', data.abandonedCartId);\n  firstMessageSent = true;\n}\n\nreturn {\n  json: {\n    ...data,\n    firstMessageSent,\n    firstMessageError,\n    firstMessageSentAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "9f8b4289-2b8d-4cf5-9a44-dd7370495d7d",
+      "name": "First Message Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.secondDelay }}",
+              "operation": "larger"
+            }
+          ]
+        }
+      },
+      "id": "2b86341d-e218-4f31-8125-f40a920289f7",
+      "name": "Should Send Second?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        608,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.secondDelay }}",
+        "unit": "minutes"
+      },
+      "id": "bb86121c-55ca-4607-9dfb-91b1937e6639",
+      "name": "Second Delay",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        800,
+        0
+      ],
+      "webhookId": "872ec375-3811-4ce9-af3a-bc3c335d23ce"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.WHATSAPP_API_URL || 'http://localhost:3000' }}/api/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"tenantId\": $json.tenantId,\n  \"to\": $json.phoneNumber,\n  \"message\": \"⏰ Last chance!\\n\\nYour cart is still waiting with \" + $json.itemCount + \" item(s).\\n\\nCart total: \" + $json.currency + \" \" + $json.cartTotal + \"\\n\\nDon't miss out! Complete your order:\\n\" + $json.recoveryLink + \"\\n\\n💬 Questions? Reply anytime!\"\n} }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "df1ea517-077f-4a31-b9f2-5c7bf5debe6f",
+      "name": "Send Second WhatsApp Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1008,
+        0
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// SECOND MESSAGE RESULT HANDLER\n// =====================================================================\n\nconst data = $input.item.json;\nconst error = $input.item.error;\n\nlet secondMessageSent = false;\nlet secondMessageError = null;\n\nif (error) {\n  console.error('[Phase3] Second Message | FAILED | abandonedCartId:', data.abandonedCartId, '| error:', error.message);\n  secondMessageError = error.message;\n} else {\n  console.log('[Phase3] Second Message | SENT | abandonedCartId:', data.abandonedCartId);\n  secondMessageSent = true;\n}\n\nreturn {\n  json: {\n    ...data,\n    secondMessageSent,\n    secondMessageError,\n    secondMessageSentAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "fed08f38-a65d-4414-b33c-5b0fea0d5155",
+      "name": "Second Message Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.POS_API_URL || 'http://localhost:5000' }}/api/admin/ecommerce/abandoned-cart-recovery/recovery-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"abandonedCartId\": $json.abandonedCartId,\n  \"tenantId\": $json.tenantId,\n  \"firstMessageSent\": $json.firstMessageSent,\n  \"firstMessageSentAt\": $json.firstMessageSentAt,\n  \"firstMessageError\": $json.firstMessageError,\n  \"secondMessageSent\": $json.secondMessageSent || false,\n  \"secondMessageSentAt\": $json.secondMessageSentAt,\n  \"secondMessageError\": $json.secondMessageError,\n  \"completedAt\": $now\n} }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "44c2ba30-2b77-43a1-9344-e05240c301ce",
+      "name": "Result Logger",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        1408,
+        112
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// IDEMPOTENCY COMPLETION MARKER\n// =====================================================================\nconst data = $input.item.json;\nconst security = data.security || {};\nif (security.tenantId && security.idempotencyKey) {\n  const staticData = $getWorkflowStaticData('global');\n  staticData.recoveryIdempotency = staticData.recoveryIdempotency || {};\n  const key = security.tenantId + ':' + security.idempotencyKey;\n  const existing = staticData.recoveryIdempotency[key];\n  if (existing) {\n    existing.status = 'processed';\n    existing.processedAt = Math.floor(Date.now() / 1000);\n  }\n}\nreturn { json: data };"
+      },
+      "id": "d83209df-f3ef-42fa-8657-b7f5fccf92a",
+      "name": "Mark Idempotency Processed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================================================================\n// WORKFLOW COMPLETE\n// =====================================================================\n\nconst data = $input.item.json;\n\nconsole.log('[Phase3] Workflow Complete | abandonedCartId:', data.abandonedCartId, '| firstMessageSent:', data.firstMessageSent, '| secondMessageSent:', data.secondMessageSent || false);\n\nreturn {\n  json: {\n    success: true,\n    abandonedCartId: data.abandonedCartId,\n    firstMessageSent: data.firstMessageSent,\n    secondMessageSent: data.secondMessageSent || false,\n    completedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "78a7874b-201e-4bb0-a93e-be825206f20e",
+      "name": "Workflow Complete",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1600,
+        112
+      ]
+    }
+  ],
+  "pinData": {
+    "Webhook Trigger": [
+      {
+        "json": {
+          "headers": {
+            "host": "localhost:5678",
+            "transfer-encoding": "chunked",
+            "content-type": "application/json; charset=utf-8"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "tenantId": "8a9f672b-43d5-4a2c-9762-5df63410fb73",
+            "abandonedCartId": "7b0550fa-d2c1-45a1-818d-f44906cd47dc",
+            "cartId": "8dcc9048-bd83-45b0-bd57-41ee31504716",
+            "phoneNumber": "+201022174803",
+            "email": "customer@example.com",
+            "cartSnapshot": {
+              "items": [
+                {
+                  "sku": "128",
+                  "name": "ssssss",
+                  "price": 100,
+                  "quantity": 1,
+                  "productId": "fe9411e2-6217-41f2-a83d-06b749558808",
+                  "thumbnail": null,
+                  "variantId": "0075497f-0da7-4053-af31-1f5cce1d6e60"
+                }
+              ],
+              "total": 100,
+              "currency": "EGP",
+              "itemCount": 1
+            },
+            "firstMessageDelayMinutes": 1,
+            "secondMessageDelayMinutes": 720,
+            "workingHoursFrom": "00:00",
+            "workingHoursTo": "23:59",
+            "recoveryLink": "https://store.example/cart/recover/test-token",
+            "triggeredAtUtc": "2026-02-05T22:30:07.4534696Z"
+          },
+          "webhookUrl": "http://localhost:5678/webhook/abandoned-cart",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Verify Recovery Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Payload": {
+      "main": [
+        [
+          {
+            "node": "Validation Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Check": {
+      "main": [
+        [
+          {
+            "node": "Accept Verified Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Data": {
+      "main": [
+        [
+          {
+            "node": "First Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Delay": {
+      "main": [
+        [
+          {
+            "node": "Working Hours Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Working Hours Gate": {
+      "main": [
+        [
+          {
+            "node": "Should Delay?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Delay?": {
+      "main": [
+        [
+          {
+            "node": "Wait Until Working Hours",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send First WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Until Working Hours": {
+      "main": [
+        [
+          {
+            "node": "Send First WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send First WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "First Message Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "First Message Result": {
+      "main": [
+        [
+          {
+            "node": "Should Send Second?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Send Second?": {
+      "main": [
+        [
+          {
+            "node": "Second Delay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Idempotency Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Second Delay": {
+      "main": [
+        [
+          {
+            "node": "Send Second WhatsApp Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Second WhatsApp Message": {
+      "main": [
+        [
+          {
+            "node": "Second Message Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Second Message Result": {
+      "main": [
+        [
+          {
+            "node": "Mark Idempotency Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Result Logger": {
+      "main": [
+        [
+          {
+            "node": "Workflow Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Recovery Webhook": {
+      "main": [
+        [
+          {
+            "node": "Signature Verification Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature Verification Check": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Idempotency Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Untrusted Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Duplicate Idempotency Check": {
+      "main": [
+        [
+          {
+            "node": "Respond Duplicate Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validate Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept Verified Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Idempotency Processed": {
+      "main": [
+        [
+          {
+            "node": "Result Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "05fb1f2c-766d-4b00-9212-102a335af129",
+  "meta": {
+    "instanceId": "a1696433490575195a3d3702a32c845b97ade90a734e26384f5b76eee7ac1213"
+  },
+  "id": "SrvG613QoD7MUOwlvflM-",
+  "tags": []
+}

@@ -1,0 +1,165 @@
+module:
+  module_name: General Ledger
+  domain: PointOfSale Accounting (POS Admin)
+  page_name:
+    - "Financial Reports (api/financialreports)"
+  business_entity:
+    - JournalEntry
+    - LedgerEntry
+    - Account
+
+business_rules:
+  - General Ledger is the financial source of truth.
+  - JournalEntry represents the journal header (table LedgerJournalEntries).
+  - LedgerEntry represents the journal lines (table LedgerLines).
+  - Every journal must remain balanced (sum debits == sum credits).
+  - JournalEntry is immutable (no edit/delete/archive/cancel/restore).
+  - Only Reversal may modify financial history (Posted -> Reversed transition only).
+  - FinancialPostingService is the only Ledger writer.
+  - Ledger owns financial truth.
+  - Account.CurrentBalance is only a denormalized cache.
+  - Reports derive from Ledger (recomputed from LedgerEntries every request).
+  - Journal Numbers are unique per tenant (JE-YYYY-NNNNNN).
+  - Idempotency is mandatory (unique per tenant).
+  - Tenant isolation is enforced on every Ledger row.
+  - PreventNegative is enforced for flagged accounts.
+  - BalanceAfter represents the account balance immediately after posting the line.
+  - Reports must reconcile with Ledger.
+  - Treasury inflow/outflow require certified source authority.
+  - Cash movement is capped to the authorized source amount.
+  - Ledger mutation is gated by LedgerMutationScope (engine only).
+  - Each LedgerEntry is exactly one debit XOR one credit (never both, never neither).
+  - LedgerEntry amounts must be positive.
+  - Reversal creates a new balanced journal and marks the original Reversed.
+
+preconditions:
+  - Valid Tenant (X-Tenant-Id header set).
+  - Authenticated user (Authorize / JWT present).
+  - Authorized access to financial reports.
+  - Valid Posting Request (internal/outbox path only).
+  - Balanced Journal (debits == credits).
+  - At least two Ledger Lines.
+  - Positive amounts on each line.
+  - Required SourceType.
+  - Required SourceId.
+  - Required Journal Number (immutable, auto-generated).
+  - Active Ledger Accounts (inactive accounts rejected).
+  - Valid Idempotency Key (unique per tenant).
+  - Account exists within the tenant.
+  - Treasury authority satisfied for cash movements (if applicable).
+  - PreventNegative projected balance non-negative (if applicable).
+
+user_journey:
+  - View Trial Balance (GET api/financialreports/trial-balance?from=&to=)
+  - View General Ledger for an account (GET api/financialreports/general-ledger/{accountId}?from=&to=)
+  - View Profit & Loss (GET api/financialreports/profit-loss?from=&to=)
+  - View Balance Sheet (GET api/financialreports/balance-sheet?asOf=)
+  - View Cash Flow (GET api/financialreports/cash-flow?from=&to=)
+  - View Clearing Aging (GET api/financialreports/clearing-aging?asOf=)
+  - View Account Summaries (GET api/financialreports/accounts)
+  - View Financial Dashboard (GET api/financialreports/dashboard?from=&to=)
+  - Verify Reversal (via sale-update or outbox refund/return; inspect original + reversal journals)
+
+expected_runtime_after_success:
+  - Journal posted successfully (status Posted).
+  - Ledger updated (LedgerJournalEntries + LedgerLines rows written).
+  - Journal Number assigned (JE-YYYY-NNNNNN, unique per tenant).
+  - BalanceAfter updated on each LedgerEntry.
+  - Account balance cache updated (Account.CurrentBalance).
+  - Trial Balance remains balanced.
+  - Financial reports reflect latest Ledger state (recomputed on request).
+  - Dashboard updated (if within cache window).
+  - Accounting Outbox processed (posting triggered by outbox consumer).
+  - Read models reconcile with Ledger.
+  - Reversal journal posted (SourceType=Reversal) and original marked Reversed.
+
+browser_assertions:
+  - Trial Balance loads and IsBalanced is true (variance 0).
+  - General Ledger loads for the account.
+  - General Ledger OpeningBalance equals account balance as of from-1 day.
+  - General Ledger ClosingBalance equals OpeningBalance + sum(Debit - Credit).
+  - Each General Ledger entry shows a valid JournalNumber (JE-YYYY-NNNNNN).
+  - Each General Ledger entry shows BalanceAfter matching running balance in order.
+  - Profit & Loss loads (GrossProfit == Revenue - COGS; NetProfit == GrossProfit - Expenses).
+  - Balance Sheet loads (TotalAssets == TotalLiabilities + TotalEquity; IsBalanced true).
+  - Cash Flow loads.
+  - Clearing Aging loads (TotalPending matches sum of IsClearing account balances).
+  - Dashboard loads with metrics consistent with P&L + BalanceSheet + ClearingAging.
+  - Journal Number displayed on journal/report rows.
+  - BalanceAfter displayed on ledger entries.
+  - Reports reconcile with Ledger.
+  - Trial Balance remains balanced after a reversal (reversals net out).
+  - Reversal reflected: original Status == Reversed, ReversedByJournalId points to reversal journal.
+
+negative_tests:
+  - Unbalanced Journal (debits != credits) rejected with UnbalancedJournalException.
+  - Single Ledger Line (fewer than 2 lines) rejected with InvalidJournalException.
+  - Debit and Credit on same line rejected (InvalidJournalException; DB check CK_LedgerLines_SingleSide).
+  - Negative amount on a line rejected (InvalidJournalException; DB check CK_LedgerLines_PositiveAmounts).
+  - Missing SourceType rejected.
+  - Missing SourceId rejected.
+  - Missing Idempotency Key rejected.
+  - Duplicate Idempotency Key returns the same existing Journal (no duplicate).
+  - PreventNegative violation (cash outflow exceeding balance) rejected with InsufficientFundsException.
+  - Inactive Account rejected with InactiveAccountException.
+  - Cross-tenant access denied (no tenant B rows returned for tenant A X-Tenant-Id).
+  - Double Reversal rejected with JournalAlreadyReversedException.
+  - Unauthorized access denied (no valid Authorization header).
+  - Any PUT/DELETE on a journal route returns 404/405 (no edit/delete surface).
+
+critical_invariants:
+  - Ledger owns financial truth.
+  - JournalEntry is immutable (no edit/delete/archive/cancel/restore).
+  - LedgerEntry belongs to exactly one JournalEntry.
+  - FinancialPostingService is the only Ledger writer.
+  - Reports always derive from Ledger (never from business tables).
+  - CurrentBalance is never the source of truth (it is a cache).
+  - Journal remains balanced (debits == credits).
+  - Journal Numbers remain unique per tenant.
+  - BalanceAfter reconciles with Ledger running balance.
+  - Only Reversal may negate a Journal (creates new balancing journal).
+  - Tenant isolation always enforced.
+  - Idempotency prevents duplicate journals.
+  - Ledger mutation always gated by LedgerMutationScope.
+  - Each LedgerEntry is exactly one debit XOR one credit.
+  - Reversed journal cannot be reversed again.
+
+browser_test_scenarios:
+  - View Trial Balance and assert IsBalanced true.
+  - View General Ledger for an account and assert Opening/Closing balances reconcile.
+  - View Profit & Loss and assert Gross/Net profit formulas.
+  - View Balance Sheet and assert TotalAssets == TotalLiabilities + TotalEquity.
+  - View Cash Flow.
+  - View Clearing Aging and assert TotalPending.
+  - View Dashboard.
+  - Verify Journal Details (JournalNumber, SourceType, Status, lines).
+  - Verify BalanceAfter consistency per entry.
+  - Verify Trial Balance Integrity after postings.
+  - Verify Report Reconciliation with Ledger.
+  - Verify Journal Reversal (original Reversed + new Reversal journal).
+  - Verify Duplicate Submission Protection (same idempotency key returns same journal).
+
+success_definition:
+  - Business Rules hold.
+  - Browser assertions succeed.
+  - Critical invariants remain intact.
+  - Trial Balance remains balanced.
+  - Reports reconcile with Ledger.
+  - Journal remains immutable.
+  - Only Reversal modifies financial history.
+  - BalanceAfter is consistent.
+  - Journal Numbers remain unique.
+  - Runtime expectations succeed.
+
+not_implemented:
+  - No Journal CRUD UI (no create/edit/delete pages).
+  - No Manual Journal Creation endpoint (posting is outbox/treasury/internal only).
+  - No Journal Edit (immutable; no update path).
+  - No Journal Delete (no method/endpoint).
+  - No Journal Archive (no archive state).
+  - No Journal Cancel (no Cancelled status).
+  - No Journal Restore (Reversed is terminal for that header).
+  - No Journal List/Search/Filter/Paging UI (no controller action).
+  - No Event-Sourced Projection Store (reports recomputed every request; cache is no-op pass-through).
+  - No direct Account.CurrentBalance mutation UI.
+  - Party sub-ledger (LedgerService/AccountLedger) is a SEPARATE system, not the General Ledger — do not conflate.

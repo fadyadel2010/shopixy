@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "event_name": "PageView",
+      "event_time": 1784723696,
+      "event_id": "11111111-1111-1111-1111-111111111111",
+      "event_source_url": "https://store.example.com/thank-you",
+      "action_source": "website",
+      "user_data": {
+        "external_id": "9d218b69ddef1ffe129aacbd6575530139c629aad00719921bb7d6917026ecc8",
+        "client_ip_address": "203.0.113.0",
+        "client_user_agent": "UnitTest/1.0"
+      }
+    }
+  ],
+  "test_event_code": "TEST123"
+}

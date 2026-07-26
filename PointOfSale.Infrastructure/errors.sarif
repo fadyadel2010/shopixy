@@ -1,0 +1,254 @@
+{
+  "$schema": "http://json.schemastore.org/sarif-1.0.0",
+  "version": "1.0.0",
+  "runs": [
+    {
+      "tool": {
+        "name": "Microsoft (R) Visual C# Compiler",
+        "version": "4.14.0.0",
+        "fileVersion": "4.14.0-3.25465.8 (b0a9adbf)",
+        "semanticVersion": "4.14.0",
+        "language": "en-US"
+      },
+      "results": [
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'OnlineCustomerSessionProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerSessionProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<OnlineCustomerSessionProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerSessionProjectionConsumer>)'. Add the Obsolete attribute to 'OnlineCustomerSessionProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerSessionProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/OnlineCustomerSessionProjectionConsumer.cs",
+                "region": {
+                  "startLine": 530,
+                  "startColumn": 29,
+                  "endLine": 530,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'NavigationProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<NavigationProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<NavigationProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<NavigationProjectionConsumer>)'. Add the Obsolete attribute to 'NavigationProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<NavigationProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/NavigationProjectionConsumer.cs",
+                "region": {
+                  "startLine": 370,
+                  "startColumn": 29,
+                  "endLine": 370,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'CmsPageProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<CmsPageProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<CmsPageProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<CmsPageProjectionConsumer>)'. Add the Obsolete attribute to 'CmsPageProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<CmsPageProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/CmsPageProjectionConsumer.cs",
+                "region": {
+                  "startLine": 419,
+                  "startColumn": 29,
+                  "endLine": 419,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'OnlineCustomerProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<OnlineCustomerProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerProjectionConsumer>)'. Add the Obsolete attribute to 'OnlineCustomerProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/OnlineCustomerProjectionConsumer.cs",
+                "region": {
+                  "startLine": 590,
+                  "startColumn": 29,
+                  "endLine": 590,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'OnlineCustomerWishlistProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerWishlistProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<OnlineCustomerWishlistProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerWishlistProjectionConsumer>)'. Add the Obsolete attribute to 'OnlineCustomerWishlistProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<OnlineCustomerWishlistProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/OnlineCustomerWishlistProjectionConsumer.cs",
+                "region": {
+                  "startLine": 338,
+                  "startColumn": 29,
+                  "endLine": 338,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'ShippingMethodProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ShippingMethodProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<ShippingMethodProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ShippingMethodProjectionConsumer>)'. Add the Obsolete attribute to 'ShippingMethodProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ShippingMethodProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/ShippingMethodProjectionConsumer.cs",
+                "region": {
+                  "startLine": 268,
+                  "startColumn": 29,
+                  "endLine": 268,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'StorefrontConfigProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<StorefrontConfigProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<StorefrontConfigProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<StorefrontConfigProjectionConsumer>)'. Add the Obsolete attribute to 'StorefrontConfigProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<StorefrontConfigProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/StorefrontConfigProjectionConsumer.cs",
+                "region": {
+                  "startLine": 575,
+                  "startColumn": 29,
+                  "endLine": 575,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'TenantCurrencyProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<TenantCurrencyProjectionConsumer>)' overrides obsolete member 'ConsumerDefinition<TenantCurrencyProjectionConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<TenantCurrencyProjectionConsumer>)'. Add the Obsolete attribute to 'TenantCurrencyProjectionConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<TenantCurrencyProjectionConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/TenantCurrencyProjectionConsumer.cs",
+                "region": {
+                  "startLine": 155,
+                  "startColumn": 29,
+                  "endLine": 155,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0672",
+          "level": "warning",
+          "message": "Member 'ProductStockChangedConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ProductStockChangedConsumer>)' overrides obsolete member 'ConsumerDefinition<ProductStockChangedConsumer>.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ProductStockChangedConsumer>)'. Add the Obsolete attribute to 'ProductStockChangedConsumerDefinition.ConfigureConsumer(IReceiveEndpointConfigurator, IConsumerConfigurator<ProductStockChangedConsumer>)'.",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Consumers/ProductStockChangedConsumer.cs",
+                "region": {
+                  "startLine": 119,
+                  "startColumn": 29,
+                  "endLine": 119,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "properties": {
+            "warningLevel": 1
+          }
+        },
+        {
+          "ruleId": "CS0246",
+          "level": "error",
+          "message": "The type or namespace name 'FunctionsDescriptor<>' could not be found (are you missing a using directive or an assembly reference?)",
+          "locations": [
+            {
+              "resultFile": {
+                "uri": "file:///C:/Users/fadya/source/repos/PointOfSale/PointOfSale.Infrastructure/Elasticsearch/Services/ProductDiscoveryService.cs",
+                "region": {
+                  "startLine": 308,
+                  "startColumn": 18,
+                  "endLine": 308,
+                  "endColumn": 60
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "rules": {
+        "CS0246": {
+          "id": "CS0246",
+          "defaultLevel": "error",
+          "helpUri": "https://msdn.microsoft.com/query/roslyn.query?appId=roslyn&k=k(CS0246)",
+          "properties": {
+            "category": "Compiler",
+            "isEnabledByDefault": true,
+            "tags": [
+              "Compiler",
+              "Telemetry",
+              "NotConfigurable"
+            ]
+          }
+        },
+        "CS0672": {
+          "id": "CS0672",
+          "shortDescription": "Member overrides obsolete member",
+          "defaultLevel": "warning",
+          "helpUri": "https://msdn.microsoft.com/query/roslyn.query?appId=roslyn&k=k(CS0672)",
+          "properties": {
+            "category": "Compiler",
+            "isEnabledByDefault": true,
+            "tags": [
+              "Compiler",
+              "Telemetry"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

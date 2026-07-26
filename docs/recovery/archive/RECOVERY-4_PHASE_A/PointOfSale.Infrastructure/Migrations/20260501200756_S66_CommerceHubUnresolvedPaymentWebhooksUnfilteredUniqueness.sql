@@ -1,0 +1,36 @@
+-- Migration: S66_CommerceHubUnresolvedPaymentWebhooksUnfilteredUniqueness
+-- Date: 2026-05-01
+-- Description: Remove IsDeleted filter from CommerceHubUnresolvedPaymentWebhooks unique index
+--              to align with IgnoreQueryFilters() lookup pattern
+--
+-- Problem:
+-- The unique index UX_CommerceHubUnresolvedPaymentWebhooks_Provider_Event previously had
+-- .HasFilter("IsDeleted = false"), which allowed duplicate (Provider, ProviderEventId) values
+-- between deleted and non-deleted rows. However, the lookup in CommerceHubPaymentService uses
+-- IgnoreQueryFilters().FirstOrDefaultAsync(), which searches across all records (deleted and
+-- non-deleted). This mismatch could lead to:
+-- 1. Duplicate webhook events being processed if one is soft-deleted
+-- 2. Unpredictable behavior when the lookup finds a deleted record
+--
+-- Solution:
+-- Remove the HasFilter clause so the unique index enforces uniqueness across ALL records
+-- (both deleted and non-deleted), ensuring the constraint aligns with the IgnoreQueryFilters()
+-- lookup pattern.
+--
+-- Note: This migration is part of the EF Core generated migration that creates the table.
+-- The index is created without a filter from the start, so no ALTER is needed.
+-- This SQL file documents the design decision for future reference.
+
+-- The index is created as part of the table creation in the C# migration:
+-- CREATE UNIQUE INDEX "UX_CommerceHubUnresolvedPaymentWebhooks_Provider_Event"
+-- ON "CommerceHubUnresolvedPaymentWebhooks" ("Provider", "ProviderEventId");
+--
+-- No filter clause = uniqueness enforced across all rows regardless of IsDeleted value
+
+-- Verification query (run after migration):
+-- SELECT indexname, indexdef
+-- FROM pg_indexes
+-- WHERE tablename = 'CommerceHubUnresolvedPaymentWebhooks'
+--   AND indexname = 'UX_CommerceHubUnresolvedPaymentWebhooks_Provider_Event';
+--
+-- Expected result should NOT contain "WHERE" clause in indexdef

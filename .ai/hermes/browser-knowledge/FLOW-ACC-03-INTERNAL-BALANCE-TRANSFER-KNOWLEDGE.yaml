@@ -1,0 +1,163 @@
+module:
+  module_name: Internal Balance Transfer
+  domain: Accounting / Treasury (POS Admin)
+  page_name:
+    - BalanceTransfer
+    - TreasuryTransfers
+  business_entity:
+    - JournalEntry
+    - LedgerEntry
+    - Account
+
+business_rules:
+  - Internal Balance Transfer is an internal ledger reallocation.
+  - Internal Balance Transfer never creates or destroys money.
+  - FinancialPostingService is the only Ledger writer.
+  - JournalEntry represents the transfer.
+  - Transfer has no dedicated entity.
+  - Transfer has no lifecycle state machine.
+  - Journal Status is Posted or Reversed only.
+  - Transfer always produces a balanced journal (DEBIT destination, CREDIT source, equal amounts).
+  - Transfer is materialized as a JournalEntry with SourceType "TreasuryTransfer" plus 2 LedgerEntries.
+  - Source and destination accounts must differ.
+  - Amount must be positive.
+  - Both accounts must be active, same-tenant, Asset-type Cashbox or Bank treasury accounts.
+  - PreventNegative is enforced by the posting engine (cashbox seeded PreventNegative=true).
+  - Cross-tenant isolation is enforced.
+  - Idempotency is mandatory (IdempotencyKey scoped per tenant).
+  - History is represented by Ledger entries (with BalanceAfter per line).
+  - Trial Balance must remain balanced after every transfer.
+  - Transfers are exempt from certified inflow/outflow authority (net cash effect is zero).
+  - Roles gate access: operations require Owner/Admin/Manager; legacy admin requires Admin.
+  - Financial writes are rate-limited (FinancialWrite policy).
+  - UI never writes or adjusts balances directly; balances are ledger-derived.
+  - Transfers reuse the generic AccountingOutboxMessage; no transfer-specific event exists.
+
+preconditions:
+  - Valid Tenant (RequiredTenantId).
+  - Authenticated user.
+  - Required role: Owner, Admin, or Manager for operations endpoint; Admin for legacy admin endpoint.
+  - Active Treasury Accounts (Cashbox or Bank) mapped for both source and destination.
+  - Treasury Account mapping exists and is same-tenant, Asset, active, not deleted.
+  - Source and destination accounts differ.
+  - Positive amount supplied.
+  - Valid Posting Request built with SourceType "TreasuryTransfer" and 2 balanced lines.
+  - Idempotency key / OperationId supplied (TreasuryTransferRequest.OperationId is required).
+  - Backing Ledger Accounts exist and are active.
+  - For FinancialAccounts path: source/destination FinancialAccount or Cashbox resolves to distinct treasury control account codes.
+
+user_journey:
+  - View Balance Transfer screen (BalanceTransfer.jsx).
+  - View Treasury Transfers screen (TreasuryTransfers.jsx).
+  - Select source account (Financial Account or Cashbox / Treasury ledger account).
+  - Select destination account (Financial Account or Cashbox / Treasury ledger account).
+  - Enter positive amount.
+  - Enter description (required on TreasuryTransfers).
+  - Review Confirmation Dialog (TreasuryTransfers only).
+  - Submit Transfer via POST /api/financialaccounts/transfer or POST /api/treasury/operations/transfer.
+  - Verify Journal Number returned.
+  - View Updated Balances after refresh.
+  - View Updated Ledger (General Ledger screen).
+  - View Transfer History via Ledger movements filtered by TreasuryTransfer.
+
+expected_runtime_after_success:
+  - Transfer succeeds (HTTP 200 with journalId and journalNumber).
+  - Balanced Journal created (1 JournalEntry, 2 LedgerEntries).
+  - Journal Number generated (per-tenant sequential).
+  - Ledger updated (DEBIT destination, CREDIT source).
+  - Account balances updated (Account.CurrentBalance mutated by posting engine).
+  - Trial Balance remains balanced (net cash effect zero).
+  - Accounting Outbox generated (generic AccountingOutboxMessage).
+  - Treasury balances refreshed on screen.
+  - Read models updated (Trial Balance / General Ledger / Movements via ITreasuryReadService).
+
+browser_assertions:
+  - Transfer screen loads (BalanceTransfer and TreasuryTransfers).
+  - Treasury accounts displayed in dropdown (TreasuryTransfers).
+  - Financial accounts and Cashboxes displayed (BalanceTransfer).
+  - Confirmation dialog appears before posting (TreasuryTransfers).
+  - Transfer succeeds and returns success message.
+  - Journal number returned and displayed.
+  - Updated source and destination balances displayed after refresh.
+  - Ledger reflects transfer (1 journal, 2 lines, balanced).
+  - Trial Balance remains balanced after transfer.
+  - Duplicate submission with same OperationId does not create another journal.
+  - User is shown error for invalid amount / same account / insufficient balance.
+
+negative_tests:
+  - Zero amount rejected (400 TreasuryValidationException).
+  - Negative amount rejected.
+  - Source equals destination rejected (TreasuryValidationException).
+  - Same treasury control account (e.g. two Visa financial accounts) rejected by FinancialAccountsController.
+  - Invalid / non-treasury / inactive account rejected (EnsureTreasuryAccountAsync).
+  - Cross-tenant account rejected (tenant filter on all queries).
+  - Insufficient balance on PreventNegative source rejected by posting engine (InsufficientFundsException -> 400); note FinancialAccountsController only logs warning, hard block is downstream.
+  - Missing OperationId rejected (TreasuryTransferRequest.OperationId required -> 400).
+  - Unauthorized role rejected (401/403).
+  - Rate-limit exceeded rejected (429 FinancialWrite).
+  - Missing description rejected on TreasuryTransfers (required field).
+
+critical_invariants:
+  - Ledger owns financial truth.
+  - FinancialPostingService is the only Ledger writer.
+  - Internal Transfer never owns balances.
+  - Journal is always balanced.
+  - Account balances reconcile with Ledger.
+  - History comes from Ledger.
+  - Journal is immutable (no update/delete).
+  - Only Reversal may undo a transfer (new reversal journal, original marked Reversed).
+  - Idempotency prevents duplicate journals.
+  - Tenant isolation always enforced.
+  - Trial Balance remains balanced after every transfer.
+  - Transfer is never an inflow/outflow requiring certified authority.
+
+browser_test_scenarios:
+  - Successful Internal Balance Transfer between Treasury accounts.
+  - Transfer Between Cashbox and Bank.
+  - Transfer Between Financial Accounts (BalanceTransfer.jsx).
+  - Duplicate Submission (idempotent replay, same OperationId).
+  - PreventNegative validation (overdraw PreventNegative source).
+  - Invalid Amount (zero / negative).
+  - Same Source/Destination.
+  - Same Treasury Control Account (FinancialAccount mapping collision).
+  - Unauthorized Access (wrong role).
+  - Rate Limit Exceeded.
+  - Journal Reversal.
+  - Ledger Reconciliation (DEBIT dest, CREDIT src).
+  - Trial Balance Verification.
+  - Transfer History via Ledger Movements.
+
+success_definition:
+  - Business Rules hold.
+  - Browser assertions succeed.
+  - Critical invariants remain intact.
+  - Transfer generates exactly one balanced journal.
+  - Ledger balances reconcile.
+  - Trial Balance remains balanced.
+  - Duplicate submission never creates duplicate journals.
+  - Journal remains immutable.
+  - Runtime expectations succeed.
+
+not_implemented:
+  - No Transfer Entity.
+  - No Transfer Table.
+  - No Transfer Status (TransferStatus enum belongs to StockTransfer/warehouse only).
+  - No Transfer Lifecycle Workflow (Pending/Approved/Completed/Cancelled do not apply).
+  - No Transfer Approval Workflow.
+  - No Cancel Transfer (server-side).
+  - No Archive Transfer.
+  - No Delete Transfer.
+  - No Currency Management on transfer (no currency parameter).
+  - No Transfer-specific Events / Outbox row.
+  - No manual clearing settlement via admin (SettleClearing returns 410 Gone).
+  - No direct balance write by UI or transfer service.
+
+runtime_model:
+  - Transfer Request
+  - Validation
+  - Posting Request
+  - FinancialPostingService
+  - JournalEntry
+  - LedgerEntry
+  - Accounting Outbox
+  - Read Models

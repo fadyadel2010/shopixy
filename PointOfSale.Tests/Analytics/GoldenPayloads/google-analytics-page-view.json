@@ -1,0 +1,16 @@
+{
+  "client_id": "checkout-session-123",
+  "timestamp_micros": 1784723696000000,
+  "non_personalized_ads": true,
+  "events": [
+    {
+      "name": "page_view",
+      "params": {
+        "page_location": "https://store.example.com/thank-you",
+        "page_referrer": "https://store.example.com",
+        "page_title": "thank-you",
+        "language": "en"
+      }
+    }
+  ]
+}

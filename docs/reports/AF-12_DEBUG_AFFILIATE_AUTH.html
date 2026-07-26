@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Affiliate Auth Debugger</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 40px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 15px;
+            background: #f9f9f9;
+            border-left: 4px solid #4CAF50;
+        }
+        .success {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+        .warning {
+            color: #ff9800;
+            font-weight: bold;
+        }
+        pre {
+            background: #263238;
+            color: #aed581;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .test-btn {
+            background: #2196F3;
+        }
+        .test-btn:hover {
+            background: #0b7dda;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 300px;
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔍 Affiliate Authentication Debugger</h1>
+        
+        <div class="section">
+            <h2>Step 1: Check Current Auth Status</h2>
+            <button onclick="checkAuthStatus()">Check Auth Status</button>
+            <div id="authStatus"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 2: Register New Affiliate (if needed)</h2>
+            <label>Email:</label>
+            <input type="email" id="regEmail" placeholder="affiliate@example.com">
+            
+            <label>Password:</label>
+            <input type="password" id="regPassword" placeholder="Min 8 chars, uppercase, lowercase, number, special">
+            
+            <label>Display Name:</label>
+            <input type="text" id="regDisplayName" placeholder="John Doe">
+            
+            <label>Store Slug:</label>
+            <input type="text" id="regStoreSlug" placeholder="mystore">
+            
+            <br><br>
+            <button onclick="registerAffiliate()">Register</button>
+            <div id="registerResult"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 3: Login</h2>
+            <label>Email:</label>
+            <input type="email" id="loginEmail" placeholder="affiliate@example.com">
+            
+            <label>Password:</label>
+            <input type="password" id="loginPassword" placeholder="Your password">
+            
+            <label>Store Slug:</label>
+            <input type="text" id="loginStoreSlug" placeholder="mystore">
+            
+            <br><br>
+            <button onclick="loginAffiliate()">Login</button>
+            <div id="loginResult"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 4: Test API Endpoints</h2>
+            <button class="test-btn" onclick="testDebugClaims()">Test Debug Claims</button>
+            <button class="test-btn" onclick="testProfile()">Test Profile</button>
+            <button class="test-btn" onclick="testDashboard()">Test Dashboard</button>
+            <div id="testResults"></div>
+        </div>
+
+        <div class="section">
+            <h2>Step 5: Decode JWT Token</h2>
+            <button onclick="decodeToken()">Decode Token</button>
+            <div id="tokenDecoded"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        function checkAuthStatus() {
+            const token = localStorage.getItem('affiliate_accessToken');
+            const tenantId = localStorage.getItem('affiliate_tenantId');
+            const referralCode = localStorage.getItem('affiliate_referralCode');
+            const email = localStorage.getItem('affiliate_email');
+            const displayName = localStorage.getItem('affiliate_displayName');
+
+            let html = '<pre>';
+            html += '=== AUTHENTICATION STATUS ===\n\n';
+            html += `Token exists: ${token ? '<span class="success">✅ YES</span>' : '<span class="error">❌ NO</span>'}\n`;
+            html += `Tenant ID: ${tenantId || '<span class="error">❌ MISSING</span>'}\n`;
+            html += `Referral Code: ${referralCode || '<span class="error">❌ MISSING</span>'}\n`;
+            html += `Email: ${email || '<span class="error">❌ MISSING</span>'}\n`;
+            html += `Display Name: ${displayName || '<span class="error">❌ MISSING</span>'}\n\n`;
+
+            if (token) {
+                try {
+                    const payload = JSON.parse(atob(token.split('.')[1]));
+                    const exp = new Date(payload.exp * 1000);
+                    const now = new Date();
+                    const isExpired = exp < now;
+
+                    html += `Token expires: ${exp.toLocaleString()}\n`;
+                    html += `Token valid: ${!isExpired ? '<span class="success">✅ YES</span>' : '<span class="error">❌ EXPIRED</span>'}\n`;
+                    html += `Role claim: ${payload['http://schemas.microsoft.com/ws/2008/06/identity/claims/role'] || '<span class="error">❌ MISSING</span>'}\n`;
+                    html += `Affiliate Account ID: ${payload.affiliate_account_id || '<span class="error">❌ MISSING</span>'}\n`;
+                } catch (e) {
+                    html += `<span class="error">❌ Error decoding token: ${e.message}</span>\n`;
+                }
+            }
+
+            html += '</pre>';
+            document.getElementById('authStatus').innerHTML = html;
+        }
+
+        async function registerAffiliate() {
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+            const displayName = document.getElementById('regDisplayName').value;
+            const storeSlug = document.getElementById('regStoreSlug').value;
+
+            if (!email || !password || !displayName || !storeSlug) {
+                document.getElementById('registerResult').innerHTML = '<pre class="error">❌ All fields are required</pre>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/affiliate/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, displayName, storeSlug })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Store tokens
+                    localStorage.setItem('affiliate_accessToken', data.accessToken);
+                    localStorage.setItem('affiliate_refreshToken', data.refreshToken);
+                    localStorage.setItem('affiliate_accountId', data.affiliateAccountId);
+                    localStorage.setItem('affiliate_email', data.email);
+                    localStorage.setItem('affiliate_displayName', data.displayName);
+                    localStorage.setItem('affiliate_referralCode', data.referralCode);
+                    localStorage.setItem('affiliate_tenantId', data.tenantId);
+                    localStorage.setItem('affiliate_storeSlug', storeSlug);
+
+                    document.getElementById('registerResult').innerHTML = `
+                        <pre class="success">✅ Registration successful!
+Referral Code: ${data.referralCode}
+Email: ${data.email}
+Display Name: ${data.displayName}
+
+Tokens stored in localStorage.</pre>`;
+                    
+                    checkAuthStatus();
+                } else {
+                    document.getElementById('registerResult').innerHTML = `<pre class="error">❌ Registration failed: ${data.message || JSON.stringify(data)}</pre>`;
+                }
+            } catch (error) {
+                document.getElementById('registerResult').innerHTML = `<pre class="error">❌ Error: ${error.message}</pre>`;
+            }
+        }
+
+        async function loginAffiliate() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const storeSlug = document.getElementById('loginStoreSlug').value;
+
+            if (!email || !password || !storeSlug) {
+                document.getElementById('loginResult').innerHTML = '<pre class="error">❌ All fields are required</pre>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/affiliate/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, storeSlug })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    // Store tokens
+                    localStorage.setItem('affiliate_accessToken', data.accessToken);
+                    localStorage.setItem('affiliate_refreshToken', data.refreshToken);
+                    localStorage.setItem('affiliate_accountId', data.affiliateAccountId);
+                    localStorage.setItem('affiliate_email', data.email);
+                    localStorage.setItem('affiliate_displayName', data.displayName);
+                    localStorage.setItem('affiliate_referralCode', data.referralCode);
+                    localStorage.setItem('affiliate_tenantId', data.tenantId);
+                    localStorage.setItem('affiliate_storeSlug', storeSlug);
+
+                    document.getElementById('loginResult').innerHTML = `
+                        <pre class="success">✅ Login successful!
+Referral Code: ${data.referralCode}
+Email: ${data.email}
+Display Name: ${data.displayName}
+
+Tokens stored in localStorage.</pre>`;
+                    
+                    checkAuthStatus();
+                } else {
+                    document.getElementById('loginResult').innerHTML = `<pre class="error">❌ Login failed: ${data.message || JSON.stringify(data)}</pre>`;
+                }
+            } catch (error) {
+                document.getElementById('loginResult').innerHTML = `<pre class="error">❌ Error: ${error.message}</pre>`;
+            }
+        }
+
+        async function testDebugClaims() {
+            const token = localStorage.getItem('affiliate_accessToken');
+            const tenantId = localStorage.getItem('affiliate_tenantId');
+
+            if (!token) {
+                document.getElementById('testResults').innerHTML = '<pre class="error">❌ No token found. Please login first.</pre>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/affiliate/debug-claims`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Tenant-Id': tenantId || ''
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    document.getElementById('testResults').innerHTML = `
+                        <pre class="success">✅ Debug Claims Response:
+${JSON.stringify(data, null, 2)}</pre>`;
+                } else {
+                    document.getElementById('testResults').innerHTML = `<pre class="error">❌ Debug Claims failed (${response.status}): ${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            } catch (error) {
+                document.getElementById('testResults').innerHTML = `<pre class="error">❌ Error: ${error.message}</pre>`;
+            }
+        }
+
+        async function testProfile() {
+            const token = localStorage.getItem('affiliate_accessToken');
+            const tenantId = localStorage.getItem('affiliate_tenantId');
+
+            if (!token) {
+                document.getElementById('testResults').innerHTML = '<pre class="error">❌ No token found. Please login first.</pre>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/affiliate/profile`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Tenant-Id': tenantId || ''
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    document.getElementById('testResults').innerHTML = `
+                        <pre class="success">✅ Profile Response:
+${JSON.stringify(data, null, 2)}</pre>`;
+                } else {
+                    document.getElementById('testResults').innerHTML = `<pre class="error">❌ Profile failed (${response.status}): ${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            } catch (error) {
+                document.getElementById('testResults').innerHTML = `<pre class="error">❌ Error: ${error.message}</pre>`;
+            }
+        }
+
+        async function testDashboard() {
+            const token = localStorage.getItem('affiliate_accessToken');
+            const tenantId = localStorage.getItem('affiliate_tenantId');
+
+            if (!token) {
+                document.getElementById('testResults').innerHTML = '<pre class="error">❌ No token found. Please login first.</pre>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/affiliate/dashboard`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'X-Tenant-Id': tenantId || ''
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    document.getElementById('testResults').innerHTML = `
+                        <pre class="success">✅ Dashboard Response:
+${JSON.stringify(data, null, 2)}</pre>`;
+                } else {
+                    document.getElementById('testResults').innerHTML = `<pre class="error">❌ Dashboard failed (${response.status}): ${JSON.stringify(data, null, 2)}</pre>`;
+                }
+            } catch (error) {
+                document.getElementById('testResults').innerHTML = `<pre class="error">❌ Error: ${error.message}</pre>`;
+            }
+        }
+
+        function decodeToken() {
+            const token = localStorage.getItem('affiliate_accessToken');
+
+            if (!token) {
+                document.getElementById('tokenDecoded').innerHTML = '<pre class="error">❌ No token found</pre>';
+                return;
+            }
+
+            try {
+                const parts = token.split('.');
+                const header = JSON.parse(atob(parts[0]));
+                const payload = JSON.parse(atob(parts[1]));
+
+                document.getElementById('tokenDecoded').innerHTML = `
+                    <pre><strong>Header:</strong>
+${JSON.stringify(header, null, 2)}
+
+<strong>Payload:</strong>
+${JSON.stringify(payload, null, 2)}
+
+<strong>Expiration:</strong> ${new Date(payload.exp * 1000).toLocaleString()}
+<strong>Issued At:</strong> ${new Date(payload.iat * 1000).toLocaleString()}
+<strong>Valid:</strong> ${new Date(payload.exp * 1000) > new Date() ? '<span class="success">✅ YES</span>' : '<span class="error">❌ EXPIRED</span>'}</pre>`;
+            } catch (error) {
+                document.getElementById('tokenDecoded').innerHTML = `<pre class="error">❌ Error decoding token: ${error.message}</pre>`;
+            }
+        }
+
+        // Auto-check auth status on load
+        window.onload = checkAuthStatus;
+    </script>
+</body>
+</html>

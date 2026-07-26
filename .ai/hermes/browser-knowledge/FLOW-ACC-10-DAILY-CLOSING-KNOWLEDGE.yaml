@@ -1,0 +1,319 @@
+# Browser Knowledge File — FLOW-ACC-10 Daily Closing (POS Admin)
+# Source of truth for this file: .ai/hermes/accounts/FLOW-ACC-10-DAILY-CLOSING.md
+# Generated for Hermes Browser Testing. Do NOT infer behavior beyond the canonical doc.
+
+module:
+  name: FLOW-ACC-10 Daily Closing
+  domain: Cashbox Closing / Daily Close Report / Z Report / Cash Reconciliation
+  summary: >
+    Daily Closing is NOT a standalone aggregate. It is a thin operational command layer on the
+    Cashbox entity (open/close/count) plus a read-only CQRS reporting projection (Daily Close
+    Z-Report). All money truth lives in the Treasury / General Ledger. Cashbox owns drawer state only.
+  surfaces:
+    - name: Cashbox Open/Close
+      controller: CashboxController
+      file: PointOfSale.API/Controllers/CashboxController.cs
+    - name: Daily Close Z-Report
+      controller: ReportsController
+      file: PointOfSale.API/Controllers/ReportsController.cs
+      endpoint: GET /api/reports/daily-close
+    - name: Open/Close Modal (UI)
+      file: PointOfSale.Web/src/components/OpenCloseCashboxModal.jsx
+    - name: Z-Report Page (UI)
+      file: PointOfSale.Web/src/pages/DailyCloseReport.jsx
+
+business_rules:
+  - Daily Closing is NOT an aggregate.
+  - Cashbox owns drawer state only.
+  - Treasury owns balances.
+  - General Ledger is the source of truth.
+  - Cashbox.CurrentBalance is obsolete.
+  - Cashbox.ExpectedBalance is obsolete.
+  - Expected Cash is derived from the Ledger.
+  - Actual Cash is operator input.
+  - Cash Difference is audit only.
+  - Cash Difference never changes balances.
+  - Cash Difference never creates journals.
+  - Closing never posts Journal Entries.
+  - Closing never updates the General Ledger.
+  - Daily Close Report is read-only.
+  - Daily Close Report is generated on demand.
+  - Daily Close Report reads live Ledger.
+  - Cashbox Closing changes only Cashbox state.
+  - Cashbox Closing records audit.
+  - Closing does not use the Accounting Outbox.
+  - Cashbox opening float MUST equal zero; opening cash arrives via Treasury transfer.
+  - Cash-in/cash-out/expense require Cash payment method only.
+  - Cash-out/expense require sufficient cashbox ledger balance.
+  - Cash-in/cash-out/expense require amount greater than zero.
+  - Open rejects an already-open cashbox.
+  - Close requires the cashbox to be open.
+  - Delete requires the cashbox to be closed.
+  - Multiple cashboxes may be open simultaneously (no single-open-shift constraint).
+
+preconditions:
+  - Authenticated user ([Authorize] on all cashbox endpoints).
+  - Authorized user: open / cash-in / expense / opening-balance require roles Owner,Admin.
+  - Authorized user: close requires only [Authorize] (no extra role).
+  - Active Tenant (RequiredTenantId enforced everywhere).
+  - Existing Cashbox (404 if not found).
+  - Cashbox must be open before closing.
+  - Valid Actual Cash value (client validates >= 0; server accepts the numeric value as-is).
+  - Opening float equals zero (OPENING_FLOAT_TRANSFER_REQUIRED if non-zero).
+  - Treasury transfer used for opening cash (cashboxes must not create cash).
+  - Cash payment method only for cash-in / cash-out / expense.
+  - Sufficient funds for cash-out / expense.
+  - Amount greater than zero for cash-in / cash-out / expense.
+  - Cashbox must be closed before soft-delete.
+
+user_journeys:
+  - name: Open Cashbox
+    trigger: OpenCloseCashboxModal (mode=open) -> POST /cashbox/{id}/open
+    steps:
+      - Operator opens the cashbox modal in open mode.
+      - Operator enters opening balance (must be zero).
+      - Optional denomination breakdown helper computes total.
+      - Submit POST /cashbox/{id}/open { openingBalance, notes }.
+      - Cashbox becomes active; OpenedAt and OpenedBy set.
+    notes: If OpeningBalance > 0 a Treasury CashIn journal is posted from CashFloatReserve.
+  - name: Close Cashbox
+    trigger: OpenCloseCashboxModal (mode=close) -> POST /cashbox/{id}/close
+    steps:
+      - Operator opens the cashbox modal in close mode.
+      - UI displays Expected Balance (ledger-derived).
+      - Operator enters Actual Cash (physical count; optional denomination breakdown).
+      - UI computes difference = Actual - Expected and shows over/short.
+      - Submit POST /cashbox/{id}/close { actualCash, notes }.
+      - Cashbox deactivated; audit record created with difference.
+  - name: Cash Count
+    trigger: Close flow Actual Cash entry
+    steps:
+      - Operator counts physical cash.
+      - UI denomination helper (100/50/20/10/5/1 + coins) sums to total.
+      - Final numeric actualCash submitted to server.
+    notes: Server does not re-validate denominations; accepts the numeric actualCash.
+  - name: Cash Difference
+    trigger: Close flow result
+    steps:
+      - Difference = ActualCash - ExpectedCash computed server-side.
+      - Positive -> overage (cashOver); Negative -> shortage (cashShort); Zero -> balanced.
+      - Surfaced in UI message and persisted in audit afterData only.
+  - name: Daily Close Report
+    trigger: DailyCloseReport page -> GET /api/reports/daily-close?date=YYYY-MM-DD
+    steps:
+      - Page loads with a date input (defaults to today).
+      - On date change, fetches the report.
+      - Report aggregates ledger entries for all 1010-* cashbox accounts for the day.
+  - name: Print Z Report
+    trigger: DailyCloseReport page print button
+    steps:
+      - Click print button.
+      - useReactToPrint renders the printable Z-Report section.
+  - name: Cashbox Summary
+    trigger: GET /api/cashbox/{id}/summary
+    steps:
+      - Returns period summary: CurrentBalance (ledger), OpeningBalance, TotalCashIn/Out, NetChange, TransactionsByType.
+  - name: Cashbox Transactions
+    trigger: GET /api/cashbox/{id}/transactions
+    steps:
+      - Paginated ledger-derived movements for the cashbox account.
+      - Filters by date range, transaction type, payment method.
+
+expected_runtime_after_success:
+  open_cashbox:
+    - Cashbox activated (IsActive = true).
+    - OpenedAt populated.
+    - OpenedBy populated with current user.
+    - Treasury transfer performed when applicable (OpeningBalance > 0 posts a CashIn journal).
+    - Audit record created (CashboxOpen).
+  close_cashbox:
+    - Expected Cash loaded from Ledger.
+    - Actual Cash accepted from operator.
+    - Difference calculated (Actual - Expected).
+    - Cashbox deactivated (IsActive = false; OpenedAt/OpenedBy cleared).
+    - Audit created (CashboxClose) carrying difference and discrepancyDetected.
+    - Ledger unchanged (no journal posted for the difference).
+  daily_close_report:
+    - Report generated on demand.
+    - Opening Balance calculated from prior ledger BalanceAfter.
+    - Closing Balance (ExpectedClosingCash) calculated from ledger BalanceAfter.
+    - Cash Sales calculated.
+    - Card Sales calculated.
+    - Manual Cash Movements calculated.
+    - Ledger balances displayed.
+  print_z_report:
+    - Print action available.
+    - Printable Z-Report rendered with signature lines.
+
+browser_assertions:
+  cashbox:
+    - Cashbox opens successfully.
+    - Cashbox closes successfully.
+    - Active status changes correctly (open -> true, close -> false).
+  cash_count:
+    - Expected Cash displayed (ledger-derived).
+    - Actual Cash displayed (operator input).
+    - Difference displayed (expected vs actual).
+  difference:
+    - Positive difference shown as overage (cashOver).
+    - Negative difference shown as shortage (cashShort).
+    - Zero difference shown as balanced.
+  daily_close_report:
+    - Report loads.
+    - Opening balance visible.
+    - Closing balance visible.
+    - Cash sales visible.
+    - Card sales visible.
+    - Total transactions visible.
+    - Movements visible.
+  print:
+    - Print action available.
+    - Printable Z-Report rendered.
+
+negative_tests:
+  implementation_backed:
+    - Close a closed cashbox -> HTTP 400 "Cashbox is not open".
+    - Open an already-active cashbox -> HTTP 400 "Cashbox is already open".
+    - Open with non-zero opening float -> HTTP 400 code OPENING_FLOAT_TRANSFER_REQUIRED.
+    - Close with invalid/negative cash amount -> rejected (UI validates < 0; server should reject negative).
+    - Cash-in/cash-out with non-Cash payment method -> HTTP 400.
+    - Cash-out exceeding balance -> HTTP 400 "Insufficient cash in cashbox".
+    - Expense exceeding balance -> HTTP 400 "Insufficient cash in cashbox".
+    - Delete an active cashbox -> HTTP 400 "Cannot delete an active cashbox".
+    - Unauthorized request -> 401 "Invalid user identity" / 403 role failure.
+    - Non-existent cashbox -> 404 "Cashbox not found".
+  implementation_gaps:
+    - No Business Day entity (day is a query window only).
+    - No Shift concept.
+    - No Close Shift.
+    - No Treasury Lock.
+    - No Business Day Lock.
+    - No Cashbox Lock.
+    - No Approval workflow.
+    - No Reopen endpoint (re-open only via open again).
+    - No Journal generated on Close.
+    - No Accounting Outbox message on Close.
+    - No Cash Difference adjustment (difference is audit-only, never corrected in ledger).
+    - No Daily Closing aggregate.
+    - No Closing entity.
+    - No Closing report entity (DailyCloseReportDto is a projection).
+    - No Multi-Currency per cashbox.
+    - No export endpoint (only print supported for Z-Report).
+
+critical_invariants:
+  - Treasury owns balances.
+  - General Ledger is the source of truth.
+  - Cashbox never owns balances.
+  - Cashbox.CurrentBalance is obsolete.
+  - Cashbox.ExpectedBalance is obsolete.
+  - Closing never posts journals.
+  - Closing never changes the ledger.
+  - Cash Difference is audit only.
+  - Expected Cash always comes from the Ledger.
+  - Daily Close Report is read-only.
+  - Closing only changes Cashbox state.
+  - Audit always generated for cashbox operations.
+
+browser_test_scenarios:
+  - name: Open Cashbox
+    type: positive
+    flow: Open Cashbox
+  - name: Open Active Cashbox
+    type: negative
+    flow: Open Cashbox (already open) -> expect 400
+  - name: Close Cashbox
+    type: positive
+    flow: Close Cashbox
+  - name: Close Closed Cashbox
+    type: negative
+    flow: Close Cashbox (already closed) -> expect 400
+  - name: Exact Cash Count
+    type: positive
+    flow: Close with Actual == Expected -> difference 0
+  - name: Cash Shortage
+    type: positive
+    flow: Close with Actual < Expected -> negative difference (cashShort)
+  - name: Cash Overage
+    type: positive
+    flow: Close with Actual > Expected -> positive difference (cashOver)
+  - name: Daily Close Report
+    type: positive
+    flow: Daily Close Report
+  - name: Print Z Report
+    type: positive
+    flow: Print Z Report
+  - name: Cashbox Transactions
+    type: positive
+    flow: Cashbox Transactions (paginated)
+  - name: Cashbox Summary
+    type: positive
+    flow: Cashbox Summary
+
+runtime_validation:
+  - Cashbox state updated (IsActive toggled).
+  - OpenedBy populated after open.
+  - OpenedAt populated after open.
+  - Cashbox deactivated after close (OpenedAt/OpenedBy cleared).
+  - Expected Cash loaded from Ledger at close.
+  - Difference calculated correctly (Actual - Expected).
+  - Audit created for open and close.
+  - Ledger unchanged after close.
+  - No Journal created on Close.
+  - No Accounting Outbox message on Close.
+  - Daily Close Report refreshed from live Ledger.
+
+success_definition:
+  hermes_considers_daily_closing_successful_only_if:
+    - Cashbox opens successfully.
+    - Cashbox closes successfully.
+    - Expected Cash matches Ledger.
+    - Difference calculated correctly.
+    - Cashbox state updated.
+    - Audit created.
+    - Ledger remains unchanged after close.
+    - No Journal generated.
+    - No Accounting Outbox message.
+    - Daily Close Report loads successfully.
+    - Z-Report printable.
+    - Critical invariants remain intact.
+
+runtime_models:
+  cashbox_open:
+    - Browser
+    - CashboxController
+    - Cashbox Aggregate
+    - Cashbox Active
+    - Audit
+    - Browser
+  cashbox_close:
+    - Browser
+    - CashboxController
+    - Treasury Read Service
+    - Ledger Balance
+    - Expected Cash
+    - Difference Calculation
+    - Cashbox State Update
+    - Audit
+    - Browser
+  daily_close_report:
+    - Browser
+    - ReportsController
+    - LedgerEntries
+    - Daily Close Projection
+    - DailyCloseReportDto
+    - Browser
+  print:
+    - Browser
+    - DailyCloseReport
+    - Printable Z Report
+
+modeling_directives:
+  - Never treat Cashbox as the financial source of truth.
+  - Never treat Cash Difference as a financial adjustment.
+  - Never treat Closing as a Journal Posting.
+  - Never treat Daily Closing as a Financial Posting workflow.
+  - Always treat General Ledger as the financial truth.
+  - Always treat Daily Close Report as a CQRS read projection.
+  - Always treat Cashbox Closing as an operational workflow.
+  - Always treat Cash Difference as an audit record only.
+  - Do NOT generate browser tests for capabilities marked NOT IMPLEMENTED.

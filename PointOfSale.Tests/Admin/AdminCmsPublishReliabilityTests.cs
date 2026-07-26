@@ -1,0 +1,179 @@
+using System.Collections.Concurrent;
+using System.Text.Json.Nodes;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using PointOfSale.API.Services.Admin;
+using PointOfSale.API.Services.Cms;
+using PointOfSale.Core.Entities;
+using PointOfSale.Core.Events;
+using PointOfSale.Core.Interfaces;
+using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Redis.Services;
+using PointOfSale.Tests.Infrastructure;
+
+namespace PointOfSale.Tests.Admin;
+
+public sealed class AdminCmsPublishReliabilityTests
+{
+    private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
+
+    [Fact]
+    public async Task PublishNavigationAsync_WhenOutboxPublishFails_DoesNotPersistLiveNavigationMutation()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId);
+        seedContext.StoreConfigs.Add(new StoreConfig
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            StoreName = "Reliable Navigation Store",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            CustomizationJson = BuildNavigationCustomizationJson(),
+            LiveVersion = 4,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
+        await seedContext.SaveChangesAsync();
+
+        await using var testContext = CreateDbContext(databaseName, tenantId);
+        var publisher = new Mock<IEventPublisher>();
+        publisher
+            .Setup(endpoint => endpoint.PublishAsync(It.IsAny<NavigationPublishedEvent>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("outbox unavailable"));
+
+        var service = new AdminCmsService(
+            testContext,
+            Mock.Of<ICmsPageService>(),
+            Mock.Of<ICmsPageReadService>(),
+            Mock.Of<ICmsPagePreviewTokenService>(),
+            Mock.Of<IStoreConfigCacheService>(),
+            publisher.Object,
+            NullLogger<AdminCmsService>.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.PublishNavigationAsync(
+            tenantId,
+            0,
+            "trace-navigation-publish",
+            CancellationToken.None));
+
+        await using var verifyContext = CreateDbContext(databaseName, tenantId);
+        var config = await verifyContext.StoreConfigs.SingleAsync(x => x.TenantId == tenantId);
+        var root = JsonNode.Parse(config.CustomizationJson)!.AsObject();
+
+        Assert.Equal("Live Home", root["navigation"]?["live"]?["header"]?["links"]?[0]?["label"]?.GetValue<string>());
+        Assert.Equal("Draft Home", root["navigation"]?["draft"]?["header"]?["links"]?[0]?["label"]?.GetValue<string>());
+        Assert.Equal(4, config.LiveVersion);
+    }
+
+    [Fact]
+    public async Task PublishNavigationAsync_AppendsVersionSnapshotForRollbackAuthority()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId);
+        seedContext.StoreConfigs.Add(new StoreConfig
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            StoreName = "Versioned Navigation Store",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            ThemeLivePresetKey = "default",
+            CustomizationJson = BuildNavigationCustomizationJson(),
+            VersionsJson = "[]",
+            LiveVersion = 0,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
+        await seedContext.SaveChangesAsync();
+
+        await using var testContext = CreateDbContext(databaseName, tenantId);
+        var service = new AdminCmsService(
+            testContext,
+            Mock.Of<ICmsPageService>(),
+            Mock.Of<ICmsPageReadService>(),
+            Mock.Of<ICmsPagePreviewTokenService>(),
+            Mock.Of<IStoreConfigCacheService>(),
+            Mock.Of<IEventPublisher>(),
+            NullLogger<AdminCmsService>.Instance);
+
+        await service.PublishNavigationAsync(
+            tenantId,
+            0,
+            "trace-navigation-version",
+            CancellationToken.None);
+
+        await using var verifyContext = CreateDbContext(databaseName, tenantId);
+        var config = await verifyContext.StoreConfigs.SingleAsync(x => x.TenantId == tenantId);
+        var versions = JsonNode.Parse(config.VersionsJson)!.AsArray();
+        var snapshot = versions.Single()!.AsObject();
+        var snapshotRoot = JsonNode.Parse(snapshot["CustomizationJson"]!.GetValue<string>())!.AsObject();
+
+        Assert.Equal(1, config.LiveVersion);
+        Assert.Equal(1, snapshot["Version"]!.GetValue<int>());
+        Assert.Equal("Navigation Published", snapshot["ChangeType"]!.GetValue<string>());
+        Assert.Equal("Draft Home", snapshotRoot["navigation"]?["live"]?["header"]?["links"]?[0]?["label"]?.GetValue<string>());
+    }
+
+    private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
+    {
+        var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(databaseName, databaseRoot)
+            .Options;
+
+        return new ApplicationDbContext(options, new TestTenantContext(tenantId));
+    }
+
+    private static string BuildNavigationCustomizationJson()
+    {
+        return new JsonObject
+        {
+            ["navigation"] = new JsonObject
+            {
+                ["draft"] = new JsonObject
+                {
+                    ["header"] = new JsonObject
+                    {
+                        ["links"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["label"] = "Draft Home",
+                                ["type"] = "internal",
+                                ["path"] = "/"
+                            }
+                        }
+                    },
+                    ["footer"] = new JsonObject
+                    {
+                        ["links"] = new JsonArray()
+                    }
+                },
+                ["live"] = new JsonObject
+                {
+                    ["header"] = new JsonObject
+                    {
+                        ["links"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["label"] = "Live Home",
+                                ["type"] = "internal",
+                                ["path"] = "/"
+                            }
+                        }
+                    },
+                    ["footer"] = new JsonObject
+                    {
+                        ["links"] = new JsonArray()
+                    }
+                }
+            }
+        }.ToJsonString();
+    }
+}

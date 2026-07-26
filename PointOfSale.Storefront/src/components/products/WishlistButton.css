@@ -1,0 +1,140 @@
+/**
+ * WishlistButton Styles
+ * Phase 10.3.6 - Wishlist (Production-grade)
+ * 
+ * Styles for the wishlist heart button component.
+ */
+
+.wishlist-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--color-muted, #6b7280);
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.wishlist-btn:hover {
+    color: var(--color-danger, #ef4444);
+    transform: scale(1.1);
+}
+
+.wishlist-btn:focus-visible {
+    outline: 2px solid var(--color-primary, #3b82f6);
+    outline-offset: 2px;
+    border-radius: 50%;
+}
+
+.wishlist-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Active state (in wishlist) */
+.wishlist-btn--active {
+    color: var(--color-danger, #ef4444);
+}
+
+.wishlist-btn--active:hover {
+    color: var(--color-danger-dark, #dc2626);
+}
+
+/* Animation on toggle */
+.wishlist-btn--animating .wishlist-btn__icon {
+    animation: wishlist-pop 0.3s ease;
+}
+
+@keyframes wishlist-pop {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.3);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+/* Size variants */
+.wishlist-btn--small .wishlist-btn__icon {
+    width: 1rem;
+    height: 1rem;
+}
+
+.wishlist-btn--medium .wishlist-btn__icon {
+    width: 1.5rem;
+    height: 1.5rem;
+}
+
+.wishlist-btn--large .wishlist-btn__icon {
+    width: 2rem;
+    height: 2rem;
+}
+
+/* Button variant (with text) */
+.wishlist-btn--button {
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-md, 0.5rem);
+    background: var(--color-surface, #ffffff);
+    border: 1px solid var(--color-border, #e5e7eb);
+}
+
+.wishlist-btn--button:hover {
+    background: var(--color-surface-hover, #f9fafb);
+    transform: none;
+}
+
+.wishlist-btn--button.wishlist-btn--active {
+    background: var(--color-danger-light, #fef2f2);
+    border-color: var(--color-danger, #ef4444);
+}
+
+.wishlist-btn__text {
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+/* Loading spinner */
+.wishlist-btn__spinner {
+    position: absolute;
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid transparent;
+    border-top-color: currentColor;
+    border-radius: 50%;
+    animation: wishlist-spin 0.6s linear infinite;
+}
+
+@keyframes wishlist-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.wishlist-btn--loading .wishlist-btn__icon {
+    opacity: 0.3;
+}
+
+/* Icon only variant - circular hover background */
+.wishlist-btn--icon {
+    border-radius: 50%;
+    padding: 0.5rem;
+}
+
+.wishlist-btn--icon:hover {
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* RTL Support */
+[dir="rtl"] .wishlist-btn--button {
+    flex-direction: row-reverse;
+}

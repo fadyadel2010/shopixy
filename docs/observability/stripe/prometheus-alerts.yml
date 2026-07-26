@@ -1,0 +1,72 @@
+groups:
+  - name: stripe-sandbox-operational-readiness
+    rules:
+      - alert: StripeProviderUnavailable
+        expr: sum(rate(stripe_provider_availability_total{available="false"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          provider: stripe
+        annotations:
+          summary: Stripe provider availability failures detected
+          description: Stripe provider calls are failing for one or more tenant buckets.
+
+      - alert: StripeWebhookFailuresHigh
+        expr: sum(rate(stripe_webhook_failures_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: critical
+          provider: stripe
+        annotations:
+          summary: Stripe webhook failures are elevated
+          description: Signed webhook processing is failing above the sandbox readiness threshold.
+
+      - alert: StripeWebhookReplaySpike
+        expr: sum(rate(stripe_webhook_replay_total[5m])) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          provider: stripe
+        annotations:
+          summary: Stripe webhook replay or duplicate spike
+          description: Replay protection is preventing duplicate Stripe webhook processing at an elevated rate.
+
+      - alert: StripeProviderRetriesHigh
+        expr: sum(rate(stripe_provider_retries_total[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+          provider: stripe
+        annotations:
+          summary: Stripe provider retry pressure is elevated
+          description: Stripe retryable operations are exceeding the sandbox readiness baseline.
+
+      - alert: StripePaymentLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(stripe_payment_duration_ms_bucket[10m])) by (le, operation)) > 2000
+        for: 10m
+        labels:
+          severity: warning
+          provider: stripe
+        annotations:
+          summary: Stripe payment creation latency p95 is high
+          description: Stripe payment operation p95 latency is above 2000 ms.
+
+      - alert: StripeWebhookLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(stripe_webhook_processing_ms_bucket[10m])) by (le, event_type)) > 1000
+        for: 10m
+        labels:
+          severity: warning
+          provider: stripe
+        annotations:
+          summary: Stripe webhook processing latency p95 is high
+          description: Stripe webhook p95 processing latency is above 1000 ms.
+
+      - alert: StripeRefundLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(stripe_refund_latency_ms_bucket[10m])) by (le, source)) > 2000
+        for: 10m
+        labels:
+          severity: warning
+          provider: stripe
+        annotations:
+          summary: Stripe refund reconciliation latency p95 is high
+          description: Stripe refund reconciliation p95 latency is above 2000 ms.

@@ -1,0 +1,17 @@
+export { CartPage } from "./CartPage";
+export { CheckoutPage } from "./CheckoutPage";
+export { CustomerDashboardPage } from "./CustomerDashboardPage";
+export { CustomerForgotPasswordPage } from "./CustomerForgotPasswordPage";
+export { CustomerLoginPage } from "./CustomerLoginPage";
+export { CustomerOrderDetailsPage } from "./CustomerOrderDetailsPage";
+export { CustomerOrdersPage } from "./CustomerOrdersPage";
+export { CustomerRefundsPage } from "./CustomerRefundsPage";
+export { CustomerRegisterPage } from "./CustomerRegisterPage";
+export { CustomerResetPasswordPage } from "./CustomerResetPasswordPage";
+export { CustomerSettingsPage } from "./CustomerSettingsPage";
+export { CustomerVerifyEmailPage } from "./CustomerVerifyEmailPage";
+export { HomePage } from "./HomePage";
+export { OrderPaymentRecoveryPage } from "./OrderPaymentRecoveryPage";
+export { MarketplaceContentPage } from "./MarketplaceContentPage";
+export { ProductDetailsPage } from "./ProductDetailsPage";
+export { ProductsPage } from "./ProductsPage";

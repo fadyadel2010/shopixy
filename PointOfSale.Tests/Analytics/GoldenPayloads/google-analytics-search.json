@@ -1,0 +1,13 @@
+{
+  "client_id": "checkout-session-123",
+  "timestamp_micros": 1784723696000000,
+  "non_personalized_ads": true,
+  "events": [
+    {
+      "name": "search",
+      "params": {
+        "search_term": "red shoes"
+      }
+    }
+  ]
+}

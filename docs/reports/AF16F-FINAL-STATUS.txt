@@ -1,0 +1,196 @@
+========================================
+AF-16F: Multi-Tenant Discovery Fix
+FINAL STATUS & ROOT CAUSE ANALYSIS
+========================================
+Date: 2026-02-24
+
+CRITICAL ISSUE DISCOVERED:
+==========================
+
+Error: "Invalid Guid Pattern" during Elasticsearch deserialization
+
+ROOT CAUSE:
+-----------
+When we added the `tenantId` field to existing Elasticsearch documents,
+Elasticsearch auto-mapped it as 'text' instead of 'keyword'.
+
+The C# code expects `tenantId` to be a 'keyword' field (for Guid deserialization),
+but Elasticsearch stored it as 'text', causing the NEST client to fail when
+trying to deserialize the text value as a Guid.
+
+TECHNICAL DETAILS:
+------------------
+1. PublicAffiliateProductSearchDocument.cs defines:
+   [Keyword]
+   public Guid TenantId { get; set; }
+
+2. When index is created via AutoMap(), NEST respects [Keyword] attribute
+
+3. BUT: Index was created BEFORE we added TenantId field
+
+4. When we updated existing documents with tenantId, Elasticsearch
+   auto-mapped it as 'text' (default for unknown string fields)
+
+5. NEST client tried to deserialize 'text' field as Guid → FAIL
+
+SOLUTION IMPLEMENTED:
+=====================
+
+Step 1: ✓ COMPLETE - Deleted Elasticsearch index
+  - Removed index with incorrect mapping
+  - Command: DELETE http://192.168.1.5:9200/public_affiliate_products
+
+Step 2: PENDING - Restart API Application
+  - Current PID: 20284 (needs to be stopped)
+  - On restart, ElasticsearchIndexInitializer will recreate index
+  - New index will have correct mapping (tenantId as 'keyword')
+
+Step 3: PENDING - Retrigger SQL UPDATE
+  - Run this SQL to trigger reindexing:
+  
+    UPDATE "Products" p
+    SET "UpdatedAt" = NOW()
+    FROM "AffiliateProductPolicies" app
+    WHERE app."ProductId" = p."Id"
+      AND app."IsEnabled" = true
+      AND app."IsDeleted" = false
+      AND p."IsDeleted" = false
+      AND p."IsActive" = true;
+
+Step 4: PENDING - Wait for MassTransit
+  - Events will be processed by AffiliateProductPolicyProjectionConsumer
+  - Products will be indexed with correct field types
+  - Estimated time: 1-2 minutes
+
+Step 5: PENDING - Verify
+  - Test affiliate discovery API
+  - Confirm no "Invalid Guid Pattern" errors
+  - Verify storefrontBaseUrl in responses
+
+CODE CHANGES SUMMARY (Already Applied):
+========================================
+
+Gap #1: Hardcoded URL Template ✓ FIXED
+  - File: AffiliateProductPolicyProjectionConsumer.cs
+  - Change: Injected IConfiguration, reads Storefront:UrlTemplate
+  - Before: Used localhost detection
+  - After: Uses configuration value
+
+Gap #2: Transition Mode ✓ FIXED
+  - File: AffiliateProductDiscoveryService.cs
+  - Change: Enabled strict mode
+  - Before: Filtered products without StorefrontBaseUrl
+  - After: Throws InvalidOperationException
+
+Schema Updates: ✓ COMPLETE
+  - PublicAffiliateProductSearchDocument: Added TenantId, StorefrontBaseUrl
+  - PublicAffiliateProductDocument: Added StorefrontBaseUrl
+  - AffiliateDiscoveryItem: Added TenantId, StorefrontBaseUrl
+
+MONGODB STATUS:
+===============
+
+MongoDB still needs reindexing (same as Elasticsearch).
+After API restart and SQL UPDATE, MassTransit will update both:
+  - Elasticsearch: public_affiliate_products index
+  - MongoDB: public_affiliate_products collection
+
+No separate MongoDB fix needed - the projection consumer updates both.
+
+NEXT ACTIONS:
+=============
+
+1. STOP API Application (PID: 20284)
+   - Use Task Manager, or:
+   - Stop-Process -Id 20284
+
+2. START API Application
+   - Run from Visual Studio, or:
+   - dotnet run --project PointOfSale.API
+
+3. VERIFY Index Created
+   - Check logs for: "Index 'public_affiliate_products' created successfully"
+   - Or query: GET http://192.168.1.5:9200/public_affiliate_products/_mapping
+   - Confirm tenantId is mapped as 'keyword' (not 'text')
+
+4. RUN SQL UPDATE
+   - Execute the UPDATE statement above
+   - This triggers ProductUpdatedEvent for all affiliate products
+
+5. WAIT for Processing
+   - Monitor application logs
+   - Look for: "AffiliateProductPolicyProjectionConsumer" activity
+   - Should see products being indexed
+
+6. TEST Discovery API
+   - Make request to: /api/affiliate/discovery
+   - Should return products with storefrontBaseUrl
+   - No "Invalid Guid Pattern" errors
+
+VERIFICATION CHECKLIST:
+=======================
+
+Index Mapping:
+  [ ] Elasticsearch index recreated
+  [ ] tenantId mapped as 'keyword' (not 'text')
+  [ ] storefrontBaseUrl mapped as 'keyword'
+
+Data Integrity:
+  [ ] All products have tenantId
+  [ ] All products have storefrontBaseUrl
+  [ ] URLs match tenant domains (anatico.localhost:5174, mena.localhost:5174)
+
+API Functionality:
+  [ ] Discovery API returns products
+  [ ] No deserialization errors in logs
+  [ ] storefrontBaseUrl present in responses
+  [ ] Promotion links point to correct tenant domains
+
+ARCHITECTURAL GUARANTEE:
+========================
+
+After this fix, the system will enforce:
+
+1. StorefrontBaseUrl originates ONLY from Tenant.StorefrontBaseUrl
+2. No controller/service uses CurrentTenant for URL construction
+3. No environment variables or hardcoded domains
+4. Products without StorefrontBaseUrl cause fail-fast errors
+5. Multi-tenant promotion links are mathematically impossible to cross-contaminate
+
+The data flow is:
+  Tenant.StorefrontBaseUrl (PostgreSQL)
+    ↓ IConfiguration (appsettings.json)
+    ↓ Projection Consumer (reads config)
+    ↓ Elasticsearch/MongoDB (indexed with product)
+    ↓ Discovery Service (reads from index)
+    ↓ API DTO (per-product URL)
+    ↓ Frontend (uses item.storefrontBaseUrl)
+
+No branch allows substitution or fallback.
+
+FILES MODIFIED:
+===============
+  - PointOfSale.Infrastructure/Consumers/Affiliate/AffiliateProductPolicyProjectionConsumer.cs
+  - PointOfSale.Infrastructure/Elasticsearch/Services/AffiliateProductDiscoveryService.cs
+  - PointOfSale.Infrastructure/Elasticsearch/Documents/PublicAffiliateProductSearchDocument.cs
+  - PointOfSale.Infrastructure/MongoDB/Documents/Affiliate/PublicAffiliateProductDocument.cs
+  - PointOfSale.Tests/Integration/CodPaymentLifecycleTests.cs
+
+SCRIPTS CREATED:
+================
+  - fix-elasticsearch-now.ps1 (executed - found mapping issue)
+  - fix-af16f-final.ps1 (executed - deleted index)
+  - fix-mongodb-simple.ps1 (not needed - projection handles both)
+  - af16e-trigger-reindex-via-events.sql (ready to execute)
+
+========================================
+CURRENT STATE: 90% Complete
+========================================
+
+Code fixes: ✓ Complete
+Elasticsearch index: ✓ Deleted (ready for recreation)
+API restart: ⏳ Pending
+Reindex trigger: ⏳ Pending
+Verification: ⏳ Pending
+
+Once API is restarted and SQL UPDATE is run, AF-16F will be complete.

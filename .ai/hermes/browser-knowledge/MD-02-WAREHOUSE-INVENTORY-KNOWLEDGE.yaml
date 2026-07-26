@@ -1,0 +1,138 @@
+module:
+  name: Warehouse & Inventory
+  pages:
+    - Warehouses
+    - WarehouseOpeningStock
+  business_entity: Warehouse
+
+business_rules:
+  - One stock row per (TenantId, VariantId, WarehouseId).
+  - ProductVariantStock.Quantity >= 0.
+  - ProductVariantStock.ReservedQuantity >= 0.
+  - ProductVariantStock.DamagedQuantity >= 0.
+  - ProductVariantStock.Quantity >= ReservedQuantity.
+  - AvailableQuantity is derived as Quantity - ReservedQuantity and is never client-submitted.
+  - Inventory mutation requires an explicit relational transaction.
+  - Stock mutation requires current, active, same-tenant Warehouse, Variant, and Product lineage.
+  - Opening stock is one-time: rejected if any prior inventory authority exists for the variant+warehouse.
+  - Opening stock quantities must be positive.
+  - Each variant may appear only once in an opening stock request.
+  - Transfer quantity must be positive.
+  - Transfer source and target warehouses must be different.
+  - Transfer source and target warehouses must both be active.
+  - Adjustment requires Owner, Admin, or Manager role.
+  - Transfer create/approve/reject/complete require Owner, Admin, or Manager role.
+  - StockMovements are append-only and cannot be edited or deleted.
+  - Reservation cannot exceed available quantity.
+  - Reservation invariant: ReservedQuantity <= Quantity on the stock row.
+  - TenantId is required on stock, outbox, and reservation records.
+  - Cross-tenant warehouse, product, variant, stock, movement, or reservation identifiers are rejected.
+  - Warehouse has no DELETE endpoint; removal is via IsActive=false or soft-delete.
+  - Inactive warehouses cannot receive opening stock, adjustment, reservation, or transfer mutation.
+
+preconditions:
+  - Valid Tenant context (TenantId resolved).
+  - Warehouse exists and is active.
+  - Product Variant exists, is active, not deleted.
+  - Product exists, is active, not deleted.
+  - Variant is current inventory lineage owner (not superseded, not merged).
+  - Inventory (ProductVariantStock) row exists or is creatable for the variant+warehouse.
+  - For transfer: target warehouse must exist and be active.
+  - For opening stock: no prior inventory authority for the variant+warehouse.
+  - For adjustment/transfer: caller has Owner, Admin, or Manager role.
+
+user_journey:
+  - Create Warehouse: POST api/warehouses (Owner/Admin/Manager), set TenantId, Name, optional Code/Address/Phone, IsActive, IsDefault.
+  - Edit Warehouse: PUT api/warehouses/{id}, partial update of Name/Code/Address/Phone/IsActive/IsDefault.
+  - Opening Stock: GET then POST api/warehouses/opening-stock with variant quantities; positive, one-time.
+  - Adjust Stock: POST api/warehouses/adjust-stock (Owner/Admin/Manager); idempotent key.
+  - Transfer Stock: POST api/warehouses/transfer-stock or structured StockTransfers lifecycle (Create -> Approve -> Complete).
+  - View Inventory: GET api/warehouses/{id}/stock shows variant-centric ProductVariantStock levels.
+  - Reserve Stock: checkout reserves available quantity per variant across warehouses.
+  - Release Reservation: cancellation/expiry releases reserved quantity.
+  - Complete Sale: payment success commits reservation, decrements Quantity and ReservedQuantity.
+  - View Movements: GET api/admin/inventory/movements audit log.
+
+expected_runtime_after_success:
+  - Warehouse created and appears in active warehouse list.
+  - Opening stock stored as ProductVariantStock.Quantity and a StockMovement with IsOpeningBalance=true.
+  - Inventory (available/quantity) updated in ProductVariantStock.
+  - Adjustment recorded as StockMovement and quantity changed.
+  - Transfer completed: source decremented, target incremented, two movements (TransferOut, TransferIn) written.
+  - Reservation created with ReservedQuantity allocated on stock.
+  - Reserved quantity updated (increase on reserve, decrease on release/commit).
+  - Stock movement recorded for every mutation (append-only).
+  - MongoDB read-only projection reflects new stock after outbox dispatch.
+  - Transfer state moves Pending -> Approved -> Completed.
+
+browser_assertions:
+  - Warehouse appears in the warehouse list after creation.
+  - Only active warehouses are listed in the warehouse selector.
+  - Opening stock value is visible for the variant in the warehouse.
+  - Available quantity displayed equals Quantity - ReservedQuantity.
+  - Reserved quantity is displayed and updates after reservation/release.
+  - Warehouse status (active/inactive) is displayed.
+  - Stock adjustment produces a new movement entry and updates quantity.
+  - Transfer completion shows source decreased and target increased.
+  - Transfer completes and status shows Completed.
+  - Inventory totals are correct per variant per warehouse.
+  - Re-submitting opening stock for an already-opened variant is rejected (one-time).
+  - Cross-tenant warehouse/variant is not accessible.
+
+negative_tests:
+  - Duplicate warehouse name for same tenant: allowed by code (no unique-name constraint) -> verify no false guard; focus on tenant isolation instead.
+  - Inactive warehouse: cannot receive opening stock, adjustment, reservation, or transfer.
+  - Negative adjustment that would make Quantity < 0: rejected.
+  - Opening stock twice for same variant+warehouse: rejected (one-time).
+  - Opening stock with non-positive quantity: rejected.
+  - Opening stock with duplicate variant in request: rejected.
+  - Transfer with non-positive quantity: rejected.
+  - Transfer to same warehouse: rejected.
+  - Transfer with inactive source or target warehouse: rejected.
+  - Transfer exceeding available quantity: rejected at create and at complete.
+  - Reservation exceeding available quantity: checkout rejects (out of stock).
+  - Cross-tenant warehouse/variant identifier: mutation rejected by lineage guard.
+  - Edit/delete of StockMovement: not possible (append-only).
+  - Warehouse hard delete via API: not available (only deactivate).
+
+critical_invariants:
+  - Stock never negative (Quantity >= 0, ReservedQuantity >= 0, DamagedQuantity >= 0).
+  - ReservedQuantity <= Quantity at all times.
+  - Available never exceeds physical Quantity.
+  - Warehouse identity never owns inventory quantity.
+  - Product never owns stock; only variant+warehouse holds stock.
+  - ProductVariantStock is the inventory authority (not WarehouseStock).
+  - Opening stock is one-time per variant+warehouse.
+  - Transfer is atomic: source and target commit together or not at all.
+  - StockMovements are append-only (never updated/deleted).
+  - Reservation cannot oversell available quantity.
+  - Tenant isolation: Tenant A cannot access Tenant B inventory.
+  - MongoDB and Redis/Elasticsearch are derivative projections, never authority.
+
+browser_test_scenarios:
+  - Create Warehouse
+  - Edit Warehouse (toggle IsActive)
+  - Deactivate Warehouse and verify it loses mutation authority
+  - Opening Stock (positive, one-time)
+  - Re-submit Opening Stock (expect rejection)
+  - Adjust Stock (positive)
+  - Adjust Stock (negative within bounds)
+  - Adjust Stock (negative breach -> expect rejection)
+  - View Inventory (variant-centric stock levels)
+  - Reserve Stock (checkout)
+  - Release Reservation (cancel)
+  - Complete Sale (commit reservation)
+  - Create Transfer (Pending)
+  - Approve Transfer
+  - Complete Transfer (atomic move)
+  - Transfer to same warehouse (expect rejection)
+  - Transfer exceeding available (expect rejection)
+  - View Movements (audit log)
+  - Search Warehouse
+
+success_definition:
+  - UI operations succeed for all positive scenarios.
+  - All Business Rules hold after each operation.
+  - All Critical Invariants remain unviolated.
+  - Runtime expectations succeed (stock updated, movements recorded, transfer atomic, projection converges).
+  - Negative scenarios are correctly rejected and fail closed.

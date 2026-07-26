@@ -1,0 +1,102 @@
+# FLOW-05 — Purchase Return (POS) — Browser Knowledge
+# Source of truth: .ai/hermes/business-flows/FLOW-05-PURCHASE-RETURN.md (implementation-backed)
+
+module:
+  module_name: "PointOfSale (POS Admin)"
+  workflow_name: "FLOW-05 Purchase Return"
+  business_entity: "Return (ReturnType=PurchaseReturn) / ReturnItem / PurchaseInvoice / ProductVariantStock / Supplier"
+
+business_rules:
+  - "Idempotency-Key (or X-Request-Id) header REQUIRED, <=200 chars (else 400)."
+  - "OriginalInvoiceId required; invoice must exist, not deleted, and not Cancelled/FullyReturned (Cancelled/FullyReturned -> 409)."
+  - "Request SupplierId + WarehouseId MUST exactly equal the original invoice's (else 400) — lineage is immutable."
+  - "Supplier row must exist; Warehouse must exist and be active."
+  - "Per line: product was received on the invoice; variant was received (or single-distinct); unit matches a received unit; no duplicate (ProductId,VariantId) line."
+  - "Cumulative returned base qty per (invoice,product,variant) <= received base qty (else 400 'Cannot return more than received quantity')."
+  - "AvailableQuantity (Quantity - Reserved) >= returned base qty (else 400 'Insufficient stock')."
+  - "Stock is DECREASED from the same variant in the SAME warehouse as the original invoice."
+  - "Cost re-weighted by forward Weighted Moving Average (NOT restored to a prior snapshot); Variant.CostPrice is NOT updated."
+  - "NO cash/card refund payout exists; RefundToCash / RefundAmount on the DTO are INERT. Only the supplier payable is reduced (debit)."
+  - "NO Debit Note / Supplier Credit memo document is issued."
+  - "Treasury/cashbox/bank is NOT touched."
+  - "Return is additive & immutable (no update/delete endpoint). 'State' = parent PurchaseInvoice.Status (PartiallyReturned/FullyReturned) + outbox ProcessedAtUtc."
+  - "Accounting journal: ONE compensation journal — DEBIT SupplierPayables, CREDIT Inventory (posted AFTER data commit, outbox-recovered)."
+  - "Idempotency: divergent fingerprint on same key -> 409; same fingerprint completed -> replayed 200."
+
+preconditions:
+  - "Tenant T with Owner/Admin/Manager role session."
+  - "Supplier S (active) and Warehouse W (IsActive)."
+  - "Completed purchase invoice INV with one line: Product P, Variant V, Unit U, Quantity=10, ConversionFactor=1, net unit (Total-Tax)=100, Tax=14 (received base qty = 10)."
+  - "ProductVariantStock(W,V).Quantity = 50, Reserved = 0 (Available = 50)."
+  - "Products.PurchasePrice(P) = 100; Suppliers.Balance(S) = 1000 (payable owed)."
+
+user_journey:
+  - "Open Purchase Return flow; load invoice (GET /api/PurchaseReturns/invoice/{INV}) -> 200"
+  - "Open return modal; enter return line: ProductId=P, ProductVariantId=V, UnitId=U, Quantity=4, UnitPrice=100, TaxRate=14, Reason 'defective'"
+  - "Provide Idempotency-Key (k1)"
+  - "Submit POST /api/PurchaseReturns"
+  - "Receive 200 + PurchaseReturnResponse (ReturnNumber allocated, TotalAmount=456)"
+
+expected_runtime_after_success:
+  - "Return row created (ReturnType=PurchaseReturn, OriginalPurchaseInvoiceId=INV, WarehouseId=W, SupplierId=S)."
+  - "ReturnItem row(s) created with BaseQuantity and immutable CostPriceSnapshot/CostAmountSnapshot."
+  - "ProductVariantStock(W,V).Quantity decreased by returned base quantity (e.g. 50 -> 46)."
+  - "StockMovement row created (MovementType=PurchaseReturn, negative QuantityChange)."
+  - "PurchaseInvoice.Status flipped to PartiallyReturned (or FullyReturned if whole qty) and AccountingMutationVersion++."
+  - "Supplier payable reduced by TotalAmount: Suppliers.Balance decreased (e.g. 1000 -> 544); AccountLedger debit row + SupplierTransaction debit row written."
+  - "Product.PurchasePrice re-weighted by forward WMA (not restored)."
+  - "AccountingOutboxMessage (PurchaseReturn) enqueued; journal (Dr SupplierPayables, Cr Inventory) posted sync or via worker."
+  - "NO cash/card refund; treasury untouched."
+
+browser_assertions:
+  - "Return list shows the new ReturnNumber."
+  - "Return detail shows items, total, and (echoed) RefundAmount = TotalAmount with NO actual cash payout."
+  - "Inventory page for V@W shows reduced quantity (e.g. 46)."
+  - "Supplier balance decreased by TotalAmount (payable reduced)."
+  - "Purchase Invoice status shows PartiallyReturned/FullyReturned."
+  - "Exactly one Return per idempotency key (no duplicate on replay)."
+  - "Suppliers.Balance monotonic-decreasing per return (never increases)."
+  - "Products.PurchasePrice after any sequence equals the live WMA."
+  - "AccountingOutboxMessage PurchaseReturn processed exactly once (AggregateVersion skip prevents double post)."
+
+negative_tests:
+  - "No Idempotency-Key -> 400."
+  - "OriginalInvoiceId missing -> 400."
+  - "Return Quantity > received (e.g. 20 when 10 received) -> 400 'Cannot return more than received quantity'."
+  - "WarehouseId different from INV's -> 400 'Supplier and warehouse must match...'."
+  - "Return against Cancelled invoice -> 409 'cannot accept another return'."
+  - "Stock only 3 available (set Quantity=3) -> 400 'Insufficient stock ... Available: 3, Requested: 4'."
+  - "Re-POST same Idempotency-Key + same body -> 200 replay (stored response)."
+  - "Re-POST key with different Quantity -> 409 'Idempotency-Key was already used for a different purchase return request'."
+  - "Role=Staff (no Owner/Admin/Manager) -> 403."
+  - "Assume a cash/card refund occurs -> FALSE: no treasury movement; RefundToCash/RefundAmount inert."
+
+critical_invariants:
+  - "A return can NEVER increase what the merchant owes the supplier — it only DEBITS the payable."
+  - "Cumulative returned base qty per (invoice,product,variant) <= received base qty."
+  - "SupplierId + WarehouseId are immutable lineage, equal to the original invoice."
+  - "Stock never goes negative (AvailableQuantity >= BaseQuantity enforced; WMA guards remainingStock > 0)."
+  - "The return is additive & immutable (no update/delete endpoint)."
+  - "Accounting journal must balance (Dr SupplierPayables = Cr Inventory)."
+  - "Original PurchaseInvoice remains immutable except Status + AccountingMutationVersion."
+  - "NO cash/card refund payout; NO Debit Note issued; treasury untouched."
+  - "Cost is forward WMA re-weight, never a restore of prior snapshot."
+
+browser_test_scenarios:
+  - "Create Purchase Return (partial, happy path)"
+  - "Create Purchase Return (full -> FullyReturned)"
+  - "Over-return quantity (negative)"
+  - "Warehouse mismatch (negative)"
+  - "Return against Cancelled invoice (negative)"
+  - "Insufficient available stock (negative)"
+  - "Missing idempotency key (negative)"
+  - "Duplicate idempotency key replay"
+  - "Divergent idempotency key (negative)"
+  - "Role without permission (negative, 403)"
+  - "View Purchase Returns report"
+
+success_definition:
+  - "UI completes: 200 + PurchaseReturnResponse; return appears in list with correct total and no cash payout."
+  - "Business rules satisfied: idempotency present, original Completed invoice (not Cancelled/FullyReturned), supplier+warehouse match, return qty <= received, available stock sufficient."
+  - "Critical invariants preserved: stock decremented (>=0), payable debited (never increased), WMA re-weighted forward, original invoice immutable, no refund/treasury movement."
+  - "Runtime expectations satisfied: stock decreased, supplier ledger/balance updated, invoice status bumped, PurchaseReturn outbox processed, compensation journal posted."

@@ -1,0 +1,39 @@
+# ========================
+# 🔥 Backend (.NET)
+# ========================
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+
+# ========================
+# ⚛️ Frontend (React)
+# ========================
+node_modules/
+dist/
+build/
+
+# ========================
+# 🧠 Visual Studio / VS Code
+# ========================
+.vs/
+*.user
+*.suo
+
+# ========================
+# 🔐 Env / Logs
+# ========================
+.env
+*.log
+auth_states/
+
+# ========================
+# 🗃️ OS files
+# ========================
+.DS_Store
+Thumbs.db
+
+.env.local
+secrets.json
+credentials.yaml

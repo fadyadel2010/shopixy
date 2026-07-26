@@ -1,0 +1,292 @@
+# Browser Knowledge — FLOW-ACC-08 Financial Reports (POS Admin)
+# Source of truth: .ai/hermes/accounts/FLOW-ACC-08-FINANCIAL-REPORTS.md
+# Extracted for Hermes browser testing. Read-only projections of the General Ledger.
+# No architecture explanation. Implementation-backed only.
+
+module:
+  name: FinancialReports
+  domain: Accounting / Financial Reporting
+  surface: PointOfSale.Web/src/pages/treasury/*
+  api_client: PointOfSale.Web/src/services/financialReportsApi.js
+  api_base: /financialreports
+  report_types:
+    - Trial Balance
+    - General Ledger
+    - Profit & Loss
+    - Balance Sheet
+    - Cash Flow
+    - Clearing Aging
+    - Account Summary
+  notes: >
+    All reports are read-only projections of the General Ledger. They are NOT
+    aggregates and own no data. The front-end pages live under treasury/*.jsx
+    and the API client is financialReportsApi.js.
+
+business_rules:
+  - Financial Reports are read-only projections.
+  - Financial Reports are NOT aggregates.
+  - Financial Reports never own balances.
+  - Financial Reports never write data.
+  - Financial Reports never mutate accounting.
+  - General Ledger is the financial source of truth.
+  - Reports always read LedgerEntries.
+  - Reports always read posted or reversed journals only.
+  - Reports never read business tables (SalesInvoices, Customers, Products, etc.).
+  - Reports never update JournalEntries.
+  - Reports never create JournalEntries.
+  - Reports are recomputed on every request (no server-side report cache).
+  - Reports use RepeatableRead transaction for consistent read.
+  - Reports are tenant isolated (query-level + RequiredTenantId).
+  - Reports are ledger-only (enforced by ILedgerOnlyService + CI test).
+  - Trial Balance validates balance (Debits == Credits).
+  - Balance Sheet validates Assets == Liabilities + Equity.
+  - Cash Flow uses indirect method.
+  - Export is client-side only (xlsx / jsPDF).
+  - Reports carry no currency field; display currency is front-end formatting only.
+  - Balance Sheet reads LedgerEntries aggregated by account, NOT Account.CurrentBalance.
+  - Profit & Loss reads LedgerEntries by AccountType, NOT an Expenses table.
+  - Cash Flow derives cash from ledger code-prefix balances (10* cash, 12* AR, 13* inventory, 20* AP).
+
+preconditions:
+  - Authenticated user ([Authorize] on controller).
+  - Authorized user (tenant session valid).
+  - Valid Tenant (ITenantContext.RequiredTenantId resolves).
+  - Valid report parameters (from/to for range reports; asOf for balance sheet/clearing; accountId for general ledger).
+  - Valid date range accepted (no from<=to guard exists; any range permitted).
+  - Ledger contains posted or reversed journals for the period.
+  - For General Ledger: a valid AccountId that exists for the tenant.
+
+user_journeys:
+  trial_balance:
+    - Navigate to treasury/trial-balance.
+    - Default date range loads (current month).
+    - Report table renders accounts with Debits/Credits/Balance.
+    - Balanced/Unbalanced banner shown.
+    - Click Excel or PDF to export.
+  general_ledger:
+    - Navigate to treasury/general-ledger (optionally with ?accountId=).
+    - Account list loads from Trial Balance.
+    - Select an account.
+    - Report shows opening balance, entries with running balance, closing balance.
+    - Click Excel or PDF to export.
+  profit_and_loss:
+    - Navigate to treasury/profit-loss.
+    - Date range loads.
+    - Revenue / COGS / Expense sections render with totals and Net Profit.
+    - Export available.
+  balance_sheet:
+    - Navigate to treasury/balance-sheet.
+    - asOf date loads.
+    - Assets / Liabilities / Equity render with ratios.
+    - Export available.
+  cash_flow:
+    - Navigate to treasury/cash-flow.
+    - Date range loads.
+    - Opening/Closing cash, Net Profit, working capital adjustments, reconciliation render.
+    - Export available.
+  clearing_aging:
+    - Navigate to treasury/clearing-aging.
+    - asOf date loads.
+    - Clearing accounts with aging buckets render.
+  account_summary:
+    - Via financialReportsApi.getAccountSummaries.
+    - All ledger accounts with current balances render.
+  report_export:
+    - On any report page, click Excel (xlsx) -> file downloads.
+    - On any report page, click PDF (jsPDF) -> file downloads.
+  ledger_drilldown:
+    - On Trial Balance, click "Ledger" on a row.
+    - Navigates to treasury/general-ledger?accountId=<id>.
+    - General Ledger for that account renders.
+
+expected_runtime_after_success:
+  trial_balance:
+    - Report generated.
+    - Balances calculated per account (NormalBalance aware).
+    - Report balanced (Debits == Credits) when ledger balanced.
+    - Variance shown when unbalanced.
+  general_ledger:
+    - Opening balance calculated (ledger sum before fromDate).
+    - Ledger entries displayed in date + line order.
+    - Running balance (BalanceAfter) shown per entry.
+    - Closing balance calculated (ledger sum through toDate).
+  profit_and_loss:
+    - Revenue calculated (credit-normal accounts).
+    - COGS calculated.
+    - Expenses calculated (debit-normal accounts).
+    - Gross Profit calculated (Revenue - COGS).
+    - Net Profit calculated (Gross Profit - Expenses).
+  balance_sheet:
+    - Assets calculated.
+    - Liabilities calculated.
+    - Equity calculated.
+    - Current Ratio calculated (current assets / current liabilities).
+    - Debt To Equity Ratio calculated.
+    - Balance verified (Assets == Liabilities + Equity).
+  cash_flow:
+    - Net Profit loaded (from P&L).
+    - Opening cash loaded (code 10* balances at fromDate-1).
+    - Closing cash loaded (code 10* balances at toDate).
+    - Working Capital adjustments applied (AR 12*, Inventory 13*, AP 20*).
+    - Cash reconciliation calculated (Opening + NetChange == Closing).
+  export:
+    - Excel generated (xlsx with header + lines + totals row).
+    - PDF generated (jsPDF with autoTable + totals + balanced stamp).
+
+browser_assertions:
+  trial_balance:
+    - Accounts displayed (accountCode, accountName, accountType).
+    - Debit totals correct (sum of line totalDebits).
+    - Credit totals correct (sum of line totalCredits).
+    - Variance displayed when unbalanced.
+    - Balanced banner correct (green when Debits == Credits).
+  general_ledger:
+    - Running balance correct (matches BalanceAfter per entry).
+    - Opening balance correct (sum before fromDate).
+    - Closing balance correct (opening + sum(debits - credits)).
+  profit_and_loss:
+    - Revenue section visible.
+    - COGS visible.
+    - Expenses visible.
+    - Gross Profit correct (Revenue - COGS).
+    - Net Profit correct (Gross Profit - Expenses).
+  balance_sheet:
+    - Assets visible.
+    - Liabilities visible.
+    - Equity visible.
+    - Current Ratio visible.
+    - Debt To Equity Ratio visible.
+    - Balanced indicator correct (Assets == Liabilities + Equity).
+  cash_flow:
+    - Opening Cash visible.
+    - Closing Cash visible.
+    - Net Cash Change visible.
+    - Reconciliation visible (Opening + NetChange == Closing).
+  exports:
+    - Excel export works (file downloads).
+    - PDF export works (file downloads).
+
+negative_tests:
+  unauthorized_request:
+    - No auth token -> controller [Authorize] returns 401.
+  invalid_account_id:
+    - General Ledger with unknown accountId -> controller returns 404 "Requested account was not found."
+  empty_reporting_period:
+    - Period with no matching journals -> report returns zero lines, isBalanced true (0 == 0), no crash.
+  no_posted_journals:
+    - Ledger has only non-posted (draft) journals -> reports exclude them; lines empty.
+  missing_report_parameters:
+    - from/to omitted -> DateTime defaults (UTC now); verify no 500.
+  implementation_gaps:
+    - No multi-currency: report payload has no currency field.
+    - No pagination: full list returned, no page controls.
+    - No snapshots: reports never read a stored snapshot.
+    - No materialized views: reports read live ledger.
+    - No server-side export: export is browser-only.
+    - No server-side report caching: recompute every request.
+    - No retained earnings calculation: Equity is raw ledger balances.
+    - No profit carry forward: no closing/roll-forward logic.
+    - No dynamic grouping: grouping fixed by AccountType.
+    - No dynamic filtering: only status/date/type/code-prefix implied.
+
+critical_invariants:
+  - Reports never own balances.
+  - Reports never mutate ledger.
+  - Reports never read business tables.
+  - Reports always read LedgerEntries.
+  - Reports always read posted or reversed journals.
+  - Reports always enforce tenant isolation.
+  - Reports always use General Ledger.
+  - Reports never create JournalEntries.
+  - Reports never update JournalEntries.
+  - Reports are recomputed each request.
+  - Reports are read-only.
+  - Financial truth is General Ledger.
+  - Ledger remains unchanged during any report generation.
+
+browser_test_scenarios:
+  - Trial Balance
+  - Trial Balance Date Filtering
+  - General Ledger
+  - Ledger Drill-down
+  - Profit & Loss
+  - Balance Sheet
+  - Cash Flow
+  - Clearing Aging
+  - Account Summary
+  - Trial Balance Export
+  - General Ledger Export
+  - Profit & Loss Export
+  - Balance Sheet Export
+  - Cash Flow Export
+  - Cross Report Validation
+
+cross_report_validation:
+  - Trial Balance Debits == Credits (double-entry holds).
+  - Balance Sheet balances (Assets == Liabilities + Equity).
+  - Cash Flow reconciles (Opening Cash + Net Cash Change == Closing Cash).
+  - Net Profit in Cash Flow matches Net Profit in Profit & Loss (same ledger source).
+  - General Ledger totals agree with Trial Balance for the same account/period.
+  - All reports generated from same ledger state (tenant-scoped, live read).
+
+runtime_models:
+  trial_balance:
+    - Browser
+    - FinancialReportsController
+    - FinancialReportService
+    - RepeatableRead Transaction
+    - LedgerEntries
+    - SQL GroupBy
+    - Balance Calculation
+    - DTO
+    - Browser
+  profit_and_loss:
+    - Browser
+    - FinancialReportService
+    - LedgerEntries
+    - Revenue Calculation
+    - COGS Calculation
+    - Expense Calculation
+    - Net Profit
+    - Browser
+  balance_sheet:
+    - Browser
+    - FinancialReportService
+    - LedgerEntries
+    - Assets
+    - Liabilities
+    - Equity
+    - Ratios
+    - Browser
+  cash_flow:
+    - Browser
+    - FinancialReportService
+    - Profit & Loss
+    - Ledger Account Balances
+    - Working Capital Adjustments
+    - Cash Reconciliation
+    - Browser
+
+orientation:
+  treat_as: projections
+  never_treat_as:
+    - aggregates
+    - financial truth
+  financial_truth: General Ledger
+  never_assume:
+    - reports own balances
+    - reports mutate accounting
+    - reports read business tables
+
+success_definition:
+  - All reports load successfully.
+  - Browser assertions succeed.
+  - Critical invariants remain intact.
+  - Reports remain read-only.
+  - Ledger remains unchanged.
+  - Trial Balance balanced.
+  - Balance Sheet balanced.
+  - Cash Flow reconciles.
+  - Reports derived from General Ledger.
+  - Tenant isolation maintained.
+  - Exports generated successfully.

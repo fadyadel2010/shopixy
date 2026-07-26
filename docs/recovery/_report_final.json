@@ -1,0 +1,2877 @@
+{
+ "rows": [
+  [
+   "AF-19_COMPLETE_MIGRATION.sql",
+   "2alt,1+col,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "AF-19_VERIFY_MIGRATION_STATE.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "AF-38E-A_VERIFICATION_QUERIES.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "AF-38F_TEST_SCENARIOS.sql",
+   "9dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "AF-38F_VERIFICATION_QUERIES.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "AF16D_AddStorefrontBaseUrlToTenant.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "AddEstimatedDeliveryDays.sql",
+   "9tbl,33alt,35idx,4fn,17dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 4 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "AddOnlineCustomerIdToOrders.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "AddTemplateTypeToAffiliateProductPolicy.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "AffiliateUsersMigration.sql",
+   "6tbl,1alt,26idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "AffiliateUsersMigrationIdempotent.sql",
+   "6tbl,1alt,26idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "DB/11-4-2026.sql",
+   "209tbl,205alt,671idx,33fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index; legacy-only: 30 trigger, 33 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/12-2-2026.sql",
+   "110tbl,110alt,307idx,14fn,14trg,3vw,9seq,12dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 14 func, 3 view, 9 seq, 14 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/13-1-2026.sql",
+   "83tbl,83alt,205idx,9seq,2dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index; legacy-only: 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/15-5-2026.sql",
+   "227tbl,223alt,792idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/16-1-2026.sql",
+   "85tbl,85alt,216idx,9seq,2dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index; legacy-only: 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/16-3-2026.sql",
+   "133tbl,133alt,400idx,21fn,21trg,4vw,9seq,20dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 21 func, 21 trigger, 4 view, 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/21-1-2026.sql",
+   "89tbl,89alt,226idx,9seq,2dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index; legacy-only: 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/21-2-2026.sql",
+   "124tbl,124alt,360idx,20fn,20trg,4vw,9seq,18dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 20 func, 20 trigger, 4 view, 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/21-3-2026.sql",
+   "153tbl,149alt,429idx,21fn,21trg,4vw,9seq,20dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 21 func, 21 trigger, 4 view, 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/21-4-2026.sql",
+   "213tbl,209alt,693idx,33fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index; legacy-only: 30 trigger, 33 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/23-7-2026.sql",
+   "228tbl,224alt,796idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/24-3-2026.sql",
+   "168tbl,164alt,497idx,23fn,24trg,4vw,10seq,21dml",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index; legacy-only: 23 func, 24 trigger, 4 view, 10 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/25-2-2026.sql",
+   "125tbl,125alt,374idx,20fn,20trg,4vw,9seq,18dml",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index; legacy-only: 20 func, 20 trigger, 4 view, 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/25-3-2026.sql",
+   "173tbl,169alt,520idx,26fn,27trg,4vw,10seq,25dml",
+   "YES",
+   "FULLY COVERED",
+   "4 index(es) superseded by broader baseline index; legacy-only: 26 func, 27 trigger, 4 view, 10 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/25-6-2026.sql",
+   "228tbl,224alt,796idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/28-3-2026.sql",
+   "191tbl,187alt,592idx,30fn,30trg,4vw,10seq,32dml",
+   "YES",
+   "FULLY COVERED",
+   "4 index(es) superseded by broader baseline index; legacy-only: 30 func, 30 trigger, 4 view, 10 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/30-3-2026.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "DB/4-5-2026.sql",
+   "219tbl,215alt,735idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index; legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/5-6-2026.sql",
+   "228tbl,224alt,796idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/6-2-2026.sql",
+   "100tbl,100alt,270idx,9seq,2dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 9 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "DB/schema-23-7-2026.sql",
+   "228tbl,228alt,796idx,34fn,30trg,4vw,15seq,44dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 30 trigger, 34 func, 15 seq, 4 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "PointOfSale.Infrastructure/Data/SqlMigrations/001_AddManualWalletFields.sql",
+   "1alt,6+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/Data/SqlMigrations/AddPixelTrackingConfig.sql",
+   "1tbl,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/Data/SqlMigrations/AddProductPixelOverride.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/Scripts/ProvisionForensicEvidenceRoles.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "PointOfSale.Infrastructure/Scripts/RedactExistingWebhookData.sql",
+   "1fn,5dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "PointOfSale.Infrastructure/Scripts/VerifyForensicEvidenceDatabaseHardening.sql",
+   "3dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "PointOfSale.Infrastructure/add_analytics_alert_rules.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/add_tenant_analytics_configuration.sql",
+   "1tbl,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/fix_online_customers_schema.sql",
+   "1alt,2+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "PointOfSale.Infrastructure/migration.sql",
+   "52tbl,36alt,127idx,47dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "RemoveLegacyAffiliateUserFKMigration.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "RemoveLegacyAffiliateUserFKMigrationIdempotent.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "UpdateSalesRequestIdempotencyIndexFilter.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "Update_StoreConfigs_CommerceAI.sql",
+   "1alt,5+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "WhatsAppMigration.sql",
+   "3tbl,7idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "WhatsAppTemplatesMigration.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "add-client-secret-encrypted-column.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add-country-to-checkout-sessions.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add-customer-opening-balance-columns.sql",
+   "2alt,4+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_abandoned_cart_recovery_log_unique_constraint.sql",
+   "1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_accounting_outbox_rowversion.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "add_affiliate_category_system.sql",
+   "1tbl,1alt,1+col,4idx,6dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_affiliate_payout_wallet.sql",
+   "1alt,3+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_affiliate_storetenanid_backfill.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "add_banks_table.sql",
+   "1tbl,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "add_banner_style.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_carrier_code_to_shipping_methods.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_checkout_session_improvements.sql",
+   "1alt,4+col,1idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_checkout_session_invalidated_at.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_checkout_sessions.sql",
+   "1tbl,4idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_commerce_ai_columns.sql",
+   "1alt,3+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_country_to_checkout_sessions.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_country_to_checkout_sessions_index.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_coupon_normalized_code.sql",
+   "1alt,1+col,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_fulfillment_ownership_snapshot.sql",
+   "1alt,2+col,1idx,1fn,1trg,3dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "add_inventory_committed_to_payment_intent.sql",
+   "1alt,1+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_is_access_token_blacklisted.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_is_access_token_blacklisted_index_only.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_marketplace_fe3_fields.sql",
+   "3alt,10+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_missing_carrier_config_columns.sql",
+   "1alt,2+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_processed_events_unique_constraint.sql",
+   "1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_product_variant_stock_unique_constraint.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_product_variant_weight.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_promotion_ranking_config.sql",
+   "2alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "add_revoked_customer_access_tokens.sql",
+   "1tbl,1alt,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_stock_sync_outbox_claimed_until.sql",
+   "1alt,1+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "add_stock_sync_outbox_claimed_until_sqlserver.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "add_tokens_valid_after_utc.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "af16e-trigger-reindex-via-events.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af17a-reindex-trigger.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-backfill-missing-commissions.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-comprehensive-diagnostic.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-cross-tenant-commission-verification.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-debug-middleware-query.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-diagnostic-queries.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-final-debug.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-find-zezo-tenant.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-tenant-mismatch-diagnostic.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-verify-isdeleted-column.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-verify-zezo-commission.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af18-zezo-order-check.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af19-debug-order-attribution.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "af19_global_marketplace_affiliate.sql",
+   "2alt,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "af21_backfill_order_status.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "affiliate_audit_index_fixes.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "audit_log_migration.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "check-order-phone.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check-tenant-ids.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check-whatsapp-accounts.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check-whatsapp-payment-setup.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check_request_status.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check_reviews.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "check_smartoffer_whitespace_coupons.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "cleanup_smartoffer_whitespace_coupons.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "coupon_usages_migration.sql",
+   "2tbl,10idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "coupon_usages_only.sql",
+   "1tbl,6idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_email_verification_table.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_online_customers_table.sql",
+   "1tbl,7idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_password_reset_tokens_table.sql",
+   "1tbl,1alt,2+col,3idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_refresh_tokens_table.sql",
+   "1tbl,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_social_login_tables.sql",
+   "2tbl,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_store_configs_table.sql",
+   "1tbl,1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "create_treasury_table.sql",
+   "1tbl,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "debug-affiliate-data.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260407134756_AddSalesRequestIdempotency.sql",
+   "2tbl,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260408103000_AddPurchaseInvoiceSequence.sql",
+   "1tbl,1seq,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260408120000_AddSalesIdempotencyClaimToken.sql",
+   "1alt,2+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260408153000_AddExpenseAccountingMutationVersion.sql",
+   "1tbl,1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260408193000_AddSupplierPaymentsAndPartyLedgerAdjustments.sql",
+   "3tbl,6idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260408212030_SyncSnapshot.sql",
+   "6tbl,10alt,22+col,12idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409164612_AddReliableDocumentNumberSequences.sql",
+   "1tbl,2idx,3seq,14dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 3 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409190921_AddDashboardPerformanceIndexes.sql",
+   "2alt,1+col,24idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409202930_AddContentHashToVendorPaymentProof.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409210000_AddTenantScopedOrderNumberIndex.sql",
+   "1tbl,1idx,1seq,11dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409214000_DashboardPerformanceIndexes_PgAdmin.sql",
+   "19idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260409214000_DashboardPerformanceIndexes_PgAdmin_Idempotent.sql",
+   "19idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260410120000_HardenSupplierOpeningBalanceIdempotency.sql",
+   "4alt,2idx,11dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260415103000_AddOrderRequestIdempotency.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260415221500_AddCouponCustomerUsageUniquenessGuard.sql",
+   "1tbl,1alt,1idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260419113000_AddOrderRequestIdempotencySnapshotHash.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260419143000_HardenAccessTokenRevocation.sql",
+   "2tbl,3alt,2+col,7idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260419190000_AddCheckoutSessionManualWalletRecovery.sql",
+   "1alt,3+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260419222000_AddPaymentIntentActiveProviderIdempotency.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260420103000_NormalizeManualWalletProofReferences.sql",
+   "4dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260420114500_AddStockSyncOutboxReliability.sql",
+   "1tbl,1alt,1+col,4idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260421000128_AddStockSyncOutboxMissingColumns.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260422190000_S15A_CheckoutIdempotencyCartConcurrency.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260422203000_S15B_PromotionCouponCorrectness.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260422224500_S16A_ShipmentCheckoutSafety.sql",
+   "1alt,9+col,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260423110000_S19_CheckoutDomainSimplification.sql",
+   "1tbl,1alt,4+col,5idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260423173000_S21_DiscountAuthorityLifecycleFix.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260423200000_S19C_AddPromotionFallbackFields.sql",
+   "1alt,2+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424090000_S22_OrderRefundLifecycleHardening.sql",
+   "2tbl,2alt,8+col,7idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424100000_S23_OrderRefundLineAmountNonNegative.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424110000_S24_OrderRefundLineTenantIsolation.sql",
+   "1alt,1+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424120000_S25_OrderRefundTenantConsistencyConstraints.sql",
+   "2alt,1+col,2idx,5dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424130000_S26_OrderRefundLineOrderScopedFK.sql",
+   "1alt,2+col,2idx,5dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424130000_S26_PaymentCancellationOutbox.sql",
+   "1tbl",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424140000_S27_PaymentCancellationSkipFlag.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424143000_S27_CheckoutIdempotencyRequestHashRecovery.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424150000_S28_PosSalesAccountingMutationVersion.sql",
+   "1tbl,1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424153000_S29_SalesUpdateIdempotencyRequestHashRecovery.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424160000_S30_MarketplaceProjectionMutationVersions.sql",
+   "1tbl,4alt,4+col,5dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424163000_S31_CanonicalCrossSystemIdentityLinks.sql",
+   "2tbl,5idx,8dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424163000_S31_CanonicalCrossSystemIdentityLinks_SqlServer.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424170000_S32_AccountingOutboxProcessingLeases.sql",
+   "1alt,1+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424173000_S33_PayoutCompletionEvidenceFingerprint.sql",
+   "1alt,2+col,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424180000_S34_DataAuthorityBoundaryHardening.sql",
+   "2idx,9dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424183000_S35_EventOrderingBoundaryHardening.sql",
+   "1alt,1+col,6idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424190000_S36_FinancialIntegrityBoundaryHardening.sql",
+   "3alt,2+col,2idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426100000_S37_AddCommerceHubCheckoutIdempotencyRequestHash.sql",
+   "1alt,1+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426110000_S38_ReopenCriticalFinancialFailures.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426120000_S36_TenantCurrencyRequired.sql",
+   "1alt,5dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426120000_S39_AddPaymentMethodVersion.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426130000_S40_AddCurrencyReferenceTable.sql",
+   "2tbl,1alt,3idx,4dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260427170000_S42_CommerceHubLedgerFingerprintIdempotency.sql",
+   "2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260427183000_S43_CommerceHubPaymentProviderIdentityUniqueness.sql",
+   "1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260427190000_S44_CommerceHubCustomerCartIdentity.sql",
+   "2alt,2+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428123000_S45_CommerceHubLedgerPostingOutboxBackfill.sql",
+   "2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428143000_S46_CommerceHubPaymentCompensationOutbox.sql",
+   "1tbl,5idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428160000_S47_AccountingOutboxSourceType.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428160001_S47b_AccountingOutboxSourceTypeConstraints.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428173000_S48_ComHubEarningPayoutAllocation.sql",
+   "1alt,2+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429100000_S49_CrossSystemCriticalRiskClosure.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429110000_S50_DataAuthorityViolationClosure.sql",
+   "1alt,2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429120000_S51_FixAffectedStoreIdsJsonColumnType.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429123000_S51_CrossSystemCriticalRiskHardening.sql",
+   "1alt,1+col,3idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429130000_S52_CleanupOldCartOwnerIndex.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429133000_S52_DataAuthorityBoundaryHardening.sql",
+   "3alt,4+col,3dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429140000_S53_AffiliatePayoutPaymentReferenceUniqueness.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429143000_S54_EventOrderingHardening.sql",
+   "1alt,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429150000_S55_CrossSystemCriticalRiskClosure.sql",
+   "3alt,13+col,3idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429153000_S56_DataAuthorityAndEventOrderingClosure.sql",
+   "4alt,2+col,5idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429160000_S57_OrderFinancialPostingStatusConstraintHardening.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429163000_S58_OrderItemAffiliateSnapshotMutualExclusivity.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429170000_S59_AffiliateProductPolicySoftDeleteFilteredIndex.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260430100000_S60_CommerceHubOrderAggregateVersionHardening.sql",
+   "2alt,2+col,2idx,3dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260430110000_S61_DataAuthorityAndEventScopeClosure.sql",
+   "2alt,4dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260430120000_S62_AffiliateAuthorityAndEventOrderingClosure.sql",
+   "2alt,1+col,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260430120000_S62_CommerceHubCartsCustomerAuthorityBoundaryFix.sql",
+   "1alt,1+col,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501160000_S63_DataAuthorityAndEventOrderingClosure.sql",
+   "2alt,1idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501170000_S64_CrossSystemCriticalRiskProductionClosure.sql",
+   "3alt,3+col,8idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501180000_S65_CommerceHubProjectionRetryTracking.sql",
+   "1alt,3+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501190000_S66_CommerceHubUnresolvedPaymentWebhookRecovery.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501200756_S66_CommerceHubUnresolvedPaymentWebhooksUnfilteredUniqueness.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501213000_S68_StockSyncOutboxWarehouseScopedEventIdentity.sql",
+   "1alt,1+col,5idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260503160000_S69_CrossSystemCriticalRiskProductionFixes.sql",
+   "3tbl,4alt,10+col,7idx,4dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260504100000_S67_CommerceHubPaymentProvisionalRefundTracking.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260504120000_S70_CrossSystemCriticalRiskFinalClosure.sql",
+   "2alt,3+col,4idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260505100000_S71_OrderRefundFinancialPostingStatus.sql",
+   "1alt,5+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260505130000_S72_CommerceHubPayoutReconciliationRequired.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260506110000_S72_CrossSystemCriticalRiskCompensationSnapshots.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260507223000_S73_GlobalPayoutEvidenceUniqueness.sql",
+   "2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260507224500_S74_AffiliatePayoutEvidenceAndOutboxArchive.sql",
+   "3tbl,8idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260507231500_S75_CommerceHubRefundReconciliationRequired.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260508120000_S76_InventoryTenantCoOwnershipHardening.sql",
+   "6alt,4fn,4dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 4 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260508143000_S77_CommerceHubProviderRefundAuthorityConvergence.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260508170000_S78_PosPurchaseAccountingMutationVersion.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260511150000_S80_AddTenantsCurrencyDefaultValue.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260626120000_AffiliatePayoutApprovalAuditIdentity.sql",
+   "1alt,2+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260626153000_AffiliatePayoutPaidByAuditIdentity.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_AddCoreLedgerEngine.sql",
+   "4tbl,1alt,5-col,17idx,2fn,2trg,3dml",
+   "YES",
+   "FULLY COVERED",
+   "18 object(s) target intentionally-removed legacy tables; legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_AddCoreLedgerEngine_Generated.sql",
+   "81tbl,44alt,7-col,233idx,2fn,2trg,80dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "Targets the retired Core Ledger Engine (ledgerentries/journalentries/accounts/journalnumbersequences) \u2014 intentionally removed from runtime model (certified in DATABASE-2 as legacy-only tables); 18 object(s) target intentionally-removed legacy tables; 2 index(es) superseded by broader baseline index; legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_CoreLedgerEngine_PgAdmin.sql",
+   "4tbl,17idx,2fn,2trg,4dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_CreateCoreLedgerEngine.sql",
+   "4tbl,16idx,2fn,2trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "17 object(s) target intentionally-removed legacy tables; legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_Phase2_ChartOfAccounts_Treasury.sql",
+   "2tbl,5idx,3fn,3trg,3dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 3 func, 3 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260206_Phase35_ProductionHardening.sql",
+   "3tbl,7idx,3vw,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 3 view (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddGlobalPhoneReputation.sql",
+   "1tbl,1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddOrderIpAddress.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddOrderSessionId.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddOrdersGuestPhoneIndex.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddPhoneRiskProfiles.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260312_AddPhoneSpamReports.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260315_AddMediaIdToProductVariants.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260315_AddProductMedia.sql",
+   "1tbl,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260315_AddProductTemplateToProducts.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260315_MigrateLegacyProductImagesToProductMedia.sql",
+   "6dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260318_AddCommerceHubCheckoutTables.sql",
+   "3tbl,3alt,6+col,7idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260319_AddCommerceHubGlobalCategories.sql",
+   "2tbl,2alt,19+col,3idx,4dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260319_AddCommerceHubListings.sql",
+   "1tbl,1alt,13+col,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260319_AddCommerceHubSearchIntelligence.sql",
+   "4tbl,2alt,3+col,9idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260319_AddSystemSchemaVersions.sql",
+   "1tbl,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_AddCommerceHubCartPersistence.sql",
+   "1tbl,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_AddCommerceHubSearchFilterEvents.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_AddCommerceHubSubOrderShippingSelections.sql",
+   "1alt,2+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_AddCommerceHubSubOrderShippingSnapshotJson.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_BackfillDefaultProductVariants.sql",
+   "3tbl,9dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_RecoverTenantCategories.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_SeparateCommerceHubCategoriesFromTenantCategories.sql",
+   "6tbl,2alt,19+col,3idx,13dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_AddCommerceHubCheckoutLocksAndIdempotency.sql",
+   "1tbl,1alt,2+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_AddCommerceHubCodPaymentSnapshots.sql",
+   "1alt,4+col,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_AddCommerceHubOrderNumberSequenceAndVendorIndexes.sql",
+   "1idx,1seq",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 seq (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_AddCommerceHubPaymentsCommissionAndEarnings.sql",
+   "5tbl,6alt,9+col,18idx",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_AddCommerceHubPayoutsRefundsAndFinance.sql",
+   "3tbl,5alt,21+col,23idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_HardenCommerceHubCartPersistence.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_HardenCommerceHubSubOrderSafety.sql",
+   "1tbl,1alt,3idx,4dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_ProductionHardeningSecurityAndAudit.sql",
+   "1tbl,1alt,4+col,6idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_ZZZ_AddSuperAdminAuthentication.sql",
+   "1tbl,2idx,2fn,3trg,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 3 trigger, 2 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260322_ZZ_HardenCommerceHubFinanceReliability.sql",
+   "4alt,19+col,4idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZA_AddSuperAdminRefreshTokens.sql",
+   "1alt,2+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZB_FixSuperAdminRootTriggerAndTokenVersion.sql",
+   "1alt,1+col,1fn,2trg,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZC_AddCommerceHubDynamicCommissionRules.sql",
+   "1tbl,2alt,2+col,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZD_AddCommerceHubCustomersAndOrderOwnership.sql",
+   "1tbl,1alt,1+col,3idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZE_AddCommerceHubCustomerRefundRequests.sql",
+   "1tbl,1alt,5idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260323_ZZF_HardenCommerceHubRefundRequestSafety.sql",
+   "2alt,3+col,1idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZG_AddCommerceHubSuperAdminRefundControl.sql",
+   "2alt,14+col,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZH_AddCommerceHubRefundEvidenceSystem.sql",
+   "1tbl,2alt,8+col,5idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZI_AddCommerceHubCustomerPayoutDetails.sql",
+   "1tbl,1alt,4+col,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZJ_AddCommerceHubManualRefundExecution.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZK_AddCommerceHubReturnManagementSystem.sql",
+   "1tbl,1alt,2+col,5idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZL_AddCommerceHubFinancialLedger.sql",
+   "1tbl,3idx,1fn,1trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 func, 1 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZM_AddCommerceHubWalletQueryIndexes.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZN_AddCommerceHubVendorFinancialControl.sql",
+   "1tbl,1alt,3idx,1fn,1trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260324_ZZO_HardenCommerceHubFinancialLedgerTraceability.sql",
+   "1alt,2+col,4idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZM_AddCommerceHubLedgerImmutabilityAndReturnSLA.sql",
+   "2alt,5+col,2idx,2fn,2trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZN_AddCommerceHubSettlementLedgerType.sql",
+   "1alt,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZP_HardenCommerceHubLedgerAuditSafety.sql",
+   "1alt,2+col,4idx",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZQ_AddCommerceHubVendorRepaymentWorkflow.sql",
+   "4tbl,10idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZR_AddCommerceHubFinancialBuckets.sql",
+   "1alt,1+col,1idx,2fn,2trg,3dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260325_ZZS_AddCommerceHubVendorPayoutMethods.sql",
+   "1tbl,1alt,2+col,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260326_ZZS_HardenCommerceHubInventoryConsistency.sql",
+   "2tbl,5alt,17+col,6idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260326_ZZT_AddCommerceHubFinancialSafetyGuards.sql",
+   "2tbl,6idx,1fn,1trg,8dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index; legacy-only: 1 func, 1 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260326_ZZU_AddCommerceHubUserGovernance.sql",
+   "3tbl,8idx,1fn,1trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260326_ZZV_AddCommerceHubVendorVisibilityControl.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260327_ZZW_AddCommerceHubPromoCodes.sql",
+   "2tbl,7alt,39+col,9idx,8dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260327_ZZX_HardenCommerceHubFinancialDashboardAggregates.sql",
+   "1tbl,1alt,3+col,10idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260327_ZZY_AddCommerceHubFinancialReconciliationReports.sql",
+   "1tbl,2idx,1fn,1trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260327_ZZZ_AddHomepageSections.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "3 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260328_AAA_HardenHomepageSectionsDraftPublishing.sql",
+   "1alt,8+col,10idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260329_AAB_AddCmsPages.sql",
+   "1tbl,1alt,8idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260329_AAC_AddMarketplaceCmsPages.sql",
+   "1tbl,1alt,8idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260329_AAD_AddStorefrontFooterAndSocial.sql",
+   "3tbl,1alt,5idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260329_AAE_AddMarketplaceFooterAndSocial.sql",
+   "3tbl,1alt,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260329_AAF_AddMarketplaceEventBackbone.sql",
+   "2tbl,7idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260331_AAG_AddMarketplaceProductReviews.sql",
+   "1tbl,1alt,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260331_AAH_AddMarketplaceCategoryTranslations.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260331_AAH_AddMarketplaceLocalizationColumns.sql",
+   "3alt,6+col,3dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260331_AAH_AddMarketplaceProductAiContent.sql",
+   "1alt,5+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260403_AddPurchaseRequestIdempotency.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260403_AddPurchaseRequestIdempotencyOperationScope.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260403_AddPurchaseReturnRequestIdempotency.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260408_ReconcileExistingEfMigrationHistory.sql",
+   "1tbl,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260424_CrossSystemCriticalRiskHardening.sql",
+   "2alt,7+col,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/AF14_Seed_AffiliateAccounts.sql",
+   "5dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/AF15_PromotionLinks_Migration.sql",
+   "1tbl,3alt,2+col,8idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/AF_PA34_AffiliateAccountLifecycle.sql",
+   "1alt,2+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/AddStorefrontFooterSectionTitleAr.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Fix_AccountType_Zero.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Fix_AccountingOutboxMessages_MissingColumns.sql",
+   "1alt,5+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Fix_Tenant_Mena_Nuclear_Reset.sql",
+   "7dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/PhaseCOD_MigratePaymentStatus.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/PhaseOFL_AddFulfillmentStatus.sql",
+   "1alt,1+col,2idx,7dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/PhaseTOJ_BlockLegacyTreasuryWrites.sql",
+   "6fn,6trg,6dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 6 func, 6 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Seed_LedgerAccounts_ChartOfAccounts.sql",
+   "25dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/Phase11_4_1_AddVariantIdToOrderItems.sql",
+   "1alt,2+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/Phase11_4_2A_AddOrderItemFinancials.sql",
+   "1alt,2+col,3dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/SQL/AF30A_FIX_D2_EnabledRequiresCategory.sql",
+   "1alt,2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/SQL/AF30B_FIX_AffiliateCategories_MissingColumns.sql",
+   "1alt,2+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af11_affiliate_attribution.sql",
+   "1alt,2+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af13b_guest_checkout.sql",
+   "1alt,1+col,1idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af19_global_marketplace_affiliate.sql",
+   "2alt,1+col,2idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af19b_remove_affiliate_tenant_binding.sql",
+   "3alt,1idx,1trg,5dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af1_affiliate_system.sql",
+   "4tbl,8idx,1fn,1trg,2dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af7_settlement_lifecycle.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/affiliate_audit_index_fixes.sql",
+   "99tbl,56alt,7-col,311idx,2fn,2trg,86dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "Targets the retired Core Ledger Engine (ledgerentries/journalentries/accounts/journalnumbersequences) \u2014 intentionally removed from runtime model (certified in DATABASE-2 as legacy-only tables); 18 object(s) target intentionally-removed legacy tables; 6 index(es) superseded by broader baseline index; legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/create_processed_trust_event.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/marketing_review_evidence.sql",
+   "1tbl,2alt,5+col,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/mr1c_rating_constraints.sql",
+   "2alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix-empty-category-ids.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix-missing-ledger-entries.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix-preview-url.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "fix-visa-account.sql",
+   "2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_chat_FINAL.sql",
+   "1alt,1fn",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "fix_chat_attachment_constraint.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_chat_bulletproof.sql",
+   "1alt,1fn,1trg",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "fix_chat_trigger_function.sql",
+   "1fn",
+   "LEGACY",
+   "LEGACY ONLY",
+   "legacy-only: 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "fix_coupon_index.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "fix_marketplace_profile_image_columns.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_product_stock.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_servicerequest_status.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_servicerequestmessage_types.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "fix_shipping_carrier_integration.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "manual_wallet_cleanup.sql",
+   "1alt,1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "marketplace_indexes.sql",
+   "11tbl,9alt,3+col,42idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "migrate-multi-unit-data.sql",
+   "5dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrate-store-config-phase9.sql",
+   "1tbl,2alt,7+col,3dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migration.sql",
+   "29tbl,6alt,61idx,11dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migration_categories.sql",
+   "2tbl,4alt,10+col,4idx,5dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260129_WhatsAppPhoneVerification.sql",
+   "1alt,2+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260129_WhatsAppTemplateHardening.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260203_AddWhatsAppPaymentApproval.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260204_AbandonedCartHardening.sql",
+   "3tbl,2alt,5+col,12idx",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index"
+  ],
+  [
+   "migrations/20260204_AbandonedCartPhase2_CartTracking.sql",
+   "1tbl,6idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260204_AbandonedCartRecoveryFoundation.sql",
+   "1tbl,1alt,1+col,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260204_WhatsAppRateLimits.sql",
+   "1tbl,2idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260212_ServicesMarketplaceFoundation.sql",
+   "4tbl,15idx,2fn,2trg,1typ,1dml",
+   "YES",
+   "FULLY COVERED",
+   "1 index(es) superseded by broader baseline index; legacy-only: 2 func, 2 trigger, 1 type (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/20260212_ServicesMarketplaceP2_Hardening.sql",
+   "1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260212_ServicesMarketplacePhase2_Chat.sql",
+   "1tbl,3idx,2fn,2trg,2typ,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 trigger, 2 type, 2 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/20260212_ServicesMarketplacePhase3_Idempotency.sql",
+   "1tbl,3idx,1fn,1dml",
+   "PART",
+   "PARTIALLY COVERED",
+   "Table ProcessedTrustEvents fully represented in baseline as EF-singularized 'ProcessedTrustEvent' (all columns + PK present); 3 secondary performance indexes (ProviderProfileId, ProcessedAt, TenantId) not carried into runtime EF model; cleanup_old_processed_events() function is legacy-only (baseline has zero functions by design)"
+  ],
+  [
+   "migrations/20260212_ServicesMarketplacePhase3_Trust.sql",
+   "1tbl,3idx,1fn,1trg,1vw,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 view, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/20260213_ChatHardening_CR1.sql",
+   "1tbl,1alt,5idx,2fn,2trg,4dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 func, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/20260312_AddOrderSessionId.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260316_AddSmartOfferCouponConfig.sql",
+   "1alt,5+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/20260316_AddSmartOffers.sql",
+   "1tbl,1alt,5+col,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/AF38B_ReconciliationEngine.sql",
+   "1alt,1+col,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/AF38C_DualLedgerArchitecture.sql",
+   "1tbl,1alt,1-col,4idx,1fn,1trg,5dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger, 1 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/AF38C_Rollback.sql",
+   "1alt,1+col,1trg,3dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 1 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "migrations/AF38E_Rollback.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/AF38E_UnifiedMonetaryFlow.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/AF38_HOTFIX_Constraints.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/AF38_HOTFIX_FinalConstraints.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/AF38_HOTFIX_RateConstraint.sql",
+   "1alt",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/AF38_WithdrawalEngine.sql",
+   "1tbl,1alt,1+col,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/AddCampaignCosts.sql",
+   "68tbl,40alt,2-col,191idx,70dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "migrations/AddOnlinePriceToProduct.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/AddPromotionsEngine.sql",
+   "2tbl,1alt,4+col,7idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/AddShipmentOutForDeliveryTimestamp.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/Phase11_1_ProductVariants.sql",
+   "2tbl,1alt,7+col,2-col,9idx,4dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/Phase8B_CampaignCosts.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/PromotionsEngine_QuickFix.sql",
+   "2alt,4+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/UpdateConstraints.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/UpdateConstraints_2.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/UpdateConstraints_2_utf8.sql",
+   "2tbl,2alt,9idx,3dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/UpdateConstraints_Clean.sql",
+   "2tbl,2alt,9idx,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/UpdateConstraints_Only_Diff.sql",
+   "1tbl,1alt,3idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/add-payment-method-snapshot-columns.sql",
+   "1alt,4+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/add_use_baileys_feature_gate.sql",
+   "1alt,1+col,1idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/enable_baileys_gradual_rollout.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/normalize_carrier_codes.sql",
+   "2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "migrations/phase_11_5_add_has_variants.sql",
+   "2alt,3+col,2dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations/shipping_module_migration.sql",
+   "1tbl,1alt,27+col,6idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "migrations_promotion_ranking.sql",
+   "65tbl,40alt,2-col,185idx,68dml",
+   "YES",
+   "FULLY COVERED",
+   "2 index(es) superseded by broader baseline index"
+  ],
+  [
+   "normalize_existing_payout_wallets.sql",
+   "2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "scripts/AddOnlineCustomerWishlistItem.sql",
+   "1tbl,5idx,1dml",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "scripts/AddPaymentIntentColumns_FawryManualWallet.sql",
+   "1alt,8+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "scripts/AddTenantPaymentMethods.sql",
+   "1tbl,3idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "scripts/Migrations/20260117_AddPromotionSearchBoostOverride.sql",
+   "1alt,1+col",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "scripts/SeedFawryAndManualWalletPaymentMethods.sql",
+   "2dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "scripts/storefront-admin-hardening.sql",
+   "1tbl,4idx",
+   "YES",
+   "FULLY COVERED",
+   "All schema objects present or superseded in baseline"
+  ],
+  [
+   "sql/phase_lcr_block_legacy_writes.sql",
+   "1tbl,2fn,2trg,1dml",
+   "YES",
+   "FULLY COVERED",
+   "legacy-only: 2 trigger, 2 func (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "temp/applicationdbcontext-migrations.sql",
+   "133tbl,80alt,25+col,9-col,440idx,2fn,2trg,4seq,174dml",
+   "LEGACY",
+   "LEGACY ONLY",
+   "Targets the retired Core Ledger Engine (ledgerentries/journalentries/accounts/journalnumbersequences) \u2014 intentionally removed from runtime model (certified in DATABASE-2 as legacy-only tables); 18 object(s) target intentionally-removed legacy tables; 11 index(es) superseded by broader baseline index; legacy-only: 2 func, 4 seq, 2 trigger (baseline has none by design; replaced by app logic/EF)"
+  ],
+  [
+   "test_smartoffer_whitespace_constraints.sql",
+   "8dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "trigger-reindex-now.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "update-visa-account-name.sql",
+   "1dml",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ],
+  [
+   "verify_backfill_results.sql",
+   "\u2014",
+   "N/A",
+   "DATA MIGRATION ONLY",
+   "No DDL schema objects; data/verification only"
+  ]
+ ],
+ "verify_only": [
+  "AF-19_VERIFY_MIGRATION_STATE.sql",
+  "AF-38E-A_VERIFICATION_QUERIES.sql",
+  "AF-38F_VERIFICATION_QUERIES.sql",
+  "DB/30-3-2026.sql",
+  "PointOfSale.Infrastructure/Scripts/ProvisionForensicEvidenceRoles.sql",
+  "add_accounting_outbox_rowversion.sql",
+  "add_stock_sync_outbox_claimed_until_sqlserver.sql",
+  "af16e-trigger-reindex-via-events.sql",
+  "af18-backfill-missing-commissions.sql",
+  "af18-comprehensive-diagnostic.sql",
+  "af18-cross-tenant-commission-verification.sql",
+  "af18-debug-middleware-query.sql",
+  "af18-diagnostic-queries.sql",
+  "af18-final-debug.sql",
+  "af18-find-zezo-tenant.sql",
+  "af18-tenant-mismatch-diagnostic.sql",
+  "af18-verify-isdeleted-column.sql",
+  "af18-verify-zezo-commission.sql",
+  "af18-zezo-order-check.sql",
+  "af19-debug-order-attribution.sql",
+  "af21_backfill_order_status.sql",
+  "affiliate_audit_index_fixes.sql",
+  "check-order-phone.sql",
+  "check-tenant-ids.sql",
+  "check_request_status.sql",
+  "check_reviews.sql",
+  "check_smartoffer_whitespace_coupons.sql",
+  "debug-affiliate-data.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424100000_S23_OrderRefundLineAmountNonNegative.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429120000_S51_FixAffectedStoreIdsJsonColumnType.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429130000_S52_CleanupOldCartOwnerIndex.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429160000_S57_OrderFinancialPostingStatusConstraintHardening.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429163000_S58_OrderItemAffiliateSnapshotMutualExclusivity.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260501200756_S66_CommerceHubUnresolvedPaymentWebhooksUnfilteredUniqueness.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260511150000_S80_AddTenantsCurrencyDefaultValue.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260320_RecoverTenantCategories.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/af7_settlement_lifecycle.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/mr1c_rating_constraints.sql",
+  "fix-empty-category-ids.sql",
+  "fix_chat_attachment_constraint.sql",
+  "fix_marketplace_profile_image_columns.sql",
+  "fix_product_stock.sql",
+  "fix_servicerequest_status.sql",
+  "fix_servicerequestmessage_types.sql",
+  "migrations/AF38_HOTFIX_Constraints.sql",
+  "migrations/AF38_HOTFIX_FinalConstraints.sql",
+  "migrations/AF38_HOTFIX_RateConstraint.sql",
+  "migrations/UpdateConstraints.sql",
+  "migrations/UpdateConstraints_2.sql",
+  "migrations/enable_baileys_gradual_rollout.sql",
+  "verify_backfill_results.sql"
+ ],
+ "data_mig": [
+  "AF-38F_TEST_SCENARIOS.sql",
+  "AddTemplateTypeToAffiliateProductPolicy.sql",
+  "PointOfSale.Infrastructure/Scripts/VerifyForensicEvidenceDatabaseHardening.sql",
+  "RemoveLegacyAffiliateUserFKMigration.sql",
+  "RemoveLegacyAffiliateUserFKMigrationIdempotent.sql",
+  "add_affiliate_storetenanid_backfill.sql",
+  "add_promotion_ranking_config.sql",
+  "af17a-reindex-trigger.sql",
+  "check-whatsapp-accounts.sql",
+  "check-whatsapp-payment-setup.sql",
+  "cleanup_smartoffer_whitespace_coupons.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260420103000_NormalizeManualWalletProofReferences.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424140000_S27_PaymentCancellationSkipFlag.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260424163000_S31_CanonicalCrossSystemIdentityLinks_SqlServer.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426110000_S38_ReopenCriticalFinancialFailures.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260426120000_S36_TenantCurrencyRequired.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260428123000_S45_CommerceHubLedgerPostingOutboxBackfill.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429100000_S49_CrossSystemCriticalRiskClosure.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260429110000_S50_DataAuthorityViolationClosure.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/20260430110000_S61_DataAuthorityAndEventScopeClosure.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/20260315_MigrateLegacyProductImagesToProductMedia.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/AF14_Seed_AffiliateAccounts.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Fix_AccountType_Zero.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Fix_Tenant_Mena_Nuclear_Reset.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/PhaseCOD_MigratePaymentStatus.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A/PointOfSale.Infrastructure/Migrations/Sql/Seed_LedgerAccounts_ChartOfAccounts.sql",
+  "docs/recovery/archive/RECOVERY-4_PHASE_A_COMPLETION/PointOfSale.Infrastructure/Data/Migrations/SQL/AF30A_FIX_D2_EnabledRequiresCategory.sql",
+  "fix-missing-ledger-entries.sql",
+  "fix-visa-account.sql",
+  "manual_wallet_cleanup.sql",
+  "migrate-multi-unit-data.sql",
+  "migrations/AF38E_Rollback.sql",
+  "migrations/AF38E_UnifiedMonetaryFlow.sql",
+  "migrations/normalize_carrier_codes.sql",
+  "normalize_existing_payout_wallets.sql",
+  "scripts/SeedFawryAndManualWalletPaymentMethods.sql",
+  "test_smartoffer_whitespace_constraints.sql",
+  "trigger-reindex-now.sql",
+  "update-visa-account-name.sql"
+ ]
+}

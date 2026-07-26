@@ -1,0 +1,72 @@
+using System;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+using System.IO;
+
+public class AIHelper
+{
+    private readonly string endpoint = "https://ahramco-resource.openai.azure.com/";
+    private readonly string apiKey = "5v4Oj6jkf5Vy8H2wO5c4OqUDDHosrjqKbZw9vNsPaI0csd3eEmVxJQQJ99BFACfhMk5XJ3w3AAAAACOG5zMl";
+    private readonly string deploymentName = "gpt-4o";
+    private readonly string apiVersion = "2024-02-15-preview";
+
+    public async Task<string> GetAIResponseWithImage(string userQuestion, string imagePath)
+    {
+        using (var client = new HttpClient())
+        {
+            client.BaseAddress = new Uri(endpoint);
+            client.DefaultRequestHeaders.Add("api-key", apiKey);
+
+            // تحويل الصورة إلى Base64
+            byte[] imageBytes = File.ReadAllBytes(imagePath);
+            string base64Image = Convert.ToBase64String(imageBytes);
+            string imageDataUrl = $"data:image/png;base64,{base64Image}";
+
+            var requestBody = new
+            {
+                messages = new object[]
+                {
+                    new {
+                        role = "system",
+                        content = "أنت مساعد ذكي داخل برنامج تجاري، أجب على استفسارات المستخدم بدقة وبلغة عربية واضحة."
+                    },
+                    new {
+                        role = "user",
+                        content = new object[]
+                        {
+                            new { type = "text", text = userQuestion },
+                            new {
+                                type = "image_url",
+                                image_url = new {
+                                    url = imageDataUrl
+                                }
+                            }
+                        }
+                    }
+                },
+                max_tokens = 1000,
+                temperature = 0.7,
+                top_p = 0.95,
+                frequency_penalty = 0,
+                presence_penalty = 0
+            };
+
+            var jsonBody = Newtonsoft.Json.JsonConvert.SerializeObject(requestBody);
+            var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+            var response = await client.PostAsync($"/openai/deployments/{deploymentName}/chat/completions?api-version={apiVersion}", content);
+            var responseString = await response.Content.ReadAsStringAsync();
+
+            // للعرض والتشخيص إن أردت
+            Console.WriteLine("رد الخادم:\n" + responseString);
+
+            var json = JObject.Parse(responseString);
+            var reply = json["choices"]?[0]?["message"]?["content"]?.ToString();
+
+            return reply ?? "⚠️ لم يتم العثور على رد من الذكاء الاصطناعي.";
+        }
+    }
+}

@@ -1,0 +1,111 @@
+# FLOW-01 — Cash Sale (POS) — Browser Knowledge
+# Source of truth: .ai/hermes/business-flows/FLOW-01-CASH-SALE.md (implementation-backed)
+
+module:
+  module_name: "PointOfSale (POS Admin)"
+  workflow_name: "FLOW-01 Cash Sale"
+  business_entity: "SalesInvoice / SalesInvoiceItem / ProductVariantStock / Customer / JournalEntry"
+
+business_rules:
+  - "Idempotency header is MANDATORY: send X-Payment-Attempt-Id or X-Pos-Cart-Id (else 400)."
+  - "Payment method MUST be Cash, Card, or Mixed. Credit is hard-rejected (else 400)."
+  - "Warehouse must exist and be active (else 400)."
+  - "Customer (if provided) must exist and be active (else 400)."
+  - "Product and Variant must resolve for every line (else 400)."
+  - "Unit conversion factor must be > 0."
+  - "Server overwrites client UnitPrice and TaxRate with authoritative catalog values (price tampering prevented)."
+  - "Invoice-level and line-level discount must not exceed the subtotal."
+  - "Stock is decremented via pessimistic row lock; stock cannot go negative (app guard + DB CHECK)."
+  - "Cash paid must cover total; Mixed split must equal total within 0.01; no cash on card and no card on cash."
+  - "Every accounting journal must balance (debits == credits)."
+  - "ChangeAmount is derived (PaidAmount - TotalAmount); never trusted from client."
+  - "Failure rolls back the ENTIRE transaction; zero partial state."
+
+preconditions:
+  - "Tenant exists; operator JWT with role Owner/Admin/Manager/Cashier."
+  - "Active warehouse W1 owned by the tenant."
+  - "Cashbox GL account resolved for W1 (per-warehouse), else NoCashboxAccountException."
+  - "Product P1 with a default unit (ConversionFactor > 0) and variant V1."
+  - "ProductVariantStock(W1, V1).Quantity >= line quantity (e.g. 10)."
+  - "GL accounts exist: PosSales, VisaClearing (if card/mixed), CostOfGoodsSold, Inventory."
+  - "Idempotency header value available (uuid)."
+
+user_journey:
+  - "Open POS sale screen (pages/POS.jsx, route /pos)"
+  - "Scan or select product P1 / variant V1 and set quantity"
+  - "Select warehouse W1"
+  - "Optionally select customer C1"
+  - "Open payment modal (F9 / process payment)"
+  - "Choose PaymentMethod = Cash and enter PaidAmount = TotalAmount"
+  - "Submit (POST /api/sales with X-Payment-Attempt-Id)"
+  - "Receive 200 + SaleResponse (InvoiceNumber, TotalAmount, PaidAmount, ChangeAmount)"
+  - "Observe success toast and auto-opened ReceiptModal"
+
+expected_runtime_after_success:
+  - "SalesInvoice row created with Status = Completed and InvoiceNumber allocated."
+  - "SalesInvoiceItem rows created with authoritative price/tax/cost snapshot."
+  - "ProductVariantStock(W1,V1).Quantity decremented by sold base quantity."
+  - "StockMovement row created (MovementType = Sale, negative QuantityChange)."
+  - "If customer: Customer.Balance mutated via LedgerService; CustomerTransaction rows appended."
+  - "Revenue journal posted (debit cashbox/Visa/AR, credit PosSales); COGS journal if cost > 0."
+  - "LedgerAccount (cashbox GL) CurrentBalance increased by TotalAmount."
+  - "AccountingOutboxMessage row (PosSale) marked Processed with JournalId."
+  - "StockSyncOutboxMessage emitted for deferred inventory read-model replication."
+  - "No CashboxTransaction row written (cashbox is GL-derived)."
+  - "Receipt rendered with line items, totals, and ChangeAmount."
+
+browser_assertions:
+  - "'Sale completed successfully' toast/notification appears."
+  - "Receipt shows correct InvoiceNumber, TotalAmount, PaidAmount, ChangeAmount."
+  - "Inventory count for V1 reflects decremented quantity (after stock-sync propagates)."
+  - "Sales list shows the new invoice."
+  - "Cashbox balance display (Cashbox page) increases by TotalAmount (derived)."
+  - "Reports / sales summary reflect the new invoice on next query."
+  - "Duplicate submit (same idempotency key) returns byte-equal response and no second invoice."
+  - "No cashbox-transaction record is created by the sale."
+
+negative_tests:
+  - "Out of stock (quantity > available) -> 409 'Insufficient stock'; quantity unchanged."
+  - "Invalid/closed warehouse -> 400 'Warehouse not found'; no rows written."
+  - "Invalid customer -> 400 'Customer not found'; no rows written."
+  - "Discount exceeds line subtotal -> 400 'Discount exceeds line subtotal'; rollback."
+  - "Cash paid < total -> 400 'Invalid cash payment'; rollback."
+  - "Mixed split mismatch (cash+card != total) -> 400 'Invalid payment split'; rollback."
+  - "Duplicate submit same key -> 200 with same stored response (idempotency HIT)."
+  - "Key reuse with different payload -> 400 'Idempotency key reuse with different payload'."
+  - "PaymentMethod = Credit -> 400 'Unsupported payment method'."
+  - "Missing idempotency header -> 400 'Either X-Payment-Attempt-Id or X-Pos-Cart-Id header is required'."
+  - "JWT without POS role -> 401/403 at auth filter."
+
+critical_invariants:
+  - "Inventory cannot become negative (app guard + DB CHECK CK_ProductVariantStocks_Quantity_NonNegative)."
+  - "Accounting journal must balance (debits == credits)."
+  - "Invoice totals are server-recomputed; client prices/tax are overwritten."
+  - "Cash payment must cover total; mixed split must equal total."
+  - "Idempotency payload hash must match the bound key."
+  - "Original document must remain immutable (new sale only appends a new SalesInvoice)."
+  - "No Mongo/ES/Redis domain event is emitted by a POS sale (only SQL + stock-sync outbox)."
+  - "Cashbox entity balance is derived; the sale writes no CashboxTransaction."
+
+browser_test_scenarios:
+  - "Create Cash Sale (happy path, single item)"
+  - "Create Card Sale"
+  - "Create Mixed-payment Sale"
+  - "Create Sale with Customer (balance check)"
+  - "Create Sale without Customer"
+  - "Out-of-stock Sale (negative)"
+  - "Invalid warehouse (negative)"
+  - "Invalid customer (negative)"
+  - "Discount exceeds subtotal (negative)"
+  - "Cash underpaid (negative)"
+  - "Mixed split mismatch (negative)"
+  - "Credit payment method (negative, expect 400)"
+  - "Duplicate submit (idempotency HIT)"
+  - "Print receipt"
+  - "Search / view sale"
+
+success_definition:
+  - "UI completes: 200 + SaleResponse; success toast and receipt shown."
+  - "Business rules satisfied: idempotency present, payment method valid, stock sufficient, prices authoritative, payment covers total."
+  - "Critical invariants preserved: stock >= 0, journal balanced, invoice totals correct, no CashboxTransaction written."
+  - "Runtime expectations satisfied: SalesInvoice Completed, stock decremented, ledger/balance updated, journals posted and outbox processed, stock-sync emitted."

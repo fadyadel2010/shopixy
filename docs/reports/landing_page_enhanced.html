@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>خدمات الأنبا أبرام</title>
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        /* Modern Background with Animated Gradient */
+        body {
+            background: linear-gradient(-45deg, #667eea, #764ba2, #f093fb, #4facfe);
+            background-size: 400% 400%;
+            animation: gradientShift 15s ease infinite;
+            min-height: 100vh;
+            overflow-x: hidden;
+            font-family: 'Tajawal', sans-serif;
+            color: #fff;
+            padding: 20px 0;
+        }
+
+        @keyframes gradientShift {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* Enhanced Floating Shapes */
+        .shape {
+            position: fixed;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(2px);
+            border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+            animation: float 8s infinite ease-in-out;
+            box-shadow: 0 8px 32px rgba(255, 255, 255, 0.1);
+        }
+
+        .shape:nth-child(1) {
+            width: 150px; height: 150px; top: 10%; left: 15%;
+            animation-duration: 9s;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
+        }
+        .shape:nth-child(2) {
+            width: 100px; height: 100px; bottom: 15%; right: 20%;
+            animation-duration: 7s;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
+        }
+        .shape:nth-child(3) {
+            width: 80px; height: 80px; top: 40%; right: 10%;
+            animation-duration: 10s;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+        }
+        .shape:nth-child(4) {
+            width: 120px; height: 120px; bottom: 20%; left: 10%;
+            animation-duration: 12s;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04));
+        }
+        .shape:nth-child(5) {
+            width: 90px; height: 90px; top: 60%; left: 25%;
+            animation-duration: 11s;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.03));
+        }
+
+        @keyframes float {
+            0% { transform: translateY(0px) rotate(0deg) scale(1); opacity: 0.7; }
+            50% { transform: translateY(-40px) rotate(180deg) scale(1.1); opacity: 1; }
+            100% { transform: translateY(0px) rotate(360deg) scale(1); opacity: 0.7; }
+        }
+
+        /* Modern Glass Card */
+        .landing-box {
+            position: relative;
+            z-index: 100;
+            backdrop-filter: blur(20px) saturate(180%);
+            border-radius: 24px;
+            padding: 50px 40px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 
+                        0 0 0 1px rgba(255, 255, 255, 0.1) inset;
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        /* Modern Title */
+        .main-title {
+            font-size: 2.8rem;
+            font-weight: 900;
+            margin-bottom: 15px;
+            text-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            letter-spacing: -0.5px;
+        }
+
+        .subtitle {
+            font-size: 1.2rem;
+            font-weight: 400;
+            opacity: 0.95;
+            margin-bottom: 40px;
+        }
+
+        /* Enhanced Service Cards */
+        .service-card {
+            position: relative;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.15);
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            border-radius: 20px;
+            padding: 30px 20px;
+            overflow: hidden;
+        }
+
+        .service-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.05));
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            border-radius: 20px;
+        }
+
+        .service-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            background: rgba(255, 255, 255, 0.25);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3),
+                        0 0 0 1px rgba(255, 255, 255, 0.3) inset;
+        }
+
+        .service-card:hover::before {
+            opacity: 1;
+        }
+
+        .service-card:active {
+            transform: translateY(-5px) scale(0.98);
+        }
+
+        /* Logo Styling */
+        img.logo {
+            width: 120px;
+            height: 120px;
+            object-fit: contain;
+            margin-bottom: 15px;
+            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.2));
+            transition: transform 0.4s ease;
+        }
+
+        .service-card:hover img.logo {
+            transform: scale(1.1) rotate(5deg);
+        }
+
+        /* Service Title */
+        .service-title {
+            font-size: 1.4rem;
+            font-weight: 700;
+            margin: 0;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        }
+
+        /* Coming Soon Badge */
+        .coming-soon-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: linear-gradient(135deg, #ffd700, #ffed4e);
+            color: #333;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            box-shadow: 0 4px 12px rgba(255, 215, 0, 0.4);
+            z-index: 10;
+        }
+
+        .service-card.disabled {
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .service-card.disabled:hover {
+            transform: none;
+            background: rgba(255, 255, 255, 0.15);
+            box-shadow: none;
+        }
+
+        .service-card.disabled img.logo {
+            filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.2)) grayscale(50%);
+        }
+
+        .service-card.disabled:hover img.logo {
+            transform: none;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .landing-box {
+                padding: 30px 20px;
+            }
+            
+            .main-title {
+                font-size: 2rem;
+            }
+            
+            .subtitle {
+                font-size: 1rem;
+            }
+            
+            img.logo {
+                width: 90px;
+                height: 90px;
+            }
+            
+            .service-title {
+                font-size: 1.2rem;
+            }
+
+            .coming-soon-badge {
+                font-size: 0.75rem;
+                padding: 4px 12px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Floating Shapes -->
+    <div class="shape"></div>
+    <div class="shape"></div>
+    <div class="shape"></div>
+    <div class="shape"></div>
+    <div class="shape"></div>
+
+    <div class="container h-100 d-flex justify-content-center align-items-center">
+        <div class="landing-box text-center text-white">
+
+            <h1 class="main-title">خدمات الأنبا أبرام</h1>
+            <p class="subtitle">اختر الخدمة المناسبة للانتقال إليها</p>
+
+            <div class="row g-4">
+                <!-- Coaching Service -->
+                <div class="col-12 col-md-6">
+                    <div onclick="location.href='https://coaching.anba-ebram.com'" class="service-card">
+                        <img src="logo1.png" class="logo" alt="Coaching Logo">
+                        <h3 class="service-title">خدمة الكوتشنج</h3>
+                    </div>
+                </div>
+
+                <!-- Ebda B Nafsak -->
+                <div class="col-12 col-md-6">
+                    <div onclick="location.href='https://starturslef.anba-ebram.com'" class="service-card">
+                        <img src="logo2.png" class="logo" alt="Start Yourself Logo">
+                        <h3 class="service-title">خدمة ابدأ بنفسك</h3>
+                    </div>
+                </div>
+
+                <!-- Mental Math Service -->
+                <div class="col-12 col-md-6">
+                    <div onclick="location.href='https://mentalmath.anba-ebram.com/Account/Login'" class="service-card">
+                        <img src="logo3.png" class="logo" alt="Mental Math Logo">
+                        <h3 class="service-title">خدمة الحساب الذهني</h3>
+                    </div>
+                </div>
+
+                <!-- Coming Soon Service -->
+                <div class="col-12 col-md-6">
+                    <div class="service-card disabled">
+                        <span class="coming-soon-badge">قريباً</span>
+                        <img src="logo4.png" class="logo" alt="Coming Soon" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23ffffff%22 opacity=%220.3%22/%3E%3Ctext x=%2250%22 y=%2255%22 font-size=%2230%22 text-anchor=%22middle%22 fill=%22%23ffffff%22%3E%3F%3C/text%3E%3C/svg%3E'">
+                        <h3 class="service-title">خدمة جديدة</h3>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</body>
+</html>

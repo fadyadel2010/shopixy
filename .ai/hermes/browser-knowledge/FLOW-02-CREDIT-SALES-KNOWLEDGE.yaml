@@ -1,0 +1,73 @@
+# FLOW-02 — Deferred Payment / Credit Sale — Browser Knowledge
+# Source of truth: .ai/hermes/platform/FLOW-02-deferred-payment-credit-sale-canonical.md
+# IMPORTANT: There is NO credit-sale / deferred-payment business flow in Shopixy.
+# This file encodes the VERIFIED ABSENCE so Hermes proves non-existence during browser tests.
+
+module:
+  module_name: PointOfSale (POS Admin)
+  workflow_name: FLOW-02 Deferred Payment (Credit Sale) — NON-EXISTENT
+  business_entity: None (no CreditSale / Receivable / OpenInvoice aggregate exists)
+
+business_rules:
+  - PaymentMethod.Credit exists in the enum but has ZERO references and is explicitly rejected by SalesController.EnsureSupportedPaymentMethod.
+  - POS CreateSale forces FULL payment: Cash must cover total, Card must equal total exactly, Mixed must split exactly to total.
+  - Underpaid or zero-payment cash sale is rejected (400 "Invalid cash payment").
+  - A paid POS sale to a customer nets to ZERO outstanding (debit Sale = credit PaymentReceived).
+  - Customer debt (if any) is only a ledger residue (AccountLedger Debit - Credit), never a designed credit-sale transaction.
+  - AR Aging / Outstanding Balances pages are READ-ONLY analytics over AccountLedger; no "settle" verb.
+  - The SOA "Receive Payment" UI button points at POST /Payments/receive which has NO backend controller (404).
+  - No write path exists to record TransactionType.PaymentReceived outside the SalesController sale path.
+
+preconditions:
+  - Tenant exists; operator JWT.
+  - (For negative proof) a completed POS cash sale with a customer so an AccountLedger exists.
+  - (For orphan-endpoint proof) the OutstandingBalances.jsx "Receive Payment" button is reachable.
+
+user_journey:
+  - (Expected NEGATIVE) Attempt to create a sale with PaymentMethod = Credit via POST /api/sales.
+  - (Expected NEGATIVE) Attempt a cash sale with PaidAmount < TotalAmount.
+  - (Expected NEGATIVE) Open OutstandingBalances page and click "Receive Payment"; observe it targets an unimplemented endpoint.
+  - (Expected READ-ONLY) Open AR Aging report; confirm it only displays data and mutates nothing.
+
+expected_runtime_after_success:
+  - N/A — this workflow does not succeed. Successful execution is defined as PROVING NON-EXISTENCE:
+  - POST /api/Sales with paymentMethod "Credit" returns 400 "Unsupported payment method".
+  - Cash sale with paidAmount < total returns 400 "Invalid cash payment".
+  - After a paid cash sale to a customer, GET /StatementOfAccount/balance/Customer/{id} returns balance ~0.
+  - POST /api/Payments/receive returns 404 (no controller).
+  - GET /api/Reports/accounts-receivable-aging returns data but mutates nothing.
+
+browser_assertions:
+  - Payment method selector in the POS payment modal offers only Cash / Card / Mixed (no Credit option, or Credit is rejected if submitted).
+  - Submitting a Credit sale yields an error toast / 400, no invoice created.
+  - Submitting an underpaid cash sale yields an error, no invoice created.
+  - Outstanding Balances "Receive Payment" action fails (404 / no settlement recorded).
+  - AR Aging report renders but no action closes the balance.
+  - A paid cash sale leaves the customer's outstanding balance ~0.
+
+negative_tests:
+  - Credit payment method on POS sale -> 400 "Unsupported payment method".
+  - Underpaid cash sale (paidAmount < total) -> 400 "Invalid cash payment".
+  - Zero-payment cash sale (paidAmount = 0) -> 400.
+  - Attempt to settle an outstanding balance via POST /Payments/receive -> 404 (orphaned endpoint).
+  - Assume a CreditSale / Receivable aggregate exists -> grep yields only reporting/DTOs, no write path.
+
+critical_invariants:
+  - POS sale cannot leave a balance outstanding (full payment enforced).
+  - No "CreditSale", "AccountsReceivable" (as aggregate), "OpenInvoice", "InvoiceSettlement", or "ReceivePayment" write path exists.
+  - Customer debt is a ledger residue (AccountLedger Debit - Credit), never a designed receivable document.
+  - AR Aging and Outstanding Balances are read-only; settlement-to-zero is not wired end-to-end.
+
+browser_test_scenarios:
+  - Attempt Credit Sale (expect 400)
+  - Attempt Underpaid Cash Sale (expect 400)
+  - View Outstanding Balances (read-only)
+  - Click Receive Payment (expect 404 / no effect)
+  - View AR Aging report (read-only, no mutation)
+  - Paid Cash Sale leaves zero outstanding
+
+success_definition:
+  - UI proves the absence: no Credit option persists, Credit/underpaid submissions error out, no invoice is created.
+  - Business rules satisfied: full-payment enforcement and Credit rejection confirmed.
+  - Critical invariants preserved: no receivable aggregate, balances remain ledger-derived.
+  - Runtime expectations satisfied: orphaned settlement endpoint 404s; AR aging read-only; paid sale nets to ~0 outstanding.

@@ -1,0 +1,149 @@
+# Browser testing knowledge extracted from .ai/hermes/master-data/MD-01-PRODUCT-LIFECYCLE.md
+# Implementation-backed. No architecture discussion. Actionable QA knowledge only.
+
+module:
+  module_name: POS Admin Catalog / Product Management
+  page_name: Product Management (Products list, Product Detail, Variants tab, Media gallery)
+  business_entity: Product / ProductVariant / ProductVariantStock / ProductMedia
+
+business_rules:
+  - id: R1
+    rule: Every Product must have exactly one current Default Variant (IsDefault=true).
+    source: ProductVariantConfiguration.cs:109-113; ProductVariantService.cs:210-219
+  - id: R2
+    rule: CategoryId is mandatory and must NOT be Guid.Empty.
+    source: ProductsController.cs:269-273; ProductConfiguration.cs:53-55
+  - id: R3
+    rule: Category must be a live node in the SQL parent lineage (no broken/deleted ancestor, no cycle).
+    source: CategoryLineageAuthority.cs:32-108; ProductsController.cs:275-282
+  - id: R4
+    rule: SKU must be unique across Products and live Variants (auto-suffixed on collision, no error unless truly duplicate).
+    source: ProductVariantCloneImportAuthority.cs:14-105; ProductVariantConfiguration.cs:94-97
+  - id: R5
+    rule: Barcode must be unique across Products, live Variants, and ProductUnits.
+    source: ProductVariantCloneImportAuthority.cs:107-179; ProductVariantConfiguration.cs:99-102
+  - id: R6
+    rule: Simple Products (HasVariants=false) may own only their default variant; extra variant creation is forbidden.
+    source: ProductVariantsController.cs:151-162
+  - id: R7
+    rule: Variant products (HasVariants=true) must have product-level SKU/Barcode/Price set to null/0.
+    source: ProductsController.cs:328-344
+  - id: R8
+    rule: Variant attribute combination (AttributeCombinationKey) must be unique per (TenantId, ProductId).
+    source: ProductVariantAttributeCombinationKey.cs; ProductVariantConfiguration.cs:104-107
+  - id: R9
+    rule: A variant cannot have two live values for the same attribute name.
+    source: ProductVariantAttributeConfiguration.cs:38-42
+  - id: R10
+    rule: Stock Quantity, ReservedQuantity, DamagedQuantity must be non-negative; ReservedQuantity must not exceed Quantity.
+    source: ProductVariantStockConfiguration.cs:18-30
+  - id: R11
+    rule: Exactly one stock row per (TenantId, VariantId, WarehouseId).
+    source: ProductVariantStockConfiguration.cs:60-62
+  - id: R12
+    rule: Variant merge/split must stay within the same tenant; open reservations block supersede.
+    source: ProductVariantMergeSplitAuthority.cs:277-350
+  - id: R13
+    rule: Product Media must belong to the product+tenant and be image type before a variant may reference it via MediaId.
+    source: ProductVariantCloneImportAuthority.cs:237-253; ProductVariantsController.cs:229-235
+  - id: R14
+    rule: "Media URL validation: image extensions jpg/jpeg/png/webp (no provider); video provider youtube/vimeo/mp4; URL absolute or root-relative."
+    source: ProductMediaService.cs:304-416
+  - id: R15
+    rule: Product is tenant-scoped; all reads/writes filtered by RequiredTenantId.
+    source: ITenantOwned.cs; ProductsController.cs
+
+expected_runtime_after_create:
+  - Product row inserted in PostgreSQL.
+  - Exactly one Default Variant created and linked (mirrors SKU/Barcode/Price for simple product).
+  - Category assigned and validated as live.
+  - ProductCreatedEvent published (MassTransit outbox, same transaction).
+  - ProductVariantCreatedEvent published for the default variant.
+  - Product appears in product list (GET api/products).
+  - Mongo ProductDocument created with embedded default variant.
+  - Redis cache invalidated.
+  - If initial variant stock supplied, ProductVariantStock rows created per warehouse.
+  - If not published, product not visible on storefront/ES until PublishStatus=Published + IsOnlineVisible=true.
+
+expected_runtime_after_update:
+  - Product fields persisted; ProjectionMutationVersion advanced (monotonic).
+  - If CategoryId changed, new category validated as live lineage.
+  - If SKU/Barcode changed, uniqueness re-checked across products+variants+units.
+  - If publish status or IsOnlineVisible flipped, ProductPublishStatusChangedEvent emitted.
+  - Mongo ProductDocument updated or tombstoned; ES doc indexed or deleted; Redis invalidated.
+  - For variant products, product commerce fields remain null/0 (variant owns them).
+  - For simple products, default variant mirror re-synced (SKU/Barcode/Price/Cost/IsActive).
+
+expected_runtime_after_delete:
+  - Product soft-deleted (IsDeleted=true).
+  - ProductDeletedEvent published.
+  - Mongo ProductDocument tombstoned.
+  - Elasticsearch document deleted.
+  - Redis cache invalidated.
+  - Variants remain (soft lineage) but product no longer resolvable in active catalog.
+  - Delete guarded if product has stock/transaction history (falls back to inactive).
+
+browser_assertions:
+  - Product appears in the product list after creation.
+  - Product can be searched by Name, SKU, and Barcode (ILike).
+  - Product detail shows correct Name, Category, Price, SKU, Barcode.
+  - Exactly one Default Variant is shown for a simple product.
+  - Variant product shows the Variants tab with multiple variants.
+  - Each variant shows correct SKU, Barcode, Price, OnlinePrice, CostPrice.
+  - Variant attributes (e.g. Color=Red, Size=XL) displayed on variant.
+  - Product images appear in gallery ordered by Position.
+  - Variant shows its selected MediaId image.
+  - Category name displayed and matches assigned live category.
+  - PublishStatus and IsOnlineVisible reflect in storefront visibility.
+  - Stock quantity per warehouse visible on variant.
+  - Barcode search returns product and, for variant barcode, the matched variant id.
+  - After media delete, referencing variant no longer shows that image.
+
+negative_tests:
+  - Create product with CategoryId = Guid.Empty -> rejected (400).
+  - Create product with deleted/broken-lineage category -> rejected (400).
+  - Create product with duplicate Barcode (owned by another live product/variant) -> rejected (VariantSemanticBarcodeOwnershipConflict).
+  - Create variant with duplicate Barcode -> rejected (VariantSemanticBarcodeOwnershipConflict).
+  - Create second variant with same attribute combination -> rejected (VariantAttributeCombinationConflict).
+  - Create extra variant on a simple product -> rejected (SimpleProductAdditionalVariantForbidden).
+  - Create variant stock with negative quantity -> rejected.
+  - Add media with non-image extension (e.g. .gif) -> rejected (400).
+  - Add video media without provider -> rejected (400).
+  - Reference another product's media as variant MediaId -> rejected (400).
+  - Create variant with warehouse not belonging to tenant -> rejected (400).
+  - Concurrent stock mutation causing oversell -> InsufficientStockException / blocked.
+
+critical_invariants:
+  - Every Product has exactly one current Default Variant.
+  - SKU globally unique across products + live variants + product units.
+  - Barcode globally unique across products + live variants + product units.
+  - CategoryId always references a live SQL lineage category (never Guid.Empty, never broken).
+  - Variant attribute combination unique per product.
+  - Stock Quantity >= 0 and ReservedQuantity <= Quantity per variant-warehouse.
+  - Exactly one stock row per (TenantId, VariantId, WarehouseId).
+  - Product is always tenant-scoped; cross-tenant access never occurs.
+  - Variant SKU/barcode/stock/media/publication owned only by Current semantic-lifecycle variants.
+  - A Product is never sold directly; only a ProductVariant is sold (OrderItem.VariantId is source of truth).
+  - PostgreSQL is the system of record; Mongo/ES/Redis are derived projections re-owned by SQL.
+
+browser_test_scenarios:
+  - Create Simple Product.
+  - Create Variant Product.
+  - Add Variant to Variant Product.
+  - Edit Product (name, price, category).
+  - Mirror sync check on Simple Product default variant.
+  - Search by Name.
+  - Search by SKU.
+  - Search by Barcode (product then variant).
+  - Upload Image to Product.
+  - Reorder Media gallery.
+  - Delete Media (verify variant ref cleared).
+  - Assign Variant Stock (multiple warehouses).
+  - Publish Product (storefront visible).
+  - Archive Product (hidden).
+  - Delete Product (soft delete + tombstone).
+  - Negative: Missing Category.
+  - Negative: Duplicate Barcode.
+  - Negative: Duplicate Variant Attribute Combination.
+  - Negative: Extra Variant on Simple Product.
+  - Negative: Invalid Media type.

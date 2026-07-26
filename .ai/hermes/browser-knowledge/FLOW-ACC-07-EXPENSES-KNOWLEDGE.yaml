@@ -1,0 +1,251 @@
+# Browser Knowledge File — Expenses (POS Admin)
+# Source of truth: .ai/hermes/accounts/FLOW-ACC-07-EXPENSES.md (implementation-backed ONLY)
+# Consumed by Hermes before Browser Testing. Do NOT inspect implementation.
+
+module:
+  name: Expenses (POS Admin)
+  domain: Accounting / POS Admin Expenses
+  business_entity: Expense
+  includes:
+    - Expense
+    - Expense Category
+    - Expense Report
+    - Approval
+    - Financial Posting
+
+business_rules:
+  - Expense is a versioned aggregate (AccountingMutationVersion).
+  - Expense has AccountingMutationVersion (monotonic, bumped on ledger-affecting mutations).
+  - Expense uses transactional Accounting Outbox (PosExpense / ExpenseReversal).
+  - Expense posts through CommerceAccountingService.PostPosExpenseAsync.
+  - Expense posts through FinancialPostingService.PostJournalAsync.
+  - Expense never mutates balances directly (explicit controller guard "DO NOT mutate balances directly").
+  - Expense never writes Party Ledger (no AccountLedger / PartyLedgerAdjustment for expenses).
+  - Supplier linkage is optional (SupplierId nullable).
+  - Supplier does not create Payables / Receivables for expenses.
+  - Expense Category is metadata (name/description/active); all expenses post to single Expenses account 6100.
+  - Expense Report is a read model over the Expenses business table (not financial truth).
+  - General Ledger owns financial truth.
+  - Expense journals are replay-safe via AccountingMutationVersion (stale messages skipped).
+  - Expense update performs reversal (ExpenseReversal) then repost.
+  - Expense delete performs reversal (soft delete + ExpenseReversal).
+  - Expense approval controls posting (ShouldAccountExpense = IsApproved && !IsDeleted).
+  - Expense must be approved before posting.
+  - Funding account resolved per payment method (Cash to cashbox account or default; Visa/Card to VisaClearing 1110; BankTransfer to BankAccount 1030).
+  - Payment methods supported are Cash, Visa, Card, BankTransfer only (others throw CreateInvalidPaymentMethodException).
+  - Expense debit is Expenses account 6100; credit is the resolved funding account.
+  - Expense Category deletion is blocked while expenses reference it.
+  - Report row cap is 1000 (X-Result-Truncated header set when exceeded).
+  - Idempotency enforced via Idempotency-Key / X-Request-Id header plus request hash.
+  - No system-generated expense number; ReferenceNumber is free-text and nullable.
+  - No Expense status enum; state is RequiresApproval + IsApproved + IsDeleted + AccountingMutationVersion.
+
+preconditions:
+  - Authenticated user ([Authorize] on controllers).
+  - Authorized user (POS Admin scope).
+  - Valid Tenant (TenantId = ITenantContext.RequiredTenantId; cross-tenant reads return 404/empty).
+  - Valid Idempotency-Key header (pattern ^[A-Za-z0-9-]+$, max length 100) for all mutations.
+  - Idempotency-Key and X-Request-Id must match when both provided.
+  - Expense Category supplied (ExpenseCategoryId is Required FK).
+  - Payment Method supported (Cash, Visa, Card, BankTransfer).
+  - Expense approved before posting (auto-approved on create when RequiresApproval=false).
+  - Required fields present: ExpenseCategoryId, ExpenseDate, Amount, Description, PaymentMethod (Entity [Required]).
+  - Expense Category name unique within tenant (duplicate rejected).
+
+user_journey:
+  expense_creation:
+    - Navigate to /expenses.
+    - Select category.
+    - Enter amount, date, description, notes.
+    - Select payment method (Cash selects cashbox; Visa/Card; BankTransfer selects bank).
+    - Optionally link supplier.
+    - Optionally set RequiresApproval flag.
+    - Submit with Idempotency-Key header.
+    - Expect 201; expense appears in list.
+  expense_approval:
+    - Open expense requiring approval.
+    - POST /api/expenses/{id}/approve with approved true (or false to reject).
+    - Expect approval stored; journal posts when approved.
+  expense_update:
+    - Open expense.
+    - Edit amount/date/category/method/etc.
+    - Submit PUT /api/expenses/{id} with Idempotency-Key.
+    - Expect updated record; previous journal reversed; new journal reposted.
+  expense_delete:
+    - Open expense.
+    - Trigger DELETE /api/expenses/{id} with Idempotency-Key.
+    - Expect soft delete (IsDeleted=true); previous journal reversed.
+  expense_report:
+    - Navigate to /reports/expenses.
+    - Apply filters (date range, category, payment method, supplier, isApproved).
+    - Expect summary totals, by-category, by-payment-method.
+  expense_categories:
+    - Navigate to /expense-categories.
+    - Create / edit / delete / toggle-status category.
+    - Duplicate name rejected; delete blocked while expenses exist.
+
+expected_runtime_after_success:
+  expense_creation:
+    - Expense created (Expenses table row).
+    - AccountingMutationVersion initialized (0 if RequiresApproval, else 1).
+    - Outbox message created (PosExpense, EXPENSE:{tenant}:{id}:vN).
+    - Journal eventually created by background processor (SourceType="Expense").
+    - General Ledger updated (Debit 6100, Credit funding account).
+  expense_approval:
+    - Approval stored (IsApproved, ApprovedBy, ApprovedAt).
+    - Journal created (when approved=true).
+  expense_update:
+    - AccountingMutationVersion incremented.
+    - Previous Journal reversed (ExpenseReversal).
+    - New Journal posted (same expense, new operation key).
+  expense_delete:
+    - Expense soft deleted (IsDeleted=true).
+    - Previous Journal reversed.
+  expense_report:
+    - Report reflects current Expenses table rows (totals, by-category, by-payment-method).
+
+browser_assertions:
+  expense:
+    - Expense visible in list / detail.
+    - Category name visible.
+    - Approval state correct (approved / pending / rejected).
+    - Reference number displayed (if supplied).
+    - Mutation Version behaves correctly (increments on update/delete; stable on no-op).
+  financial:
+    - Journal exists (SourceType="Expense", SourceId=expense.Id).
+    - Journal balanced (Debit 6100 equals Credit funding).
+    - Expense account (6100) debited.
+    - Funding account credited (cashbox account / VisaClearing 1110 / BankAccount 1030).
+    - Trial Balance remains balanced.
+    - Profit & Loss updated (Expense lines).
+    - Balance Sheet funding leg updated (Asset accounts).
+  reports:
+    - Expense Report updated (operational read model).
+    - Financial reports eventually reflect journal (after outbox drain).
+
+negative_tests:
+  missing_idempotency_key:
+    - Mutation without Idempotency-Key / X-Request-Id returns 400.
+  duplicate_idempotency_key:
+    - Replay same key plus same payload returns stored response (no duplicate).
+  same_idempotency_key_different_payload:
+    - Replay same key plus different payload returns 400 "Idempotency key reuse with different payload".
+  invalid_payment_method:
+    - Payment method Cheque / unsupported causes posting to throw CreateInvalidPaymentMethodException; outbox fails/retries.
+  duplicate_expense_category:
+    - Create category with existing name returns 400.
+  delete_category_with_linked_expenses:
+    - Delete category that has expenses returns 400.
+  expense_not_approved:
+    - Unapproved expense does not post journal (processor skips).
+  expense_deleted:
+    - Soft-deleted expense does not post journal (processor skips).
+  stale_mutation_version:
+    - Outbox message with stale AccountingMutationVersion is skipped (no re-apply).
+  implementation_gaps:
+    negative_amount_accepted:
+      - No server-side positive-amount guard; negative/zero amount currently accepted. Marked GAP, not expected validation.
+    missing_category_existence_validation:
+      - No API-level check that ExpenseCategoryId exists. Marked GAP.
+    missing_supplier_validation:
+      - No existence check on SupplierId. Marked GAP.
+    missing_funding_validation:
+      - No funding-availability / balance pre-check; overdraft permitted at API layer. Marked GAP.
+    no_expense_number_generator:
+      - ReferenceNumber is free-text only; no system-generated number. Marked GAP / NOT IMPLEMENTED.
+
+critical_invariants:
+  - Expense never mutates balances directly.
+  - Expense never writes Party Ledger.
+  - Expense always posts through Accounting Outbox.
+  - Expense always posts through FinancialPostingService.
+  - Financial truth is General Ledger.
+  - Expense Report is read-only operational read model.
+  - Expense Category owns metadata only.
+  - AccountingMutationVersion is monotonic.
+  - Reversal always precedes repost.
+  - Journals remain balanced.
+  - Idempotency prevents duplicate posting.
+  - Tenant isolation enforced (TenantId on every row; cross-tenant read returns 404/empty).
+  - No direct Cashbox balance mutation by Expense path.
+  - No direct Bank balance mutation by Expense path.
+  - No Supplier Payable / Receivable generated by Expense.
+
+browser_test_scenarios:
+  - Cash Expense
+  - Visa Expense
+  - Bank Expense
+  - Expense Approval
+  - Expense Rejection
+  - Expense Update
+  - Expense Reversal (via update/delete/reject)
+  - Expense Delete
+  - Expense Category CRUD
+  - Expense Report Verification
+  - Profit & Loss Verification
+  - Trial Balance Verification
+  - Balance Sheet Verification
+  - Mutation Version Verification
+
+not_implemented_scenarios_excluded:
+  - No Expense Archive.
+  - No Expense Restore.
+  - No Receipt Upload endpoint.
+  - No Expense Number generator.
+  - No Expense Status enum.
+  - No Expense Attachment aggregate.
+  - No Party Ledger posting.
+  - No Supplier Payable generation.
+  - No Direct Cashbox Balance mutation.
+  - No Direct Bank Balance mutation.
+  - No Expense void endpoint.
+
+runtime_models:
+  expense_runtime:
+    - Expense Request
+    - Expense Aggregate
+    - AccountingMutationVersion
+    - Accounting Outbox
+    - AccountingOutboxProcessor
+    - CommerceAccountingService
+    - FinancialPostingService
+    - JournalEntry
+    - General Ledger
+    - Financial Reports
+  update_runtime:
+    - Expense Update
+    - Mutation Version Increment
+    - ExpenseReversal
+    - Reverse Previous Journal
+    - Create New Journal
+    - General Ledger Updated
+  delete_runtime:
+    - Expense Delete
+    - Soft Delete
+    - ExpenseReversal
+    - Reverse Journal
+    - END
+
+assumptions_to_reject:
+  - Expense owns balances. (FALSE)
+  - Expense updates Party Ledger. (FALSE)
+  - Expense Report is financial truth. (FALSE)
+  - Category controls accounting. (FALSE)
+  - Expense creates CashboxTransaction synchronously. (FALSE)
+  - Expense creates ledger entry synchronously on create. (FALSE)
+
+success_definition:
+  hermes_considers_expenses_successful_only_if:
+    - Business Rules hold.
+    - Browser assertions succeed.
+    - Critical invariants remain intact.
+    - Expense aggregate created.
+    - AccountingMutationVersion maintained.
+    - Accounting Outbox receives message.
+    - FinancialPostingService posts journal.
+    - Journal balanced.
+    - Expense account (6100) debited.
+    - Funding account credited.
+    - Financial reports updated (P&L / TB / BS).
+    - No Party Ledger mutation occurs.
+    - No direct balance mutation occurs.

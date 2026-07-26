@@ -1,0 +1,177 @@
+module:
+  name: Customer Master
+  page: Customers
+  business_entity: Customer (POS/ERP tenant-owned party record)
+  scope: POS Customer only; storefront OnlineCustomer / CommerceHubCustomer are a separate domain and out of scope
+  source: .ai/hermes/master-data/MD-03-CUSTOMER-MASTER.md
+  data_authority:
+    identity: Customer (Postgres Customers row)
+    financial: AccountLedger (Σ Debit - Credit)
+    search: Direct Postgres query (no Mongo/ES projection)
+
+business_rules:
+  - id: BR-01
+    rule: Customer phone must be unique among non-deleted customers (enforced on create and update)
+  - id: BR-02
+    rule: Customer Name is required (max 200 chars)
+  - id: BR-03
+    rule: Field length caps enforced - Phone <=50, Email <=200, TaxNumber <=50
+  - id: BR-04
+    rule: TenantId is mandatory and stamped from the authenticated tenant context
+  - id: BR-05
+    rule: Customer identity and all queries are tenant-scoped; cross-tenant access is blocked
+  - id: BR-06
+    rule: Opening balance is a one-time operation per customer (app + service + unique index guarded)
+  - id: BR-07
+    rule: Opening balance amount must be greater than zero and BalanceType must be Debit or Credit
+  - id: BR-08
+    rule: Customer balance is read-only from the UI - it is derived from the ledger, never edited directly
+  - id: BR-09
+    rule: Customer update endpoint changes identity/contact only and never mutates balance
+  - id: BR-10
+    rule: Customer cannot be deleted if it has a non-zero ledger balance
+  - id: BR-11
+    rule: Customer cannot be deleted if it has sales invoice history
+  - id: BR-12
+    rule: Customer cannot be deleted if it has transaction history
+  - id: BR-13
+    rule: Delete is a soft delete; deleted customers are excluded from lists and mutations
+  - id: BR-14
+    rule: Credit limit / credit-sale gating does NOT exist - credit sales are never blocked (do not assert on it)
+  - id: BR-15
+    rule: There is no inactive/deactivate state - only soft delete exists
+
+preconditions:
+  - Valid authenticated tenant (TenantId resolvable from context)
+  - Create requires role Owner, Admin, Manager, or Cashier
+  - Update requires role Owner, Admin, or Manager
+  - Delete requires role Owner, Admin, or Manager
+  - Customer must exist and not be soft-deleted for update/delete/opening-balance
+  - Opening balance must not already exist for the customer
+  - Valid customer data (Name present, phone not duplicate, valid field lengths)
+  - Opening balance requires amount > 0 and BalanceType in {Debit, Credit}
+  - Idempotency-Key (when provided) must be letters/numbers/hyphens, max 100 chars
+
+user_journeys:
+  - name: Create Customer
+    steps:
+      - Open Customers page
+      - Click Create/New customer
+      - Enter Name (required), Phone, Email, Address, TaxNumber, Notes
+      - Submit
+    result: Customer created with balance 0
+  - name: Edit Customer
+    steps:
+      - Open an existing customer
+      - Modify identity/contact fields
+      - Save
+    result: Identity/contact updated; balance unchanged
+  - name: Search Customer
+    steps:
+      - Enter a term in the customer search box (Name, Phone, or Email)
+    result: Matching non-deleted customers listed, paginated, newest first
+  - name: Create Opening Balance
+    steps:
+      - Open opening balances screen
+      - Select customer, enter amount (> 0) and BalanceType (Debit/Credit)
+      - Submit
+    result: Opening balance recorded once; ledger and shadow balance updated
+  - name: View Customer Details
+    steps:
+      - Open a customer
+    result: Identity/contact fields and ledger-derived balance displayed
+  - name: View Customer Ledger
+    steps:
+      - Open a customer's transactions/statement view
+    result: Transaction history and running balance derived from ledger displayed
+  - name: Delete Customer
+    steps:
+      - Open a clean customer (no balance/invoices/transactions)
+      - Confirm delete
+    result: Customer soft-deleted and removed from list
+
+expected_runtime_after_success:
+  - Customer row created/updated in Postgres with correct TenantId
+  - Opening balance recorded as one ledger entry and one CustomerTransaction (IsOpeningBalance)
+  - AccountLedger updated on sale/payment/return/opening-balance
+  - Shadow Customer.Balance synchronized by LedgerService (non-authoritative)
+  - Customer searchable via direct SQL query
+  - Customer soft-deleted (IsDeleted=true) and excluded from queries
+  - Displayed balance equals Σ(Debit - Credit) from AccountLedgers
+
+browser_assertions:
+  - New customer appears in the customer list
+  - Customer is findable via search by Name, Phone, or Email
+  - Customer detail fields display the submitted values
+  - Newly created customer shows balance 0
+  - Opening balance value is displayed after saving
+  - Customer balance card reflects ledger aggregation after a credit sale/payment
+  - Ledger/transaction history shows sale, payment, and return entries
+  - Deleted customer disappears from the list and search
+  - Validation error messages are shown for invalid input (duplicate phone, missing name)
+  - Delete is blocked with an explanatory message when guards fail
+
+negative_tests:
+  - name: Duplicate phone number
+    action: Create/update a customer with a phone already used by a non-deleted customer
+    expect: Rejected with "A customer with this phone number already exists"
+  - name: Missing customer name
+    action: Submit create/update without Name
+    expect: Rejected (Name required)
+  - name: Opening balance submitted twice
+    action: Save opening balance again for a customer that already has one
+    expect: Rejected with "Opening balance already exists for this customer"
+  - name: Opening balance invalid amount/type
+    action: Submit opening balance with amount <= 0 or BalanceType not Debit/Credit
+    expect: Rejected (validation error)
+  - name: Delete customer with outstanding balance
+    action: Delete a customer whose ledger balance is non-zero
+    expect: Rejected with CUSTOMER_HAS_BALANCE
+  - name: Delete customer with invoices
+    action: Delete a customer with sales invoice history
+    expect: Rejected with CUSTOMER_HAS_INVOICES
+  - name: Delete customer with transaction history
+    action: Delete a customer with transaction history
+    expect: Rejected with CUSTOMER_HAS_TRANSACTIONS
+  - name: Cross-tenant access
+    action: Authenticated as Tenant B, request a Tenant A customer id
+    expect: Not found (tenant isolation)
+  - name: Direct balance edit attempt
+    action: Attempt to set/edit balance through the update flow
+    expect: Balance unchanged (update never mutates balance)
+
+critical_invariants:
+  - Customer is the Identity authority only (identity + contact + addresses)
+  - AccountLedger is the sole Financial authority
+  - Customer.Balance is never authoritative - it is a shadow/cache only
+  - Displayed/outstanding balance is always the ledger aggregation Σ(Debit - Credit)
+  - Customer balance cannot be edited directly; it changes only through ledger writes
+  - Opening balance is one-time per customer
+  - Phone uniqueness is maintained across non-deleted customers
+  - Tenant isolation is always enforced; no cross-tenant read/write
+  - Soft-deleted customers are always excluded from lists, search, and mutations
+  - No credit limit exists; credit sales are never gated (must not be assumed present)
+  - POS Customer has no Mongo/ES projection and emits no domain events
+
+browser_test_scenarios:
+  - Create Customer
+  - Update Customer
+  - Search Customer
+  - Create Opening Balance
+  - Opening Balance One-Time Enforcement
+  - View Customer Details
+  - View Customer Ledger
+  - Delete Customer (clean)
+  - Delete Validation (balance/invoices/transactions)
+  - Duplicate Phone Validation
+  - Missing Name Validation
+  - Read-Only Balance Enforcement
+  - Cross Tenant Protection
+
+success_definition:
+  - UI behaves correctly for all implemented journeys
+  - All business rules hold
+  - All critical invariants hold
+  - Runtime expectations succeed and are observable
+  - Financial authority remains with the ledger (never Customer.Balance)
+  - Customer identity integrity and tenant isolation are preserved

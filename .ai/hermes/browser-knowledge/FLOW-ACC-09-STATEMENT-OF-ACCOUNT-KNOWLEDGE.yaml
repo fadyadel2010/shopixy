@@ -1,0 +1,312 @@
+# Browser Knowledge — Statement Of Account (FLOW-ACC-09)
+# Source of truth: .ai/hermes/accounts/FLOW-ACC-09-STATEMENT-OF-ACCOUNT.md
+# This YAML is consumed by Hermes BEFORE browser testing. Browser-only testing knowledge.
+# Statement Of Account is a Party Ledger projection, NOT a financial report, NOT General Ledger.
+
+module:
+  name: StatementOfAccount
+  domain: Accounts Receivable / Accounts Payable (Party Ledger Projection)
+  statement_types:
+    - Customer Statement
+    - Supplier Statement
+    - Outstanding Balance
+    - Opening Balance
+    - Manual Adjustment
+    - Party Ledger
+
+business_rules:
+  - Statement Of Account is a read projection.
+  - Statement Of Account is NOT an aggregate.
+  - Statement Of Account never owns balances.
+  - Statement reads AccountLedger (Party Ledger).
+  - Statement never reads General Ledger.
+  - Statement never writes General Ledger.
+  - Statement never owns Running Balance.
+  - Running Balance belongs to AccountLedger.
+  - Customer Balance is a cache.
+  - Supplier Balance is a cache.
+  - Statement is generated on demand.
+  - Statement reads live ledger (AsNoTracking, no cache/snapshot/projection).
+  - Opening Balance allowed once per party.
+  - Manual Adjustments write Party Ledger.
+  - Outstanding Balance is computed live.
+  - Party Ledger is financial truth for statements.
+  - General Ledger is NOT the source for statements.
+  - Closing Balance = Opening + TotalDebit - TotalCredit (Opening Balance rows excluded from Debit/Credit totals).
+  - Adjustments accept only: CreditNote, DebitNote, CreditAdjustment, DebitAdjustment.
+  - All writes are idempotent per tenant (SHA256 request hash + Idempotency-Key).
+  - Tenant isolation enforced by global EF query filter on AccountLedger.
+
+preconditions:
+  - Authenticated user ([Authorize]).
+  - Authorized user (POS Admin scope).
+  - Valid Tenant (X-Tenant-Id resolved; RequiredTenantId stamped on writes).
+  - Valid Party Type (Customer | Supplier).
+  - Valid Party (party exists and not IsDeleted) for balance/opening/adjustment/outstanding detail.
+  - Valid Statement Filters (PartyType required; PartyId/StartDate/EndDate optional).
+  - Valid Date Range (StartDate <= EndDate when both supplied; Opening Balance = last RunningBalance with TransactionDate < StartDate).
+  - Valid Adjustment Type (one of CreditNote, DebitNote, CreditAdjustment, DebitAdjustment).
+  - Opening Balance not already created (customer.OpeningBalanceAmount == null AND no OpeningBalance ledger row).
+  - Opening Balance amount > 0.
+  - Idempotency-Key header required for adjustment (letters/numbers/hyphens only).
+
+user_journeys:
+  - name: Customer Statement
+    trigger: Select PartyType=Customer, pick party, click Load
+    service: soaApi.getStatement
+    endpoint: "POST /api/StatementOfAccount/query"
+  - name: Supplier Statement
+    trigger: Select PartyType=Supplier, pick party, click Load
+    service: soaApi.getStatement
+    endpoint: "POST /api/StatementOfAccount/query"
+  - name: Outstanding Balance
+    trigger: Open OutstandingBalances page
+    service: soaApi.getOutstandingBalances
+    endpoint: "GET /api/StatementOfAccount/outstanding/{partyType}"
+  - name: Opening Balance
+    trigger: Submit opening-balance form
+    service: soaApi.createOpeningBalance
+    endpoint: "POST /api/StatementOfAccount/opening-balance"
+  - name: Manual Adjustment
+    trigger: Submit adjustment form
+    service: soaApi.createAdjustment
+    endpoint: "POST /api/StatementOfAccount/adjustment"
+  - name: Balance Lookup
+    trigger: Request party balance
+    service: soaApi.getPartyBalance
+    endpoint: "GET /api/StatementOfAccount/balance/{partyType}/{partyId}"
+  - name: Date Filtering
+    trigger: Set Start/End date then Load
+    service: soaApi.getStatement
+    endpoint: "POST /api/StatementOfAccount/query"
+  - name: Outstanding Search
+    trigger: Type name fragment in OutstandingBalances search
+    service: soaApi.getOutstandingBalances (search param)
+    endpoint: "GET /api/StatementOfAccount/outstanding/{partyType}?search="
+  - name: Pagination
+    trigger: Click Next/Prev on statement with >50 transactions
+    service: soaApi.getStatement (page)
+    endpoint: "POST /api/StatementOfAccount/query"
+
+expected_runtime_after_success:
+  statement_query:
+    - Statement generated (SOAResponse).
+    - Opening Balance calculated (last RunningBalance before StartDate).
+    - Total Debit calculated (excludes OpeningBalance rows).
+    - Total Credit calculated (excludes OpeningBalance rows).
+    - Closing Balance calculated (Opening + Debit - Credit).
+    - Running Balances displayed (from AccountLedger.RunningBalance).
+    - Summary cards rendered (Opening/Debit/Credit/Closing).
+    - Pagination controls rendered when totalPages > 1.
+  opening_balance:
+    - Opening Balance created (message returned).
+    - Ledger row added (TransactionType.OpeningBalance).
+    - Running Balance updated (LedgerService newBalance = prev + debit - credit).
+    - Customer/Supplier Balance cache updated (Balance column set).
+    - Outbox message queued (SupplierOpeningBalance / PartyLedgerAdjustment).
+  manual_adjustment:
+    - Adjustment created (PartyLedgerAdjustmentResponse returned).
+    - Party Ledger updated (AccountLedger row added).
+    - Running Balance updated.
+    - Balance cache updated.
+    - Outbox message queued (PartyLedgerAdjustment).
+    - Audit logged (IAuditService.LogCreate).
+  outstanding_balance:
+    - Outstanding calculated (SUM(Debit-Credit) over ledger).
+    - Non-zero balances displayed only.
+    - X-Total-Count / X-Total-Debit / X-Total-Credit headers returned.
+    - For customers: TotalPaid (PaymentReceived Credit), TotalInvoiced (Sale Debit).
+    - For suppliers: TotalPaid (PaymentMade Debit), TotalInvoiced (Purchase Credit), DueDate from PurchaseInvoices.
+
+browser_assertions:
+  statement:
+    - Statement loads successfully (table + summary).
+    - Summary cards displayed.
+    - Opening Balance correct (last RunningBalance before StartDate; abs value).
+    - Total Debit correct.
+    - Total Credit correct.
+    - Closing Balance correct (Opening + Debit - Credit; abs value).
+    - Balance type label Debit/Credit rendered.
+  running_balance:
+    - Running Balance displayed per row.
+    - Running Balance changes correctly (prev + debit - credit across ordered rows).
+  outstanding:
+    - Outstanding Balance visible.
+    - Only non-zero balances shown.
+    - Total Debit / Total Credit headers present.
+  opening_balance:
+    - Can only be created once (second attempt rejected).
+  adjustment:
+    - Adjustment appears in history (ledger row in statement).
+    - Running Balance updated after adjustment.
+    - Statement refreshed (re-query shows new row).
+  filtering:
+    - Party filter works (Customer vs Supplier).
+    - Date filter works (all rows within range).
+    - Pagination works (totalPages = ceil(totalCount/50)).
+    - Outstanding search works (name ILike).
+
+negative_tests:
+  - name: No party selected
+    trigger: Click Load with no selectedParty
+    expected: "Warning toast; no API request."
+  - name: Invalid Party Type
+    expected: "Rejected (PartyType enum constraint)."
+  - name: Duplicate Opening Balance
+    trigger: Second opening-balance for same party
+    expected: "409 Conflict."
+  - name: Invalid Adjustment Type
+    trigger: "Adjustment with type not in {CreditNote,DebitNote,CreditAdjustment,DebitAdjustment}"
+    expected: "400 Bad Request."
+  - name: Opening Balance amount <= 0
+    expected: "400 Bad Request."
+  - name: Unauthorized request
+    expected: "401 (no Authorize token)."
+  - name: Cross Tenant access
+    expected: "Denied (global TenantId filter on AccountLedger)."
+  - name: Missing Idempotency-Key on adjustment
+    expected: "400 Bad Request."
+
+implementation_gaps:
+  - No Export (PDF/Excel/CSV) — NOT IMPLEMENTED.
+  - No Statement PDF — NOT IMPLEMENTED.
+  - No Statement Excel — NOT IMPLEMENTED.
+  - No Statement Print — NOT IMPLEMENTED.
+  - No Multi-Currency — NOT IMPLEMENTED (single currency, 2-dp rounding).
+  - No Statement Snapshots — NOT IMPLEMENTED.
+  - No Statement Cache — NOT IMPLEMENTED (live reads).
+  - No Dynamic Grouping — NOT IMPLEMENTED.
+  - No Aging inside Statement — NOT IMPLEMENTED (aging is separate ReportsController feature).
+
+critical_invariants:
+  - Statement never owns balances.
+  - Statement always reads AccountLedger.
+  - Statement never reads General Ledger.
+  - Statement never updates General Ledger.
+  - Statement is read-only (query/balance/outstanding are reads).
+  - Running Balance belongs to AccountLedger.
+  - Customer Balance is only a cache.
+  - Supplier Balance is only a cache.
+  - Opening Balance is unique per party.
+  - Outstanding is computed live.
+  - Statement is tenant isolated.
+  - Party isolation always enforced (PartyType + PartyId scoped).
+  - Closing Balance excludes OpeningBalance rows from Debit/Credit totals.
+
+browser_test_scenarios:
+  - name: Customer Statement
+    steps: Select Customer, pick party, Load, assert summary + rows.
+  - name: Supplier Statement
+    steps: Select Supplier, pick party, Load, assert summary + inverted balance semantics.
+  - name: Outstanding Balance
+    steps: Open OutstandingBalances, assert only non-zero parties listed.
+  - name: Opening Balance
+    steps: Submit opening balance form, assert success + ledger row + cache update.
+  - name: Duplicate Opening Balance
+    steps: Submit opening balance twice, assert second is 409.
+  - name: Manual Credit Note
+    steps: Post CreditNote adjustment, assert ledger row + balance move.
+  - name: Manual Debit Note
+    steps: Post DebitNote adjustment, assert ledger row + balance move.
+  - name: Manual Credit Adjustment
+    steps: Post CreditAdjustment, assert ledger row + balance move.
+  - name: Manual Debit Adjustment
+    steps: Post DebitAdjustment, assert ledger row + balance move.
+  - name: Balance Lookup
+    steps: GET balance/{partyType}/{partyId}, assert abs balance + type.
+  - name: Outstanding Search
+    steps: Type name fragment, assert ILike-filtered results.
+  - name: Statement Pagination
+    steps: Load party with >50 txns, assert page controls + totalPages.
+  - name: Date Filtering
+    steps: Set Start/End, assert all rows within range.
+  - name: Cross Tenant Isolation
+    steps: Use tenant A token against tenant B party, assert no cross-tenant rows.
+  - name: Export Gap
+    type: gap
+    note: No export/print tests — capability NOT IMPLEMENTED.
+
+runtime_validation:
+  - Running Balance updated after Opening Balance.
+  - Running Balance updated after Adjustment.
+  - Customer Balance cache synchronized after write.
+  - Supplier Balance cache synchronized after write.
+  - Outstanding recalculated on next read (live).
+  - Outbox message generated (SupplierOpeningBalance / PartyLedgerAdjustment).
+  - Statement refreshed after write (re-query shows new row).
+  - AccountLedger remains source of truth (RunningBalance stored, not recomputed in query).
+
+runtimes:
+  statement_query:
+    - Browser
+    - StatementOfAccountController
+    - AccountLedger
+    - Opening Balance Calculation
+    - Running Balance
+    - Summary Calculation
+    - SOAResponse
+    - Browser
+  opening_balance:
+    - Browser
+    - StatementOfAccountController
+    - LedgerService
+    - Party Lock (FOR UPDATE / UPDLOCK,ROWLOCK,HOLDLOCK)
+    - AccountLedger
+    - Running Balance Update
+    - Customer/Supplier Balance Cache
+    - Accounting Outbox
+    - Browser
+  manual_adjustment:
+    - Browser
+    - StatementOfAccountController
+    - LedgerService
+    - AccountLedger
+    - Running Balance Update
+    - PartyLedgerAdjustment
+    - Customer/Supplier Transaction
+    - Accounting Outbox
+    - Browser
+  outstanding:
+    - Browser
+    - StatementOfAccountController
+    - Grouped AccountLedger
+    - Outstanding Calculation
+    - Browser
+
+source_of_truth_notes:
+  - Always treat Statement Of Account as a Party Ledger projection.
+  - Never treat Statement Of Account as a Financial Report.
+  - Never treat Statement Of Account as General Ledger.
+  - Never treat Customer Balance as financial truth.
+  - Never treat Supplier Balance as financial truth.
+  - Always treat AccountLedger as the source of truth.
+  - Always treat Customer/Supplier Balance as caches.
+  - Always treat Running Balance as AccountLedger state.
+
+success_definition:
+  - Statement loads successfully.
+  - Browser assertions succeed.
+  - Critical invariants remain intact.
+  - Statement remains read-only.
+  - Running Balance remains consistent.
+  - Outstanding calculated correctly.
+  - Opening Balance uniqueness enforced.
+  - Party Ledger updated correctly.
+  - Balance cache synchronized.
+  - Outbox message generated.
+  - Tenant isolation maintained.
+  - Party isolation maintained.
+
+gaps_no_browser_tests:
+  - No Statement Aggregate.
+  - No Statement Entity.
+  - No Statement Repository.
+  - No Statement Cache.
+  - No Statement Snapshot.
+  - No Statement Export.
+  - No Statement PDF.
+  - No Statement Excel.
+  - No Statement Print.
+  - No Multi-Currency.
+  - No Dynamic Grouping.
+  - No Statement Aging.

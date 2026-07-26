@@ -1,0 +1,107 @@
+# FLOW-04 — Purchase Invoice (POS) — Browser Knowledge
+# Source of truth: .ai/hermes/business-flows/FLOW-04-PURCHASE-INVOICE.md (implementation-backed)
+
+module:
+  module_name: PointOfSale (POS Admin)
+  workflow_name: FLOW-04 Purchase Invoice
+  business_entity: PurchaseInvoice / PurchaseInvoiceItem / ProductVariantStock / Supplier / JournalEntry
+
+business_rules:
+  - Idempotency-Key (or X-Request-Id) header is REQUIRED (else 400).
+  - Supplier must exist (else 400).
+  - Warehouse must exist and be active (else 400).
+  - Each item: product must exist, variant must resolve, UnitCost > 0, unit must be bound to product.
+  - Quantity >= 0.01; TaxRate 0-100.
+  - PaidAmount >= 0 and <= TotalAmount.
+  - Cash + Card must equal PaidAmount when a split is provided.
+  - Payment methods: Cash, Card, Mixed, Credit (BankTransfer rejected for purchase create).
+  - Weighted Moving Average cost on Product.PurchasePrice is recomputed (product-global, normalized to base units via ConversionFactor).
+  - Invoice is created directly in Status = Completed (no Draft -> Post lifecycle).
+  - Tax is capitalized into inventory cost (full tax-inclusive Total debited to Inventory; no input-VAT account).
+  - Discount fields on PurchaseInvoice are dead schema (not applied on create); Total = Subtotal + Tax.
+  - Cashbox capacity is validated before mutation when cash is used (else 400 INSUFFICIENT_FUNDS / 503 CASHBOX_VALIDATION_UNAVAILABLE).
+  - Supplier ledger: full total credited as payable; optional immediate payment debits the payable.
+  - Accounting journal balanced: Dr Inventory = Cr(Cash + Card + SupplierPayables).
+  - TenantId stamped from RequiredTenantId on every aggregate.
+
+preconditions:
+  - Tenant operator with role Owner/Admin/Manager.
+  - Supplier exists.
+  - Active warehouse exists.
+  - Product with a variant and a configured unit (ConversionFactor > 0).
+  - If cash used: cashbox for the warehouse funded >= line total.
+  - GL accounts exist: Inventory (1310), Cashbox, POS Visa (1020), SupplierPayables (2010).
+  - Idempotency-Key header value available.
+
+user_journey:
+  - Open Purchase Invoice screen (pages/PurchaseInvoice.jsx)
+  - Select supplier
+  - Select warehouse
+  - Add product line(s): quantity, unit cost, tax rate
+  - Choose payment method (Cash / Card / Mixed / Credit) and paid amount
+  - Save (POST /api/purchases with Idempotency-Key)
+  - Receive 200 + PurchaseResponse (InvoiceNumber PUR-<date>-####, TotalAmount, MutationVersion=0)
+
+expected_runtime_after_success:
+  - PurchaseInvoice row created with Status = Completed; header totals set.
+  - PurchaseInvoiceItem rows created with immutable unit-price/cost snapshots.
+  - ProductVariantStock incremented by base quantity (Quantity += baseQuantity).
+  - Product.PurchasePrice re-weighted to new WMA (product-global).
+  - StockMovement row created (MovementType=Purchase).
+  - Supplier ledger: Purchase transaction credits supplier by Total; optional PaymentMade debits by Paid.
+  - Supplier payable (Total - Paid) lands in GL SupplierPayables (2010).
+  - Accounting journal posted synchronously and outbox row marked Processed: Dr Inventory(1310)=Total, Cr Cashbox/Visa/Payables.
+  - If paid in full: no payables line; net supplier balance change = 0.
+  - Idempotency record marked Completed.
+
+browser_assertions:
+  - Success toast / confirmation; new invoice appears in purchase list with InvoiceNumber.
+  - Invoice detail shows Status = Completed and correct totals.
+  - Inventory for the variant shows increased quantity.
+  - Product cost (PurchasePrice) reflects recomputed WMA.
+  - Supplier balance updated (credit for purchase; debit if paid immediately).
+  - Journal balances (debits == credits).
+  - Replay with same Idempotency-Key + body returns identical response and NO duplicate invoice.
+  - No CashboxTransaction-style side effects beyond GL journal.
+
+negative_tests:
+  - Missing Idempotency-Key -> 400.
+  - UnitCost = 0 -> 400 "Unit cost must be greater than zero".
+  - Inactive/unknown warehouse -> 400 "Active warehouse not found".
+  - Unknown supplier -> 400 "Supplier not found".
+  - Cash > cashbox balance -> 400 INSUFFICIENT_FUNDS.
+  - Cash + Card != Paid -> 400 "must add up exactly to PaidAmount".
+  - Replay same key + different body -> 409.
+  - Update with stale ExpectedMutationVersion -> 409.
+  - Delete invoice with posted journal -> 409 POSTED_JOURNALS_EXIST.
+  - BankTransfer payment method -> rejected.
+
+critical_invariants:
+  - Inventory cannot become negative (purchases only add stock; revert enforces no-negative).
+  - Accounting journal must balance (Dr Inventory = Cr Cash + Card + Payables).
+  - TotalAmount = Subtotal + Tax (discount not applied on create).
+  - PaidAmount <= TotalAmount; Cash + Card = PaidAmount.
+  - Product.PurchasePrice is the single WMA cost authority (consumed by future sales/returns).
+  - Invoice is born Completed (no Draft lifecycle on create).
+  - Original document immutable except compensation revert (no in-place edit of financials).
+  - Tenant scoping mandatory (RequiredTenantId); cross-tenant reference fails.
+
+browser_test_scenarios:
+  - Create Cash Purchase (single item, happy path)
+  - Create Credit Purchase (unpaid, payable created)
+  - Create Mixed-payment Purchase
+  - Create Card Purchase
+  - Purchase with insufficient cashbox funds (negative)
+  - Purchase with UnitCost = 0 (negative)
+  - Purchase with unknown supplier/warehouse (negative)
+  - Missing idempotency key (negative)
+  - Replay duplicate (idempotency)
+  - View Purchases by Supplier report
+  - Edit purchase (revert/reapply) with version check
+  - Delete posted purchase (negative)
+
+success_definition:
+  - UI completes: 200 + PurchaseResponse; invoice appears Completed in list.
+  - Business rules satisfied: idempotency present, supplier/warehouse valid, UnitCost > 0, payment split consistent, cashbox sufficient.
+  - Critical invariants preserved: stock incremented, WMA cost correct, journal balanced, totals correct, born Completed.
+  - Runtime expectations satisfied: stock incremented, cost re-weighted, supplier ledger + payable updated, journal posted and outbox processed, idempotency Completed.

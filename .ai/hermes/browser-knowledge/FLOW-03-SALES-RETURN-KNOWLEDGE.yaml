@@ -1,0 +1,100 @@
+# FLOW-03 — Sales Return (POS) — Browser Knowledge
+# Source of truth: .ai/hermes/business-flows/FLOW-03-SALES-RETURN.md (implementation-backed)
+
+module:
+  module_name: "PointOfSale (POS Admin)"
+  workflow_name: "FLOW-03 Sales Return"
+  business_entity: "Return (ReturnType=SalesReturn) / ReturnItem / SalesInvoice / ProductVariantStock / Customer"
+
+business_rules:
+  - "Original invoice is REQUIRED and must have Status = Completed."
+  - "CustomerId must match the original invoice's CustomerId."
+  - "Warehouse must be active and tenant-owned; stock restored to the SAME warehouse."
+  - "Stock restored to the SAME variant in the same warehouse (no cross-warehouse/variant routing)."
+  - "Return quantity cannot exceed sold quantity per line and per invoice; prior returns are summed from committed ReturnItems."
+  - "Total refund cannot exceed the original invoice total."
+  - "RefundMethod in {Cash, Card, Mixed, AccountCredit}; Cash/Card/Mixed must allocate the FULL return total; AccountCredit leaves whole amount as customer credit."
+  - "Server recomputes refund from original invoice line snapshots; client UnitPrice/TaxRate overrides are ignored and logged."
+  - "Returned unit must equal the original sale unit."
+  - "Net refund subtotal cannot be negative; return total must be > 0."
+  - "Idempotency enforced (Idempotency-Key / X-Request-Id or auto-hash); divergent payload on same key -> 409, same payload -> replayed 200."
+  - "Legacy refund fields (refundFromCash / refundAmount) are rejected."
+  - "At least one item with Quantity > 0 required."
+  - "Original SalesInvoice is left intact except a monotonic AccountingMutationVersion++ (compensation, not reversal)."
+  - "No DELETE / CANCEL endpoint exists; corrections are separate returns or adjustments."
+
+preconditions:
+  - "Tenant T with operator JWT (Owner role)."
+  - "Active warehouse W (TenantId = T)."
+  - "Product P with variant V, default unit U, cost basis C, sale price S, tax rate t."
+  - "Completed sales invoice I for customer Cu: e.g. 2xP @ S, tax t, total = 2*S*(1+t); ProductVariantStock(W,V).Quantity = 10."
+  - "Customer Cu with a prior receivable balance B0 (so a ledger credit is observable)."
+
+user_journey:
+  - "Open return flow for invoice I (GET /api/salesreturns/invoice/{I})"
+  - "Open return modal (ReturnModal.jsx) for the selected invoice"
+  - "Enter return line(s): quantity 1xP, reason 'defective', RefundMethod = Cash (or AccountCredit)"
+  - "Provide Idempotency-Key"
+  - "Submit POST /api/salesreturns"
+  - "Receive 200 + SalesReturnResponse (ReturnId, ReturnNumber, TotalAmount, RefundAmount, RefundMethod, CashAmount, CardAmount, CustomerCreditAmount)"
+  - "Observe new return in the return list; receipt/detail shows items, total, refund method, amounts"
+
+expected_runtime_after_success:
+  - "Return row created (ReturnType=SalesReturn, OriginalInvoiceId=I, WarehouseId=W)."
+  - "ReturnItem row(s) created with BaseQuantity and immutable CostAmountSnapshot."
+  - "ProductVariantStock(W,V).Quantity increased by returned base quantity (e.g. 10 -> 11)."
+  - "StockMovement row created (MovementType=SalesReturn, positive QuantityChange)."
+  - "If AccountCredit: Customer.Balance increased by creditToCustomerAmount via ledger (SalesReturn credit entry). If Cash/Card: payable leg settled through GL; customer ledger credit = 0."
+  - "AccountingOutboxMessage (PosRefund) enqueued and marked Processed (synchronous) or pending (worker retries)."
+  - "Compensation journals posted: Revenue reversal (Debit PosSales, Credit cashbox/Visa/AR) + optional COGS reversal (Debit Inventory, Credit COGS) only if cost > 0."
+  - "Original SalesInvoice.AccountingMutationVersion incremented by 1."
+  - "SOA for Cu shows the new credit entry and updated balance."
+
+browser_assertions:
+  - "Return list shows the new ReturnNumber."
+  - "Return detail shows items, total, refund method, and amounts."
+  - "Inventory page for V@W shows restored quantity (e.g. 11)."
+  - "SOA for Cu shows the new credit entry and updated balance."
+  - "Exactly one Return per idempotency key (no duplicate document on replay)."
+  - "Sum ReturnItems.BaseQuantity per (P,V) across all returns for I <= original sold BaseQuantity."
+  - "Journals balance (debits == credits)."
+  - "ProductVariantStocks.Quantity never negative."
+  - "AccountingOutboxMessage PosRefund eventually processed exactly once."
+
+negative_tests:
+  - "Return quantity > sold (e.g. 3xP when 2 sold) -> 400 'Cannot return more than sold'."
+  - "Return on a Draft invoice -> 400 'Only completed sales invoices can be returned'."
+  - "Different CustomerId than original -> 400 'Customer must match'."
+  - "Same Idempotency-Key with different items -> 409 Conflict."
+  - "Same Idempotency-Key with same payload -> replayed 200, no duplicate Return."
+  - "Missing original invoice -> 400."
+  - "RefundMethod that does not allocate full total (cash/card/mixed) -> validation error."
+  - "Credit sale attempt on this endpoint (wrong method) -> rejected / not applicable."
+
+critical_invariants:
+  - "Return quantity cannot exceed sold quantity (per line and per invoice)."
+  - "Refund total cannot exceed the original invoice total."
+  - "Stock cannot go negative (returns only increase stock)."
+  - "Accounting journal must balance (debits == credits)."
+  - "Original SalesInvoice remains immutable except a monotonic version counter (compensation, not reversal)."
+  - "Server-authoritative pricing: client price/tax overrides are ignored."
+  - "Return is additive/immutable: no update/delete endpoint exists."
+  - "Customer ledger mutation flows through LedgerService (authoritative), not a cashbox entity."
+
+browser_test_scenarios:
+  - "Create Sales Return (Cash)"
+  - "Create Sales Return (AccountCredit)"
+  - "Create Sales Return (Card / Mixed)"
+  - "Over-return quantity (negative)"
+  - "Return on non-completed invoice (negative)"
+  - "Customer mismatch (negative)"
+  - "Duplicate idempotency key replay"
+  - "Divergent idempotency key (negative)"
+  - "View Sales Return report"
+  - "View SOA credit entry"
+
+success_definition:
+  - "UI completes: 200 + SalesReturnResponse; return appears in list with correct totals and refund method."
+  - "Business rules satisfied: original Completed invoice, customer match, return qty <= sold, refund <= original total, full payout allocation, idempotency honored."
+  - "Critical invariants preserved: stock restored (>=0), journal balanced, original invoice immutable, server pricing authoritative."
+  - "Runtime expectations satisfied: stock increased, ledger/balance updated, PosRefund outbox processed, compensation journals posted, SOA reflects credit."

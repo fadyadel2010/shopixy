@@ -1,0 +1,151 @@
+/**
+ * Skeleton Loading Styles
+ * CSS-only shimmer animation
+ * No JavaScript required
+ */
+
+.skeleton-card {
+  padding: 1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+
+.skeleton-page {
+  padding: 2rem;
+}
+
+.skeleton-section {
+  margin-bottom: 2rem;
+}
+
+/* Base skeleton element */
+.skeleton-line,
+.skeleton-badge,
+.skeleton-button,
+.skeleton-stat {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 0.25rem;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Line variants */
+.skeleton-line {
+  height: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-title {
+  height: 1.5rem;
+  width: 60%;
+}
+
+.skeleton-title.large {
+  height: 2rem;
+  width: 70%;
+}
+
+.skeleton-subtitle {
+  height: 1.25rem;
+  width: 40%;
+  margin-bottom: 1rem;
+}
+
+.skeleton-description {
+  width: 100%;
+}
+
+.skeleton-description.short {
+  width: 70%;
+}
+
+.skeleton-text {
+  width: 50%;
+}
+
+.skeleton-text.short {
+  width: 30%;
+}
+
+/* Badge */
+.skeleton-badge {
+  height: 1.5rem;
+  width: 4rem;
+  display: inline-block;
+}
+
+/* Button */
+.skeleton-button {
+  height: 2.5rem;
+  width: 8rem;
+  margin-top: 1rem;
+}
+
+.skeleton-button.large {
+  width: 12rem;
+  height: 3rem;
+}
+
+/* Stats */
+.skeleton-stats {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.skeleton-stat {
+  height: 3rem;
+  width: 5rem;
+}
+
+/* Header */
+.skeleton-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+/* Provider */
+.skeleton-provider {
+  margin: 0.5rem 0;
+}
+
+/* Message */
+.skeleton-message {
+  margin-bottom: 1rem;
+}
+
+.skeleton-message-header {
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-message-body {
+  padding: 0.5rem;
+}
+
+/* Meta */
+.skeleton-meta {
+  margin-top: 0.5rem;
+}
+
+/* Actions */
+.skeleton-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.skeleton-actions .skeleton-button {
+  margin-top: 0;
+}

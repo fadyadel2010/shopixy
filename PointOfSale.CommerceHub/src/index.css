@@ -1,0 +1,111 @@
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 45% 98%;
+    --foreground: 228 30% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 228 30% 14%;
+    --primary: 227 92% 60%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 256 100% 97%;
+    --secondary-foreground: 254 42% 28%;
+    --accent: 320 84% 62%;
+    --accent-foreground: 0 0% 100%;
+    --muted: 222 30% 94%;
+    --muted-foreground: 223 13% 42%;
+    --border: 225 28% 88%;
+    --input: 225 24% 92%;
+    --ring: 227 92% 60%;
+    --success: 154 63% 40%;
+    --success-foreground: 0 0% 100%;
+    --warning: 36 92% 54%;
+    --warning-foreground: 25 55% 18%;
+    --hero-start: 227 92% 60%;
+    --hero-end: 320 84% 62%;
+    --hero-soft: 256 100% 97%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-size: 16px;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    background-image:
+      radial-gradient(circle at 15% 10%, rgba(91, 92, 246, 0.14), transparent 24%),
+      radial-gradient(circle at 85% 12%, rgba(244, 114, 182, 0.16), transparent 22%),
+      radial-gradient(circle at 50% 120%, rgba(129, 140, 248, 0.12), transparent 34%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 247, 255, 0.96));
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+
+  #root {
+    min-height: 100vh;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--foreground));
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .surface-panel {
+    @apply rounded-[2rem] border border-white/70 bg-white/80 shadow-card backdrop-blur-xl;
+  }
+
+  .surface-muted {
+    @apply rounded-[1.75rem] border border-white/70 bg-white/70 shadow-soft backdrop-blur;
+  }
+
+  .brand-gradient {
+    background-image: linear-gradient(135deg, hsl(var(--hero-start)), hsl(var(--hero-end)));
+  }
+
+  .brand-gradient-soft {
+    background-image: linear-gradient(180deg, hsl(var(--hero-soft) / 0.9), rgba(255, 255, 255, 0.92));
+  }
+
+  .text-gradient {
+    background-image: linear-gradient(135deg, hsl(var(--hero-start)), hsl(var(--hero-end)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .surface-glow {
+    box-shadow:
+      0 24px 54px -30px rgba(91, 92, 246, 0.48),
+      inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  }
+
+  .animate-enter {
+    @apply animate-fade-up;
+  }
+
+  .skeleton-wave {
+    background-image: linear-gradient(
+      90deg,
+      rgba(226, 232, 255, 0.74) 0%,
+      rgba(255, 255, 255, 0.98) 50%,
+      rgba(226, 232, 255, 0.74) 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer;
+  }
+}

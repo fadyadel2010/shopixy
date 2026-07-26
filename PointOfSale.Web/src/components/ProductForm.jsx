@@ -1,0 +1,1211 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
+import api from '../services/api'
+import { useTranslation } from 'react-i18next'
+import { useSettings } from '../contexts/SettingsContext'
+import ProductMediaManager from '../components/ProductMediaManager'
+import ProductVariantsTab from '../components/ProductVariantsTab'
+import ProductPixelOverrideTab from '../components/ProductPixelOverrideTab'
+import ProductAffiliateSettingsCard from '../components/ProductAffiliateSettingsCard'
+import SidebarPanel from './SidebarPanel'
+import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
+import { getProductTemplateOptions } from '@/storefront/products/ProductTemplateRegistry'
+import { useAuthStore } from '../store/authStore'
+
+function WorkspaceSection({ eyebrow, title, description, children, className = '' }) {
+    return (
+        <section className={`overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm ${className}`}>
+            <div className="border-b border-gray-100 px-6 py-5">
+                {eyebrow && <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>}
+                <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+                {description && <p className="mt-1 text-sm text-gray-500">{description}</p>}
+            </div>
+            <div className="px-6 py-6">{children}</div>
+        </section>
+    )
+}
+
+function EmbeddedSection({ title, description, children }) {
+    return (
+        <div className="space-y-4">
+            <div>
+                <h4 className="text-sm font-semibold text-gray-900">{title}</h4>
+                {description && <p className="mt-1 text-xs text-gray-500">{description}</p>}
+            </div>
+            {children}
+        </div>
+    )
+}
+
+function normalizePublishStatus(value) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value
+    }
+
+    const normalizedValue = typeof value === 'string' ? value.trim().toLowerCase() : ''
+
+    if (normalizedValue === 'draft') {
+        return 0
+    }
+
+    if (normalizedValue === 'published') {
+        return 1
+    }
+
+    if (normalizedValue === 'archived') {
+        return 2
+    }
+
+    const parsedValue = Number.parseInt(value, 10)
+    return Number.isFinite(parsedValue) ? parsedValue : 1
+}
+
+function isBlankValue(value) {
+    return value == null || `${value}`.trim() === ''
+}
+
+function sanitizeSlugValue(value) {
+    if (isBlankValue(value)) {
+        return ''
+    }
+
+    return `${value}`
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+}
+
+function normalizeListValues(value) {
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => `${item ?? ''}`.trim())
+            .filter(Boolean)
+    }
+
+    if (typeof value === 'string') {
+        return value
+            .split(/[,;\n]/)
+            .map((item) => item.trim())
+            .filter(Boolean)
+    }
+
+    return []
+}
+
+function normalizeFaqItems(value) {
+    if (!Array.isArray(value)) {
+        return []
+    }
+
+    return value
+        .map((item) => {
+            if (typeof item === 'string') {
+                return {
+                    question: item.trim(),
+                    answer: ''
+                }
+            }
+
+            return {
+                question: `${item?.question ?? ''}`.trim(),
+                answer: `${item?.answer ?? ''}`.trim()
+            }
+        })
+        .filter((item) => item.question || item.answer)
+}
+
+function parseJsonValue(value, fallback) {
+    if (value == null || value === '') {
+        return fallback
+    }
+
+    if (typeof value !== 'string') {
+        return value
+    }
+
+    try {
+        return JSON.parse(value)
+    } catch {
+        return fallback
+    }
+}
+
+function parseStructuredListValue(value) {
+    return normalizeListValues(parseJsonValue(value, value))
+}
+
+function parseStructuredFaqValue(value) {
+    return normalizeFaqItems(parseJsonValue(value, value))
+}
+
+function parseStructuredAiMetadata(value) {
+    return parseJsonValue(value, null)
+}
+
+function buildGeneratedDescription(generatedProduct) {
+    const features = normalizeListValues(generatedProduct?.features)
+    const faqItems = normalizeFaqItems(generatedProduct?.faq)
+    const sections = []
+    const shortDescription = `${generatedProduct?.shortDescription ?? ''}`.trim()
+    const description = `${generatedProduct?.description ?? ''}`.trim()
+
+    if (shortDescription && shortDescription !== description) {
+        sections.push(shortDescription)
+    }
+
+    if (description) {
+        sections.push(description)
+    }
+
+    if (features.length > 0) {
+        sections.push(`Features:\n${features.map((feature) => `- ${feature}`).join('\n')}`)
+    }
+
+    if (faqItems.length > 0) {
+        sections.push(`FAQ:\n${faqItems.map((item) => {
+            if (!item.answer) {
+                return `- ${item.question}`
+            }
+
+            return `Q: ${item.question}\nA: ${item.answer}`
+        }).join('\n\n')}`)
+    }
+
+    return sections.join('\n\n').trim()
+}
+
+const ProductForm = forwardRef(function ProductForm({
+    productId,
+    onClose,
+    onSave,
+    mode = 'modal',
+    formId = 'product-form',
+    hideActions = false,
+    onMetaChange
+}, ref) {
+    const { t } = useTranslation()
+    const { confirm } = useConfirmDialog()
+    const { formatCurrency } = useSettings()
+    const userRole = useAuthStore((state) => state.user?.role)
+    const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
+    const [loading, setLoading] = useState(false)
+    const variantsTabRef = useRef(null)
+    const formDataRef = useRef(null)
+    const [categories, setCategories] = useState([])
+    const [units, setUnits] = useState([])
+    const [generatingBarcode, setGeneratingBarcode] = useState(false)
+    const [error, setError] = useState('')
+    const [productTemplateOptions, setProductTemplateOptions] = useState(getProductTemplateOptions())
+    const [hasVariants, setHasVariants] = useState(false)
+    const [defaultVariant, setDefaultVariant] = useState(null)
+    const [simpleProductData, setSimpleProductData] = useState({
+        sku: '',
+        barcode: '',
+        price: '',
+        onlinePrice: '',
+        costPrice: ''
+    })
+    const [formData, setFormData] = useState({
+        name: '',
+        nameAr: '',
+        categoryId: '',
+        description: '',
+        descriptionAr: '',
+        taxRate: '10',
+        priceIncludesTax: false,
+        trackStock: true,
+        isActive: true,
+        slug: '',
+        metaTitle: '',
+        metaDescription: '',
+        metaKeywords: '',
+        weight: '',
+        length: '',
+        width: '',
+        height: '',
+        weightUnit: 'kg',
+        dimensionUnit: 'cm',
+        publishStatus: 1,
+        isOnlineVisible: true,
+        isSearchable: true,
+        isFeatured: false,
+        lowStockThreshold: '',
+        allowBackorder: false,
+        brand: '',
+        manufacturer: '',
+        tags: '',
+        videoUrl: '',
+        productTemplate: 'default',
+        features: [],
+        faqs: [],
+        aiGenerated: false,
+        aiMetadata: null
+    })
+
+    const isWorkspace = mode === 'workspace'
+
+    useEffect(() => {
+        formDataRef.current = formData
+    }, [formData])
+
+    useEffect(() => {
+        fetchCategories()
+        fetchUnits()
+        fetchProductTemplates()
+        if (productId) {
+            fetchProduct()
+        }
+    }, [productId])
+
+    useEffect(() => {
+        if (!onMetaChange) return
+        onMetaChange({
+            name: formData.name,
+            isActive: formData.isActive,
+            publishStatus: normalizePublishStatus(formData.publishStatus),
+            isOnlineVisible: formData.isOnlineVisible,
+            slug: formData.slug,
+            hasVariants,
+            loading
+        })
+    }, [
+        formData.name,
+        formData.isActive,
+        formData.publishStatus,
+        formData.isOnlineVisible,
+        formData.slug,
+        hasVariants,
+        loading,
+        onMetaChange
+    ])
+
+    useImperativeHandle(ref, () => ({
+        applyAiGeneratedData(generatedProduct) {
+            const currentFormData = formDataRef.current
+
+            if (!currentFormData || !generatedProduct) {
+                return { appliedFieldCount: 0, skippedFieldCount: 0 }
+            }
+
+            const nextFormData = { ...currentFormData }
+            const tags = normalizeListValues(generatedProduct.tags).join(', ')
+            const metaKeywords = normalizeListValues(generatedProduct.metaKeywords).join(', ')
+            const generatedDescription = buildGeneratedDescription(generatedProduct)
+            const counters = {
+                appliedFieldCount: 0,
+                skippedFieldCount: 0
+            }
+
+            const applyTextField = (field, value, transform = (input) => input) => {
+                if (isBlankValue(value)) {
+                    return
+                }
+
+                if (isBlankValue(nextFormData[field])) {
+                    nextFormData[field] = transform(value)
+                    counters.appliedFieldCount += 1
+                    return
+                }
+
+                counters.skippedFieldCount += 1
+            }
+
+            applyTextField('name', generatedProduct.name)
+            applyTextField('description', generatedDescription)
+            applyTextField('brand', generatedProduct.brand)
+            applyTextField('manufacturer', generatedProduct.manufacturer)
+            applyTextField('tags', tags)
+            applyTextField('slug', generatedProduct.slug, sanitizeSlugValue)
+            applyTextField('metaTitle', generatedProduct.metaTitle)
+            applyTextField('metaDescription', generatedProduct.metaDescription)
+            applyTextField('metaKeywords', metaKeywords)
+
+            nextFormData.features = normalizeListValues(generatedProduct.features)
+            nextFormData.faqs = normalizeFaqItems(generatedProduct.faq)
+            nextFormData.aiGenerated = true
+            nextFormData.aiMetadata = {
+                source: 'admin_ai_product_generator',
+                generatedAtUtc: new Date().toISOString(),
+                shortDescription: `${generatedProduct.shortDescription ?? ''}`.trim() || null,
+                metaKeywords: normalizeListValues(generatedProduct.metaKeywords),
+                featureCount: normalizeListValues(generatedProduct.features).length,
+                faqCount: normalizeFaqItems(generatedProduct.faq).length
+            }
+
+            formDataRef.current = nextFormData
+            setFormData(nextFormData)
+
+            return counters
+        }
+    }), [])
+
+    const fetchCategories = async () => {
+        try {
+            const response = await api.get('/categories')
+            setCategories(response.data)
+        } catch (err) {
+            console.error('Failed to load categories', err)
+        }
+    }
+
+    const fetchUnits = async () => {
+        try {
+            const response = await api.get('/units')
+            setUnits(response.data)
+        } catch (err) {
+            console.error('Failed to load units', err)
+        }
+    }
+
+    const fetchProductTemplates = async () => {
+        try {
+            const response = await api.get('/admin/store-config')
+            setProductTemplateOptions(getProductTemplateOptions(response.data?.productTemplates))
+        } catch (err) {
+            console.error('Failed to load product templates', err)
+            setProductTemplateOptions(getProductTemplateOptions())
+        }
+    }
+
+    const fetchProduct = async () => {
+        try {
+            setLoading(true)
+            const response = await api.get(`/products/${productId}`)
+            const product = response.data
+            const variantCount = Array.isArray(product.variants) ? product.variants.length : 0
+            const derivedHasVariants = !!product.hasVariants || variantCount > 1
+
+            setHasVariants(derivedHasVariants)
+            setFormData({
+                name: product.name,
+                nameAr: product.nameAr || '',
+                categoryId: product.categoryId || '',
+                description: product.description || '',
+                descriptionAr: product.descriptionAr || '',
+                taxRate: product.taxRate.toString(),
+                priceIncludesTax: product.priceIncludesTax,
+                trackStock: product.trackStock,
+                isActive: product.isActive,
+                slug: product.slug || '',
+                metaTitle: product.metaTitle || '',
+                metaDescription: product.metaDescription || '',
+                metaKeywords: product.metaKeywords || '',
+                weight: product.weight?.toString() || '',
+                length: product.length?.toString() || '',
+                width: product.width?.toString() || '',
+                height: product.height?.toString() || '',
+                weightUnit: product.weightUnit || 'kg',
+                dimensionUnit: product.dimensionUnit || 'cm',
+                publishStatus: normalizePublishStatus(product.publishStatus),
+                isOnlineVisible: product.isOnlineVisible ?? true,
+                isSearchable: product.isSearchable ?? true,
+                isFeatured: product.isFeatured ?? false,
+                lowStockThreshold: product.lowStockThreshold?.toString() || '',
+                allowBackorder: product.allowBackorder ?? false,
+                brand: product.brand || '',
+                manufacturer: product.manufacturer || '',
+                tags: product.tags || '',
+                videoUrl: product.videoUrl || '',
+                productTemplate: product.productTemplate || 'default',
+                features: parseStructuredListValue(product.featuresJson ?? product.features),
+                faqs: parseStructuredFaqValue(product.faqJson ?? product.faqs),
+                aiGenerated: Boolean(product.aiGenerated),
+                aiMetadata: parseStructuredAiMetadata(product.aiMetadataJson ?? product.aiMetadata)
+            })
+
+            if (!derivedHasVariants) {
+                await fetchDefaultVariant()
+            }
+        } catch (err) {
+            setError(t('products.failedToLoad'))
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const fetchDefaultVariant = async () => {
+        try {
+            const response = await api.get(`/products/${productId}/variants`)
+            const variants = response.data
+
+            if (variants.length > 1) {
+                setHasVariants(true)
+                setDefaultVariant(null)
+                return
+            }
+
+            const defaultVar = variants.find(v => v.isDefault)
+
+            if (defaultVar) {
+                setDefaultVariant(defaultVar)
+                setSimpleProductData({
+                    sku: defaultVar.sku || '',
+                    barcode: defaultVar.barcode || '',
+                    price: defaultVar.price?.toString() || '',
+                    onlinePrice: defaultVar.onlinePrice?.toString() || '',
+                    costPrice: defaultVar.costPrice?.toString() || ''
+                })
+            }
+        } catch (err) {
+            console.error('Failed to load default variant', err)
+        }
+    }
+
+    const handleGenerateBarcode = async (type = 'EAN13') => {
+        try {
+            setGeneratingBarcode(true)
+            const response = await api.post(`/products/generate-barcode?type=${type}`)
+            setSimpleProductData(prev => ({ ...prev, barcode: response.data.barcode }))
+        } catch (err) {
+            setError(t('products.failedToGenerateBarcode'))
+        } finally {
+            setGeneratingBarcode(false)
+        }
+    }
+
+    const handleModeChange = async (newHasVariants) => {
+        if (newHasVariants && !hasVariants && (simpleProductData.price || simpleProductData.sku)) {
+            const confirmed = await confirm({
+                confirmLabel: t('common.confirm'),
+                description:
+                    t('products.switchToVariantModeConfirm')
+                    || 'Switching to variant mode will move all pricing and stock data to the default variant. Continue?',
+                title: t('common.warning'),
+                variant: 'warning',
+            })
+
+            if (!confirmed) {
+                return
+            }
+        }
+
+        setHasVariants(newHasVariants)
+    }
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        setLoading(true)
+        setError('')
+
+        if (!formData.categoryId) {
+            setError(t('products.categoryRequired'))
+            setLoading(false)
+            return
+        }
+
+        if (!hasVariants && !productId && (!simpleProductData.price || parseFloat(simpleProductData.price) <= 0)) {
+            setError(t('products.priceRequired') || 'Price is required for the product')
+            setLoading(false)
+            return
+        }
+
+        try {
+            if (productId && hasVariants) {
+                const variantsSaved = await variantsTabRef.current?.savePendingChanges?.()
+
+                if (variantsSaved === false) {
+                    setError(t('variants.failedToSave') || 'Failed to save variant changes')
+                    setLoading(false)
+                    return
+                }
+            }
+
+            const productData = {
+                ...formData,
+                taxRate: parseFloat(formData.taxRate) || 0,
+                images: null,
+                categoryId: formData.categoryId,
+                hasVariants,
+                sku: hasVariants ? null : simpleProductData.sku,
+                barcode: hasVariants ? null : simpleProductData.barcode,
+                purchasePrice: hasVariants ? 0 : (parseFloat(simpleProductData.costPrice) || 0),
+                salePrice: hasVariants ? 0 : (parseFloat(simpleProductData.price) || 0),
+                onlinePrice: hasVariants ? null : (simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null),
+                weight: formData.weight ? parseFloat(formData.weight) : null,
+                length: formData.length ? parseFloat(formData.length) : null,
+                width: formData.width ? parseFloat(formData.width) : null,
+                height: formData.height ? parseFloat(formData.height) : null,
+                lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
+                publishStatus: normalizePublishStatus(formData.publishStatus),
+                productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null
+            }
+
+            if (import.meta.env.DEV) {
+                console.info('[ProductForm] Submitting product payload', {
+                    productId,
+                    isOnlineVisible: formData.isOnlineVisible,
+                    selectedProductTemplate: formData.productTemplate,
+                    payloadProductTemplate: productData.productTemplate
+                })
+            }
+
+            let savedProduct
+
+            if (productId) {
+                await api.put(`/products/${productId}`, productData)
+                savedProduct = { id: productId }
+
+                if (!hasVariants && defaultVariant) {
+                    await api.put(`/products/${productId}/variants/${defaultVariant.id}`, {
+                        sku: simpleProductData.sku || null,
+                        barcode: simpleProductData.barcode || null,
+                        price: parseFloat(simpleProductData.price) || 0,
+                        onlinePrice: simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null,
+                        costPrice: parseFloat(simpleProductData.costPrice) || 0,
+                        isActive: formData.isActive
+                    })
+                }
+            } else {
+                const response = await api.post('/products', productData)
+                savedProduct = response.data
+
+                if (!hasVariants) {
+                    await new Promise(resolve => setTimeout(resolve, 500))
+
+                    try {
+                        const variantsResponse = await api.get(`/products/${savedProduct.id}/variants`)
+                        const defaultVar = variantsResponse.data.find(v => v.isDefault)
+
+                        if (defaultVar) {
+                            await api.put(`/products/${savedProduct.id}/variants/${defaultVar.id}`, {
+                                sku: simpleProductData.sku || null,
+                                barcode: simpleProductData.barcode || null,
+                                price: parseFloat(simpleProductData.price) || 0,
+                                onlinePrice: simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null,
+                                costPrice: parseFloat(simpleProductData.costPrice) || 0,
+                                isActive: formData.isActive
+                            })
+                        }
+                    } catch (variantErr) {
+                        console.error('Failed to update default variant', variantErr)
+                    }
+                }
+            }
+
+            invalidatePosRuntimeCache({ reason: 'product-updated' })
+            onSave(savedProduct)
+        } catch (err) {
+            setError(err.response?.data?.message || t('products.failedToSave'))
+        } finally {
+            setLoading(false)
+        }
+    }
+
+    const handleChange = (field, value) => {
+        setFormData(prev => ({ ...prev, [field]: value }))
+    }
+
+    const handleSimpleChange = (field, value) => {
+        setSimpleProductData(prev => ({ ...prev, [field]: value }))
+    }
+
+    if (loading && productId) {
+        return (
+            <div className="flex items-center justify-center py-12">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-600 border-t-transparent"></div>
+            </div>
+        )
+    }
+
+    const productTypeSection = (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('products.basicInfo') || 'Product Setup') : null}
+            title={t('products.productType') || 'Product Type'}
+            description={t('products.productTypeDescription') || 'Choose how this product is sold.'}
+            className="border-purple-100 bg-gradient-to-r from-white to-purple-50"
+        >
+            <label className="flex items-start gap-3 rounded-xl border border-purple-100 bg-white p-4">
+                <input
+                    type="checkbox"
+                    checked={hasVariants}
+                    onChange={(e) => handleModeChange(e.target.checked)}
+                    className="mt-1 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+                />
+                <div>
+                    <span className="font-medium text-gray-900">
+                        {t('products.hasMultipleOptions') || 'This product has multiple options (size, color, etc.)'}
+                    </span>
+                    <p className="mt-1 text-sm text-gray-500">
+                        {hasVariants
+                            ? (t('products.variantModeHint') || 'Each variant has its own SKU, price, and stock.')
+                            : (t('products.simpleModeHint') || 'Single product with one SKU and price.')}
+                    </p>
+                </div>
+            </label>
+        </WorkspaceSection>
+    )
+
+    const basicInformationSection = (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('products.basicInfo') || 'Product Content') : null}
+            title={t('products.basicInfo') || 'Basic Information'}
+            description={t('products.editProduct') || 'Core product details used across POS and storefront surfaces.'}
+        >
+            <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                    <label className="label">{t('products.productName')} *</label>
+                    <input
+                        type="text"
+                        value={formData.name}
+                        onChange={(e) => handleChange('name', e.target.value)}
+                        className="input"
+                        required
+                    />
+                </div>
+
+                <div className="md:col-span-2">
+                    <label className="label">{t('products.category')} *</label>
+                    <select
+                        value={formData.categoryId}
+                        onChange={(e) => handleChange('categoryId', e.target.value)}
+                        className="input"
+                        required
+                    >
+                        <option value="">{t('products.selectCategory')}</option>
+                        {categories.map(cat => (
+                            <option key={cat.id} value={cat.id}>
+                                {cat.parentCategoryName ? `${cat.parentCategoryName} > ` : ''}{cat.name}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+
+                <div className="md:col-span-2">
+                    <label className="label">{t('categories.description')}</label>
+                    <textarea
+                        value={formData.description}
+                        onChange={(e) => handleChange('description', e.target.value)}
+                        className="input"
+                        rows="4"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.taxRate')}</label>
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={formData.taxRate}
+                        onChange={(e) => handleChange('taxRate', e.target.value)}
+                        className="input"
+                    />
+                </div>
+
+                <div className="flex items-center rounded-xl border border-dashed border-gray-200 px-4 py-3">
+                    <label className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            checked={formData.priceIncludesTax}
+                            onChange={(e) => handleChange('priceIncludesTax', e.target.checked)}
+                            className="rounded"
+                        />
+                        <span className="text-sm text-gray-700">{t('products.priceIncludesTax')}</span>
+                    </label>
+                </div>
+            </div>
+        </WorkspaceSection>
+    )
+
+    const simplePricingSection = !hasVariants ? (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('products.salePrice') || 'Pricing') : null}
+            title={t('products.skuPricing') || 'SKU & Pricing'}
+            description={t('products.simpleModeHint') || 'Simple products keep pricing, barcode, and SKU on the default variant.'}
+            className="border-emerald-100 bg-gradient-to-r from-white to-emerald-50"
+        >
+            <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                    <label className="label">{t('products.sku') || 'SKU'}</label>
+                    <input
+                        type="text"
+                        value={simpleProductData.sku}
+                        onChange={(e) => handleSimpleChange('sku', e.target.value)}
+                        className="input"
+                        placeholder={t('products.autoGenerated')}
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.barcode')}</label>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={simpleProductData.barcode}
+                            onChange={(e) => handleSimpleChange('barcode', e.target.value)}
+                            className="input flex-1"
+                            placeholder={t('products.scanOrGenerate')}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => handleGenerateBarcode('EAN13')}
+                            disabled={generatingBarcode}
+                            className="btn-secondary whitespace-nowrap"
+                        >
+                            {generatingBarcode ? t('products.generating') : t('products.generate')}
+                        </button>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="label">{t('products.salePrice') || 'POS Sale Price'} *</label>
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={simpleProductData.price}
+                        onChange={(e) => handleSimpleChange('price', e.target.value)}
+                        className="input"
+                        placeholder="0.00"
+                        required={!hasVariants}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                        {t('products.posPriceHint') || 'Price used in the POS system.'}
+                    </p>
+                </div>
+
+                <div>
+                    <label className="label">{t('products.onlinePrice') || 'Online Price'}</label>
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={simpleProductData.onlinePrice}
+                        onChange={(e) => handleSimpleChange('onlinePrice', e.target.value)}
+                        className="input"
+                        placeholder={t('products.samePosPrice') || 'Same as POS price if empty'}
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                        {t('products.onlinePriceHint') || 'Price displayed on the storefront.'}
+                    </p>
+                </div>
+
+                <div>
+                    <label className="label">{t('products.costPrice') || 'Cost Price'}</label>
+                    <input
+                        type="number"
+                        step="0.01"
+                        value={simpleProductData.costPrice}
+                        onChange={(e) => handleSimpleChange('costPrice', e.target.value)}
+                        className="input"
+                        placeholder="0.00"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">
+                        {t('products.costPriceHint') || 'Purchase cost used for profit analysis.'}
+                    </p>
+                </div>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                {t('products.stockManagedViaWarehouses') || 'Stock is managed via Warehouses -> Opening Stock.'}
+            </div>
+        </WorkspaceSection>
+    ) : null
+
+    const mediaSection = (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? 'Media' : null}
+            title="Media"
+            description={t('products.viewOnStorefront') || 'Manage the media customers and staff see for this product.'}
+        >
+            {productId ? (
+                <ProductMediaManager productId={productId} />
+            ) : (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Save the product first, then manage all images and videos from the Media Manager.
+                </div>
+            )}
+        </WorkspaceSection>
+    )
+
+    const variantsSection = hasVariants ? (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('variants.productVariants') || 'Variants') : null}
+            title={t('variants.productVariants') || 'Product Variants'}
+            description={t('products.variantModeInfo') || 'Manage sellable variants, attributes, and pricing from one table.'}
+            className="border-purple-100 bg-gradient-to-r from-white to-purple-50"
+        >
+            {productId ? (
+                <ProductVariantsTab ref={variantsTabRef} productId={productId} forceMatrixMode={hasVariants} />
+            ) : (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                    <p className="text-sm font-medium text-blue-800">
+                        {t('variants.saveProductFirst') || 'Please save the product first to manage variants.'}
+                    </p>
+                    <p className="mt-1 text-sm text-blue-600">
+                        {t('variants.autoCreateNote') || 'A default variant will be created automatically when you save the product.'}
+                    </p>
+                </div>
+            )}
+        </WorkspaceSection>
+    ) : null
+
+    const inventorySection = (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('products.inventoryNotice') || 'Inventory') : null}
+            title={t('products.inventoryNotice') || 'Stock & Inventory'}
+            description={t('products.inventoryManagedSeparately') || 'Stock quantities are managed separately in the inventory section.'}
+            className="border-blue-100 bg-gradient-to-r from-white to-blue-50"
+        >
+            <div className="flex flex-wrap gap-2">
+                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
+                    Warehouses -&gt; Opening Stock
+                </span>
+                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
+                    Inventory Management
+                </span>
+                <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-700">
+                    Purchases
+                </span>
+            </div>
+        </WorkspaceSection>
+    )
+
+    const storefrontSettingsFields = (
+        <div className="space-y-6">
+            <EmbeddedSection title={t('products.productActive') || 'Status'}>
+                <label className="flex items-center gap-3 rounded-xl border border-gray-200 px-4 py-3">
+                    <input
+                        type="checkbox"
+                        checked={formData.isActive}
+                        onChange={(e) => handleChange('isActive', e.target.checked)}
+                        className="rounded"
+                    />
+                    <span className="text-sm font-medium text-gray-700">{t('products.productActive')}</span>
+                </label>
+            </EmbeddedSection>
+
+            <EmbeddedSection
+                title={t('products.publicationSettings') || 'Storefront Settings'}
+                description={t('products.isOnlineVisible') || 'Publication, merchandising, and storefront visibility.'}
+            >
+                <div className="grid gap-4">
+                    <div>
+                        <label className="label">{t('products.publishStatus')}</label>
+                        <select
+                            value={normalizePublishStatus(formData.publishStatus)}
+                            onChange={(e) => handleChange('publishStatus', normalizePublishStatus(e.target.value))}
+                            className="input"
+                        >
+                            <option value={0}>{t('products.statusDraft')}</option>
+                            <option value={1}>{t('products.statusPublished')}</option>
+                            <option value={2}>{t('products.statusArchived')}</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="label">{t('products.lowStockThreshold')}</label>
+                        <input
+                            type="number"
+                            value={formData.lowStockThreshold}
+                            onChange={(e) => handleChange('lowStockThreshold', e.target.value)}
+                            className="input"
+                            placeholder={t('products.autoFromMinStock')}
+                        />
+                    </div>
+
+                    <div className="space-y-3 rounded-xl border border-gray-100 bg-gray-50 p-4">
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={formData.isOnlineVisible}
+                                onChange={(e) => handleChange('isOnlineVisible', e.target.checked)}
+                                className="rounded"
+                            />
+                            <span className="text-sm text-gray-700">{t('products.isOnlineVisible')}</span>
+                        </label>
+
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={formData.isSearchable}
+                                onChange={(e) => handleChange('isSearchable', e.target.checked)}
+                                className="rounded"
+                            />
+                            <span className="text-sm text-gray-700">{t('products.isSearchable')}</span>
+                        </label>
+
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={formData.isFeatured}
+                                onChange={(e) => handleChange('isFeatured', e.target.checked)}
+                                className="rounded"
+                            />
+                            <span className="text-sm text-gray-700">{t('products.isFeatured')}</span>
+                        </label>
+
+                        <label className="flex items-center gap-2">
+                            <input
+                                type="checkbox"
+                                checked={formData.allowBackorder}
+                                onChange={(e) => handleChange('allowBackorder', e.target.checked)}
+                                className="rounded"
+                            />
+                            <span className="text-sm text-gray-700">{t('products.allowBackorder')}</span>
+                        </label>
+                    </div>
+
+                    {formData.isOnlineVisible && (
+                        <div>
+                            <label className="label">{t('products.storefrontLayout') || 'Storefront Layout'}</label>
+                            <select
+                                value={formData.productTemplate}
+                                onChange={(e) => handleChange('productTemplate', e.target.value)}
+                                className="input"
+                            >
+                                {productTemplateOptions.map((option) => (
+                                    <option key={option.id} value={option.id}>
+                                        {option.name}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                </div>
+            </EmbeddedSection>
+        </div>
+    )
+
+    const marketingFields = (
+        <EmbeddedSection
+            title={t('products.brandMetadata') || 'Marketing'}
+            description={t('products.tags') || 'Branding, metadata, and merchandising fields.'}
+        >
+            <div className="grid gap-4">
+                <div>
+                    <label className="label">{t('products.brand')}</label>
+                    <input
+                        type="text"
+                        value={formData.brand}
+                        onChange={(e) => handleChange('brand', e.target.value)}
+                        className="input"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.manufacturer')}</label>
+                    <input
+                        type="text"
+                        value={formData.manufacturer}
+                        onChange={(e) => handleChange('manufacturer', e.target.value)}
+                        className="input"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.tags')}</label>
+                    <input
+                        type="text"
+                        value={formData.tags}
+                        onChange={(e) => handleChange('tags', e.target.value)}
+                        className="input"
+                        placeholder="tag1, tag2, tag3"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.videoUrl')}</label>
+                    <input
+                        type="url"
+                        value={formData.videoUrl}
+                        onChange={(e) => handleChange('videoUrl', e.target.value)}
+                        className="input"
+                        placeholder="https://youtube.com/..."
+                    />
+                </div>
+            </div>
+        </EmbeddedSection>
+    )
+
+    const seoFields = (
+        <EmbeddedSection
+            title={t('products.seoSettings') || 'SEO'}
+            description={t('products.slugHint') || 'Search-facing metadata for the storefront product page.'}
+        >
+            <div className="grid gap-4">
+                <div>
+                    <label className="label">{t('products.slug')}</label>
+                    <input
+                        type="text"
+                        value={formData.slug}
+                        onChange={(e) => handleChange('slug', e.target.value.toLowerCase().replace(/\s+/g, '-'))}
+                        className="input font-mono"
+                        placeholder="product-url-slug"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">{t('products.slugHint')}</p>
+                </div>
+
+                <div>
+                    <label className="label">{t('products.metaTitle')}</label>
+                    <input
+                        type="text"
+                        value={formData.metaTitle}
+                        onChange={(e) => handleChange('metaTitle', e.target.value)}
+                        className="input"
+                        maxLength="70"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.metaKeywords')}</label>
+                    <input
+                        type="text"
+                        value={formData.metaKeywords}
+                        onChange={(e) => handleChange('metaKeywords', e.target.value)}
+                        className="input"
+                        placeholder="keyword1, keyword2, keyword3"
+                    />
+                </div>
+
+                <div>
+                    <label className="label">{t('products.metaDescription')}</label>
+                    <textarea
+                        value={formData.metaDescription}
+                        onChange={(e) => handleChange('metaDescription', e.target.value)}
+                        className="input"
+                        rows="3"
+                        maxLength="160"
+                    />
+                    <p className="mt-1 text-xs text-gray-500">{formData.metaDescription.length}/160</p>
+                </div>
+            </div>
+        </EmbeddedSection>
+    )
+
+    const pixelOverrideSection = productId ? (
+        <ProductPixelOverrideTab
+            productId={productId}
+            productPrice={hasVariants && defaultVariant ? defaultVariant.price : (parseFloat(simpleProductData.price) || 0)}
+        />
+    ) : (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            {t('variants.saveProductFirst') || 'Save the product first to configure advanced tracking.'}
+        </div>
+    )
+
+    const affiliateSection = productId && canManageAffiliateProducts ? (
+        <ProductAffiliateSettingsCard productId={productId} />
+    ) : canManageAffiliateProducts ? (
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
+            {t('variants.saveProductFirst') || 'Save the product first to configure affiliate marketing.'}
+        </div>
+    ) : null
+
+    const legacyActions = !hideActions && (
+        <div className="flex gap-3">
+            <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 btn-secondary"
+                disabled={loading}
+            >
+                {t('products.cancel')}
+            </button>
+            <button
+                type="submit"
+                className="flex-1 btn-primary"
+                disabled={loading}
+            >
+                {loading ? t('products.saving') : productId ? t('products.update') : t('products.create')}
+            </button>
+        </div>
+    )
+
+    const modalSections = (
+        <div className="space-y-6">
+            {productTypeSection}
+            {basicInformationSection}
+            {simplePricingSection}
+            {mediaSection}
+            {variantsSection}
+            {inventorySection}
+
+            <WorkspaceSection title={t('products.publicationSettings') || 'Storefront Settings'}>
+                {storefrontSettingsFields}
+            </WorkspaceSection>
+
+            <WorkspaceSection title={t('products.brandMetadata') || 'Marketing'}>
+                {marketingFields}
+            </WorkspaceSection>
+
+            <WorkspaceSection title={t('products.seoSettings') || 'SEO'}>
+                {seoFields}
+            </WorkspaceSection>
+
+            {pixelOverrideSection}
+            {canManageAffiliateProducts && affiliateSection}
+        </div>
+    )
+
+    const workspaceSections = (
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="space-y-6">
+                {productTypeSection}
+                {basicInformationSection}
+                {simplePricingSection}
+                {mediaSection}
+                {variantsSection}
+                {inventorySection}
+            </div>
+
+            <div className="space-y-4 xl:sticky xl:top-28 xl:self-start">
+                <SidebarPanel
+                    title={t('products.publicationSettings') || 'Storefront Settings'}
+                    subtitle={t('products.isOnlineVisible') || 'Publication, visibility, and product template settings.'}
+                >
+                    {storefrontSettingsFields}
+                </SidebarPanel>
+
+                <SidebarPanel
+                    title={t('products.brandMetadata') || 'Marketing'}
+                    subtitle={t('products.tags') || 'Branding and merchandising details.'}
+                    defaultOpen={false}
+                >
+                    {marketingFields}
+                </SidebarPanel>
+
+                <SidebarPanel
+                    title={t('products.seoSettings') || 'SEO'}
+                    subtitle={t('products.slugHint') || 'Meta fields for search and storefront pages.'}
+                    defaultOpen={false}
+                >
+                    {seoFields}
+                </SidebarPanel>
+
+                <SidebarPanel
+                    title={t('pixel.productOverride') || 'Pixel Override'}
+                    subtitle={t('common.advanced') || 'Advanced conversion tracking controls.'}
+                    defaultOpen={false}
+                    bodyClassName="p-0"
+                >
+                    {pixelOverrideSection}
+                </SidebarPanel>
+
+                {canManageAffiliateProducts && (
+                    <SidebarPanel
+                        title={t('affiliate.title') || 'Affiliate Marketing'}
+                        subtitle={t('products.marketplaceCategory') || 'Commission and marketplace category settings.'}
+                        defaultOpen={false}
+                        bodyClassName="p-0"
+                    >
+                        {affiliateSection}
+                    </SidebarPanel>
+                )}
+            </div>
+        </div>
+    )
+
+    return (
+        <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+            {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                    {error}
+                </div>
+            )}
+
+            {isWorkspace ? workspaceSections : modalSections}
+            {legacyActions}
+        </form>
+    )
+})
+
+export default ProductForm

@@ -1,0 +1,287 @@
+# FLOW-ACC-05 — Opening Balance Browser Knowledge
+# Consumed by Hermes before Browser Testing.
+# Source of truth: .ai/hermes/accounts/FLOW-ACC-05-OPENING-BALANCE.md (implementation-backed only).
+# Do NOT inspect implementation. Do NOT perform architecture analysis.
+
+module:
+  name: FLOW-ACC-05-Opening-Balance
+  domain: Accounting / Opening Balance (POS Admin)
+  pages:
+    - CustomerOpeningBalance.jsx
+    - SupplierOpeningBalance.jsx
+    - CashboxOpeningBalance.jsx
+    - BankOpeningBalance.jsx
+  business_entity: AccountLedger (TransactionType.OpeningBalance) + Party scalar (OpeningBalanceAmount/OpeningBalanceDate)
+  endpoints:
+    customer: POST /customers/opening-balances
+    supplier: POST /suppliers/opening-balances
+    supplier_soa: POST /soa/opening-balance
+    cashbox_open: POST /cashboxes/{id}/open
+    bank_create: POST /banks
+    customer_read: GET /customers/opening-balances
+
+sub_domains:
+  - name: Customer Opening Balance
+    posts_to_gl: false
+    outbox: false
+    runtime_owner: Party Sub-Ledger (LedgerService + AccountLedgers + CustomerTransactions)
+  - name: Supplier Opening Balance
+    posts_to_gl: true
+    outbox: true
+    runtime_owner: Accounting Outbox + CommerceAccountingService + FinancialPostingService (GL)
+  - name: Cashbox Opening Balance
+    posts_to_gl: true
+    outbox: false
+    runtime_owner: Treasury (CashInAsync -> FinancialPostingService)
+    treasury_blocked_note: Current TreasuryOperationService.CashInAsync throws "Direct treasury cash-in is disabled"; GL path blocked at treasury layer.
+  - name: Bank Opening Balance
+    posts_to_gl: false
+    outbox: false
+    runtime_owner: Treasury (rejected at bank creation)
+
+business_rules:
+  - Opening Balance is NOT a standalone aggregate.
+  - Opening Balance is a transaction type (AccountLedger with TransactionType.OpeningBalance).
+  - Customer Opening Balance writes only Party Ledger (AccountLedger + CustomerTransaction).
+  - Customer Opening Balance does NOT generate JournalEntry.
+  - Customer Opening Balance does NOT use Accounting Outbox.
+  - Supplier Opening Balance writes Party Ledger (AccountLedger + SupplierTransaction).
+  - Supplier Opening Balance generates JournalEntry (SourceType=SupplierOpeningBalance).
+  - Supplier Opening Balance uses Accounting Outbox (EnqueueSupplierOpeningBalanceAsync).
+  - Supplier Opening Balance posts through FinancialPostingService (via CommerceAccountingService).
+  - Supplier Opening Balance posts DR/CR SupplierPayables <-> OpeningBalanceEquity (code 3010).
+  - Supplier Opening Balance journal must be balanced (Sum debit == Sum credit).
+  - Cashbox Opening Float is Treasury-owned.
+  - Cashbox open requires OpeningBalance == 0 (else 400 OPENING_FLOAT_TRANSFER_REQUIRED).
+  - Bank Opening Balance cannot be created during Bank creation (non-zero rejected, 400).
+  - Only one Opening Balance per Party.
+  - Duplicate Opening Balance rejected (409 DuplicateOpeningBalanceException).
+  - Positive amount required (Amount > 0).
+  - Exactly one of Debit/Credit must be positive (not both, not neither).
+  - Idempotency required (batch idempotency record + supplier outbox idempotency key).
+  - Tenant isolation enforced on every read/write.
+  - OpeningBalanceAmount is only a cache (not financial truth).
+  - Party Balance is only a cache (not financial truth).
+  - General Ledger owns financial truth only where implemented (Supplier, Cashbox via Treasury).
+  - Customer Opening Balance has no GL representation (hard asymmetry).
+  - Opening Balance is immutable once written (no edit / reverse / reset / delete).
+
+preconditions:
+  - Authenticated user.
+  - Valid Tenant (X-Tenant-Id resolved; ITenantOwned enforced).
+  - Authorized access (Roles: Owner, Admin, Manager for customer/supplier endpoints).
+  - Existing Customer (for customer OB) or Existing Supplier (for supplier OB).
+  - Party not soft-deleted.
+  - Positive amount (> 0).
+  - Valid BalanceType (Debit or Credit).
+  - No existing Opening Balance for the Party.
+  - Valid Idempotency (batch request hash / operationId claim).
+  - Valid Party (PartyId resolves to a real, non-deleted party).
+  - For Cashbox open: cashbox exists and is not already active.
+  - For Bank create: OpeningBalanceAmount must be null or 0.
+
+user_journey:
+  customer:
+    - Navigate to CustomerOpeningBalance page.
+    - Load customers (GET /customers/opening-balances); only parties without existing balance are editable.
+    - Enter amount > 0 and select BalanceType (Debit/Credit) for a customer with no existing OB.
+    - Submit (POST /customers/opening-balances).
+    - Observe success toast and reload; hasOpeningBalance becomes true for that customer.
+  supplier:
+    - Navigate to SupplierOpeningBalance page (or SOA opening-balance form).
+    - Enter amount > 0 and select BalanceType for a supplier with no existing OB.
+    - Submit (POST /suppliers/opening-balances or POST /soa/opening-balance).
+    - Observe success; outbox event enqueued; background consumer posts GL journal.
+  cashbox:
+    - Navigate to CashboxOpeningBalance page.
+    - Open a cashbox (POST /cashboxes/{id}/open) with OpeningBalance = 0.
+    - Observe cashbox becomes active; non-zero float is rejected.
+  bank:
+    - Navigate to BankOpeningBalance / Bank creation page.
+    - Attempt to create a bank; providing non-zero OpeningBalanceAmount is rejected.
+    - Bank is created with OpeningBalanceAmount = null.
+
+expected_runtime_after_success:
+  customer:
+    - Party Ledger (AccountLedgers) updated with one OpeningBalance row.
+    - Customer Balance updated (Customer.Balance scalar).
+    - OpeningBalanceAmount / OpeningBalanceDate updated on Customer.
+    - CustomerTransaction added with IsOpeningBalance=true.
+    - NO JournalEntry created.
+    - NO AccountingOutbox message created.
+  supplier:
+    - Party Ledger (AccountLedgers) updated with one OpeningBalance row.
+    - Supplier Balance updated (Supplier.Balance scalar).
+    - OpeningBalanceAmount / OpeningBalanceDate updated on Supplier.
+    - SupplierTransaction added with IsOpeningBalance=true.
+    - Accounting Outbox created (MessageType=SupplierOpeningBalance).
+    - JournalEntry created (SourceType=SupplierOpeningBalance, balanced).
+    - General Ledger updated (LedgerJournalEntries + LedgerLines).
+    - Reports reflect posting (Trial Balance / GL read from LedgerEntries).
+  cashbox:
+    - Cashbox becomes active (IsActive=true).
+    - Treasury flow executed when allowed (CashInAsync -> GL); currently blocked at treasury layer.
+    - Non-zero OpeningBalance at open is rejected (400).
+  bank:
+    - Creation with non-zero Opening Balance rejected (400).
+    - Bank created with OpeningBalanceAmount = null.
+
+browser_assertions:
+  customer:
+    - Opening Balance saved successfully (success toast / 200).
+    - Party Balance updated and visible after reload.
+    - hasOpeningBalance=true after reload.
+    - NO JournalEntry exists for the customer opening balance.
+    - NO AccountingOutbox row for the customer opening balance.
+  supplier:
+    - Opening Balance saved successfully (200).
+    - Supplier Balance updated.
+    - Accounting Outbox row present (MessageType=SupplierOpeningBalance).
+    - JournalEntry exists (SourceType=SupplierOpeningBalance).
+    - Ledger lines balanced (Sum debit == Sum credit).
+    - Reports / Trial Balance updated and remain balanced.
+  cashbox:
+    - Cashbox opens only with OpeningBalance = 0.
+    - Non-zero float open returns 400 (OPENING_FLOAT_TRANSFER_REQUIRED).
+  bank:
+    - Opening Balance at creation rejected (400 "must be posted through ledger-backed treasury operations").
+    - Bank created with OpeningBalanceAmount = null.
+
+negative_tests:
+  - Duplicate Opening Balance for same party -> 409 "Opening balance already exists for this {party}".
+  - Second Opening Balance after one already saved -> 409.
+  - Duplicate customer entry in same batch -> first succeeds, second skipped=true ("Duplicate customer entry ignored").
+  - Negative amount -> 400.
+  - Zero amount -> 400.
+  - Missing Party (PartyId not found) -> skipped / not found.
+  - Invalid BalanceType -> rejected (debit/credit resolution fails).
+  - Invalid Tenant -> rejected (tenant isolation enforced).
+  - Duplicate Idempotency (replay identical batch) -> single AccountLedger row, no duplicate.
+  - Customer should NOT create JournalEntry (assert absence).
+  - Invalid Supplier Posting (both debit and credit positive) -> posting throws, journal not created.
+  - Cashbox non-zero open blocked (400 OPENING_FLOAT_TRANSFER_REQUIRED).
+  - Bank Opening Balance during creation rejected (400).
+  - Opening Balance for soft-deleted party -> not found / skipped.
+
+critical_invariants:
+  - One Opening Balance per Party.
+  - Opening Balance is immutable (no edit / reverse / reset / delete).
+  - Customer Opening Balance never creates JournalEntry.
+  - Customer Opening Balance never emits Accounting Outbox event.
+  - Supplier Opening Balance always uses Accounting Outbox.
+  - Supplier Opening Balance always posts through FinancialPostingService.
+  - Supplier Opening Balance journal is always balanced.
+  - OpeningBalanceAmount is not financial truth.
+  - Party Balance is not financial truth.
+  - General Ledger owns financial truth only after Supplier posting (and Cashbox via Treasury).
+  - Treasury owns Cashbox Opening Float.
+  - Bank Opening Balance is rejected at creation.
+  - Tenant isolation enforced on every read/write.
+  - Idempotency prevents duplicate Opening Balances.
+
+browser_test_scenarios:
+  - name: Customer Opening Balance Happy Path
+    type: positive
+    domain: customer
+    asserts:
+      - Party Ledger updated
+      - Customer Balance updated
+      - No JournalEntry created
+  - name: Supplier Opening Balance Happy Path
+    type: positive
+    domain: supplier
+    asserts:
+      - Party Ledger updated
+      - Outbox created
+      - JournalEntry created
+      - General Ledger updated
+  - name: Duplicate Opening Balance
+    type: negative
+    domain: both
+    asserts:
+      - 409 on second save
+  - name: Duplicate Batch Entry
+    type: negative
+    domain: customer
+    asserts:
+      - first succeeds, second skipped
+  - name: Supplier Journal Verification
+    type: positive
+    domain: supplier
+    asserts:
+      - JournalEntry SourceType=SupplierOpeningBalance
+      - Ledger lines balanced
+  - name: Customer No-Journal Verification
+    type: positive
+    domain: customer
+    asserts:
+      - No JournalEntry exists
+  - name: Trial Balance Verification
+    type: positive
+    domain: supplier
+    asserts:
+      - Trial Balance remains balanced after posting
+  - name: Cashbox Opening Validation
+    type: negative
+    domain: cashbox
+    asserts:
+      - Non-zero open blocked (400)
+  - name: Bank Opening Validation
+    type: negative
+    domain: bank
+    asserts:
+      - Non-zero Opening Balance at creation rejected (400)
+  - name: Idempotent Retry
+    type: positive
+    domain: both
+    asserts:
+      - Single AccountLedger row, no duplicate
+
+not_implemented_excluded:
+  - No Opening Balance Aggregate (no OpeningBalance entity/controller/service/DTO).
+  - No Opening Balance CRUD beyond Create.
+  - No Edit of Opening Balance.
+  - No Delete of Opening Balance.
+  - No Reverse of Opening Balance.
+  - No Reset / Recreate of Opening Balance.
+  - No Archive of Opening Balance.
+  - No Customer GL Posting.
+  - No Customer JournalEntry.
+  - No Customer Accounting Outbox.
+  - No Manual Journal Creation endpoint for Opening Balance.
+  - No Warehouse Opening Stock as accounting opening balance (inventory only, out of scope).
+
+runtime_models:
+  customer:
+    - Opening Balance
+    - Party Ledger (AccountLedgers)
+    - Customer Balance
+    - END
+  supplier:
+    - Opening Balance
+    - Party Ledger (AccountLedgers)
+    - Accounting Outbox
+    - CommerceAccountingService
+    - FinancialPostingService
+    - JournalEntry
+    - General Ledger
+    - Reports
+  cashbox:
+    - Opening Float
+    - Treasury (CashInAsync)
+    - FinancialPostingService
+    - General Ledger
+  bank:
+    - Create Bank
+    - Opening Balance Rejected
+
+success_definition:
+  - Business Rules hold.
+  - Browser assertions succeed.
+  - Critical invariants remain intact.
+  - Customer Opening Balance does NOT create JournalEntry.
+  - Supplier Opening Balance creates exactly one JournalEntry.
+  - Supplier posting reaches General Ledger.
+  - Trial Balance remains balanced.
+  - Duplicate Opening Balances prevented.
+  - Runtime expectations succeed.

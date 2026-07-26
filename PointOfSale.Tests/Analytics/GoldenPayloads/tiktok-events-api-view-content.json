@@ -1,0 +1,35 @@
+{
+  "event_source": "web",
+  "event_source_id": "PIXEL 123",
+  "data": [
+    {
+      "event": "ViewContent",
+      "event_time": 1784723696,
+      "event_id": "11111111-1111-1111-1111-111111111111",
+      "user": {
+        "external_id": "05d17100b346c29d6760a0fdedcf8623945b53a26f7f811ae70835610f9e6797",
+        "ip": "203.0.113.0",
+        "user_agent": "UnitTest/1.0"
+      },
+      "page": {
+        "url": "https://store.example.com/thank-you",
+        "referrer": "https://store.example.com"
+      },
+      "properties": {
+        "contents": [
+          {
+            "content_id": "SKU-RED",
+            "content_name": "Red Shirt",
+            "content_type": "product",
+            "quantity": 1,
+            "price": 10.00
+          }
+        ],
+        "content_type": "product",
+        "description": "Red Shirt",
+        "currency": "USD",
+        "value": 10.00
+      }
+    }
+  ]
+}

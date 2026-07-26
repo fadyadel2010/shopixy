@@ -1,0 +1,193 @@
+using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using PointOfSale.API.Services;
+using PointOfSale.Core.Interfaces;
+
+namespace PointOfSale.API.Controllers;
+
+[ApiController]
+[Authorize]
+[Route("api/upload")]
+public class UploadController : ControllerBase
+{
+    private const long MaxImageBytes = 10 * 1024 * 1024;
+    private const long MaxVideoBytes = 100 * 1024 * 1024;
+
+    private readonly IR2StorageService _r2StorageService;
+    private readonly IFileValidationService _fileValidationService;
+    private readonly ITenantContext _tenantContext;
+    private readonly ILogger<UploadController> _logger;
+
+    public UploadController(
+        IR2StorageService r2StorageService,
+        IFileValidationService fileValidationService,
+        ITenantContext tenantContext,
+        ILogger<UploadController> logger)
+    {
+        _r2StorageService = r2StorageService;
+        _fileValidationService = fileValidationService;
+        _tenantContext = tenantContext;
+        _logger = logger;
+    }
+
+    [HttpPost]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaxVideoBytes)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxVideoBytes)]
+    [ProducesResponseType(typeof(UploadResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(object), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> Upload(
+        [FromForm] UploadRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.File == null || request.File.Length == 0)
+        {
+            return BadRequest(new { error = "File is required." });
+        }
+
+        FileValidationResult validationResult;
+        await using (var validationStream = request.File.OpenReadStream())
+        {
+            validationResult = await _fileValidationService.ValidateFileAsync(
+                validationStream,
+                request.File.FileName,
+                request.File.ContentType,
+                FileValidationProfiles.ProductMedia,
+                cancellationToken);
+        }
+
+        if (!validationResult.IsValid || string.IsNullOrWhiteSpace(validationResult.CanonicalContentType))
+        {
+            return BadRequest(new { error = "Unsupported or invalid file type." });
+        }
+
+        var normalizedContentType = validationResult.CanonicalContentType;
+        var maxBytes = normalizedContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
+            ? MaxVideoBytes
+            : MaxImageBytes;
+
+        if (request.File.Length > maxBytes)
+        {
+            return BadRequest(new
+            {
+                error = normalizedContentType.StartsWith("video/", StringComparison.OrdinalIgnoreCase)
+                    ? "Video size exceeds 100MB limit."
+                    : "Image size exceeds 10MB limit."
+            });
+        }
+
+        if (!TryNormalizeEntityType(request.EntityType, out var entityType))
+        {
+            return BadRequest(new { error = "entityType must be one of: product, variant, general." });
+        }
+
+        var normalizedEntityId = SanitizePathSegment(request.EntityId);
+
+        if ((entityType == "product" || entityType == "variant") && string.IsNullOrWhiteSpace(normalizedEntityId))
+        {
+            return BadRequest(new { error = "entityId is required for product and variant uploads." });
+        }
+
+        var tenantId = _tenantContext.RequiredTenantId;
+        var objectPath = BuildObjectPath(tenantId, entityType, normalizedEntityId);
+
+        try
+        {
+            await using var stream = request.File.OpenReadStream();
+            var result = await _r2StorageService.UploadFileAsync(
+                stream,
+                normalizedContentType,
+                objectPath,
+                cancellationToken);
+
+            return Ok(new UploadResponse
+            {
+                Url = result.Url,
+                FileName = result.FileName,
+                ContentType = normalizedContentType,
+                Size = request.File.Length
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "R2 upload rejected due to configuration | TenantId: {TenantId}", tenantId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "An unexpected error occurred" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "R2 upload failed | TenantId: {TenantId} | EntityType: {EntityType} | EntityId: {EntityId}",
+                tenantId,
+                entityType,
+                request.EntityId);
+
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Upload failed." });
+        }
+    }
+
+    private static bool TryNormalizeEntityType(string? entityType, out string normalized)
+    {
+        normalized = (entityType ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized is "product" or "variant" or "general";
+    }
+
+    private static string NormalizeContentType(string? contentType)
+    {
+        return (contentType ?? string.Empty).Split(';', 2)[0].Trim().ToLowerInvariant();
+    }
+
+    private static string BuildObjectPath(Guid tenantId, string entityType, string? entityId)
+    {
+        var tenantSegment = tenantId.ToString("D");
+        var entitySegment = entityId ?? string.Empty;
+
+        return entityType switch
+        {
+            "product" => $"tenants/{tenantSegment}/products/{entitySegment}",
+            "variant" => $"tenants/{tenantSegment}/variants/{entitySegment}",
+            _ => string.IsNullOrWhiteSpace(entitySegment)
+                ? $"tenants/{tenantSegment}/general"
+                : $"tenants/{tenantSegment}/general/{entitySegment}"
+        };
+    }
+
+    private static string SanitizePathSegment(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var invalidChars = Path.GetInvalidFileNameChars();
+        var sanitized = new string(value
+            .Where(ch => !invalidChars.Contains(ch) && ch != '/' && ch != '\\')
+            .ToArray());
+
+        return sanitized.Replace("..", string.Empty, StringComparison.Ordinal);
+    }
+
+    public class UploadRequest
+    {
+        [Required]
+        public IFormFile? File { get; set; }
+
+        [Required]
+        [StringLength(20)]
+        public string? EntityType { get; set; }
+
+        [StringLength(128)]
+        public string? EntityId { get; set; }
+    }
+
+    public class UploadResponse
+    {
+        public string? Url { get; set; }
+        public string FileName { get; set; } = string.Empty;
+        public string ContentType { get; set; } = string.Empty;
+        public long Size { get; set; }
+    }
+}

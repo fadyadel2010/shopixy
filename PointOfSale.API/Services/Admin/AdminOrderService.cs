@@ -1,0 +1,1449 @@
+using Microsoft.EntityFrameworkCore;
+using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.DTOs.Admin;
+using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
+using PointOfSale.Core.Events;
+using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Payments;
+using PointOfSale.Core.Pagination;
+using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Data.Repositories;
+
+namespace PointOfSale.API.Services.Admin;
+
+/// <summary>
+/// Admin Order Service Implementation.
+/// 
+/// PHASE 6.1: ADMIN ORDER MANAGEMENT
+/// 
+/// ARCHITECTURAL RULES (STRICT):
+/// - PostgreSQL is the ONLY source of truth for orders
+/// - MongoDB is NOT used for admin operations
+/// - Events are reused from existing order/payment/shipment events
+/// - Prefer rejecting invalid actions over auto-fixing
+/// 
+/// ⚠️ TENANT ISOLATION - CRITICAL:
+/// The Order entity does NOT have TenantId column.
+/// Tenant isolation MUST be enforced via ownership joins:
+/// - Order → Customer → TenantId (for customer orders)
+/// - Order → Shipment → TenantId (for guest orders with shipment)
+/// - Order → PaymentIntent → TenantId (for guest orders with payment)
+/// 
+/// If ownership cannot be proven → treat as ORDER_NOT_FOUND.
+/// </summary>
+public class AdminOrderService : IAdminOrderService
+{
+    private readonly ApplicationDbContext _context;
+    private readonly IEventPublisher _eventPublisher;
+    private readonly IRefundEvidenceService _refundEvidenceService;
+    private readonly ICouponValidationService _couponValidationService;
+    private readonly IPaymentLifecycleService _paymentLifecycleService;
+    private readonly IProductVariantStockRepository _stockRepository;
+    private readonly ILogger<AdminOrderService> _logger;
+
+    public AdminOrderService(
+        ApplicationDbContext context,
+        IEventPublisher eventPublisher,
+        IRefundEvidenceService refundEvidenceService,
+        ICouponValidationService couponValidationService,
+        IPaymentLifecycleService paymentLifecycleService,
+        IProductVariantStockRepository stockRepository,
+        ILogger<AdminOrderService> logger)
+    {
+        _context = context;
+        _eventPublisher = eventPublisher;
+        _refundEvidenceService = refundEvidenceService;
+        _couponValidationService = couponValidationService;
+        _paymentLifecycleService = paymentLifecycleService;
+        _stockRepository = stockRepository;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminPagedResult<AdminOrderListItemDto>> ListOrdersAsync(
+        Guid tenantId,
+        AdminOrderListQuery query,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "ListOrders | TenantId: {TenantId} | Page: {Page} | PageSize: {PageSize} | Status: {Status} | PaymentStatus: {PaymentStatus} | CorrelationId: {CorrelationId} | Action: LIST",
+            tenantId, query.Page, query.PageSize, query.Status, query.PaymentStatus, correlationId);
+
+        query.Page = PaginationGuard.NormalizePage(query.Page);
+        query.PageSize = PaginationGuard.NormalizePageSize(query.PageSize);
+        var skip = PaginationGuard.GetSkip(query.Page, query.PageSize);
+
+        var standardOrdersQuery = _context.Orders
+            .Include(o => o.Customer)
+            .Where(o => 
+                (o.CustomerId != null && o.Customer != null && o.Customer.TenantId == tenantId) ||
+                (o.CustomerId == null && _context.Shipments.Any(s => s.OrderId == o.Id && s.TenantId == tenantId)) ||
+                (o.CustomerId == null && _context.Set<PaymentIntent>().Any(pi => pi.OrderId == o.Id && pi.TenantId == tenantId))
+            )
+            .AsNoTracking();
+
+        if (query.Status.HasValue)
+        {
+            standardOrdersQuery = standardOrdersQuery.Where(o => o.Status == query.Status.Value);
+        }
+
+        if (query.PaymentStatus.HasValue)
+        {
+            standardOrdersQuery = standardOrdersQuery.Where(o => o.PaymentStatus == query.PaymentStatus.Value);
+        }
+
+        if (query.FromDate.HasValue)
+        {
+            var fromDateUtc = DateTime.SpecifyKind(query.FromDate.Value.Date, DateTimeKind.Utc);
+            standardOrdersQuery = standardOrdersQuery.Where(o => o.CreatedAt >= fromDateUtc);
+        }
+
+        if (query.ToDate.HasValue)
+        {
+            var toDateUtc = DateTime.SpecifyKind(query.ToDate.Value.Date.AddDays(1), DateTimeKind.Utc);
+            standardOrdersQuery = standardOrdersQuery.Where(o => o.CreatedAt < toDateUtc);
+        }
+
+        if (query.CustomerId.HasValue)
+        {
+            standardOrdersQuery = standardOrdersQuery.Where(o => o.CustomerId == query.CustomerId.Value);
+        }
+
+        var search = query.Search?.Trim();
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            standardOrdersQuery = standardOrdersQuery.Where(o =>
+                o.OrderNumber.Contains(search) ||
+                (o.Customer != null && o.Customer.Name != null && o.Customer.Name.Contains(search)) ||
+                (o.Customer != null && o.Customer.Email != null && o.Customer.Email.Contains(search)) ||
+                (o.GuestName != null && o.GuestName.Contains(search)) ||
+                (o.GuestEmail != null && o.GuestEmail.Contains(search)) ||
+                (o.GuestPhone != null && o.GuestPhone.Contains(search)));
+        }
+
+        var standardRowsQuery = standardOrdersQuery
+            .Select(o => new AdminOrderListItemDto
+            {
+                TenantId = o.TenantId,
+                OrderId = o.Id,
+                OrderNumber = o.OrderNumber,
+                CustomerId = o.CustomerId,
+                CustomerName = o.Customer != null ? o.Customer.Name : o.GuestName,
+                TotalAmount = o.Total,
+                Currency = o.Currency,
+                Status = o.Status,
+                PaymentStatus = o.PaymentStatus,
+                Source = o.Source,
+                SourceOrderId = o.SourceOrderId,
+                SourceLabel = o.Source == OrderSource.Marketplace ? "Marketplace" : null,
+                IsMarketplaceOrder = false,
+                MarketplaceLineage = null,
+                CreatedAtUtc = o.CreatedAt
+            });
+
+        IQueryable<CommerceHubSubOrder> marketplaceOrdersQuery = _context.CommerceHubSubOrders
+            .AsNoTracking()
+            .Where(subOrder =>
+                !subOrder.IsDeleted &&
+                subOrder.StoreId == tenantId &&
+                !subOrder.MarketplaceOrder.IsDeleted);
+
+        if (query.CustomerId.HasValue)
+        {
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(_ => false);
+        }
+
+        if (query.Status.HasValue)
+        {
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(subOrder => subOrder.Status == query.Status.Value);
+        }
+
+        if (query.PaymentStatus.HasValue)
+        {
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(subOrder => subOrder.PaymentStatus == query.PaymentStatus.Value);
+        }
+
+        if (query.FromDate.HasValue)
+        {
+            var fromDateUtc = DateTime.SpecifyKind(query.FromDate.Value.Date, DateTimeKind.Utc);
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(subOrder => subOrder.CreatedAt >= fromDateUtc);
+        }
+
+        if (query.ToDate.HasValue)
+        {
+            var toDateUtc = DateTime.SpecifyKind(query.ToDate.Value.Date.AddDays(1), DateTimeKind.Utc);
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(subOrder => subOrder.CreatedAt < toDateUtc);
+        }
+
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(subOrder =>
+                subOrder.OrderNumber.Contains(search) ||
+                subOrder.MarketplaceOrder.FullName.Contains(search) ||
+                subOrder.MarketplaceOrder.PhoneNumber.Contains(search));
+        }
+
+        var marketplaceRowsQuery = marketplaceOrdersQuery
+            .Select(subOrder => new AdminOrderListItemDto
+            {
+                TenantId = subOrder.StoreId,
+                OrderId = subOrder.Id,
+                OrderNumber = subOrder.OrderNumber,
+                CustomerId = null,
+                CustomerName = subOrder.MarketplaceOrder.FullName,
+                TotalAmount = subOrder.Total,
+                Currency = subOrder.Currency,
+                Status = subOrder.Status,
+                PaymentStatus = subOrder.PaymentStatus,
+                Source = OrderSource.Marketplace,
+                SourceOrderId = subOrder.MarketplaceOrderId.ToString(),
+                SourceLabel = "Marketplace",
+                IsMarketplaceOrder = true,
+                MarketplaceLineage = null,
+                CreatedAtUtc = subOrder.CreatedAt
+            });
+
+        var combinedQuery = standardRowsQuery.Concat(marketplaceRowsQuery);
+        var totalCount = await combinedQuery.CountAsync(cancellationToken);
+        var orderedQuery = ApplyOrderListSorting(combinedQuery, query.SortBy, query.SortDirection);
+        var orders = await orderedQuery
+            .Skip(skip)
+            .Take(query.PageSize)
+            .ToListAsync(cancellationToken);
+
+        await AttachAffiliateAttributionEvidenceAsync(orders, tenantId, cancellationToken);
+        await AttachMarketplaceLineageEvidenceAsync(orders, tenantId, cancellationToken);
+
+        _logger.LogInformation(
+            "ListOrders | TenantId: {TenantId} | TotalCount: {TotalCount} | ReturnedCount: {ReturnedCount} | CorrelationId: {CorrelationId}",
+            tenantId, totalCount, orders.Count, correlationId);
+
+        return new AdminPagedResult<AdminOrderListItemDto>(orders, query.Page, query.PageSize, totalCount);
+    }
+
+    private static IOrderedQueryable<AdminOrderListItemDto> ApplyOrderListSorting(
+        IQueryable<AdminOrderListItemDto> query,
+        string sortBy,
+        string sortDirection)
+    {
+        var descending = string.Equals(sortDirection, "desc", StringComparison.OrdinalIgnoreCase);
+        return sortBy.ToLowerInvariant() switch
+        {
+            "ordernumber" => descending
+                ? query.OrderByDescending(order => order.OrderNumber)
+                : query.OrderBy(order => order.OrderNumber),
+            "customername" => descending
+                ? query.OrderByDescending(order => order.CustomerName)
+                : query.OrderBy(order => order.CustomerName),
+            "totalamount" => descending
+                ? query.OrderByDescending(order => order.TotalAmount)
+                : query.OrderBy(order => order.TotalAmount),
+            "status" => descending
+                ? query.OrderByDescending(order => order.Status)
+                : query.OrderBy(order => order.Status),
+            "paymentstatus" => descending
+                ? query.OrderByDescending(order => order.PaymentStatus)
+                : query.OrderBy(order => order.PaymentStatus),
+            _ => descending
+                ? query.OrderByDescending(order => order.CreatedAtUtc)
+                : query.OrderBy(order => order.CreatedAtUtc),
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminOrderDetailsDto?> GetOrderDetailsAsync(
+        Guid tenantId,
+        Guid orderId,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "GetOrderDetails | TenantId: {TenantId} | OrderId: {OrderId} | CorrelationId: {CorrelationId} | Action: VIEW",
+            tenantId, orderId, correlationId);
+
+        {
+            var marketplaceSubOrder = await _context.CommerceHubSubOrders
+                .AsNoTracking()
+                .Include(subOrder => subOrder.MarketplaceOrder)
+                .Include(subOrder => subOrder.Items)
+                .FirstOrDefaultAsync(
+                    subOrder =>
+                        subOrder.Id == orderId &&
+                        !subOrder.IsDeleted &&
+                        subOrder.StoreId == tenantId &&
+                        !subOrder.MarketplaceOrder.IsDeleted,
+                    cancellationToken);
+
+            if (marketplaceSubOrder != null)
+            {
+                return await MapMarketplaceSubOrderToDetailsDtoAsync(marketplaceSubOrder, cancellationToken);
+            }
+        }
+
+        // First, verify ownership
+        var orderExists = await VerifyOrderOwnershipAsync(tenantId, orderId, cancellationToken);
+        if (!orderExists)
+        {
+            _logger.LogWarning(
+                "GetOrderDetails | TenantId: {TenantId} | OrderId: {OrderId} | NOT_FOUND_OR_NOT_OWNED | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            return null;
+        }
+
+        var order = await _context.Orders
+            .Where(o => o.Id == orderId)
+            .Include(o => o.Customer)
+            .Include(o => o.Items)
+            .Include(o => o.Coupon)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (order == null)
+        {
+            return null;
+        }
+
+        // Load payment intents (already tenant-filtered by ownership)
+        var paymentIntents = await _context.Set<PaymentIntent>()
+            .Where(pi => pi.OrderId == orderId && pi.TenantId == tenantId)
+            .AsNoTracking()
+            .ToListAsync(cancellationToken);
+
+        // Load shipment (already tenant-filtered by ownership)
+        var shipment = await _context.Shipments
+            .Where(s => s.OrderId == orderId && s.TenantId == tenantId)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var affiliateAttribution = await LoadAffiliateAttributionEvidenceAsync(
+            tenantId,
+            order,
+            cancellationToken);
+
+        var orderDetails = MapToDetailsDto(order, paymentIntents, shipment, affiliateAttribution);
+
+        _logger.LogInformation(
+            "GetOrderDetails | TenantId: {TenantId} | OrderId: {OrderId} | OrderNumber: {OrderNumber} | Status: {Status} | CorrelationId: {CorrelationId}",
+            tenantId, orderId, order.OrderNumber, order.Status, correlationId);
+
+        return orderDetails;
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminOrderStatusUpdateResponse> UpdateOrderStatusAsync(
+        Guid tenantId,
+        Guid orderId,
+        AdminUpdateOrderStatusRequest request,
+        uint expectedRowVersion,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | NewStatus: {NewStatus} | Reason: {Reason} | CorrelationId: {CorrelationId} | Action: STATUS_CHANGE",
+            tenantId, orderId, request.NewStatus, request.Reason ?? "(none)", correlationId);
+
+        // Verify ownership first
+        var ownershipVerified = await VerifyOrderOwnershipAsync(tenantId, orderId, cancellationToken);
+        if (!ownershipVerified)
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | NOT_FOUND_OR_NOT_OWNED | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            throw new AdminOrderNotFoundException(orderId);
+        }
+
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        // Get order with a write lock so admin, payment, and shipment status writers
+        // cannot validate against stale state and publish competing versions.
+        var order = await LoadOrderForAdminStatusMutationAsync(
+            tenantId,
+            orderId,
+            cancellationToken);
+
+        if (order == null)
+        {
+            throw new AdminOrderNotFoundException(orderId);
+        }
+
+        var oldStatus = order.Status;
+        var currentRowVersion = GetOrderRowVersion(order);
+
+        if (currentRowVersion != expectedRowVersion)
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | ExpectedRowVersion: {ExpectedRowVersion} | CurrentRowVersion: {CurrentRowVersion} | VERSION_CONFLICT | CorrelationId: {CorrelationId}",
+                tenantId, orderId, expectedRowVersion, currentRowVersion, correlationId);
+            throw new AdminOrderConcurrencyException(orderId);
+        }
+
+        // Validate: Delivered orders are immutable
+        if (order.Status == OrderStatus.Delivered || order.Status == OrderStatus.Completed)
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | ORDER_IMMUTABLE | CorrelationId: {CorrelationId}",
+                tenantId, orderId, oldStatus, request.NewStatus, correlationId);
+            throw new AdminOrderImmutableException(orderId, order.Status);
+        }
+
+        // PRODUCTION HARDENING: Lifecycle transitions must use dedicated endpoints
+        // This guard runs BEFORE generic transition validation to ensure consistent messaging
+        if (request.NewStatus == OrderStatus.Cancelled ||
+            request.NewStatus == OrderStatus.Shipped ||
+            request.NewStatus == OrderStatus.Delivered ||
+            request.NewStatus == OrderStatus.Completed ||
+            request.NewStatus == OrderStatus.Refunded)
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | LIFECYCLE_BYPASS_ATTEMPT | CorrelationId: {CorrelationId}",
+                tenantId, orderId, oldStatus, request.NewStatus, correlationId);
+            throw new InvalidAdminOrderStateException(
+                orderId, 
+                oldStatus, 
+                request.NewStatus, 
+                $"Direct status update to {request.NewStatus} is prohibited. Use dedicated lifecycle endpoints to ensure cross-system integrity.");
+        }
+
+        // Validate status transition
+        if (!IsValidStatusTransition(oldStatus, request.NewStatus))
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | INVALID_TRANSITION | CorrelationId: {CorrelationId}",
+                tenantId, orderId, oldStatus, request.NewStatus, correlationId);
+            throw new InvalidAdminOrderStateException(orderId, oldStatus, request.NewStatus);
+        }
+
+        EnsureAdminStatusOverrideDoesNotAdvanceOperationalLifecycle(order, request.NewStatus, correlationId);
+
+        var nowUtc = DateTime.UtcNow;
+
+        // Update order status
+        using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
+        _context.Entry(order).Property<uint>("xmin").OriginalValue = expectedRowVersion;
+        order.Status = request.NewStatus;
+        order.UpdatedAt = nowUtc;
+
+        // No status-specific timestamp side-effects here — only non-lifecycle statuses
+        // (Confirmed, Processing, OnHold, etc.) reach this point. Lifecycle statuses
+        // (Cancelled, Shipped, Delivered) are blocked above by the LIFECYCLE_BYPASS_ATTEMPT guard.
+
+        // Append admin notes
+        if (!string.IsNullOrWhiteSpace(request.Reason))
+        {
+            var noteEntry = $"{nowUtc:yyyy-MM-dd HH:mm}: Status changed from {oldStatus} to {request.NewStatus}. Reason: {request.Reason}";
+            order.AdminNotes = string.IsNullOrEmpty(order.AdminNotes)
+                ? noteEntry
+                : $"{order.AdminNotes}\n{noteEntry}";
+        }
+
+        // Emit inside the same transaction and before SaveChanges. The publisher
+        // writes to the EF/MassTransit outbox, making the status mutation and
+        // downstream projection event a single commit boundary.
+        await _eventPublisher.PublishAsync(new OrderStatusChangedEvent
+        {
+            TenantId = tenantId,
+            OrderId = order.Id,
+            OrderNumber = order.OrderNumber,
+            OldStatus = oldStatus,
+            NewStatus = order.Status,
+            Reason = request.Reason,
+            CorrelationId = correlationId
+        });
+
+        await _context.SaveChangesAsync(cancellationToken);
+        var acceptedRowVersion = GetOrderRowVersion(order);
+        await transaction.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | SUCCESS | CorrelationId: {CorrelationId}",
+            tenantId, orderId, oldStatus, order.Status, correlationId);
+
+        return new AdminOrderStatusUpdateResponse
+        {
+            OrderId = order.Id,
+            OrderNumber = order.OrderNumber,
+            OldStatus = oldStatus,
+            NewStatus = order.Status,
+            RowVersion = acceptedRowVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            UpdatedAtUtc = nowUtc
+        };
+    }
+
+    /// <inheritdoc />
+    public async Task<AdminOrderCancellationResponse> CancelOrderAsync(
+        Guid tenantId,
+        Guid orderId,
+        AdminCancelOrderRequest request,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId} | Action: CANCEL",
+            tenantId, orderId, request.Reason, correlationId);
+
+        // Validate reason
+        if (string.IsNullOrWhiteSpace(request.Reason))
+        {
+            _logger.LogWarning(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | CANCELLATION_REASON_REQUIRED | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            throw new CancellationReasonRequiredException();
+        }
+
+        // Verify ownership first
+        var ownershipVerified = await VerifyOrderOwnershipAsync(tenantId, orderId, cancellationToken);
+        if (!ownershipVerified)
+        {
+            _logger.LogWarning(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | NOT_FOUND_OR_NOT_OWNED | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            throw new AdminOrderNotFoundException(orderId);
+        }
+
+        // Get order
+        var order = await _context.Orders
+            .Where(o => o.Id == orderId)
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (order == null)
+        {
+            throw new AdminOrderNotFoundException(orderId);
+        }
+
+        // Validate: Cannot cancel delivered orders
+        if (order.Status == OrderStatus.Delivered || order.Status == OrderStatus.Completed)
+        {
+            _logger.LogWarning(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | Status: {Status} | ORDER_IMMUTABLE | CorrelationId: {CorrelationId}",
+                tenantId, orderId, order.Status, correlationId);
+            throw new AdminOrderImmutableException(orderId, order.Status);
+        }
+
+        await EnsureCancellationDoesNotBypassRecognizedPaymentAsync(
+            tenantId,
+            order,
+            correlationId,
+            cancellationToken);
+
+        // If already cancelled, return early
+        if (order.Status == OrderStatus.Cancelled)
+        {
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | ALREADY_CANCELLED | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            return new AdminOrderCancellationResponse
+            {
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                NewStatus = OrderStatus.Cancelled,
+                InventoryReleased = false,
+                ShipmentCancelled = false,
+                PaymentCancelled = false,
+                PaymentCancellationQueued = false,
+                CancelledAtUtc = order.CancelledAt ?? DateTime.UtcNow
+            };
+        }
+
+        if (IsAdminCancellationPending(order))
+        {
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | CANCELLATION_ALREADY_PENDING | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            return new AdminOrderCancellationResponse
+            {
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                NewStatus = OrderStatus.OnHold,
+                InventoryReleased = false,
+                ShipmentCancelled = false,
+                PaymentCancelled = false,
+                PaymentCancellationQueued = true,
+                CancelledAtUtc = order.UpdatedAt ?? DateTime.UtcNow
+            };
+        }
+
+        var inventoryReleased = false;
+        var shipmentCancelled = false;
+        var cancellablePaymentIntentIds = await _context.Set<PaymentIntent>()
+            .Where(pi =>
+                pi.OrderId == orderId &&
+                pi.TenantId == tenantId &&
+                !pi.IsDeleted &&
+                (pi.Status == PaymentIntentStatus.Pending ||
+                 pi.Status == PaymentIntentStatus.Authorized ||
+                 pi.Status == PaymentIntentStatus.AwaitingVerification))
+            .Select(pi => pi.Id)
+            .ToListAsync(cancellationToken);
+
+        var shouldCancelPaymentViaLifecycle =
+            cancellablePaymentIntentIds.Count > 0 ||
+            order.PaymentStatus is PaymentStatus.Pending or PaymentStatus.Authorized or PaymentStatus.AwaitingVerification;
+
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+        await _context.Entry(order).ReloadAsync(cancellationToken);
+
+        if (order.Status == OrderStatus.Delivered || order.Status == OrderStatus.Completed)
+        {
+            _logger.LogWarning(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | Status: {Status} | ORDER_IMMUTABLE_AFTER_RELOAD | CorrelationId: {CorrelationId}",
+                tenantId, orderId, order.Status, correlationId);
+            throw new AdminOrderImmutableException(orderId, order.Status);
+        }
+
+        await EnsureCancellationDoesNotBypassRecognizedPaymentAsync(
+            tenantId,
+            order,
+            correlationId,
+            cancellationToken);
+
+        if (order.Status == OrderStatus.Cancelled)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | ALREADY_CANCELLED_AFTER_RELOAD | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            return new AdminOrderCancellationResponse
+            {
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                NewStatus = OrderStatus.Cancelled,
+                InventoryReleased = false,
+                ShipmentCancelled = false,
+                PaymentCancelled = false,
+                PaymentCancellationQueued = false,
+                CancelledAtUtc = order.CancelledAt ?? DateTime.UtcNow
+            };
+        }
+
+        if (IsAdminCancellationPending(order))
+        {
+            await transaction.CommitAsync(cancellationToken);
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | CANCELLATION_ALREADY_PENDING_AFTER_RELOAD | CorrelationId: {CorrelationId}",
+                tenantId, orderId, correlationId);
+            return new AdminOrderCancellationResponse
+            {
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                NewStatus = OrderStatus.OnHold,
+                InventoryReleased = false,
+                ShipmentCancelled = false,
+                PaymentCancelled = false,
+                PaymentCancellationQueued = true,
+                CancelledAtUtc = order.UpdatedAt ?? DateTime.UtcNow
+            };
+        }
+
+        cancellablePaymentIntentIds = await _context.Set<PaymentIntent>()
+            .Where(pi =>
+                pi.OrderId == orderId &&
+                pi.TenantId == tenantId &&
+                !pi.IsDeleted &&
+                (pi.Status == PaymentIntentStatus.Pending ||
+                 pi.Status == PaymentIntentStatus.Authorized ||
+                 pi.Status == PaymentIntentStatus.AwaitingVerification))
+            .Select(pi => pi.Id)
+            .ToListAsync(cancellationToken);
+
+        shouldCancelPaymentViaLifecycle =
+            cancellablePaymentIntentIds.Count > 0 ||
+            order.PaymentStatus is PaymentStatus.Pending or PaymentStatus.Authorized or PaymentStatus.AwaitingVerification;
+
+        var oldStatus = order.Status;
+
+        // -------------------------
+        // 1. Cancel Shipment (if exists, tenant-owned, and not delivered)
+        // -------------------------
+        var shipment = await _context.Shipments
+            .Where(s => s.OrderId == orderId && s.TenantId == tenantId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (shipment != null && shipment.Status != ShipmentStatus.Delivered && shipment.Status != ShipmentStatus.Cancelled)
+        {
+            shipment.CancellationReason = request.Reason;
+            shipment.UpdatedAt = DateTime.UtcNow;
+
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | ShipmentId: {ShipmentId} | ShipmentCancellationQueuedForCarrierAuthority | CorrelationId: {CorrelationId}",
+                tenantId, orderId, shipment.Id, correlationId);
+        }
+
+        // -------------------------
+        // 2. Payment state is finalized after the order transaction via IPaymentLifecycleService.
+        // -------------------------
+
+        // -------------------------
+        // 3. Update Order Status
+        // -------------------------
+        var nowUtc = DateTime.UtcNow;
+        var paymentCancellationQueued = shouldCancelPaymentViaLifecycle;
+        var requestedStatus = paymentCancellationQueued ? OrderStatus.OnHold : OrderStatus.Cancelled;
+
+        using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
+        order.Status = requestedStatus;
+        order.CancelledAt = paymentCancellationQueued ? null : nowUtc;
+        order.CancellationReason = request.Reason;
+        order.UpdatedAt = nowUtc;
+
+        if (!paymentCancellationQueued && order.CheckoutState != CheckoutState.Paid)
+        {
+            order.TransitionCheckoutState(CheckoutState.Cancelled);
+        }
+
+        if (!paymentCancellationQueued)
+        {
+            await _couponValidationService.ReleaseCouponReservationAsync(
+                tenantId,
+                order.Id,
+                correlationId,
+                "admin_order_cancelled",
+                cancellationToken);
+        }
+
+        // -------------------------
+        // 5. Persist Payment Cancellation Intent (Durable Outbox)
+        // -------------------------
+        if (shouldCancelPaymentViaLifecycle)
+        {
+            var lifecycleTargets = cancellablePaymentIntentIds.Count > 0
+                ? cancellablePaymentIntentIds
+                : new List<Guid> { Guid.Empty }; // Guid.Empty signals "cancel all intents for order"
+
+            foreach (var paymentIntentId in lifecycleTargets)
+            {
+                var outboxMessage = new PaymentCancellationOutboxMessage
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    OrderId = order.Id,
+                    PaymentIntentId = paymentIntentId == Guid.Empty ? null : paymentIntentId,
+                    SkipPaymentIntentResolution = paymentIntentId == Guid.Empty,
+                    Reason = $"Order cancelled: {request.Reason}",
+                    Actor = "admin",
+                    CorrelationId = correlationId,
+                    CreatedAt = nowUtc,
+                    UpdatedAt = nowUtc
+                };
+
+                await _context.PaymentCancellationOutboxMessages.AddAsync(outboxMessage, cancellationToken);
+            }
+
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | PaymentCancellationIntentPersisted: {Count} | CorrelationId: {CorrelationId}",
+                tenantId, orderId, lifecycleTargets.Count, correlationId);
+        }
+
+        // PRODUCTION HARDENING: Always attempt to release reservations
+        // ReleaseOrderReservationsAsync handles per-reservation checks internally,
+        // filtering to only those with RemainingReservedQuantity > 0.
+        // Using a net sum (GetOpenOrderReservationQuantityAsync) is incorrect because
+        // it can hide positive reservations when offset by negative ones (over-releases).
+        if (!paymentCancellationQueued)
+        {
+            inventoryReleased = await _stockRepository.ReleaseOrderReservationsAsync(
+                tenantId,
+                order.Id,
+                cancellationToken);
+
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | InventoryReleaseAttempted | CorrelationId: {CorrelationId}",
+                tenantId,
+                order.Id,
+                correlationId);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | InventoryReleaseDeferredUntilPaymentCancellation | CorrelationId: {CorrelationId}",
+                tenantId,
+                order.Id,
+                correlationId);
+        }
+
+        await _context.SaveChangesAsync(cancellationToken);
+
+        // Append admin notes
+        var noteEntry = paymentCancellationQueued
+            ? $"{PendingCancellationAdminNoteMarker} {nowUtc:yyyy-MM-dd HH:mm}: Cancellation requested. Payment cancellation must complete before the order becomes terminally cancelled. Reason: {request.Reason}"
+            : $"{nowUtc:yyyy-MM-dd HH:mm}: Order cancelled. Reason: {request.Reason}";
+        order.AdminNotes = string.IsNullOrEmpty(order.AdminNotes)
+            ? noteEntry
+            : $"{order.AdminNotes}\n{noteEntry}";
+
+        // -------------------------
+        // 4. Emit Events
+        // -------------------------
+        
+        if (!paymentCancellationQueued)
+        {
+            await _eventPublisher.PublishAsync(new OrderCancelledEvent
+            {
+                TenantId = tenantId,
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                CancellationReason = request.Reason,
+                CancelledAt = order.CancelledAt ?? nowUtc,
+                RestoreInventory = false,
+                CorrelationId = correlationId
+            });
+        }
+
+        // Order Status Changed Event
+        await _eventPublisher.PublishAsync(new OrderStatusChangedEvent
+        {
+            TenantId = tenantId,
+            OrderId = order.Id,
+            OrderNumber = order.OrderNumber,
+            OldStatus = oldStatus,
+            NewStatus = requestedStatus,
+            Reason = request.Reason,
+            CorrelationId = correlationId
+        });
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        _logger.LogInformation(
+            "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | InventoryReleased: {InventoryReleased} | ShipmentCancelled: {ShipmentCancelled} | PaymentCancellationQueued: {PaymentCancellationQueued} | SUCCESS | CorrelationId: {CorrelationId}",
+            tenantId, orderId, oldStatus, requestedStatus, inventoryReleased, shipmentCancelled, paymentCancellationQueued, correlationId);
+
+        return new AdminOrderCancellationResponse
+        {
+            OrderId = order.Id,
+            OrderNumber = order.OrderNumber,
+            NewStatus = requestedStatus,
+            InventoryReleased = inventoryReleased,
+            ShipmentCancelled = shipmentCancelled,
+            PaymentCancelled = false, // Not yet confirmed - background worker will process
+            PaymentCancellationQueued = paymentCancellationQueued,
+            CancelledAtUtc = paymentCancellationQueued ? nowUtc : order.CancelledAt ?? nowUtc
+        };
+    }
+
+    #region Private Helpers
+
+    /// <summary>
+    /// Verifies that an order belongs to the specified tenant via ownership joins.
+    /// 
+    /// Ownership is proven if:
+    /// - Customer order: Order.Customer.TenantId == tenantId
+    /// - Guest order with shipment: Shipment.TenantId == tenantId
+    /// - Guest order with payment: PaymentIntent.TenantId == tenantId
+    /// 
+    /// If ownership cannot be proven, the order is treated as non-existent.
+    /// </summary>
+    private async Task<bool> VerifyOrderOwnershipAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        // Check 1: Order exists with Customer who belongs to tenant
+        var customerOwned = await _context.Orders
+            .Where(o => o.Id == orderId && o.CustomerId != null)
+            .Include(o => o.Customer)
+            .AnyAsync(o => o.Customer != null && o.Customer.TenantId == tenantId, cancellationToken);
+
+        if (customerOwned)
+            return true;
+
+        // Check 2: Order exists with Shipment that belongs to tenant
+        var shipmentOwned = await _context.Shipments
+            .AnyAsync(s => s.OrderId == orderId && s.TenantId == tenantId, cancellationToken);
+
+        if (shipmentOwned)
+            return true;
+
+        // Check 3: Order exists with PaymentIntent that belongs to tenant
+        var paymentOwned = await _context.Set<PaymentIntent>()
+            .AnyAsync(pi => pi.OrderId == orderId && pi.TenantId == tenantId, cancellationToken);
+
+        return paymentOwned;
+    }
+
+    private async Task EnsureCancellationDoesNotBypassRecognizedPaymentAsync(
+        Guid tenantId,
+        Order order,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (PaymentStatusRecognizesMoney(order.PaymentStatus))
+        {
+            _logger.LogWarning(
+                "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | PaymentStatus: {PaymentStatus} | PAYMENT_REQUIRES_REFUND_LIFECYCLE | CorrelationId: {CorrelationId}",
+                tenantId,
+                order.Id,
+                order.PaymentStatus,
+                correlationId);
+
+            throw new AdminOrderPaymentRequiresRefundException(order.Id, order.PaymentStatus);
+        }
+
+        var hasCapturedPaymentIntent = await _context.Set<PaymentIntent>()
+            .AnyAsync(intent =>
+                intent.TenantId == tenantId &&
+                intent.OrderId == order.Id &&
+                !intent.IsDeleted &&
+                intent.Status == PaymentIntentStatus.Paid,
+                cancellationToken);
+
+        if (!hasCapturedPaymentIntent)
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "CancelOrder | TenantId: {TenantId} | OrderId: {OrderId} | PaymentIntentStatus: Paid | PAYMENT_INTENT_REQUIRES_REFUND_LIFECYCLE | CorrelationId: {CorrelationId}",
+            tenantId,
+            order.Id,
+            correlationId);
+
+        throw new AdminOrderPaymentRequiresRefundException(order.Id, PaymentStatus.Collected);
+    }
+
+    /// <summary>
+    /// Legacy ordinal value for PartiallyPaid status that was removed from the enum.
+    /// Money was recognized outside the canonical lifecycle.
+    /// </summary>
+    private const int LegacyPartiallyPaidValue = 3;
+
+    private static bool PaymentStatusRecognizesMoney(PaymentStatus status) =>
+        status is PaymentStatus.Collected
+            or PaymentStatus.Settled
+            or PaymentStatus.PartiallyRefunded
+            or PaymentStatus.Refunded ||
+        (int)status == LegacyPartiallyPaidValue;
+
+    private void EnsureAdminStatusOverrideDoesNotAdvanceOperationalLifecycle(
+        Order order,
+        OrderStatus requestedStatus,
+        string correlationId)
+    {
+        if (requestedStatus == order.Status || requestedStatus == OrderStatus.OnHold)
+        {
+            return;
+        }
+
+        if (requestedStatus is OrderStatus.Confirmed or OrderStatus.Processing)
+        {
+            _logger.LogWarning(
+                "UpdateOrderStatus | TenantId: {TenantId} | OrderId: {OrderId} | OldStatus: {OldStatus} | NewStatus: {NewStatus} | OPERATIONAL_LIFECYCLE_BYPASS_ATTEMPT | PaymentStatus: {PaymentStatus} | FinancialPostingStatus: {FinancialPostingStatus} | CorrelationId: {CorrelationId}",
+                order.TenantId,
+                order.Id,
+                order.Status,
+                requestedStatus,
+                order.PaymentStatus,
+                order.FinancialPostingStatus,
+                correlationId);
+
+            throw new InvalidAdminOrderStateException(
+                order.Id,
+                order.Status,
+                requestedStatus,
+                $"Direct status update to {requestedStatus} is prohibited. Use payment and fulfillment lifecycle endpoints so Storefront, Marketplace, Affiliate, and Accounting projections cannot advance ahead of financial truth.");
+        }
+    }
+
+    /// <summary>
+    /// Validates if a status transition is allowed.
+    /// Admin can move forward in workflow or to Cancelled/OnHold.
+    /// Cannot move backward arbitrarily.
+    /// </summary>
+    private static bool IsValidStatusTransition(OrderStatus current, OrderStatus requested)
+    {
+        // Same status is a no-op but allowed
+        if (current == requested)
+            return true;
+
+        // Delivered and Completed orders are immutable (handled before this call)
+        if (current == OrderStatus.Delivered || current == OrderStatus.Completed)
+            return false;
+
+        // Cancelled and Refunded orders cannot transition to anything else
+        if (current == OrderStatus.Cancelled || current == OrderStatus.Refunded)
+            return false;
+
+        // Allow transitions to OnHold or Cancelled from any active state
+        if (requested == OrderStatus.Cancelled || requested == OrderStatus.OnHold)
+            return true;
+
+        // Allow forward progression in the workflow
+        // Pending → Confirmed → Processing → Shipped → Delivered → Completed
+        var workflowOrder = new Dictionary<OrderStatus, int>
+        {
+            { OrderStatus.Pending, 0 },
+            { OrderStatus.Confirmed, 1 },
+            { OrderStatus.Processing, 2 },
+            { OrderStatus.Shipped, 3 },
+            { OrderStatus.Delivered, 4 },
+            { OrderStatus.Completed, 5 }
+        };
+
+        // OnHold can move to any forward state or back to where it was
+        if (current == OrderStatus.OnHold)
+            return true;
+
+        if (workflowOrder.TryGetValue(current, out var currentOrder) &&
+            workflowOrder.TryGetValue(requested, out var requestedOrder))
+        {
+            // Allow forward movement only
+            return requestedOrder > currentOrder;
+        }
+
+        return false;
+    }
+
+    private async Task<Order?> LoadOrderForAdminStatusMutationAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var providerName = _context.Database.ProviderName ?? string.Empty;
+
+        if (providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) ||
+            providerName.Contains("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _context.Orders
+                .FromSqlInterpolated($@"
+                    SELECT xmin, *
+                    FROM ""Orders""
+                    WHERE ""Id"" = {orderId}
+                      AND ""TenantId"" = {tenantId}
+                      AND ""IsDeleted"" = FALSE
+                    FOR UPDATE")
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) ||
+            providerName.Contains("MicrosoftSqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            return await _context.Orders
+                .FromSqlInterpolated($@"
+                    SELECT *
+                    FROM [Orders] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                    WHERE [Id] = {orderId}
+                      AND [TenantId] = {tenantId}
+                      AND [IsDeleted] = 0")
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        return await _context.Orders
+            .FirstOrDefaultAsync(
+                order => order.Id == orderId &&
+                         order.TenantId == tenantId &&
+                         !order.IsDeleted,
+                cancellationToken);
+    }
+
+    private uint GetOrderRowVersion(Order order)
+    {
+        return _context.Entry(order).Property<uint>("xmin").CurrentValue;
+    }
+
+    /// <summary>
+    /// Maps order entity to admin details DTO.
+    /// </summary>
+    private AdminOrderDetailsDto MapToDetailsDto(
+        Order order,
+        List<PaymentIntent> paymentIntents,
+        Shipment? shipment,
+        AdminAffiliateAttributionDto? affiliateAttribution)
+    {
+        return new AdminOrderDetailsDto
+        {
+            TenantId = order.TenantId,
+            OrderId = order.Id,
+            RowVersion = GetOrderRowVersion(order).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            OrderNumber = order.OrderNumber,
+            Status = order.Status,
+            PaymentStatus = order.PaymentStatus,
+            ShipmentStatus = shipment?.Status,
+            Items = order.Items.Select(i => new AdminOrderItemDto
+            {
+                ItemId = i.Id,
+                ProductId = i.ProductId,
+                SKU = i.SKU,
+                ProductName = i.ProductName,
+                VariantName = i.VariantName,
+                ImageUrl = i.ImageUrl,
+                Quantity = i.Quantity,
+                UnitPrice = i.UnitPrice,
+                DiscountAmount = i.DiscountAmount,
+                TaxAmount = i.TaxAmount,
+                Total = i.Total
+            }).ToList(),
+            Payments = paymentIntents.Select(pi => new AdminPaymentIntentDto
+            {
+                PaymentIntentId = pi.Id,
+                PaymentReference = pi.PaymentReference,
+                Provider = pi.Provider.ToString(),
+                PaymentMethod = pi.PaymentMethod,
+                Status = pi.Status,
+                Amount = pi.Amount,
+                Currency = pi.Currency,
+                CreatedAt = pi.CreatedAt,
+                CapturedAt = pi.CapturedAt,
+                FailedAt = pi.FailedAt,
+                FailureReason = pi.FailureReason
+            }).ToList(),
+            Shipment = shipment == null ? null : new AdminShipmentDto
+            {
+                ShipmentId = shipment.Id,
+                ShipmentNumber = shipment.ShipmentNumber,
+                Status = shipment.Status,
+                ShippingMethodName = shipment.ShippingMethodName,
+                CarrierName = shipment.CarrierCode,
+                TrackingNumber = shipment.TrackingNumber,
+                TrackingUrl = shipment.TrackingUrl,
+                EstimatedDeliveryDate = shipment.EstimatedDeliveryDate,
+                ActualDeliveryDate = shipment.ActualDeliveryDate,
+                CreatedAt = shipment.CreatedAt,
+                ShippedAt = shipment.ShippedAtUtc,
+                DeliveredAt = shipment.DeliveredAtUtc,
+                CancelledAt = shipment.CancelledAtUtc,
+                CancellationReason = shipment.CancellationReason
+            },
+            Totals = new AdminOrderTotalsDto
+            {
+                Subtotal = order.Subtotal,
+                DiscountAmount = order.DiscountAmount,
+                TaxAmount = order.TaxAmount,
+                ShippingCost = order.ShippingCost,
+                Total = order.Total,
+                Currency = order.Currency,
+                CouponCode = order.CouponCode
+            },
+            Customer = new AdminOrderCustomerDto
+            {
+                CustomerId = order.CustomerId,
+                Name = order.Customer?.Name ?? order.GuestName,
+                Email = order.Customer?.Email ?? order.GuestEmail,
+                Phone = order.Customer?.Phone ?? order.GuestPhone,
+                IsGuest = !order.CustomerId.HasValue
+            },
+            CreatedAtUtc = order.CreatedAt,
+            Source = order.Source,
+            SourceOrderId = order.SourceOrderId,
+            SourceLabel = order.Source == OrderSource.Marketplace ? "Marketplace" : null,
+            IsMarketplaceOrder = false,
+            AffiliateAttribution = affiliateAttribution,
+            MarketplaceLineage = null,
+            CustomerNotes = order.CustomerNotes,
+            AdminNotes = order.AdminNotes,
+            CancellationReason = order.CancellationReason,
+            ShippingAddress = new AdminAddressDto
+            {
+                Address = order.ShippingAddress,
+                City = order.ShippingCity,
+                State = order.ShippingState,
+                ZipCode = order.ShippingZipCode,
+                Country = order.ShippingCountry
+            },
+            BillingAddress = string.IsNullOrEmpty(order.BillingAddress) ? null : new AdminAddressDto
+            {
+                Address = order.BillingAddress,
+                City = order.BillingCity,
+                State = order.BillingState,
+                ZipCode = order.BillingZipCode,
+                Country = order.BillingCountry
+            }
+        };
+    }
+
+    private async Task AttachAffiliateAttributionEvidenceAsync(
+        List<AdminOrderListItemDto> orders,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var storefrontOrderIds = orders
+            .Where(order => !order.IsMarketplaceOrder && order.TenantId == tenantId)
+            .Select(order => order.OrderId)
+            .Distinct()
+            .ToArray();
+
+        if (storefrontOrderIds.Length == 0)
+        {
+            return;
+        }
+
+        var evidence = await (
+            from attribution in _context.AffiliateAttributions.AsNoTracking()
+            join order in _context.Orders.AsNoTracking() on attribution.OrderId equals order.Id
+            where attribution.TenantId == tenantId
+                  && storefrontOrderIds.Contains(attribution.OrderId)
+                  && !attribution.IsDeleted
+                  && !order.IsDeleted
+                  && order.TenantId == tenantId
+                  && order.AffiliateAccountId.HasValue
+                  && order.AffiliateAccountId.Value == attribution.AffiliateAccountId
+                  && order.AffiliateReferralCode != null
+                  && order.AffiliateReferralCode == attribution.ReferralCode
+                  && order.PromotionLinkId == attribution.PromotionLinkId
+            select new AdminAffiliateAttributionDto
+            {
+                TenantId = attribution.TenantId,
+                OrderId = attribution.OrderId,
+                AttributionId = attribution.Id,
+                AffiliateAccountId = attribution.AffiliateAccountId,
+                ReferralCode = attribution.ReferralCode,
+                PromotionLinkId = attribution.PromotionLinkId,
+                Source = attribution.Source.ToString(),
+                AttributedAtUtc = attribution.AttributedAtUtc
+            })
+            .ToDictionaryAsync(attribution => attribution.OrderId, cancellationToken);
+
+        foreach (var order in orders)
+        {
+            if (evidence.TryGetValue(order.OrderId, out var attribution))
+            {
+                order.AffiliateAttribution = attribution;
+            }
+        }
+    }
+
+    private async Task<AdminAffiliateAttributionDto?> LoadAffiliateAttributionEvidenceAsync(
+        Guid tenantId,
+        Order order,
+        CancellationToken cancellationToken)
+    {
+        if (order.TenantId != tenantId ||
+            !order.AffiliateAccountId.HasValue ||
+            string.IsNullOrWhiteSpace(order.AffiliateReferralCode))
+        {
+            return null;
+        }
+
+        return await (
+            from attribution in _context.AffiliateAttributions.AsNoTracking()
+            where attribution.TenantId == tenantId
+                  && attribution.OrderId == order.Id
+                  && !attribution.IsDeleted
+                  && attribution.AffiliateAccountId == order.AffiliateAccountId.Value
+                  && attribution.ReferralCode == order.AffiliateReferralCode
+                  && attribution.PromotionLinkId == order.PromotionLinkId
+            select new AdminAffiliateAttributionDto
+            {
+                TenantId = attribution.TenantId,
+                OrderId = attribution.OrderId,
+                AttributionId = attribution.Id,
+                AffiliateAccountId = attribution.AffiliateAccountId,
+                ReferralCode = attribution.ReferralCode,
+                PromotionLinkId = attribution.PromotionLinkId,
+                Source = attribution.Source.ToString(),
+                AttributedAtUtc = attribution.AttributedAtUtc
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task AttachMarketplaceLineageEvidenceAsync(
+        List<AdminOrderListItemDto> orders,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var marketplaceOrderIds = orders
+            .Where(order => order.IsMarketplaceOrder && order.TenantId == tenantId)
+            .Select(order => order.OrderId)
+            .Distinct()
+            .ToArray();
+
+        if (marketplaceOrderIds.Length == 0)
+        {
+            return;
+        }
+
+        var evidence = await _context.CommerceHubSubOrders
+            .AsNoTracking()
+            .Where(subOrder =>
+                marketplaceOrderIds.Contains(subOrder.Id) &&
+                subOrder.StoreId == tenantId &&
+                !subOrder.IsDeleted &&
+                !subOrder.MarketplaceOrder.IsDeleted)
+            .Select(subOrder => new AdminMarketplaceLineageDto
+            {
+                TenantId = subOrder.StoreId,
+                OrderId = subOrder.Id,
+                MarketplaceOrderId = subOrder.MarketplaceOrderId,
+                MarketplaceName = "CommerceHub",
+                MarketplaceOrderNumber = subOrder.MarketplaceOrder.OrderNumber,
+                MarketplaceSubOrderNumber = subOrder.OrderNumber,
+                ExternalCustomerId = subOrder.MarketplaceOrder.OnlineCustomerId ?? subOrder.MarketplaceOrder.CustomerId,
+                VendorId = subOrder.StoreId,
+                VendorName = subOrder.StoreName,
+                MarketplaceSourceType = "Marketplace",
+                MarketplaceStatus = subOrder.Status,
+                MarketplacePaymentStatus = subOrder.PaymentStatus,
+                Currency = subOrder.Currency,
+                Subtotal = subOrder.Subtotal,
+                Shipping = subOrder.Shipping,
+                Total = subOrder.Total,
+                PaymentReferenceId = subOrder.PaymentReferenceId,
+                PaymentSnapshotJson = subOrder.PaymentSnapshotJson,
+                ShippingMethodId = subOrder.ShippingMethodId,
+                ShippingMethodName = subOrder.ShippingMethodName,
+                ShippingSnapshotJson = subOrder.ShippingSnapshotJson,
+                CommissionSnapshotJson = subOrder.CommissionSnapshotJson
+            })
+            .ToDictionaryAsync(lineage => lineage.OrderId, cancellationToken);
+
+        foreach (var order in orders.Where(order => order.IsMarketplaceOrder))
+        {
+            if (evidence.TryGetValue(order.OrderId, out var lineage))
+            {
+                order.MarketplaceLineage = lineage;
+            }
+        }
+    }
+
+    private async Task<AdminOrderDetailsDto> MapMarketplaceSubOrderToDetailsDtoAsync(
+        CommerceHubSubOrder subOrder,
+        CancellationToken cancellationToken)
+    {
+        var marketplaceOrder = subOrder.MarketplaceOrder;
+        var refundRequests = await _context.CommerceHubRefundRequests
+            .AsNoTracking()
+            .Where(refundRequest =>
+                refundRequest.OrderItem.SubOrderId == subOrder.Id &&
+                !refundRequest.IsDeleted)
+            .OrderByDescending(refundRequest => refundRequest.CreatedAt)
+            .ThenByDescending(refundRequest => refundRequest.Id)
+            .ToListAsync(cancellationToken);
+        var evidenceLookup = await _refundEvidenceService.GetEvidenceLookupAsync(
+            refundRequests.Select(refundRequest => refundRequest.Id),
+            cancellationToken);
+        var refundIds = refundRequests.Select(refundRequest => refundRequest.Id).ToArray();
+        var returnLookup = await _context.CommerceHubReturnRequests
+            .AsNoTracking()
+            .Where(returnRequest => refundIds.Contains(returnRequest.RefundId) && !returnRequest.IsDeleted)
+            .ToDictionaryAsync(returnRequest => returnRequest.RefundId, cancellationToken);
+        var refundLookup = refundRequests
+            .GroupBy(refundRequest => refundRequest.OrderItemId)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<CommerceHubRefundRequest>)group.ToList());
+
+        return new AdminOrderDetailsDto
+        {
+            TenantId = subOrder.StoreId,
+            OrderId = subOrder.Id,
+            RowVersion = string.Empty,
+            OrderNumber = subOrder.OrderNumber,
+            Status = subOrder.Status,
+            PaymentStatus = subOrder.PaymentStatus,
+            ShipmentStatus = null,
+            Items = subOrder.Items.Select(item => new AdminOrderItemDto
+            {
+                ItemId = item.Id,
+                ProductId = item.ProductId,
+                SKU = string.Empty,
+                ProductName = item.ProductName,
+                VariantName = item.VariantName,
+                ImageUrl = item.ImageUrl,
+                Quantity = item.Quantity,
+                UnitPrice = item.UnitPrice,
+                DiscountAmount = 0m,
+                TaxAmount = 0m,
+                Total = item.Total,
+                Refunds = refundLookup.TryGetValue(item.Id, out var matchedRefunds)
+                    ? matchedRefunds.Select(refundRequest => new AdminOrderRefundEvidenceDto
+                    {
+                        RefundId = refundRequest.Id,
+                        Quantity = refundRequest.Quantity,
+                        Amount = refundRequest.TotalAmount,
+                        Status = refundRequest.Status,
+                        Reason = CustomerRefundService.BuildReasonSummary(refundRequest.ReasonCode, refundRequest.ReasonText),
+                        ReasonCode = refundRequest.ReasonCode,
+                        ReasonText = refundRequest.ReasonText,
+                        ReturnRequest = returnLookup.TryGetValue(refundRequest.Id, out var returnRequest)
+                            ? CommerceHubReturnMapper.MapDetails(returnRequest, refundRequest)
+                            : null,
+                        MediaUrls = evidenceLookup.TryGetValue(refundRequest.Id, out var media)
+                            ? media.Select(entry => entry.Url).ToList()
+                            : new List<string>(),
+                        Media = evidenceLookup.TryGetValue(refundRequest.Id, out var refundMedia)
+                            ? refundMedia.ToList()
+                            : new List<RefundEvidenceMediaDto>(),
+                        CreatedAt = refundRequest.CreatedAt,
+                        UpdatedAt = refundRequest.UpdatedAt
+                    }).ToList()
+                    : new List<AdminOrderRefundEvidenceDto>()
+            }).ToList(),
+            Payments = new List<AdminPaymentIntentDto>(),
+            Shipment = null,
+            Totals = new AdminOrderTotalsDto
+            {
+                Subtotal = subOrder.Subtotal,
+                DiscountAmount = 0m,
+                TaxAmount = 0m,
+                ShippingCost = subOrder.Shipping,
+                Total = subOrder.Total,
+                Currency = subOrder.Currency,
+                CouponCode = null
+            },
+            Customer = new AdminOrderCustomerDto
+            {
+                CustomerId = null,
+                Name = marketplaceOrder.FullName,
+                Email = null,
+                Phone = marketplaceOrder.PhoneNumber,
+                IsGuest = true
+            },
+            CreatedAtUtc = subOrder.CreatedAt,
+            Source = OrderSource.Marketplace,
+            SourceOrderId = marketplaceOrder.Id.ToString(),
+            SourceLabel = "Marketplace",
+            IsMarketplaceOrder = true,
+            AffiliateAttribution = null,
+            MarketplaceLineage = new AdminMarketplaceLineageDto
+            {
+                TenantId = subOrder.StoreId,
+                OrderId = subOrder.Id,
+                MarketplaceOrderId = marketplaceOrder.Id,
+                MarketplaceName = "CommerceHub",
+                MarketplaceOrderNumber = marketplaceOrder.OrderNumber,
+                MarketplaceSubOrderNumber = subOrder.OrderNumber,
+                ExternalCustomerId = marketplaceOrder.OnlineCustomerId ?? marketplaceOrder.CustomerId,
+                VendorId = subOrder.StoreId,
+                VendorName = subOrder.StoreName,
+                MarketplaceSourceType = "Marketplace",
+                MarketplaceStatus = subOrder.Status,
+                MarketplacePaymentStatus = subOrder.PaymentStatus,
+                Currency = subOrder.Currency,
+                Subtotal = subOrder.Subtotal,
+                Shipping = subOrder.Shipping,
+                Total = subOrder.Total,
+                PaymentReferenceId = subOrder.PaymentReferenceId,
+                PaymentSnapshotJson = subOrder.PaymentSnapshotJson,
+                ShippingMethodId = subOrder.ShippingMethodId,
+                ShippingMethodName = subOrder.ShippingMethodName,
+                ShippingSnapshotJson = subOrder.ShippingSnapshotJson,
+                CommissionSnapshotJson = subOrder.CommissionSnapshotJson
+            },
+            CustomerNotes = marketplaceOrder.Notes,
+            AdminNotes = null,
+            CancellationReason = null,
+            ShippingAddress = new AdminAddressDto
+            {
+                Address = marketplaceOrder.AddressLine,
+                City = marketplaceOrder.City,
+                State = marketplaceOrder.Area,
+                ZipCode = null,
+                Country = null
+            },
+            BillingAddress = null
+        };
+    }
+
+    private const string PendingCancellationAdminNoteMarker = "[admin-cancellation-pending]";
+
+    private static bool IsAdminCancellationPending(Order order) =>
+        order.Status == OrderStatus.OnHold &&
+        !string.IsNullOrWhiteSpace(order.AdminNotes) &&
+        order.AdminNotes.Contains(PendingCancellationAdminNoteMarker, StringComparison.Ordinal);
+
+    #endregion
+}

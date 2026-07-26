@@ -1,0 +1,72 @@
+{
+    email {$ACME_EMAIL}
+}
+
+(staging_security_headers) {
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+(api_upstream) {
+    reverse_proxy {$API_UPSTREAM:127.0.0.1:5010} {
+        header_up Host {host}
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-For {remote_host}
+    }
+}
+
+api-staging.yourdomain.com {
+    import staging_security_headers
+    encode zstd gzip
+    log {
+        output file {$STAGING_LOG_ROOT:C:\srv\pointofsale\staging\logs}\api-access.log
+        format json
+    }
+    import api_upstream
+}
+
+app-staging.yourdomain.com {
+    import staging_security_headers
+    encode zstd gzip
+    root * {$POS_WEB_ROOT:C:\srv\pointofsale\staging\web}
+
+    @backend path /api/* /hubs/* /health/*
+    handle @backend {
+        import api_upstream
+    }
+
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+
+    log {
+        output file {$STAGING_LOG_ROOT:C:\srv\pointofsale\staging\logs}\pos-web-access.log
+        format json
+    }
+}
+
+*.app-staging.yourdomain.com {
+    import staging_security_headers
+    encode zstd gzip
+    root * {$STOREFRONT_ROOT:C:\srv\pointofsale\staging\storefront}
+
+    @backend path /api/* /hubs/* /health/*
+    handle @backend {
+        import api_upstream
+    }
+
+    handle {
+        try_files {path} /index.html
+        file_server
+    }
+
+    log {
+        output file {$STAGING_LOG_ROOT:C:\srv\pointofsale\staging\logs}\storefront-access.log
+        format json
+    }
+}
