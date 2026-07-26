@@ -7477,6 +7477,15 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.HasIndex("Name");
 
                     b.ToTable("Currencies", (string)null);
+
+                    b.HasData(
+                        new
+                        {
+                            Code = "EGP",
+                            DecimalPlaces = 2,
+                            Name = "Egyptian Pound",
+                            Symbol = "EGP"
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Customer", b =>

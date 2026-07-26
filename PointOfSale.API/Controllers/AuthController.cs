@@ -114,12 +114,24 @@ public class AuthController : ControllerBase
 
         return Ok(new AuthResponse
         {
-            User = new UserDto(user)
-            {
-                NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(user, cancellationToken),
-                VendorLifecycleAuthority = await BuildCommerceHubVendorLifecycleAuthorityAsync(user.TenantId, cancellationToken)
-            }
+            User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)
         });
+    }
+
+    private async Task<UserDto> BuildPosSessionAuthorityUserDtoAsync(User user, CancellationToken cancellationToken)
+    {
+        var vendorLifecycleAuthority = await BuildCommerceHubVendorLifecycleAuthorityAsync(
+            user.TenantId,
+            cancellationToken);
+
+        return new UserDto(user)
+        {
+            NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(
+                user,
+                vendorLifecycleAuthority,
+                cancellationToken),
+            VendorLifecycleAuthority = vendorLifecycleAuthority
+        };
     }
 
     private async Task<CommerceHubVendorLifecycleAuthorityDto> BuildCommerceHubVendorLifecycleAuthorityAsync(
@@ -201,6 +213,7 @@ public class AuthController : ControllerBase
 
     private async Task<IReadOnlyList<string>> BuildCommerceHubNavigationCapabilitiesAsync(
         User user,
+        CommerceHubVendorLifecycleAuthorityDto vendorLifecycleAuthority,
         CancellationToken cancellationToken)
     {
         var capabilities = new List<string>();
@@ -209,10 +222,15 @@ public class AuthController : ControllerBase
         {
             capabilities.Add("commercehub.finance.view");
             capabilities.Add("commercehub.payments.view");
-            capabilities.Add("commercehub.analytics.view");
+            if (!vendorLifecycleAuthority.BlocksAnalytics)
+            {
+                capabilities.Add("commercehub.analytics.view");
+            }
         }
 
         if (user.Role is UserRole.Owner or UserRole.Admin &&
+            !vendorLifecycleAuthority.BlocksCatalog &&
+            !vendorLifecycleAuthority.BlocksStorefront &&
             await IsVendorCapabilityAllowedAsync(
                 token => _userGovernanceService.EnsureVendorListingAllowedAsync(user.TenantId, token),
                 cancellationToken))
@@ -225,6 +243,7 @@ public class AuthController : ControllerBase
         }
 
         if (user.Role is UserRole.Owner or UserRole.Admin or UserRole.Manager &&
+            !vendorLifecycleAuthority.BlocksOrders &&
             await IsVendorCapabilityAllowedAsync(
                 token => _userGovernanceService.EnsureVendorOrderOperationAllowedAsync(user.TenantId, token),
                 cancellationToken))
@@ -234,6 +253,7 @@ public class AuthController : ControllerBase
         }
 
         if (user.Role is UserRole.Owner or UserRole.Admin &&
+            !vendorLifecycleAuthority.BlocksPayments &&
             await IsVendorCapabilityAllowedAsync(
                 token => _userGovernanceService.EnsureVendorRepaymentAllowedAsync(user.TenantId, token),
                 cancellationToken))
@@ -337,11 +357,7 @@ public class AuthController : ControllerBase
 
         return Ok(new AuthResponse
         {
-            User = new UserDto(user)
-            {
-                NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(user, cancellationToken),
-                VendorLifecycleAuthority = await BuildCommerceHubVendorLifecycleAuthorityAsync(user.TenantId, cancellationToken)
-            }
+            User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)
         });
     }
 
@@ -421,11 +437,7 @@ public class AuthController : ControllerBase
 
         return Ok(new AuthResponse
         {
-            User = new UserDto(user)
-            {
-                NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(user, cancellationToken),
-                VendorLifecycleAuthority = await BuildCommerceHubVendorLifecycleAuthorityAsync(user.TenantId, cancellationToken)
-            }
+            User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)
         });
     }
 
@@ -527,11 +539,7 @@ public class AuthController : ControllerBase
 
         return Ok(new AuthResponse
         {
-            User = new UserDto(user)
-            {
-                NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(user, cancellationToken),
-                VendorLifecycleAuthority = await BuildCommerceHubVendorLifecycleAuthorityAsync(user.TenantId, cancellationToken)
-            }
+            User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)
         });
     }
 

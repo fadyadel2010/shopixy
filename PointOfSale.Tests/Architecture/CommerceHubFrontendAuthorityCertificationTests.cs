@@ -18,8 +18,10 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.True(
             CountOccurrences(
                 posSessionController,
-                "NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(user, cancellationToken)") >= 4,
-            "Registration, login, current-session, and refresh responses must all derive CommerceHub vendor capabilities from current backend authority.");
+                "User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)") >= 4,
+            "Registration, login, current-session, and refresh responses must all derive POS session authority from the shared backend composer.");
+        Assert.Contains("BuildCommerceHubNavigationCapabilitiesAsync", posSessionController, StringComparison.Ordinal);
+        Assert.Contains("vendorLifecycleAuthority", posSessionController, StringComparison.Ordinal);
 
         Assert.Contains("removeStoredValue(STORAGE_KEYS.TENANT_ID)", posAuthStore, StringComparison.Ordinal);
         Assert.DoesNotContain("setStoredValue(STORAGE_KEYS.TENANT_ID", posAuthStore, StringComparison.Ordinal);

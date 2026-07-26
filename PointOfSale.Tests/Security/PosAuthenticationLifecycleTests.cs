@@ -8,10 +8,12 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.API.Controllers;
+using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Models;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Audit;
 using PointOfSale.API.Services.Auth;
+using PointOfSale.API.Services.CommerceHub.Finance;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Security;
@@ -186,7 +188,89 @@ public sealed class PosAuthenticationLifecycleTests
             value => value?.StartsWith($"{AuthCookieConfiguration.PosRefreshTokenCookieName}=", StringComparison.Ordinal) == true);
     }
 
-    private static AuthController Controller(ApplicationDbContext context, Guid tenantId)
+    [Fact]
+    public async Task LoginAndSession_DoNotEmitLifecycleBlockedOperatingCapabilitiesForPendingVendor()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = Context(tenantId);
+        context.Tenants.Add(Tenant(tenantId));
+        var user = User(tenantId);
+        user.Role = UserRole.Owner;
+        user.PasswordHash = new PasswordHasher<User>().HashPassword(user, "Password!1");
+        context.Users.Add(user);
+        context.UserGovernanceProfiles.Add(new UserGovernanceProfile
+        {
+            Id = Guid.NewGuid(),
+            SubjectId = tenantId,
+            Role = UserGovernanceRole.Vendor,
+            Status = UserGovernanceStatus.Active,
+            IsKycVerified = false,
+            IsMarketplaceApproved = false,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var login = Controller(context, tenantId);
+        var loginResult = await login.Login(new LoginRequest(user.Username, "Password!1"), CancellationToken.None);
+        var loginResponse = ResponseFrom(loginResult.Result);
+
+        Assert.Equal("Pending", loginResponse.User.VendorLifecycleAuthority?.Status);
+        Assert.Contains("commercehub.finance.view", loginResponse.User.NavigationCapabilities);
+        Assert.Contains("commercehub.payments.view", loginResponse.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.analytics.view", loginResponse.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.catalog.view", loginResponse.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.orders.view", loginResponse.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.storefront.manage", loginResponse.User.NavigationCapabilities);
+
+        var session = Controller(context, tenantId);
+        session.HttpContext.User = PrincipalForUser(user.Id);
+        var sessionResult = await session.GetSession(CancellationToken.None);
+        var sessionResponse = ResponseFrom(sessionResult.Result);
+
+        Assert.Equal(loginResponse.User.NavigationCapabilities, sessionResponse.User.NavigationCapabilities);
+        Assert.Equal("Pending", sessionResponse.User.VendorLifecycleAuthority?.Status);
+    }
+
+    [Fact]
+    public async Task Login_DoesNotEmitAnalyticsOrOperationsWhenDebtBlockedLifecycleBlocksThem()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = Context(tenantId);
+        context.Tenants.Add(Tenant(tenantId));
+        var user = User(tenantId);
+        user.Role = UserRole.Owner;
+        user.PasswordHash = new PasswordHasher<User>().HashPassword(user, "Password!1");
+        context.Users.Add(user);
+        context.UserGovernanceProfiles.Add(new UserGovernanceProfile
+        {
+            Id = Guid.NewGuid(),
+            SubjectId = tenantId,
+            Role = UserGovernanceRole.Vendor,
+            Status = UserGovernanceStatus.Active,
+            IsKycVerified = true,
+            IsMarketplaceApproved = true,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var login = Controller(context, tenantId, new DebtBlockedVendorDebtService());
+        var loginResult = await login.Login(new LoginRequest(user.Username, "Password!1"), CancellationToken.None);
+        var response = ResponseFrom(loginResult.Result);
+
+        Assert.Equal("DebtBlocked", response.User.VendorLifecycleAuthority?.Status);
+        Assert.Contains("commercehub.finance.view", response.User.NavigationCapabilities);
+        Assert.Contains("commercehub.payments.view", response.User.NavigationCapabilities);
+        Assert.Contains("commercehub.payments.submit", response.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.analytics.view", response.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.catalog.manage", response.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.orders.operate", response.User.NavigationCapabilities);
+        Assert.DoesNotContain("commercehub.storefront.manage", response.User.NavigationCapabilities);
+    }
+
+    private static AuthController Controller(
+        ApplicationDbContext context,
+        Guid tenantId,
+        ICommerceHubVendorDebtService? vendorDebtService = null)
     {
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
@@ -205,7 +289,7 @@ public sealed class PosAuthenticationLifecycleTests
             Mock.Of<IEmailVerificationService>(),
             Mock.Of<IAuditService>(),
             new NoOpUserGovernanceService(),
-            new NoOpCommerceHubVendorDebtService(),
+            vendorDebtService ?? new NoOpCommerceHubVendorDebtService(),
             NullLogger<AuthController>.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
@@ -220,6 +304,15 @@ public sealed class PosAuthenticationLifecycleTests
             .Single(value => value?.StartsWith($"{cookieName}=", StringComparison.Ordinal) == true)!;
         return header.Split(';')[0].Split('=', 2)[1];
     }
+
+    private static AuthResponse ResponseFrom(ActionResult? result)
+    {
+        var ok = Assert.IsType<OkObjectResult>(result);
+        return Assert.IsType<AuthResponse>(ok.Value);
+    }
+
+    private static ClaimsPrincipal PrincipalForUser(Guid userId) =>
+        new(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, userId.ToString("D"))], "Bearer"));
 
     private static ApplicationDbContext Context(Guid tenantId, string? databaseName = null)
     {
@@ -287,5 +380,41 @@ public sealed class PosAuthenticationLifecycleTests
 
             return base.SaveChangesAsync(cancellationToken);
         }
+    }
+
+    private sealed class DebtBlockedVendorDebtService : ICommerceHubVendorDebtService
+    {
+        public Task<CommerceHubVendorDebtSnapshot> GetVendorDebtSnapshotAsync(
+            Guid vendorId,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateSnapshot(vendorId));
+
+        public Task<IReadOnlyDictionary<Guid, CommerceHubVendorDebtSnapshot>> GetVendorDebtSnapshotsAsync(
+            IReadOnlyCollection<Guid> vendorIds,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, CommerceHubVendorDebtSnapshot>>(
+                vendorIds
+                    .Where(vendorId => vendorId != Guid.Empty)
+                    .Distinct()
+                    .ToDictionary(vendorId => vendorId, CreateSnapshot));
+
+        private static CommerceHubVendorDebtSnapshot CreateSnapshot(Guid vendorId) =>
+            new(
+                vendorId,
+                1500m,
+                0m,
+                1000m,
+                0,
+                800m,
+                DateTime.UtcNow,
+                DateTime.UtcNow,
+                false,
+                true,
+                true,
+                false,
+                1500m,
+                "SUSPENDED",
+                "PAY_VENDOR_DEBT",
+                Array.Empty<CommerceHubVendorSettlementDto>());
     }
 }

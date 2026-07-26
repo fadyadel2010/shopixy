@@ -1395,6 +1395,14 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.Symbol).HasMaxLength(10).IsRequired();
             entity.Property(e => e.DecimalPlaces).IsRequired().HasDefaultValue(2);
             entity.ToTable("Currencies");
+
+            entity.HasData(new Currency
+            {
+                Code = FinancialCurrencyGuard.PlatformBaseCurrencyCode,
+                Name = "Egyptian Pound",
+                Symbol = "EGP",
+                DecimalPlaces = 2
+            });
         });
 
         // User Configuration (Phase 8.0 - TenantId)

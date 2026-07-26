@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.Platform;
+using PointOfSale.API.Middleware;
 using PointOfSale.API.Models;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Auth;
@@ -69,6 +70,7 @@ public class TenantRegistrationService : ITenantRegistrationService
     private readonly ITenantAccountSeeder _accountSeeder;
     private readonly IUserGovernanceService _userGovernanceService;
     private readonly IEventPublisher _eventPublisher;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public TenantRegistrationService(
         ApplicationDbContext context,
@@ -80,7 +82,8 @@ public class TenantRegistrationService : ITenantRegistrationService
         IConfiguration configuration,
         ITenantAccountSeeder accountSeeder,
         IUserGovernanceService userGovernanceService,
-        IEventPublisher eventPublisher)
+        IEventPublisher eventPublisher,
+        IHttpContextAccessor httpContextAccessor)
     {
         _context = context;
         _passwordHasher = passwordHasher;
@@ -92,6 +95,7 @@ public class TenantRegistrationService : ITenantRegistrationService
         _accountSeeder = accountSeeder;
         _userGovernanceService = userGovernanceService;
         _eventPublisher = eventPublisher;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<TenantRegistrationResult> RegisterTenantAsync(
@@ -554,12 +558,29 @@ public class TenantRegistrationService : ITenantRegistrationService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Tenant registration failed, rolling back transaction");
+            var correlationId = GetCorrelationId();
+            _logger.LogError(
+                ex,
+                "Tenant registration failed, rolling back transaction | CorrelationId: {CorrelationId} | ExceptionType: {ExceptionType} | ExceptionMessage: {ExceptionMessage} | InnerExceptionType: {InnerExceptionType} | InnerExceptionMessage: {InnerExceptionMessage} | StackTrace: {StackTrace}",
+                correlationId,
+                ex.GetType().FullName,
+                ex.Message,
+                ex.InnerException?.GetType().FullName,
+                ex.InnerException?.Message,
+                ex.StackTrace);
             await transaction.RollbackAsync(cancellationToken);
             
             return CreateError("REGISTRATION_FAILED", 
                 "We couldn't create your store right now. Please try again.");
         }
+    }
+
+    private string GetCorrelationId()
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+        return httpContext == null
+            ? System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("N")
+            : RequestContextMetadata.GetCorrelationId(httpContext);
     }
 
     private async Task PublishBootstrapReadModelEventsAsync(

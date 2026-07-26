@@ -1117,6 +1117,11 @@ namespace PointOfSale.Infrastructure.Migrations
                     table.PrimaryKey("PK_Currencies", x => x.Code);
                 });
 
+            migrationBuilder.InsertData(
+                table: "Currencies",
+                columns: new[] { "Code", "DecimalPlaces", "Name", "Symbol" },
+                values: new object[] { "EGP", 2, "Egyptian Pound", "EGP" });
+
             migrationBuilder.CreateTable(
                 name: "Customers",
                 columns: table => new
