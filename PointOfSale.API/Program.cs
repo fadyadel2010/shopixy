@@ -365,6 +365,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.IInventoryService, PointOfSa
 builder.Services.AddScoped<PointOfSale.API.Services.ILedgerService, PointOfSale.API.Services.LedgerService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IPartyBalanceMaintenanceService, PointOfSale.API.Services.LedgerService>();
 builder.Services.AddScoped<PointOfSale.API.Services.ISaleFinancialIntegrityService, PointOfSale.API.Services.SaleFinancialIntegrityService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Pos.IPosCartRuntimeService, PointOfSale.API.Services.Pos.PosCartRuntimeService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IPurchaseFinancialIntegrityService, PointOfSale.API.Services.PurchaseFinancialIntegrityService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IFinancialMutationIdempotencyService, PointOfSale.API.Services.FinancialMutationIdempotencyService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IFinancialIntegrityService, PointOfSale.API.Services.FinancialIntegrityService>();

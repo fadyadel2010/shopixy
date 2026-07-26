@@ -161,33 +161,32 @@ In scope (verified code ownership):
 
 ## Cart Runtime
 
-POS cart behaviour is intentionally thin. The POS terminal sends an opaque `X-Pos-Cart-Id`
-header that is used **only as an idempotency key**, not as a server-side cart aggregate that the
-sale reads line-items from. (Verified: `SalesController.cs:37` `PosCartIdHeader`, `:101` param,
-`:115-122` the cart id is normalized into `createIdempotencyKey`; the sale itself reads line items
-from `request.Items`, never from a cart entity.)
+POS cart behaviour is now server-authoritative. The terminal sends `X-Pos-Cart-Id` as sale
+correlation/idempotency evidence, and `SalesController.CreateSale` re-enters `IPosCartRuntimeService`
+to prepare checkout from SQL cart lines before sale creation (`SalesController.cs`, `PosCartIdHeader`,
+`PrepareCheckoutAsync`, `CompleteFromSaleAsync`).
 
-- **Cart Creation / Mutation / Validation / State / Expiration / Hold / Resume / Cancel / Merge**:
-  Server-side POS cart lifecycle (hold/resume/merge/expiration) is **NOT implemented** for the POS
-  sale path. The `CartService` (`PointOfSale.API/Services/Cart/CartService.cs`) exists but is the
-  **Storefront cart** (per its DTOs `PointOfSale.API/DTOs/Cart`), not the POS cart. POS line items
-  travel in the `CreateSaleRequest.Items` payload and are validated inline
-  (`PrepareSaleItemsAsync`, `SalesController.cs:194-199`).
-- **Persistence / Authority**: The POS "cart" is the uncommitted request body held by the cashier
-  client. SQL authority for a sale begins at `SalesInvoices` insert. Server-side POS cart state is a
-  VERIFIED GAP.
-- **Implication**: POS does not implement the hold/resume/cancel/merge semantics described in the
-  brief; those are storefront-cart concepts not present in the POS execution path.
+- **Cart Creation / Mutation / Validation / State / Expiration / Hold / Resume / Cancel / Recover /
+  Complete / Abandon**: implemented by `PosCartRuntimeService` and exposed through
+  `PosCartsController`. The POS cart is separate from the Storefront `CartService`; it uses
+  `PosCart`, `PosCartItem`, `PosCartRequestIdempotency`, and `PosCartOutboxMessage`.
+- **Persistence / Authority**: SQL owns the cart aggregate (`ApplicationDbContext.PosCarts`,
+  `PosCartItems`, tenant query filters, EF migration `*_PosCartRuntime`). Cart version plus
+  PostgreSQL `xmin` provide optimistic concurrency. Idempotency is persisted by `(TenantId, Key,
+  Operation)` request hash records.
+- **Inventory stance**: POS cart validates inventory at add/update and checkout, but does not reserve
+  or mutate stock. Stock mutation remains delayed until `SalesController.CreateSale`, which locks and
+  mutates `ProductVariantStocks` inside the sale transaction.
 
 ---
 
 ## Cart Line Runtime
 
-POS cart lines are the `SaleItemRequest` elements of `CreateSaleRequest` (`SalesController.cs:~2883`).
-Each line carries `ProductId`, `ProductVariantId`, `UnitId`, `Quantity`, `UnitPrice`,
-`DiscountAmount`, `TaxRate`. The server resolves the variant, locks stock, validates availability,
-and snapshots cost price (`ResolveSaleCostPriceSnapshot`, `SalesController.cs:2505-2515`). There is
-no separate server-side cart-line aggregate for POS.
+POS cart lines are `PosCartItem` SQL rows until checkout. Each line carries product/variant/unit
+identity, quantity, conversion factor, price/cost/tax snapshots, and line totals. At checkout,
+`PosCartRuntimeService.PrepareCheckoutAsync` converts authoritative cart lines into
+`CreateSaleRequest.Items`; the sale path still performs final locked stock validation and persists
+`SalesInvoiceItem` rows.
 
 ---
 
@@ -476,8 +475,9 @@ Implemented in `SalesReturnsController.CreateSalesReturnInternal` / `FinalizeSal
 ## Recovery Runtime
 
 - **Crash Recovery / Cart Recovery / Interrupted Checkout**: POS sale is a single SQL transaction;
-  any crash before commit rolls back (`SalesController.cs:131`, `:465-510`). There is no separate
-  "cart recovery" because POS has no server-side cart. VERIFIED GAP for POS-specific cart recovery.
+  any crash before commit rolls back (`SalesController.cs:131`, `:465-510`). Interrupted pre-sale
+  work is recoverable through the server-side POS cart lifecycle (`Recover`, `Resume`, `Expire`,
+  `Abandon`) and persisted cart outbox.
 - **Partial Payment**: POS requires full payment at sale time (cash overpay = change; card must equal
   total). No partial-payment-to-be-completed-later flow exists in the POS sale path.
 - **Retry / Idempotency**: `(TenantId, Key, Operation)` unique claim + `RequestHash`
@@ -605,8 +605,8 @@ SQL aggregates inside one transaction, plus the two outboxes staged in the same 
 
 | Concept | Owner (write) | Mutation Authority | Read Authority | Projection Authority | Runtime Truth |
 |---|---|---|---|---|---|
-| Cart (POS) | cashier client | client-held request | n/a (no server cart) | none | request body (VERIFIED GAP for server cart) |
-| Cart Line (POS) | `SalesController` | controller | SQL at sale time | none | `SalesInvoiceItem` |
+| Cart (POS) | `PosCartRuntimeService` | SQL `PosCarts` | SQL | none | SQL aggregate |
+| Cart Line (POS) | `PosCartRuntimeService` | SQL `PosCartItems` | SQL | none | price/inventory snapshot until sale |
 | Product | Catalog (deferred) | Catalog service | SQL `Products` | Mongo product doc | SQL |
 | Variant | Catalog (deferred) | Catalog service | SQL `ProductVariants` | Mongo | SQL |
 | Price | cashier terminal (POS) | controller accepts inline | SQL `SalesInvoiceItem.UnitPrice` | none | persisted invoice price |
@@ -709,8 +709,8 @@ POS → accounting outbox → GL.
 1. **Pricing/Promotion/Coupon not enforced server-side in POS** — price integrity depends on the
    cashier client (`SalesController.cs` takes inline `UnitPrice`). Risk: mispricing/discount fraud
    at the terminal. (Evidence: no pricing/promo/coupon service injected in `SalesController.cs:48-90`.)
-2. **No server-side POS cart** — hold/resume/merge/cancel/expiration semantics absent; POS "cart" is
-   the client request body. Risk: lost-cart on client crash, no server recovery.
+2. **POS cart merge remains intentionally absent** - create/add/update/remove/hold/resume/cancel/
+   expire/recover/complete/abandon are implemented; merge is still not part of the POS runtime.
 3. **`InvoiceStatus.PartiallyReturned`/`FullyReturned` defined but never set** — the return path only
    increments `AccountingMutationVersion` and checks `Status == Completed`; it never transitions the
    invoice to partially/full-returned (`SalesReturnsController.cs:438`, `:863-864`; enum
@@ -740,7 +740,7 @@ POS → accounting outbox → GL.
 | Title | Current Implementation | Why | Future Improvement | Priority | Status |
 |---|---|---|---|---|---|
 | Enforce pricing server-side in POS | Inline `UnitPrice` from client | Terminal trust model | Invoke `StorefrontPricingService`/price authority for POS or add a POS price policy | High | Open |
-| Server-side POS cart | Client request body only | Thin MVP | Add held-cart aggregate with resume/merge/cancel | Medium | Open |
+| Server-side POS cart | SQL `PosCart` aggregate | Stage 3 remediation | Add merge only if POS workflow requires it | Low | Implemented except merge |
 | Set return statuses | Only `AccountingMutationVersion++` | Speed | Transition invoice to `PartiallyReturned`/`FullyReturned` | Medium | Open |
 | Allow BankTransfer tender | Rejected in `EnsureSupportedPaymentMethod` | Unclear | Decide policy; if allowed, extend validation | Low | Open |
 | Emit POS sale events | `_eventPublisher` unused | Simplicity | Publish `SaleCreatedEvent`/`ReturnCreatedEvent` for analytics/realtime | Medium | Open |
@@ -753,7 +753,7 @@ POS → accounting outbox → GL.
 
 - **Implementation Confidence**: HIGH for Sales / Purchases / Returns / Refunds / Cashbox / Stock /
   Accounting-outbox / Session-authority (read directly from controllers + services with file:line).
-- **Architecture Completeness**: HIGH for the execution engine; MEDIUM for Cart (server-side gap),
+- **Architecture Completeness**: HIGH for the execution engine and POS Cart,
   Promotion/Coupon (not used), Printing (client-side), Analytics (SQL-read only).
 - **Runtime Authority Verification**: verified that POS owns its SQL aggregates and defers
   pricing/promo/coupon/payment-lifecycle/GL to owning services.
@@ -764,17 +764,17 @@ POS → accounting outbox → GL.
   synchronous accounting posting with outbox recovery, fail-closed session + financial gates,
   idempotent execution, cashbox open/close/cash-in/out/expense, mixed/cash/card tender with change,
   credit sales + account-credit refunds.
-- **Missing Capabilities (VERIFIED GAPS)**: server-side POS cart (hold/resume/merge); promotion &
+- **Missing Capabilities (VERIFIED GAPS)**: POS cart merge; promotion &
   coupon evaluation in POS; bank-transfer/wallet POS tender; server-side thermal printing; POS sale
   domain-event emission + Mongo analytics projection; offline sales / offline queue / sync
   (no offline mode in `SalesController`/`CashboxController`/`PurchasesController`/`SalesReturnsController`).
-- **Technical Debt Summary**: client-trusted pricing, no POS cart, unused return statuses, rejected
+- **Technical Debt Summary**: client-trusted pricing outside cart checkout, cart merge absent, unused return statuses, rejected
   bank tender, no POS events, dead cashbox columns, shared CommerceHub accounting coupling, partial
   treasury migration.
 - **Architectural Observations**: POS is a deliberately "SQL-authority, no-projection, synchronous-
   post" slice of the platform — the opposite end of the spectrum from Storefront's
   reservation+event+projection model. This is coherent for a cash-critical, human-operated context,
-  but it leaves pricing integrity and cart resilience as the two largest open risks.
+  but it leaves pricing integrity and offline/merge cart resilience as the two largest open risks.
 
 ---
 
@@ -908,5 +908,5 @@ The shared architectural patterns it participates in (and how POS expresses them
 The single most important architectural observation: **POS trades the rich CQRS/projection machinery
 of the rest of the platform for simplicity and cash-integrity**. That trade is correct for a
 human-operated, single-actor counter, but it concentrates risk in two places the rest of the platform
-has solved: (1) **price integrity is client-trusted** (no pricing engine in POS), and (2) **there is
-no server-side cart** (no hold/resume/recovery). Both are the top follow-up items.
+has solved: (1) **price integrity is client-trusted outside cart checkout** (no pricing engine in POS),
+and (2) **cart merge/offline recovery is still absent**. Both are the top follow-up items.

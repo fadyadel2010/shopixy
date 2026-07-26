@@ -112,6 +112,10 @@ public class ApplicationDbContext : DbContext
     public DbSet<SalesInvoiceItem> SalesInvoiceItems => Set<SalesInvoiceItem>();
     public DbSet<SalesInvoicePayment> SalesInvoicePayments => Set<SalesInvoicePayment>();
     public DbSet<SalesRequestIdempotency> SalesRequestIdempotencyRecords => Set<SalesRequestIdempotency>();
+    public DbSet<PosCart> PosCarts => Set<PosCart>();
+    public DbSet<PosCartItem> PosCartItems => Set<PosCartItem>();
+    public DbSet<PosCartRequestIdempotency> PosCartRequestIdempotencyRecords => Set<PosCartRequestIdempotency>();
+    public DbSet<PosCartOutboxMessage> PosCartOutboxMessages => Set<PosCartOutboxMessage>();
     
     // Returns
     public DbSet<Return> Returns => Set<Return>();
@@ -484,6 +488,7 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<ProviderDeliveryReplayAudit>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
         ConfigureAccountingOutboxConcurrency(modelBuilder);
+        ConfigurePosCartConcurrency(modelBuilder);
         var maxFixedDiscountValueSql = DiscountValidation.MaxFixedDiscountValue.ToString("0.00", CultureInfo.InvariantCulture);
         
         // =============================================================================
@@ -615,6 +620,15 @@ public class ApplicationDbContext : DbContext
             !e.IsDeleted && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<SalesRequestIdempotency>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        modelBuilder.Entity<PosCart>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        modelBuilder.Entity<PosCartRequestIdempotency>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        modelBuilder.Entity<PosCartOutboxMessage>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<OrderRequestIdempotency>().HasQueryFilter(e =>
@@ -1225,6 +1239,10 @@ public class ApplicationDbContext : DbContext
                 .HasDatabaseName("IX_ProductUnits_Barcode_Active")
                 .HasFilter("\"IsDeleted\" = false AND \"Barcode\" IS NOT NULL");
         });
+        modelBuilder.Entity<PosCartItem>().HasQueryFilter(e =>
+            !e.IsDeleted &&
+            !e.PosCart.IsDeleted &&
+            e.PosCart.TenantId == CurrentTenantId);
         modelBuilder.Entity<OrderItem>().HasQueryFilter(e => !e.IsDeleted);
         
         // -------------------------------------------------------------------------
@@ -3297,6 +3315,36 @@ public class ApplicationDbContext : DbContext
             .HasDefaultValue(1u)
             .IsConcurrencyToken();
     }
+
+    private void ConfigurePosCartConcurrency(ModelBuilder modelBuilder)
+    {
+        var cartRowVersion = modelBuilder.Entity<PosCart>().Property(cart => cart.RowVersion);
+        var outboxRowVersion = modelBuilder.Entity<PosCartOutboxMessage>().Property(message => message.RowVersion);
+
+        if (Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            cartRowVersion
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .IsRowVersion();
+            outboxRowVersion
+                .HasColumnName("xmin")
+                .HasColumnType("xid")
+                .IsRowVersion();
+            return;
+        }
+
+        // Non-PostgreSQL providers keep regular uint values; runtime concurrency is enforced
+        // by the explicit cart Version contract outside PostgreSQL integration tests.
+        cartRowVersion
+            .HasColumnName(nameof(PosCart.RowVersion))
+            .ValueGeneratedNever()
+            .IsConcurrencyToken(false);
+        outboxRowVersion
+            .HasColumnName(nameof(PosCartOutboxMessage.RowVersion))
+            .ValueGeneratedNever()
+            .IsConcurrencyToken(false);
+    }
     
     public override int SaveChanges()
     {
@@ -4487,6 +4535,22 @@ public class ApplicationDbContext : DbContext
         foreach (var entry in ChangeTracker.Entries<SmartOffer>())
         {
             if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                entry.Entity.RowVersion++;
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<PosCart>())
+        {
+            if (entry.State == EntityState.Modified)
+            {
+                entry.Entity.RowVersion++;
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<PosCartOutboxMessage>())
+        {
+            if (entry.State is EntityState.Modified)
             {
                 entry.Entity.RowVersion++;
             }

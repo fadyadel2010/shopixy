@@ -12883,6 +12883,7 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("OrderItems", t =>
                         {
                             t.HasCheckConstraint("CK_OrderItems_AffiliateCommissionSnapshot_Valid", "(\"AffiliateCommissionEligible\" = true AND \"AffiliateCommissionSnapshotCapturedAtUtc\" IS NOT NULL AND \"AffiliateCommissionPolicyIdSnapshot\" IS NOT NULL AND \"AffiliateCommissionRateSnapshot\" > 0 AND \"AffiliateCommissionRateSnapshot\" <= 0.500000 AND \"AffiliateCommissionBaseAmountSnapshot\" > 0 AND \"AffiliateCommissionAmountSnapshot\" > 0 AND (\"AffiliateMaxCommissionPerItemSnapshot\" IS NULL OR \"AffiliateMaxCommissionPerItemSnapshot\" > 0)) OR (\"AffiliateCommissionEligible\" = false AND \"AffiliateCommissionSnapshotCapturedAtUtc\" IS NULL AND \"AffiliateCommissionPolicyIdSnapshot\" IS NULL AND \"AffiliateCommissionRateSnapshot\" IS NULL AND \"AffiliateCommissionBaseAmountSnapshot\" IS NULL AND \"AffiliateCommissionAmountSnapshot\" IS NULL AND (\"AffiliateMaxCommissionPerItemSnapshot\" IS NULL OR \"AffiliateMaxCommissionPerItemSnapshot\" = 0))");
+
                             t.HasCheckConstraint("CK_OrderItems_PaymentAmounts_Valid", "\"PaidAmount\" >= 0 AND \"RefundedAmount\" >= 0 AND \"RefundedAmount\" <= \"PaidAmount\"");
                         });
                 });
@@ -13944,6 +13945,364 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasDatabaseName("IX_PhoneSpamReports_TenantId_OrderId");
 
                     b.ToTable("PhoneSpamReports", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCart", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AbandonedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CancellationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("CancelledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CashierId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CompletedSaleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("ExpiredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("HeldAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("LastActivityAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("RecoveredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("RecoveryReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("Subtotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CashierId");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("WarehouseId");
+
+                    b.HasIndex("TenantId", "CashierId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PosCarts_TenantId_CashierId_Open")
+                        .HasFilter("\"IsDeleted\" = false AND \"Status\" IN (0, 1, 4)");
+
+                    b.HasIndex("TenantId", "CompletedSaleId")
+                        .HasDatabaseName("IX_PosCarts_TenantId_CompletedSaleId")
+                        .HasFilter("\"CompletedSaleId\" IS NOT NULL");
+
+                    b.HasIndex("TenantId", "ExpiresAtUtc")
+                        .HasDatabaseName("IX_PosCarts_TenantId_ExpiresAtUtc");
+
+                    b.HasIndex("TenantId", "WarehouseId", "Status")
+                        .HasDatabaseName("IX_PosCarts_TenantId_WarehouseId_Status");
+
+                    b.HasIndex("TenantId", "CashierId", "Status", "UpdatedAt")
+                        .HasDatabaseName("IX_PosCarts_TenantId_CashierId_Status_UpdatedAt");
+
+                    b.ToTable("PosCarts", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCartItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("BaseQuantity")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("ConversionFactor")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<decimal>("CostAmountSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CostPriceSnapshot")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("DiscountAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PosCartId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ProductId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ProductNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)");
+
+                    b.Property<Guid>("ProductVariantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 4)
+                        .HasColumnType("numeric(18,4)");
+
+                    b.Property<decimal>("TaxAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("TaxRateSnapshot")
+                        .HasPrecision(9, 4)
+                        .HasColumnType("numeric(9,4)");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid?>("UnitId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("UnitPriceSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("VariantSkuSnapshot")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProductVariantId");
+
+                    b.HasIndex("UnitId");
+
+                    b.HasIndex("ProductId", "ProductVariantId");
+
+                    b.HasIndex("PosCartId", "ProductVariantId", "UnitId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PosCartItems_Cart_Variant_Unit")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.ToTable("PosCartItems", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCartOutboxMessage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CartId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CartVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("character varying(260)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ProcessedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ProcessingError")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProcessedAtUtc", "OccurredAtUtc")
+                        .HasDatabaseName("IX_PosCartOutboxMessages_Processing");
+
+                    b.HasIndex("TenantId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_PosCartOutboxMessages_TenantId_IdempotencyKey");
+
+                    b.HasIndex("TenantId", "CartId", "CartVersion")
+                        .HasDatabaseName("IX_PosCartOutboxMessages_TenantId_CartId_Version");
+
+                    b.ToTable("PosCartOutboxMessages", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCartRequestIdempotency", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Operation")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ResponseJson")
+                        .HasColumnType("text");
+
+                    b.Property<int?>("ResponseStatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "Key", "Operation")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PosCartRequestIdempotency_TenantId_Key_Operation");
+
+                    b.ToTable("PosCartRequestIdempotency", (string)null);
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ProcessedEvent", b =>
@@ -22039,6 +22398,66 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("PaymentIntent");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCart", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.User", "Cashier")
+                        .WithMany()
+                        .HasForeignKey("CashierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Warehouse", "Warehouse")
+                        .WithMany()
+                        .HasForeignKey("WarehouseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Cashier");
+
+                    b.Navigation("Customer");
+
+                    b.Navigation("Warehouse");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCartItem", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.PosCart", "PosCart")
+                        .WithMany("Items")
+                        .HasForeignKey("PosCartId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Product", "Product")
+                        .WithMany()
+                        .HasForeignKey("ProductId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.ProductVariant", "ProductVariant")
+                        .WithMany()
+                        .HasForeignKey("ProductVariantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Unit", "Unit")
+                        .WithMany()
+                        .HasForeignKey("UnitId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("PosCart");
+
+                    b.Navigation("Product");
+
+                    b.Navigation("ProductVariant");
+
+                    b.Navigation("Unit");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.Product", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Category", "Category")
@@ -23063,6 +23482,11 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("OrderRefunds");
 
                     b.Navigation("Orders");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosCart", b =>
+                {
+                    b.Navigation("Items");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Product", b =>

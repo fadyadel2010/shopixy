@@ -1,5 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Data;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -14,6 +15,7 @@ using Npgsql;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Infrastructure.DocumentNumbers;
 using PointOfSale.API.Services;
+using PointOfSale.API.Services.Pos;
 using PointOfSale.API.Services.Inventory;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.Core.Entities;
@@ -59,6 +61,7 @@ public class SalesController : ControllerBase
     private readonly IAccountingOutboxService _accountingOutbox;
     private readonly ICommerceAccountingService _commerceAccounting;
     private readonly IFinancialPostingService _postingService;
+    private readonly IPosCartRuntimeService? _posCartRuntimeService;
 
     private bool IsPostgresProvider() => _context.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;
     private bool IsSqlServerProvider() => _context.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;
@@ -75,7 +78,8 @@ public class SalesController : ControllerBase
         IEventPublisher eventPublisher,
         IAccountingOutboxService accountingOutbox,
         ICommerceAccountingService commerceAccounting,
-        IFinancialPostingService postingService)
+        IFinancialPostingService postingService,
+        IPosCartRuntimeService? posCartRuntimeService = null)
     {
         _context = context;
         _tenantContext = tenantContext;
@@ -89,6 +93,7 @@ public class SalesController : ControllerBase
         _accountingOutbox = accountingOutbox;
         _commerceAccounting = commerceAccounting;
         _postingService = postingService;
+        _posCartRuntimeService = posCartRuntimeService;
     }
 
     /// <summary>
@@ -127,14 +132,41 @@ public class SalesController : ControllerBase
             return BadRequest(new { message = "Either X-Payment-Attempt-Id or X-Pos-Cart-Id header is required" });
         }
 
-        var requestHash = BuildSalesRequestHash("CREATE", BuildCreateSaleIdempotencyPayload(request));
         await using var transaction = await _context.Database.BeginTransactionAsync();
         decimal? calculatedTotalAmount = null;
         SalesRequestIdempotency? idempotencyRecord = null;
         var pendingStockChanges = new List<PendingProductVariantStockChange>();
+        Guid? checkoutCartId = null;
+        Guid? checkoutCashierId = null;
         
         try
         {
+            if (Guid.TryParse(normalizedPosCartId, out var parsedCartId) && _posCartRuntimeService != null)
+            {
+                if (!TryResolveCurrentUserId(out var cashierId))
+                {
+                    await transaction.RollbackAsync();
+                    return Unauthorized(new { message = "Authenticated cashier identity is required." });
+                }
+
+                var cartCheckout = await _posCartRuntimeService.PrepareCheckoutAsync(
+                    parsedCartId,
+                    request,
+                    cashierId,
+                    HttpContext.RequestAborted);
+                if (!cartCheckout.Succeeded)
+                {
+                    await transaction.RollbackAsync();
+                    return StatusCode(cartCheckout.StatusCode, new { message = cartCheckout.Message });
+                }
+
+                request = cartCheckout.Request;
+                checkoutCartId = parsedCartId;
+                checkoutCashierId = cashierId;
+            }
+
+            var requestHash = BuildSalesRequestHash("CREATE", BuildCreateSaleIdempotencyPayload(request));
+
             // Claim, execute, and persist the replay response inside one transaction so retries never see partial state.
             var claim = await TryClaimSalesIdempotencyAsync("CREATE", createIdempotencyKey, requestHash);
             if (claim.ShortCircuitResult != null)
@@ -432,6 +464,15 @@ public class SalesController : ControllerBase
                     _context,
                     _tenantContext.RequiredTenantId,
                     pendingStockChanges);
+            }
+
+            if (checkoutCartId.HasValue && checkoutCashierId.HasValue && _posCartRuntimeService != null)
+            {
+                await _posCartRuntimeService.CompleteFromSaleAsync(
+                    checkoutCartId.Value,
+                    invoice.Id,
+                    checkoutCashierId.Value,
+                    HttpContext.RequestAborted);
             }
 
             var result = await CompleteSalesIdempotencyAsync(
@@ -1269,6 +1310,14 @@ public class SalesController : ControllerBase
                 warehouse.IsActive &&
                 !warehouse.IsDeleted,
                 cancellationToken);
+
+    private bool TryResolveCurrentUserId(out Guid userId)
+    {
+        var raw = User.FindFirstValue(ClaimTypes.NameIdentifier) ??
+                  User.FindFirstValue("sub") ??
+                  User.FindFirstValue("userId");
+        return Guid.TryParse(raw, out userId) && userId != Guid.Empty;
+    }
 
     private sealed record SaleActionSnapshot(int StatusCode, string? ResponseJson);
     private sealed record PreparedSaleItem(
