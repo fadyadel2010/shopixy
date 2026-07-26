@@ -161,10 +161,12 @@ In scope (verified code ownership):
 
 ## Cart Runtime
 
-POS cart behaviour is now server-authoritative. The terminal sends `X-Pos-Cart-Id` as sale
-correlation/idempotency evidence, and `SalesController.CreateSale` re-enters `IPosCartRuntimeService`
-to prepare checkout from SQL cart lines before sale creation (`SalesController.cs`, `PosCartIdHeader`,
-`PrepareCheckoutAsync`, `CompleteFromSaleAsync`).
+POS cart behaviour is now server-authoritative. `SalesController.CreateSale` requires a valid
+`X-Pos-Cart-Id`, uses that cart ID as the create-sale idempotency key, and re-enters
+`IPosCartRuntimeService` to prepare checkout from SQL cart lines before sale creation
+(`SalesController.cs`, `PosCartIdHeader`, `PrepareCheckoutAsync`, `CompleteFromSaleAsync`). A
+payment-attempt header can still be echoed as payment correlation evidence, but it is no longer a
+standalone sale-creation authority.
 
 - **Cart Creation / Mutation / Validation / State / Expiration / Hold / Resume / Cancel / Recover /
   Complete / Abandon**: implemented by `PosCartRuntimeService` and exposed through
@@ -320,9 +322,11 @@ POS checkout inside `SalesController.CreateSale`:
 
 ```
 request (line items + prices + payment)
-  ↓  idempotency claim (X-Pos-Cart-Id / X-Payment-Attempt-Id)   SalesController.cs:130-144
-  ↓  warehouse validation                                        SalesController.cs:150-155
-  ↓  customer validation (optional)                              SalesController.cs:158-167
+  ↓  require valid X-Pos-Cart-Id                                 SalesController.cs
+  ↓  prepare checkout from server cart lines                      SalesController.cs / PosCartRuntimeService.cs
+  ↓  idempotency claim (X-Pos-Cart-Id)                            SalesController.cs
+  ↓  warehouse validation                                        SalesController.cs
+  ↓  customer validation (optional)                              SalesController.cs
   ↓  invoice number generation                                   SalesController.cs:170, :2677-2712
   ↓  prepare sale items (variant resolution, cost snapshot)      SalesController.cs:194-208
   ↓  LOCK stock rows (deterministic order)                       SalesController.cs:202-207
@@ -363,7 +367,7 @@ request (line items + prices + payment)
   RawPrinter|PrintReceipt` returns 0 `.cs` hits; no printing NuGet package. Printing is client-side.
 - **Reprint / Duplicate Prevention**: there is **no `/reprint` endpoint**. A reprint is simply a
   second `GET api/Sales/receipt/{id}` (idempotent read). Duplicate *sale* prevention is via the sale
-  idempotency key (`X-Pos-Cart-Id`/`X-Payment-Attempt-Id`) + request-hash fingerprint
+  idempotency key (`X-Pos-Cart-Id`) + request-hash fingerprint
   (`SalesController.cs:122-712`): same key+payload returns the stored `SaleResponse`; same key +
   different payload → `400` ("Idempotency key reuse with different payload", `:560-568`).
 

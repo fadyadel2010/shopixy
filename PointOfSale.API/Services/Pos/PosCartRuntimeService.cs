@@ -299,12 +299,17 @@ public sealed class PosCartRuntimeService : IPosCartRuntimeService
             return PosCartCheckoutPreparation.Fail(StatusCodes.Status404NotFound, "POS cart not found.", request);
         }
 
-        if (cart.Status is not (PosCartStatus.Active or PosCartStatus.Recovered))
+        if (cart.Status is not (PosCartStatus.Active or PosCartStatus.Recovered or PosCartStatus.Completed))
         {
             return PosCartCheckoutPreparation.Fail(StatusCodes.Status409Conflict, "POS cart is not checkout-ready.", request);
         }
 
-        if (cart.ExpiresAtUtc <= DateTime.UtcNow)
+        if (cart.Status == PosCartStatus.Completed && !cart.CompletedSaleId.HasValue)
+        {
+            return PosCartCheckoutPreparation.Fail(StatusCodes.Status409Conflict, "POS cart completion is missing sale authority.", request);
+        }
+
+        if (cart.Status != PosCartStatus.Completed && cart.ExpiresAtUtc <= DateTime.UtcNow)
         {
             cart.Status = PosCartStatus.Expired;
             cart.ExpiredAtUtc = DateTime.UtcNow;

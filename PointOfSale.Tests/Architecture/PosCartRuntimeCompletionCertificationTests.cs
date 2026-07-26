@@ -35,7 +35,21 @@ public sealed class PosCartRuntimeCompletionCertificationTests
         Assert.Contains("PrepareCheckoutAsync(", sales, StringComparison.Ordinal);
         Assert.Contains("CompleteFromSaleAsync(", sales, StringComparison.Ordinal);
         Assert.Contains("X-Pos-Cart-Id", sales, StringComparison.Ordinal);
+        Assert.Contains("X-Pos-Cart-Id header is required", sales, StringComparison.Ordinal);
+        Assert.Contains("X-Pos-Cart-Id must be a valid POS cart id", sales, StringComparison.Ordinal);
+        Assert.Contains("var createIdempotencyKey = normalizedPosCartId;", sales, StringComparison.Ordinal);
         Assert.Contains("request = cartCheckout.Request;", sales, StringComparison.Ordinal);
+        Assert.DoesNotContain("normalizedPosCartId ?? normalizedPaymentAttemptId", sales, StringComparison.Ordinal);
+        Assert.DoesNotContain("Guid.TryParse(normalizedPosCartId, out var parsedCartId) && _posCartRuntimeService != null", sales, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PosCartCheckoutReplay_MustAllowCompletedCartToReachSaleIdempotencyReplay()
+    {
+        var service = ReadRepoFile("PointOfSale.API/Services/Pos/PosCartRuntimeService.cs");
+
+        Assert.Contains("PosCartStatus.Active or PosCartStatus.Recovered or PosCartStatus.Completed", service, StringComparison.Ordinal);
+        Assert.Contains("cart.Status == PosCartStatus.Completed && !cart.CompletedSaleId.HasValue", service, StringComparison.Ordinal);
     }
 
     [Fact]

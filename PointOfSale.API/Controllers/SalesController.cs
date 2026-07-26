@@ -124,13 +124,24 @@ public class SalesController : ControllerBase
         }
 
         AddPosCartIdHeader(normalizedPosCartId);
-        var createIdempotencyKey = normalizedPosCartId ?? normalizedPaymentAttemptId;
 
-        // Require at least one idempotency key
-        if (createIdempotencyKey == null)
+        if (normalizedPosCartId == null)
         {
-            return BadRequest(new { message = "Either X-Payment-Attempt-Id or X-Pos-Cart-Id header is required" });
+            return BadRequest(new { message = "X-Pos-Cart-Id header is required" });
         }
+
+        if (!Guid.TryParse(normalizedPosCartId, out var parsedCartId))
+        {
+            return BadRequest(new { message = "X-Pos-Cart-Id must be a valid POS cart id" });
+        }
+
+        if (_posCartRuntimeService == null)
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { message = "POS cart runtime is unavailable" });
+        }
+
+        var posCartRuntimeService = _posCartRuntimeService;
+        var createIdempotencyKey = normalizedPosCartId;
 
         await using var transaction = await _context.Database.BeginTransactionAsync();
         decimal? calculatedTotalAmount = null;
@@ -141,29 +152,26 @@ public class SalesController : ControllerBase
         
         try
         {
-            if (Guid.TryParse(normalizedPosCartId, out var parsedCartId) && _posCartRuntimeService != null)
+            if (!TryResolveCurrentUserId(out var cashierId))
             {
-                if (!TryResolveCurrentUserId(out var cashierId))
-                {
-                    await transaction.RollbackAsync();
-                    return Unauthorized(new { message = "Authenticated cashier identity is required." });
-                }
-
-                var cartCheckout = await _posCartRuntimeService.PrepareCheckoutAsync(
-                    parsedCartId,
-                    request,
-                    cashierId,
-                    HttpContext.RequestAborted);
-                if (!cartCheckout.Succeeded)
-                {
-                    await transaction.RollbackAsync();
-                    return StatusCode(cartCheckout.StatusCode, new { message = cartCheckout.Message });
-                }
-
-                request = cartCheckout.Request;
-                checkoutCartId = parsedCartId;
-                checkoutCashierId = cashierId;
+                await transaction.RollbackAsync();
+                return Unauthorized(new { message = "Authenticated cashier identity is required." });
             }
+
+            var cartCheckout = await posCartRuntimeService.PrepareCheckoutAsync(
+                parsedCartId,
+                request,
+                cashierId,
+                HttpContext.RequestAborted);
+            if (!cartCheckout.Succeeded)
+            {
+                await transaction.RollbackAsync();
+                return StatusCode(cartCheckout.StatusCode, new { message = cartCheckout.Message });
+            }
+
+            request = cartCheckout.Request;
+            checkoutCartId = parsedCartId;
+            checkoutCashierId = cashierId;
 
             var requestHash = BuildSalesRequestHash("CREATE", BuildCreateSaleIdempotencyPayload(request));
 
@@ -466,9 +474,9 @@ public class SalesController : ControllerBase
                     pendingStockChanges);
             }
 
-            if (checkoutCartId.HasValue && checkoutCashierId.HasValue && _posCartRuntimeService != null)
+            if (checkoutCartId.HasValue && checkoutCashierId.HasValue)
             {
-                await _posCartRuntimeService.CompleteFromSaleAsync(
+                await posCartRuntimeService.CompleteFromSaleAsync(
                     checkoutCartId.Value,
                     invoice.Id,
                     checkoutCashierId.Value,

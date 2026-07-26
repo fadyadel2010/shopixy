@@ -97,6 +97,7 @@ public sealed class CrossSystemAuthorityRegressionGuardTests
         "PointOfSale.Infrastructure/Elasticsearch/Services/CommerceHubSearchIndexService.cs",
         "PointOfSale.Infrastructure/Elasticsearch/Services/ProductSearchIndexService.cs",
         "PointOfSale.Infrastructure/Elasticsearch/Services/UnifiedSearchIndexService.cs",
+        "PointOfSale.Infrastructure/Jobs/ElasticsearchDriftReconciliationJob.cs",
         "PointOfSale.Infrastructure/Scripts/AF16E_ReindexAffiliateProductsWithStorefrontUrl.cs",
     };
 
@@ -386,6 +387,7 @@ public sealed class CrossSystemAuthorityRegressionGuardTests
                 file.Source.Contains("IElasticClient", StringComparison.Ordinal) &&
                 (file.Source.Contains(".IndexAsync(", StringComparison.Ordinal) ||
                  file.Source.Contains(".UpdateAsync<", StringComparison.Ordinal) ||
+                 file.Source.Contains(".BulkAsync(", StringComparison.Ordinal) ||
                  file.Source.Contains(".DeleteAsync<", StringComparison.Ordinal)))
             .Where(file => !ApprovedRawElasticClientWriteFiles.Contains(file.RelativePath))
             .Select(file => file.RelativePath)
