@@ -90,9 +90,11 @@ const AnnouncementMarquee: React.FC<AnnouncementMarqueeProps> = ({
             dir={resolved.isRTL ? 'rtl' : 'ltr'}
             className={`${accentClass} ${PEARL_ACCENT_TEXT} overflow-hidden`}
         >
+            {/* Scrolling track is decorative repetition; the region's aria-label
+                conveys the message once. motion-reduce disables the scroll. */}
             <div
-                className={`flex w-max ${PEARL_FONT_BODY} animate-[marquee_22s_linear_infinite] items-center`}
-                aria-hidden={false}
+                className={`flex w-max ${PEARL_FONT_BODY} animate-marquee motion-reduce:animate-none items-center`}
+                aria-hidden="true"
             >
                 {items.map((_, index) => (
                     <span

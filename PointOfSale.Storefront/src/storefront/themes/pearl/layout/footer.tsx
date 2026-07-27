@@ -21,7 +21,7 @@ import { FooterSocialIcon } from '@/components/layout/FooterSocialIcon';
 import { useStoreConfigStore, selectStoreName } from '@/store';
 import { useFooterStore, selectFooterSections, selectFooterSocialLinks } from '@/stores/footerStore';
 import { useTranslation } from '@/i18n';
-import { PEARL_CONTAINER, PEARL_EYEBROW, PEARL_FONT_BODY } from './pearlTokens';
+import { PEARL_CONTAINER, PEARL_EYEBROW, PEARL_FONT_BODY, PEARL_SECTION_PADDING } from './pearlTokens';
 
 const PearlFooter: React.FC = () => {
     const { t, language } = useTranslation();
@@ -46,7 +46,7 @@ const PearlFooter: React.FC = () => {
 
     return (
         <footer className={`mt-auto bg-black ${PEARL_FONT_BODY} text-[#C9A863]`}>
-            <div className={`${PEARL_CONTAINER} py-12 md:py-16`}>
+            <div className={`${PEARL_CONTAINER} ${PEARL_SECTION_PADDING}`}>
                 <div className="grid grid-cols-1 gap-10 md:grid-cols-[1.4fr,1fr,1fr]">
                     {/* Brand + contact */}
                     <div>

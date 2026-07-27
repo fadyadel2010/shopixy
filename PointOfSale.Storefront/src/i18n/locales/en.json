@@ -520,6 +520,8 @@
     },
     "home": {
         "welcome": "Welcome to {storeName}",
+        "heroLabel": "Featured",
+        "newSeason": "New Season",
         "heroTitle": "Discover Quality Products at",
         "heroTitleHighlight": "Great Prices",
         "heroSubtitle": "Explore our curated collection of premium products. From everyday essentials to special finds, we've got you covered.",

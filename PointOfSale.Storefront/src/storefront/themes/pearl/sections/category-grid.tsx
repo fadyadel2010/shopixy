@@ -1,3 +1,34 @@
+/**
+ * Pearl Theme — Category Grid (Phase T1.2B)
+ *
+ * REUSE DECISION
+ * --------------
+ * This file is an ADAPTATION of the inherited `fashion` category-grid template
+ * (copied verbatim into `pearl/sections` during T1.0 scaffolding). The fashion
+ * grid already implements ~85% of the requirement:
+ *   - the full CMS section data contract (`title, subtitle, source, maxItems,
+ *     categoryIds, sectionId, columns` — forwarded flat by SectionRenderer)
+ *   - category sourcing via `useCategories` + homepageCollectionUtils
+ *     (curated / random / default) — NO new APIs, NO new data contracts
+ *   - loading skeleton / error / DataEmptyState handling
+ *   - `AffiliateLink` navigation (affiliate attribution preserved)
+ *   - the platform responsive grid utilities (Tailwind grid classes)
+ * Per the 80% rule we ADAPT it; no business logic is duplicated and the
+ * backend/category DTOs are untouched (CategoryTreeDto has no image field, so
+ * the tile art fallback pattern from fashion is retained — platform image
+ * handling is not replaced or reimplemented).
+ *
+ * What changed for Pearl identity (design report §2/§3/§4 item 5):
+ *   - Section header centered: navy `#313E61` Newsreader serif light H2 with
+ *     a thin gold `#C9A863` uppercase eyebrow (luxury editorial rhythm).
+ *   - Cards: SQUARE corners (no pill/rounded chrome), image-first tile with the
+ *     title centered BELOW the image in Jost 12px uppercase wide tracking.
+ *   - Hover: subtle image scale (duration-700), soft dark overlay lift, and a
+ *     title color transition to the red accent — pure CSS transitions only.
+ *   - Grid: 2 cols mobile → 3 tablet → 4 desktop (reference site shows 4
+ *     equal collection tiles) using the same Tailwind responsive system.
+ */
+
 import React from 'react';
 import type { CategoryTreeDto } from '@/types';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
@@ -10,43 +41,57 @@ import {
 } from '@/components/sections/homepageCollectionUtils';
 import { useCategories } from '@/hooks';
 import { useTranslation } from '@/i18n';
+import { PEARL_FONT_BODY, PEARL_FONT_DISPLAY } from '../layout/pearlTokens';
 
-const FASHION_CATEGORY_ART = [
-    'bg-[radial-gradient(circle_at_top,#fbcfe8,transparent_30%),linear-gradient(180deg,#111827_0%,#9d174d_100%)]',
-    'bg-[radial-gradient(circle_at_top,#d8b4fe,transparent_30%),linear-gradient(180deg,#172554_0%,#6d28d9_100%)]',
-    'bg-[radial-gradient(circle_at_top,#fde68a,transparent_30%),linear-gradient(180deg,#422006_0%,#f97316_100%)]',
-    'bg-[radial-gradient(circle_at_top,#bfdbfe,transparent_30%),linear-gradient(180deg,#0f172a_0%,#0ea5e9_100%)]',
-    'bg-[radial-gradient(circle_at_top,#fecdd3,transparent_30%),linear-gradient(180deg,#4c0519_0%,#e11d48_100%)]',
-    'bg-[radial-gradient(circle_at_top,#bbf7d0,transparent_30%),linear-gradient(180deg,#052e16_0%,#16a34a_100%)]',
+/**
+ * Pearl tile art — muted dark editorial tints (CategoryTreeDto carries no
+ * image URL, so like the fashion original we render a deterministic art
+ * background per tile; when the platform adds category imagery this <div>
+ * swaps for the platform image pipeline without touching the data flow).
+ */
+const PEARL_CATEGORY_ART = [
+    'bg-[radial-gradient(circle_at_30%_20%,#3a3644_0%,transparent_55%),linear-gradient(180deg,#141218_0%,#26222e_100%)]',
+    'bg-[radial-gradient(circle_at_70%_25%,#4a4030_0%,transparent_55%),linear-gradient(180deg,#1d1c1c_0%,#2e2a22_100%)]',
+    'bg-[radial-gradient(circle_at_50%_15%,#31394f_0%,transparent_55%),linear-gradient(180deg,#141826_0%,#1e2437_100%)]',
+    'bg-[radial-gradient(circle_at_35%_30%,#43303a_0%,transparent_55%),linear-gradient(180deg,#1a1418_0%,#2b2028_100%)]',
 ];
+
+/** Responsive tile grid — 2 / 3 / 4 columns (existing Tailwind responsive system). */
+const PEARL_CATEGORY_GRID_CLASS = 'grid grid-cols-2 gap-4 sm:gap-6 md:grid-cols-3 xl:grid-cols-4';
 
 function flattenCategories(categories: CategoryTreeDto[]): CategoryTreeDto[] {
     return categories.flatMap((category) => [category, ...flattenCategories(category.children || [])]);
 }
 
-const FashionCategoryCard: React.FC<{ category: CategoryTreeDto; index: number; title: string }> = ({
+const PearlCategoryCard: React.FC<{ category: CategoryTreeDto; index: number; title: string }> = ({
     category,
     index,
     title,
 }) => {
-    const artClass = FASHION_CATEGORY_ART[index % FASHION_CATEGORY_ART.length];
+    const artClass = PEARL_CATEGORY_ART[index % PEARL_CATEGORY_ART.length];
 
     return (
         <AffiliateLink
             href={`/products?category=${category.id}`}
-            className="group block overflow-hidden bg-slate-950"
+            className="group block overflow-hidden focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#DC2626]"
+            aria-label={title}
         >
-            <article className="relative aspect-[3/4.2] overflow-hidden">
-                <div className={`absolute inset-0 transition-transform duration-700 group-hover:scale-105 ${artClass}`} />
-                <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(15,23,42,0.12)_15%,rgba(15,23,42,0.8)_100%)]" />
-
-                <div className="absolute inset-0 flex items-center justify-center p-6">
-                    <div className="rounded-full border border-white/15 bg-black/20 px-8 py-4 text-center backdrop-blur-sm">
-                        <h3 className="text-2xl font-semibold tracking-[0.08em] text-white sm:text-3xl">
-                            {title}
-                        </h3>
-                    </div>
+            <article className="bg-white">
+                {/* Image-first tile — square corners, subtle scale + overlay hover */}
+                <div className="relative aspect-[4/5] overflow-hidden bg-[#141218]">
+                    <div
+                        className={`absolute inset-0 transition-transform duration-700 ease-out group-hover:scale-105 ${artClass}`}
+                        aria-hidden="true"
+                    />
+                    <div className="absolute inset-0 bg-black/0 transition-colors duration-500 group-hover:bg-black/15" />
                 </div>
+
+                {/* Centered title — Jost, uppercase, wide tracking (design report §3) */}
+                <h3
+                    className={`px-3 pb-6 pt-5 text-center text-[12px] uppercase tracking-[0.28em] text-[#212A2F] transition-colors duration-300 group-hover:text-[#DC2626] ${PEARL_FONT_BODY}`}
+                >
+                    {title}
+                </h3>
             </article>
         </AffiliateLink>
     );
@@ -84,26 +129,32 @@ const CategoryGrid: React.FC<any> = ({ title, subtitle, source, maxItems, catego
     };
 
     return (
-        <section className="bg-white py-16 sm:py-20">
-            <div className="mx-auto max-w-7xl px-6 lg:px-10">
-                <div className="mb-10 max-w-2xl">
-                    <p className="text-sm font-medium uppercase tracking-[0.34em] text-slate-500">
+        <section
+            className="bg-white py-16 sm:py-24"
+            aria-label={t('category.shopByCategory')}
+        >
+            <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-10">
+                {/* Centered editorial section header (Pearl identity) */}
+                <div className="mx-auto mb-12 max-w-2xl text-center sm:mb-16">
+                    <p className={`text-[11px] font-medium uppercase tracking-[0.4em] text-[#C9A863] ${PEARL_FONT_BODY}`}>
                         {t('category.shopByCategory')}
                     </p>
-                    <h2 className="mt-3 text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl">
+                    <h2
+                        className={`mt-4 text-[clamp(2rem,4vw,3rem)] font-extralight leading-tight tracking-[0.02em] text-[#313E61] ${PEARL_FONT_DISPLAY}`}
+                    >
                         {displayTitle}
                     </h2>
                     {subtitle ? (
-                        <p className="mt-4 text-base leading-7 text-slate-600">
+                        <p className={`mt-5 text-base leading-7 text-[#131316]/70 ${PEARL_FONT_BODY}`}>
                             {subtitle}
                         </p>
                     ) : null}
                 </div>
 
                 {isLoading ? (
-                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                    <div className={PEARL_CATEGORY_GRID_CLASS}>
                         {[...Array(visibleCount)].map((_, index) => (
-                            <div key={index} className="aspect-[3/4.2] animate-pulse bg-slate-200" />
+                            <div key={index} className="aspect-[4/5] animate-pulse bg-slate-200" />
                         ))}
                     </div>
                 ) : error ? (
@@ -122,9 +173,9 @@ const CategoryGrid: React.FC<any> = ({ title, subtitle, source, maxItems, catego
                         }
                     />
                 ) : (
-                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                    <div className={PEARL_CATEGORY_GRID_CLASS}>
                         {visibleCategories.map((category, index) => (
-                            <FashionCategoryCard
+                            <PearlCategoryCard
                                 key={category.id}
                                 category={category}
                                 index={index}

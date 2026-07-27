@@ -125,10 +125,10 @@ export function StorefrontBuilderPage() {
         }
     }, [setSaving])
 
-    const getAcceptedWorkspaceRowVersion = useCallback((config = storeConfig) => {
+    const getAcceptedWorkspaceRowVersion = useCallback((config) => {
         const rowVersion = typeof config?.rowVersion === 'string' ? config.rowVersion.trim() : ''
         return rowVersion || null
-    }, [storeConfig])
+    }, [])
 
     const buildIfMatchOptions = useCallback((rowVersion, options = {}) => ({
         ...options,
@@ -138,7 +138,7 @@ export function StorefrontBuilderPage() {
         },
     }), [])
 
-    const admitWorkspaceConfig = useCallback((response, runtimeFallback = storeConfig) => {
+    const admitWorkspaceConfig = useCallback((response, runtimeFallback = null) => {
         const acceptedAdminConfig = deriveCurrentStoreIdentityPresentation(response, currentUser)
         if (!acceptedAdminConfig || !getAcceptedWorkspaceRowVersion(acceptedAdminConfig)) {
             return null
@@ -152,10 +152,10 @@ export function StorefrontBuilderPage() {
             pages: acceptedAdminConfig?.pages,
             productTemplates: acceptedAdminConfig?.productTemplates || {},
         }
-    }, [currentUser, getAcceptedWorkspaceRowVersion, storeConfig])
+    }, [currentUser, getAcceptedWorkspaceRowVersion])
 
     const requireWorkspaceAdmission = useCallback(() => {
-        const rowVersion = getAcceptedWorkspaceRowVersion()
+        const rowVersion = getAcceptedWorkspaceRowVersion(storeConfig)
         if (rowVersion) {
             return rowVersion
         }
@@ -166,7 +166,7 @@ export function StorefrontBuilderPage() {
         setSaveStatus('error')
         setSaveError(message)
         return null
-    }, [getAcceptedWorkspaceRowVersion, isRTL])
+    }, [getAcceptedWorkspaceRowVersion, isRTL, storeConfig])
 
     const getAcceptedSectionsFromConfig = useCallback((config, page, templateId) => {
         if (page === 'product-template') {
@@ -339,7 +339,7 @@ export function StorefrontBuilderPage() {
                 return { saved: false }
             }
 
-            const acceptedConfig = admitWorkspaceConfig(response)
+            const acceptedConfig = admitWorkspaceConfig(response, storeConfig)
             if (!acceptedConfig) {
                 throw new Error('Current backend workspace response authority is unavailable.')
             }
