@@ -190,6 +190,79 @@ public sealed class AdminStoreConfigControllerHardeningTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task SelectThemePreset_WhenPresetIsUnavailable_ReturnsInvalidConfig()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        service
+            .Setup(item => item.SelectThemePresetAsync(
+                tenantId,
+                "missing-theme",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                9))
+            .ThrowsAsync(new InvalidOperationException("Theme preset 'missing-theme' not found"));
+
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["If-Match"] = "\"9\"";
+
+        var result = await controller.SelectThemePreset("missing-theme", CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var error = Assert.IsType<AdminStoreConfigApiErrorResponse>(badRequest.Value);
+        Assert.Equal("INVALID_STORE_CONFIG", error.Code);
+        Assert.Contains("missing-theme", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UpdateThemeOverrides_WhenPayloadIsInvalid_ReturnsInvalidConfig()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        service
+            .Setup(item => item.UpdateThemeOverridesAsync(
+                tenantId,
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                10))
+            .ThrowsAsync(new ArgumentException("Theme override 'currency' is not supported."));
+
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["If-Match"] = "\"10\"";
+
+        var result = await controller.UpdateThemeOverrides(new { currency = "USD" }, CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var error = Assert.IsType<AdminStoreConfigApiErrorResponse>(badRequest.Value);
+        Assert.Equal("INVALID_STORE_CONFIG", error.Code);
+        Assert.Contains("currency", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PublishTheme_WhenPublishLockIsContended_ReturnsConflict()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new Mock<IAdminStoreConfigService>(MockBehavior.Strict);
+        service
+            .Setup(item => item.PublishThemeAsync(
+                tenantId,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                11))
+            .ThrowsAsync(new ConcurrencyConflictException("StoreConfigThemePublish", tenantId));
+
+        var controller = CreateController(service.Object, tenantId);
+        controller.Request.Headers["If-Match"] = "\"11\"";
+
+        var result = await controller.PublishTheme(CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        var error = Assert.IsType<AdminStoreConfigApiErrorResponse>(conflict.Value);
+        Assert.Equal("CONCURRENCY_CONFLICT", error.Code);
+    }
+
     private static AdminStoreConfigController CreateController(IAdminStoreConfigService service, Guid tenantId)
     {
         return new AdminStoreConfigController(

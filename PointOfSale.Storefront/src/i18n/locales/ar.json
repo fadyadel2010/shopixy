@@ -50,7 +50,12 @@
         "privacyPolicy": "سياسة الخصوصية",
         "termsOfService": "شروط الخدمة",
         "aboutUs": "من نحن",
-        "contact": "اتصل بنا"
+        "contact": "اتصل بنا",
+        "paymentMethods": "طرق الدفع"
+    },
+    "announcement": {
+        "label": "إعلان المتجر",
+        "defaultText": "تشكيلة إصدار محدود"
     },
     "search": {
         "placeholder": "ابحث عن منتجات، أقسام...",

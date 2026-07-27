@@ -1,0 +1,4 @@
+# Pearl theme icon assets placeholder.
+# Local icon overrides (if any) are added in a later visual-implementation phase.
+# The platform loads webfonts via the index.html Google Fonts link, so no local
+# fonts/ directory is required for Phase T1.0.

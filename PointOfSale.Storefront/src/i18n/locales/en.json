@@ -50,7 +50,12 @@
         "privacyPolicy": "Privacy Policy",
         "termsOfService": "Terms of Service",
         "aboutUs": "About Us",
-        "contact": "Contact"
+        "contact": "Contact",
+        "paymentMethods": "Payment Methods"
+    },
+    "announcement": {
+        "label": "Store announcement",
+        "defaultText": "Limited Edition Collection"
     },
     "search": {
         "placeholder": "Search products, categories...",

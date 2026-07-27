@@ -43,6 +43,27 @@ public sealed class StorefrontThemeAuthorityCertificationTests
     }
 
     [Fact]
+    public void ThemeRegistry_MustBeManifestBackedAndRejectAmbiguousRegistration()
+    {
+        var backendCatalog = ReadRepoFile("PointOfSale.Core/Constants/StorefrontThemes.cs");
+        var runtimeRegistry = ReadRepoFile("PointOfSale.Storefront/src/storefront/themes/ThemeRegistry.ts");
+        var marketplaceRegistry = ReadRepoFile("PointOfSale.Web/src/modules/storefront/themes/themeMarketplaceRegistry.js");
+
+        Assert.Contains("StorefrontThemeDefinition", backendCatalog, StringComparison.Ordinal);
+        Assert.Contains("Capabilities", backendCatalog, StringComparison.Ordinal);
+        Assert.Contains("Duplicate storefront theme id", backendCatalog, StringComparison.Ordinal);
+        Assert.Contains("Exactly one default storefront theme", backendCatalog, StringComparison.Ordinal);
+
+        Assert.Contains("capabilities", runtimeRegistry, StringComparison.Ordinal);
+        Assert.Contains("validateThemeRegistry", runtimeRegistry, StringComparison.Ordinal);
+        Assert.Contains("Duplicate or empty theme id", runtimeRegistry, StringComparison.Ordinal);
+
+        Assert.Contains("capabilities", marketplaceRegistry, StringComparison.Ordinal);
+        Assert.Contains("validateThemeMarketplaceRegistry", marketplaceRegistry, StringComparison.Ordinal);
+        Assert.Contains("Duplicate or empty theme id", marketplaceRegistry, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CertificationArtifacts_MustRecordP2GcTruth()
     {
         Assert.Contains(

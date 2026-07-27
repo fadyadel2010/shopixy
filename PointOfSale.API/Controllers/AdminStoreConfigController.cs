@@ -484,6 +484,16 @@ public class AdminStoreConfigController : ControllerBase
             RecordAdminConflict("theme", "stale_row_version");
             return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId));
         }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "SelectThemePreset rejected invalid preset request");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "SelectThemePreset rejected unavailable preset");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "SelectThemePreset failed");
@@ -524,6 +534,16 @@ public class AdminStoreConfigController : ControllerBase
             _logger.LogWarning(ex, "UpdateThemeOverrides concurrency conflict");
             RecordAdminConflict("theme", "stale_row_version");
             return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId));
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "UpdateThemeOverrides rejected invalid theme override payload");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "UpdateThemeOverrides rejected unavailable theme preset");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
         }
         catch (Exception ex)
         {
@@ -620,6 +640,11 @@ public class AdminStoreConfigController : ControllerBase
             _logger.LogWarning(ex, "Concurrency conflict during theme publish");
             RecordAdminConflict("theme", "stale_row_version");
             return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId));
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "PublishTheme rejected invalid theme state");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
         }
         catch (Exception ex)
         {

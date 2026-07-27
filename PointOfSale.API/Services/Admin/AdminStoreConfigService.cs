@@ -636,7 +636,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         if (!lockResult.Acquired)
         {
             _logger.LogWarning("PublishTheme rejected - lock not acquired | TenantId: {TenantId}", tenantId);
-            throw new InvalidOperationException(lockResult.Message ?? "Publishing already in progress.");
+            throw new ConcurrencyConflictException("StoreConfigThemePublish", tenantId);
         }
 
         try

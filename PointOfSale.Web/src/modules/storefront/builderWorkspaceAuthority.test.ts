@@ -7,6 +7,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url))
 const builderPagePath = join(currentDir, 'pages', 'StorefrontBuilderPage.jsx')
 const themeEditorPagePath = join(currentDir, 'pages', 'ThemeEditorPage.jsx')
 const themeMarketplacePagePath = join(currentDir, 'pages', 'ThemeMarketplacePage.jsx')
+const themeMarketplaceRegistryPath = join(currentDir, 'themes', 'themeMarketplaceRegistry.js')
 
 function readSource(filePath: string) {
     return readFileSync(filePath, 'utf8')
@@ -67,5 +68,15 @@ describe('storefront builder workspace authority', () => {
         expect(marketplaceSource).toContain("throw new Error('Theme activation response was rejected by backend store authority admission.')")
         expect(marketplaceSource).toContain('storeConfigService.activateTheme(')
         expect(marketplaceSource).not.toContain('storeConfigService.updateStoreConfig({')
+    })
+
+    it('keeps marketplace themes manifest-backed with duplicate detection', () => {
+        const registrySource = readSource(themeMarketplaceRegistryPath)
+
+        expect(registrySource).toContain('version:')
+        expect(registrySource).toContain('capabilities:')
+        expect(registrySource).toContain('validateThemeMarketplaceRegistry')
+        expect(registrySource).toContain('Duplicate or empty theme id')
+        expect(registrySource).toContain('Exactly one default theme')
     })
 })
