@@ -9,6 +9,7 @@ using Nest;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Operations;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 
@@ -73,6 +74,10 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly SemaphoreSlim _indexInitializationLock = new(1, 1);
     private volatile bool _indexInitialized;
+    private static readonly ReadModelDefinition CommerceHubSearchDefinition =
+        ReadModelEvolutionRegistry.Get(
+            ReadModelEvolutionRegistry.CommerceHubProduct,
+            ReadModelStore.Elasticsearch);
 
     public CommerceHubSearchIndexService(
         IElasticClient client,
@@ -124,7 +129,7 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
                 new
                 {
                     mode = "alias",
-                    version = _settings.CommerceHubProductsIndexVersion
+                    version = CommerceHubSearchDefinition.CurrentIndexVersion
                 },
                 cancellationToken);
         }
@@ -520,7 +525,7 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
     public async Task<CommerceHubSearchIndexStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
         var aliasName = _settings.CommerceHubProductsIndexName;
-        var desiredIndexName = BuildVersionedIndexName(_settings.CommerceHubProductsIndexVersion);
+        var desiredIndexName = BuildVersionedIndexName(CommerceHubSearchDefinition.CurrentIndexVersion);
         var legacyConcreteExists = (await _client.Indices.ExistsAsync(aliasName, ct: cancellationToken)).Exists;
         var desiredIndexExists = (await _client.Indices.ExistsAsync(desiredIndexName, ct: cancellationToken)).Exists;
 
@@ -544,7 +549,7 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
         {
             AliasName = aliasName,
             DesiredIndexName = desiredIndexName,
-            DesiredVersion = _settings.CommerceHubProductsIndexVersion,
+            DesiredVersion = CommerceHubSearchDefinition.CurrentIndexVersion,
             AliasExists = aliasExists,
             LegacyConcreteIndexExists = legacyConcreteExists && !aliasExists,
             DesiredIndexExists = desiredIndexExists,
@@ -1028,6 +1033,10 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
     {
         var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
+            ["readModelName"] = document.ReadModelName,
+            ["readModelSchemaVersion"] = document.ReadModelSchemaVersion,
+            ["projectionVersion"] = document.ProjectionVersion,
+            ["projectionConvergedAtUtc"] = document.ProjectionConvergedAtUtc,
             ["id"] = document.Id,
             ["tenantId"] = document.TenantId,
             ["storeId"] = document.StoreId,
@@ -1156,7 +1165,7 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
             new
             {
                 createdAtUtc = DateTime.UtcNow,
-                version = ParseVersion(indexName) ?? _settings.CommerceHubProductsIndexVersion
+                version = ParseVersion(indexName) ?? CommerceHubSearchDefinition.CurrentIndexVersion
             },
             cancellationToken);
 
@@ -1575,6 +1584,10 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
 
     private static readonly string[] RequiredCompatibilityFields =
     [
+        "readModelName",
+        "readModelSchemaVersion",
+        "projectionVersion",
+        "projectionConvergedAtUtc",
         "tenantId",
         "storeId",
         "productId",
@@ -1605,6 +1618,10 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
     private static readonly IReadOnlyDictionary<string, string> CompatibilityFieldMappings =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["readModelName"] = """{ "type": "keyword" }""",
+            ["readModelSchemaVersion"] = """{ "type": "integer" }""",
+            ["projectionVersion"] = """{ "type": "integer" }""",
+            ["projectionConvergedAtUtc"] = """{ "type": "date" }""",
             ["tenantId"] = """{ "type": "keyword" }""",
             ["storeId"] = """{ "type": "keyword" }""",
             ["productId"] = """{ "type": "keyword" }""",
@@ -1713,6 +1730,10 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
               }
             ],
             "properties": {
+              "readModelName": { "type": "keyword" },
+              "readModelSchemaVersion": { "type": "integer" },
+              "projectionVersion": { "type": "integer" },
+              "projectionConvergedAtUtc": { "type": "date" },
               "id": { "type": "keyword" },
               "tenantId": { "type": "keyword" },
               "storeId": { "type": "keyword" },

@@ -4,6 +4,7 @@ using Nest;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch;
 
@@ -65,6 +66,8 @@ public static class ElasticsearchServiceCollectionExtensions
 
         // Register search telemetry (OpenTelemetry-compatible metrics)
         services.AddSingleton<SearchTelemetry>();
+        services.AddSingleton<IReadModelEvolutionSnapshotProvider, ReadModelEvolutionSnapshotProvider>();
+        services.AddSingleton<IReadModelEvolutionConvergenceService, ReadModelEvolutionConvergenceService>();
 
         // Register index services as singletons
         services.AddSingleton<IProductSearchIndexService, ProductSearchIndexService>();

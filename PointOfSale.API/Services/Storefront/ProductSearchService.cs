@@ -22,6 +22,8 @@ namespace PointOfSale.API.Services.Storefront;
 /// </summary>
 public class ProductSearchService : IProductSearchService
 {
+    private const int SqlAuthorityCandidateWindow = 10000;
+
     private readonly IProductSearchIndexService _elasticsearchService;
     private readonly IProductReadRepository _mongoRepository;
     private readonly ApplicationDbContext _dbContext;
@@ -66,8 +68,8 @@ public class ProductSearchService : IProductSearchService
         var esResult = await _elasticsearchService.SearchAsync(
             tenantId,
             normalizedQuery,
-            query.Page,
-            query.PageSize,
+            page: 1,
+            pageSize: SqlAuthorityCandidateWindow,
             query.CategoryId,
             query.MinPrice,
             query.MaxPrice,
@@ -108,6 +110,13 @@ public class ProductSearchService : IProductSearchService
         }
         else
         {
+            if (esResult.TotalCount > SqlAuthorityCandidateWindow)
+            {
+                throw new StorefrontSearchUnavailableException(
+                    "product_search",
+                    $"Search result set exceeds the SQL authority recomposition window of {SqlAuthorityCandidateWindow}.");
+            }
+
             _logger.LogInformation(
                 "Elasticsearch search success | TenantId: {TenantId} | Query: {Query} | ResultCount: {ResultCount} | SearchTimeMs: {SearchTimeMs} | CorrelationId: {CorrelationId}",
                 tenantId, normalizedQuery, esResult.ProductIds.Count, esResult.SearchTimeMs, correlationId);
@@ -122,6 +131,10 @@ public class ProductSearchService : IProductSearchService
                     cancellationToken);
 
                 totalCount = items.Count;
+                items = items
+                    .Skip((query.Page - 1) * query.PageSize)
+                    .Take(query.PageSize)
+                    .ToList();
                 searchTimeMs = esResult.SearchTimeMs;
             }
             catch (Exception ex)
@@ -188,7 +201,7 @@ public class ProductSearchService : IProductSearchService
                 tenantId,
                 cancellationToken);
 
-            if (sqlProjection is { IsActive: true, IsOnlineVisible: true })
+            if (sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
             {
                 filteredDocuments.Add(sqlProjection);
             }

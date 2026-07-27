@@ -24,7 +24,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// Error Handling Strategy:
 /// - Missing TenantId: Log error, acknowledge message (no retry)
 /// - Elasticsearch transient errors: Let MassTransit handle retries
-/// - Elasticsearch permanent errors: Log and acknowledge (prevent retry storm)
+/// - Elasticsearch permanent errors: throw so MassTransit retry/error transport owns recovery
 /// 
 /// IMPORTANT:
 /// - This consumer does NOT contain business logic
@@ -74,8 +74,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
         if (!@event.TenantId.HasValue)
         {
             _logger.LogError(
-                "ProductCreatedEvent rejected for Elasticsearch: TenantId is missing | EventId: {EventId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}. " +
-                "Message will be acknowledged to prevent retry storm.",
+                "ProductCreatedEvent rejected for Elasticsearch: TenantId is missing | EventId: {EventId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}.",
                 @event.EventId,
                 @event.ProductId,
                 correlationId);
@@ -159,7 +158,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
                 return;
             }
 
-            if (!product.IsActive || !product.IsOnlineVisible)
+            if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
                 _logger.LogInformation(
                     "ProductCreatedEvent product not searchable from current SQL authority - deleting any stale ES document | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
@@ -241,30 +240,24 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
         }
         catch (ElasticsearchClientException ex)
         {
-            // Non-transient Elasticsearch errors - log and acknowledge
             _logger.LogError(ex,
                 "Elasticsearch error processing ProductCreatedEvent | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}. " +
-                "Message will be acknowledged to prevent retry storm.",
+                "Message will fail so MassTransit retry/error handling can converge the projection.",
                 @event.EventId,
                 @event.ProductId,
                 @event.TenantId,
                 correlationId);
-
-            // Do not throw - acknowledge the message to prevent infinite retries
-            // The product exists in PostgreSQL (source of truth) and MongoDB (read store)
+            throw;
         }
         catch (Exception ex)
         {
-            // Unexpected errors
             _logger.LogError(ex,
                 "Unexpected error processing ProductCreatedEvent for Elasticsearch | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
                 @event.EventId,
                 @event.ProductId,
                 @event.TenantId,
                 correlationId);
-
-            // Don't throw - Elasticsearch issues should not break message processing
-            // The product exists in PostgreSQL (source of truth) and MongoDB (read store)
+            throw;
         }
         finally
         {

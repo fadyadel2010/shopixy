@@ -34,7 +34,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// 
 /// Error Handling:
 /// - Transient ES errors: Let MassTransit retry
-/// - Permanent ES errors: Log and acknowledge (don't block other processing)
+/// - Permanent ES errors: throw so MassTransit retry/error transport owns recovery
 /// </summary>
 public class ProductPromotionSearchIndexConsumer :
     IConsumer<PromotionCreatedEvent>,
@@ -308,9 +308,15 @@ public class ProductPromotionSearchIndexConsumer :
                 product,
                 tenantId,
                 cancellationToken);
-            if (sqlOverlay == null)
+            if (sqlOverlay == null || !sqlOverlay.IsActive || !sqlOverlay.IsOnlineVisible || !sqlOverlay.IsSearchable)
             {
-                await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                if (!deleted)
+                {
+                    throw new SearchIndexSyncException(
+                        $"Elasticsearch promotion delete failed for product {productId}.");
+                }
+
                 return;
             }
 
@@ -358,7 +364,8 @@ public class ProductPromotionSearchIndexConsumer :
             _logger.LogError(ex,
                 "Error syncing product promotion to Elasticsearch | ProductId: {ProductId} | TenantId: {TenantId}",
                 productId, tenantId);
-            // Don't throw - ES failures should not break the system
+            throw new SearchIndexSyncException(
+                $"Elasticsearch promotion sync failed for product {productId}.", ex);
         }
     }
 
@@ -449,6 +456,9 @@ public class ProductPromotionSearchIndexConsumer :
                         "Some products failed to sync during promotion cleanup | TenantId: {TenantId} | PromotionId: {PromotionId} | FailedCount: {FailedCount} | FailedProductIds: {FailedProductIds}",
                         tenantId, promotionId, failedProductIds.Count, idsString);
                 }
+
+                throw new SearchIndexSyncException(
+                    $"Elasticsearch promotion cleanup failed for {failedProductIds.Count} product(s) in tenant {tenantId}.");
             }
 
             _logger.LogInformation(
@@ -457,29 +467,10 @@ public class ProductPromotionSearchIndexConsumer :
         }
         catch (Exception ex)
         {
-            // PRODUCTION HARDENING: Distinguish between infrastructure failures (should retry)
-            // and search indexing failures (can be swallowed).
-            // Infrastructure failures: MongoDB connection issues, timeouts, network errors
-            // Search failures: Elasticsearch indexing errors (already handled per-product above)
-            
-            var isInfrastructureFailure = ex is MongoException 
-                || ex is TimeoutException 
-                || ex is System.Net.Sockets.SocketException
-                || ex is System.IO.IOException
-                || ex is OperationCanceledException;
-            
-            if (isInfrastructureFailure)
-            {
-                _logger.LogError(ex,
-                    "Infrastructure error during bulk product sync for promotion cleanup - retrying | TenantId: {TenantId} | PromotionId: {PromotionId}",
-                    tenantId, promotionId);
-                throw; // Rethrow to trigger message retry
-            }
-            
-            // Search indexing errors: Log but don't retry (individual products already handled)
             _logger.LogError(ex,
-                "Search indexing error during bulk product sync for promotion cleanup | TenantId: {TenantId} | PromotionId: {PromotionId}",
+                "Error during bulk product promotion search sync - retrying | TenantId: {TenantId} | PromotionId: {PromotionId}",
                 tenantId, promotionId);
+            throw;
         }
     }
 
@@ -576,6 +567,10 @@ public class ProductPromotionSearchIndexConsumer :
     private sealed class SearchIndexSyncException : Exception
     {
         public SearchIndexSyncException(string message) : base(message)
+        {
+        }
+
+        public SearchIndexSyncException(string message, Exception innerException) : base(message, innerException)
         {
         }
     }

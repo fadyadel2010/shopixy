@@ -14,6 +14,7 @@ using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Utilities;
 
@@ -2712,6 +2713,11 @@ public class CommerceHubProjectionConsumer :
         int eventVersion,
         CancellationToken cancellationToken)
     {
+        ReadModelEvolutionMetadata.StampCurrent(
+            document,
+            ReadModelEvolutionRegistry.CommerceHubProduct,
+            ReadModelStore.MongoDb);
+
         var filter = BuildFreshListingEventFilter(document.Id, document.TenantId, eventId, occurredAtUtc, eventVersion);
 
         try

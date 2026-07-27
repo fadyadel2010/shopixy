@@ -133,7 +133,7 @@ public class ProductDeletedSearchIndexConsumer :
                 cancellationToken);
 
             bool success;
-            if (sqlProjection is { IsActive: true, IsOnlineVisible: true })
+            if (sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
             {
                 var document = ProductSearchDocumentMapper.MapFromProductDocument(
                     sqlProjection,

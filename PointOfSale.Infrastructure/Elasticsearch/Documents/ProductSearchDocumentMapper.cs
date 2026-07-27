@@ -31,6 +31,9 @@ public static class ProductSearchDocumentMapper
         {
             TenantId = product.TenantId,
             ProductId = product.ProductId,
+            ReadModelSchemaVersion = ProductSearchDocument.CurrentReadModelSchemaVersion,
+            ProjectionVersion = ProductSearchDocument.CurrentProjectionVersion,
+            ProjectionConvergedAtUtc = product.ProjectionConvergedAtUtc,
             EntityType = "product",
             Name = product.Name,
             NameAr = product.NameAr,
@@ -42,6 +45,7 @@ public static class ProductSearchDocumentMapper
             Price = (double)product.StorefrontVisiblePrice,
             IsActive = product.IsActive,
             IsOnlineVisible = product.IsOnlineVisible,
+            IsSearchable = product.IsSearchable,
             Slug = product.Slug,
             StorefrontLayout = product.ProductTemplate,
             IsFeatured = product.IsFeatured,

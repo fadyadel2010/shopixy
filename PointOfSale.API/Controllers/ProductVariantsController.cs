@@ -934,6 +934,8 @@ public class ProductVariantsController : ControllerBase
                     Description = product.Description,
                     Images = product.Images,
                     IsOnlineVisible = product.IsOnlineVisible,
+                    IsSearchable = product.IsSearchable,
+                    IsFeatured = product.IsFeatured,
                     Slug = product.Slug,
                     ProductTemplate = product.ProductTemplate,
                     TrackStock = product.TrackStock,

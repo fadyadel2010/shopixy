@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using MongoDB.Bson;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 
@@ -9,7 +10,7 @@ public static partial class CommerceHubSearchDocumentMapper
 {
     public static CommerceHubProductSearchDocument Map(CommerceHubProductDocument document)
     {
-        return new CommerceHubProductSearchDocument
+        var searchDocument = new CommerceHubProductSearchDocument
         {
             Id = document.Id,
             TenantId = document.TenantId,
@@ -40,8 +41,15 @@ public static partial class CommerceHubSearchDocumentMapper
             Attributes = MapAttributes(document.Attributes),
             IsPublished = document.IsPublished,
             CreatedAtUtc = document.CreatedAtUtc,
-            UpdatedAtUtc = document.UpdatedAtUtc
+            UpdatedAtUtc = document.UpdatedAtUtc,
+            ProjectionConvergedAtUtc = document.ProjectionConvergedAtUtc
         };
+
+        return ReadModelEvolutionMetadata.StampCurrent(
+            searchDocument,
+            ReadModelEvolutionRegistry.CommerceHubProduct,
+            ReadModelStore.Elasticsearch,
+            document.ProjectionConvergedAtUtc);
     }
 
     public static Dictionary<string, object> MapAttributes(BsonDocument? attributes)

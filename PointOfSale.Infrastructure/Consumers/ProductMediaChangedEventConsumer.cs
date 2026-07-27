@@ -183,6 +183,7 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                 .FirstOrDefaultAsync(context.CancellationToken);
             if (product != null)
             {
+                var skipSearchIndex = false;
                 if (_dbContext != null)
                 {
                     product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
@@ -191,29 +192,43 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                         @event.TenantId.Value,
                         context.CancellationToken);
 
-                    if (product == null)
+                    if (product == null || !product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
                     {
                         _logger.LogWarning(
-                            "ProductMediaChangedEvent search sync skipped because SQL product authority was not found | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
+                            "ProductMediaChangedEvent search sync deleting stale search document because SQL product authority is unavailable or not searchable | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
                             @event.EventId,
                             @event.ProductId,
                             @event.TenantId);
+                        var deleted = await _searchIndexService.DeleteAsync(
+                            @event.TenantId.Value,
+                            @event.ProductId,
+                            context.CancellationToken);
+                        if (!deleted)
+                        {
+                            throw new InvalidOperationException(
+                                $"Elasticsearch delete failed for ProductMediaChangedEvent product {@event.ProductId}.");
+                        }
+
+                        skipSearchIndex = true;
                     }
                 }
 
-                if (product == null)
+                if (product != null && !skipSearchIndex)
                 {
-                    return;
+                    var searchDocument = ProductSearchDocumentMapper.MapFromProductDocument(product, @event.EventId);
+                    var indexed = await _searchIndexService.IndexAsync(searchDocument, context.CancellationToken);
+                    if (!indexed)
+                    {
+                        throw new InvalidOperationException(
+                            $"Elasticsearch index failed for ProductMediaChangedEvent product {@event.ProductId}.");
+                    }
+
+                    _logger.LogInformation(
+                        "Synced product media to Elasticsearch | ProductId: {ProductId} | TenantId: {TenantId} | PrimaryImage: {PrimaryImage}",
+                        @event.ProductId,
+                        @event.TenantId,
+                        searchDocument.ImageUrl ?? "none");
                 }
-
-                var searchDocument = ProductSearchDocumentMapper.MapFromProductDocument(product, @event.EventId);
-                await _searchIndexService.IndexAsync(searchDocument, context.CancellationToken);
-
-                _logger.LogInformation(
-                    "Synced product media to Elasticsearch | ProductId: {ProductId} | TenantId: {TenantId} | PrimaryImage: {PrimaryImage}",
-                    @event.ProductId,
-                    @event.TenantId,
-                    searchDocument.ImageUrl ?? "none");
             }
 
             if (fence != null && _dbContext != null)

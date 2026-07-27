@@ -73,6 +73,16 @@ public class ProductCreatedEvent : IntegrationEvent
     public string? Images { get; set; }
     
     public bool IsOnlineVisible { get; set; }
+
+    /// <summary>
+    /// Whether this product is eligible for storefront search and discovery.
+    /// </summary>
+    public bool IsSearchable { get; set; } = true;
+
+    /// <summary>
+    /// Whether this product is curated for featured storefront surfaces.
+    /// </summary>
+    public bool IsFeatured { get; set; }
     
     // SEO Friendly URL slug
     public string? Slug { get; set; }
@@ -160,6 +170,8 @@ public class ProductUpdatedEvent : IntegrationEvent
     public string? AiMetadataJson { get; set; }
     public string? Images { get; set; }
     public bool? IsOnlineVisible { get; set; }
+    public bool? IsSearchable { get; set; }
+    public bool? IsFeatured { get; set; }
     public string? Slug { get; set; }
     public string? ProductTemplate { get; set; }
     public string? PublishStatus { get; set; }

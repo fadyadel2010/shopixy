@@ -22,7 +22,10 @@ public enum SqlAuthorityOverlayKind
     StorefrontNavigation = 32768,
     StorefrontCms = 65536,
     ServiceMarketplace = 131072,
-    Coupon = 262144
+    Coupon = 262144,
+    ProductVisibility = 524288,
+    ProductSearchability = 1048576,
+    ProductMerchandising = 2097152
 }
 
 public sealed record SqlAuthorityOverlayResult<TProjection>(

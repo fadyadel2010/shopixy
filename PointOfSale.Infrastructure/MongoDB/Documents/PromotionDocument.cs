@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Documents;
 
@@ -19,8 +20,12 @@ namespace PointOfSale.Infrastructure.MongoDB.Documents;
 /// - Category page banners
 /// - Countdown timers for ending promotions
 /// </summary>
-public class PromotionDocument
+[BsonIgnoreExtraElements]
+public class PromotionDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.StorefrontPromotionMongoSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.StorefrontPromotionMongoProjectionVersion;
+
     /// <summary>
     /// MongoDB internal document ID - auto-generated if not set
     /// </summary>
@@ -28,6 +33,15 @@ public class PromotionDocument
     [BsonRepresentation(BsonType.ObjectId)]
     [BsonIgnoreIfNull]
     public string? Id { get; set; }
+
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.StorefrontPromotion;
+
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
 
     /// <summary>
     /// The tenant that owns this promotion.

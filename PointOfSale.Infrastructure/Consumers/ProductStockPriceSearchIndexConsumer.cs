@@ -37,7 +37,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// Error Handling:
 /// - Missing TenantId: Log error, acknowledge (no retry)
 /// - Transient ES errors: Let MassTransit retry
-/// - Permanent ES errors: Log and acknowledge
+/// - Permanent ES errors: throw so MassTransit retry/error transport owns recovery
 /// </summary>
 public class ProductStockPriceSearchIndexConsumer :
     IConsumer<ProductStockChangedEvent>,
@@ -345,7 +345,7 @@ public class ProductStockPriceSearchIndexConsumer :
 
             // Delete hidden products only after SQL authority has had a chance to
             // override stale Mongo visibility from replayed projection timing.
-            if (!product.IsActive || !product.IsOnlineVisible)
+            if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
                 _logger.LogInformation(
                     "[ES-{EventName}] SQL product authority is not searchable - deleting stale ES document | ProductId: {ProductId} | TenantId: {TenantId}",
@@ -485,7 +485,7 @@ public class ProductStockPriceSearchIndexConsumer :
                 return true;
             }
 
-            if (!product.IsActive || !product.IsOnlineVisible)
+            if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
                 var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
                 if (!deleted)

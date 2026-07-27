@@ -546,7 +546,7 @@ public class AdminSearchSyncController : ControllerBase
             tenantId,
             cancellationToken);
 
-        if (sqlProjection is null || !sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
+        if (sqlProjection is null || !sqlProjection.IsActive || !sqlProjection.IsOnlineVisible || !sqlProjection.IsSearchable)
         {
             return null;
         }

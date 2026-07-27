@@ -1,4 +1,5 @@
 using Nest;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 
@@ -16,8 +17,24 @@ namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 /// - Ensures tenant isolation and idempotent indexing
 /// </summary>
 [ElasticsearchType(RelationName = "category")]
-public class CategorySearchDocument
+public class CategorySearchDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.StorefrontCategorySearchSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.StorefrontCategorySearchProjectionVersion;
+    public const int CurrentIndexVersion = ReadModelEvolutionRegistry.StorefrontCategorySearchIndexVersion;
+
+    [Keyword]
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.StorefrontCategory;
+
+    [Number(NumberType.Integer)]
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    [Number(NumberType.Integer)]
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    [Date(Format = "strict_date_optional_time||epoch_millis")]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
+
     /// <summary>
     /// Tenant that owns this category.
     /// CRITICAL: All queries MUST filter by TenantId.

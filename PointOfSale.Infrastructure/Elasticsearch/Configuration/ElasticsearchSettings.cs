@@ -39,12 +39,6 @@ public class ElasticsearchSettings
     public string CommerceHubProductsIndexName { get; set; } = "commercehub_products";
 
     /// <summary>
-    /// Current version of the CommerceHub search index schema.
-    /// Versioned indices are created as commercehub_products_v{n}.
-    /// </summary>
-    public int CommerceHubProductsIndexVersion { get; set; } = 2;
-
-    /// <summary>
     /// Number of shards for the products index.
     /// </summary>
     public int NumberOfShards { get; set; } = 1;

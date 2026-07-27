@@ -234,6 +234,8 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
             Slug = @event.Slug,
             ProductTemplate = @event.ProductTemplate,
             IsOnlineVisible = @event.IsOnlineVisible,
+            IsSearchable = @event.IsSearchable,
+            IsFeatured = @event.IsFeatured,
             IsActive = true, // New products are active by default
             DefaultUnit = defaultUnit,
             Units = units,

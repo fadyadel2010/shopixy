@@ -1,7 +1,26 @@
+using Nest;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
+
 namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 
-public class CommerceHubProductSearchDocument
+public class CommerceHubProductSearchDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.CommerceHubProductSearchSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.CommerceHubProductSearchProjectionVersion;
+    public const int CurrentIndexVersion = ReadModelEvolutionRegistry.CommerceHubProductSearchIndexVersion;
+
+    [Keyword]
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.CommerceHubProduct;
+
+    [Number(NumberType.Integer)]
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    [Number(NumberType.Integer)]
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    [Date(Format = "strict_date_optional_time||epoch_millis")]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
+
     public Guid Id { get; set; }
     public Guid TenantId { get; set; }
     public Guid StoreId { get; set; }

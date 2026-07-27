@@ -1,5 +1,6 @@
 using Nest;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 
@@ -32,8 +33,36 @@ namespace PointOfSale.Infrastructure.Elasticsearch.Documents;
 /// NO AI, NO runtime translation, NO external services.
 /// </summary>
 [ElasticsearchType(RelationName = "product")]
-public class ProductSearchDocument
+public class ProductSearchDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.StorefrontProductSearchSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.StorefrontProductSearchProjectionVersion;
+    public const int CurrentIndexVersion = ReadModelEvolutionRegistry.StorefrontProductSearchIndexVersion;
+
+    /// <summary>
+    /// Stable read model identity used by the evolution framework.
+    /// </summary>
+    [Keyword]
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.StorefrontProduct;
+
+    /// <summary>
+    /// Shape version of this Elasticsearch document. Query strictness is gated on convergence.
+    /// </summary>
+    [Number(NumberType.Integer)]
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    /// <summary>
+    /// Version of the projection logic that wrote this search document.
+    /// </summary>
+    [Number(NumberType.Integer)]
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    /// <summary>
+    /// Set by convergence certification once all documents for this read model are safely upgraded.
+    /// </summary>
+    [Date(Format = "strict_date_optional_time||epoch_millis")]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
+
     /// <summary>
     /// Tenant that owns this product.
     /// CRITICAL: All queries MUST filter by TenantId.
@@ -120,6 +149,12 @@ public class ProductSearchDocument
     /// </summary>
     [Boolean]
     public bool IsOnlineVisible { get; set; }
+
+    /// <summary>
+    /// Whether the product is eligible for storefront search and discovery.
+    /// </summary>
+    [Boolean]
+    public bool IsSearchable { get; set; }
 
     /// <summary>
     /// SEO-friendly URL slug.

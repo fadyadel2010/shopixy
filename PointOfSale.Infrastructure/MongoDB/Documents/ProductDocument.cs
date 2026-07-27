@@ -3,6 +3,7 @@ using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using PointOfSale.Infrastructure.MongoDB.Serialization;
 using PointOfSale.Core.Pricing;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Documents;
 
@@ -80,8 +81,11 @@ public class ProductFaqDocument
 /// - If DefaultUnit is null, product is NOT purchasable online
 /// </summary>
 [BsonIgnoreExtraElements]
-public class ProductDocument
+public class ProductDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.StorefrontProductMongoSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.StorefrontProductMongoProjectionVersion;
+
     /// <summary>
     /// MongoDB internal document ID - auto-generated if not set
     /// </summary>
@@ -89,6 +93,27 @@ public class ProductDocument
     [BsonRepresentation(BsonType.ObjectId)]
     [BsonIgnoreIfNull]
     public string? Id { get; set; }
+
+    /// <summary>
+    /// Stable read model identity used by the evolution framework.
+    /// </summary>
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.StorefrontProduct;
+
+    /// <summary>
+    /// Shape version of this Mongo document. New runtime-required fields are only strict after convergence.
+    /// </summary>
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    /// <summary>
+    /// Version of the projection logic that wrote this document.
+    /// </summary>
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    /// <summary>
+    /// Set by convergence certification once all documents for this read model are safely upgraded.
+    /// </summary>
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
 
     /// <summary>
     /// The tenant that owns this product.
@@ -291,6 +316,12 @@ public class ProductDocument
     /// Whether product is visible on e-commerce storefront
     /// </summary>
     public bool IsOnlineVisible { get; set; }
+
+    /// <summary>
+    /// Whether product is eligible for storefront search and discovery.
+    /// SQL Products.IsSearchable owns this field; projections must not default it.
+    /// </summary>
+    public bool IsSearchable { get; set; } = true;
 
     /// <summary>
     /// Whether the product is active in the system

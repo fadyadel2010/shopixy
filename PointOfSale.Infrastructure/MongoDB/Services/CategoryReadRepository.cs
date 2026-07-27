@@ -1,5 +1,6 @@
 using MongoDB.Driver;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -247,6 +248,11 @@ public class CategoryReadRepository : ICategoryReadRepository, ICategorySyncRepo
     /// <inheritdoc />
     public async Task<bool> UpsertAsync(CategoryDocument document, CancellationToken cancellationToken = default)
     {
+        ReadModelEvolutionMetadata.StampCurrent(
+            document,
+            ReadModelEvolutionRegistry.StorefrontCategory,
+            ReadModelStore.MongoDb);
+
         // Build filter: match by TenantId AND CategoryId (business key)
         var filter = Builders<CategoryDocument>.Filter.And(
             Builders<CategoryDocument>.Filter.Eq(c => c.TenantId, document.TenantId),

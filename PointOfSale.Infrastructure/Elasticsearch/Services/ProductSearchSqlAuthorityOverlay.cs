@@ -43,6 +43,9 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
             SqlAuthorityOverlayKind.Media |
             SqlAuthorityOverlayKind.Category |
             SqlAuthorityOverlayKind.Promotion |
+            SqlAuthorityOverlayKind.ProductVisibility |
+            SqlAuthorityOverlayKind.ProductSearchability |
+            SqlAuthorityOverlayKind.ProductMerchandising |
             SqlAuthorityOverlayKind.Tombstone);
 
         var applied = await ApplyCoreAsync(
@@ -62,6 +65,9 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
                 SqlAuthorityOverlayKind.Media |
                 SqlAuthorityOverlayKind.Category |
                 SqlAuthorityOverlayKind.Promotion |
+                SqlAuthorityOverlayKind.ProductVisibility |
+                SqlAuthorityOverlayKind.ProductSearchability |
+                SqlAuthorityOverlayKind.ProductMerchandising |
                 SqlAuthorityOverlayKind.Tombstone);
     }
 
@@ -170,6 +176,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         product.IsActive = sqlProduct.IsActive;
         product.IsOnlineVisible = sqlProduct.IsOnlineVisible &&
                                   sqlProduct.PublishStatus == PublishStatus.Published;
+        product.IsSearchable = sqlProduct.IsSearchable;
         product.HasVariants = sqlProduct.HasVariants;
         product.TrackStock = sqlProduct.TrackStock;
         product.AllowBackorder = sqlProduct.AllowBackorder;

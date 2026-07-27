@@ -1,6 +1,7 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -175,6 +176,11 @@ public class ProductReadRepository : IProductReadRepository
     /// <inheritdoc />
     public async Task<bool> UpsertAsync(ProductDocument document, CancellationToken cancellationToken = default)
     {
+        ReadModelEvolutionMetadata.StampCurrent(
+            document,
+            ReadModelEvolutionRegistry.StorefrontProduct,
+            ReadModelStore.MongoDb);
+
         var filter = Builders<ProductDocument>.Filter.And(
             Builders<ProductDocument>.Filter.Eq(p => p.TenantId, document.TenantId),
             Builders<ProductDocument>.Filter.Eq(p => p.ProductId, document.ProductId),

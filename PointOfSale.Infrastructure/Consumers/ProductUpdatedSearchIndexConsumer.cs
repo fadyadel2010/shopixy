@@ -24,7 +24,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// Error Handling Strategy:
 /// - Missing TenantId: Log error, acknowledge message (no retry)
 /// - Elasticsearch transient errors: Let MassTransit handle retries
-/// - Elasticsearch permanent errors: Log and acknowledge (prevent retry storm)
+/// - Elasticsearch permanent errors: throw so MassTransit retry/error transport owns recovery
 /// </summary>
 public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
 {
@@ -140,7 +140,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
                 return;
             }
 
-            if (!product.IsActive || !product.IsOnlineVisible)
+            if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
                 _logger.LogInformation(
                     "Product search visibility removed from current authority - deleting from Elasticsearch | ProductId: {ProductId} | TenantId: {TenantId}",
@@ -202,7 +202,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
             _logger.LogError(ex,
                 "Error processing ProductUpdatedEvent for Elasticsearch | ProductId: {ProductId}",
                 @event.ProductId);
-            // Don't throw - Elasticsearch issues should not break message processing
+            throw;
         }
         finally
         {

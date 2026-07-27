@@ -1,6 +1,7 @@
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -114,6 +115,9 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
         sqlProjection.LastEventId = request.EventId;
         sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc;
         sqlProjection.LastEventVersion = request.EventVersion;
+        sqlProjection.ReadModelName = ReadModelEvolutionRegistry.StorefrontProduct;
+        sqlProjection.ReadModelSchemaVersion = ProductDocument.CurrentReadModelSchemaVersion;
+        sqlProjection.ProjectionVersion = ProductDocument.CurrentProjectionVersion;
 
         var upsert = await _mutationBoundary.ApplyAsync(
             new StorefrontProductProjectionMutation(

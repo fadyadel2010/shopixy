@@ -8,6 +8,7 @@ using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Promotions;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Core.Entities;
@@ -590,6 +591,11 @@ public class PromotionProjectionConsumer :
 
     private async Task<bool> UpsertDocumentAsync(PromotionDocument document, IntegrationEvent @event, CancellationToken cancellationToken)
     {
+        ReadModelEvolutionMetadata.StampCurrent(
+            document,
+            ReadModelEvolutionRegistry.StorefrontPromotion,
+            ReadModelStore.MongoDb);
+
         var filter = Builders<PromotionDocument>.Filter.And(
             Builders<PromotionDocument>.Filter.Eq(x => x.TenantId, document.TenantId),
             Builders<PromotionDocument>.Filter.Eq(x => x.PromotionId, document.PromotionId),
@@ -1116,6 +1122,12 @@ public class PromotionProjectionConsumer :
         }
 
         PromotionVisibilityProjectionSupport.ApplyCategoryPromotionOverlay(categoryDocument, winningPromotion);
+        ReadModelEvolutionMetadata.StampCurrent(
+            categoryDocument,
+            ReadModelEvolutionRegistry.StorefrontCategory,
+            ReadModelStore.MongoDb,
+            categoryDocument.ProjectionConvergedAtUtc);
+
         await _categoryCollection.ReplaceOneAsync(
             filter,
             categoryDocument,
@@ -1197,9 +1209,10 @@ public class PromotionProjectionConsumer :
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
-                "Failed to update product promotion badge | ProductId: {ProductId}",
+            _logger.LogError(ex,
+                "Failed to update product promotion badge - retrying | ProductId: {ProductId}",
                 productId);
+            throw;
         }
     }
 
@@ -1223,10 +1236,12 @@ public class PromotionProjectionConsumer :
             var product = await _productCollection.Find(filter).FirstOrDefaultAsync(cancellationToken);
             if (product == null)
             {
-                _logger.LogDebug(
-                    "Product not found for ES sync | ProductId: {ProductId}",
-                    productId);
-                return;
+                _logger.LogWarning(
+                    "Product not found for ES sync - will retry | ProductId: {ProductId} | TenantId: {TenantId}",
+                    productId,
+                    tenantId);
+                throw new InvalidOperationException(
+                    $"Product read model {productId} not found before promotion search sync.");
             }
 
             product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
@@ -1235,9 +1250,19 @@ public class PromotionProjectionConsumer :
                 tenantId,
                 cancellationToken);
 
-            if (product == null)
+            if (product == null || !product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
-                await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                if (!deleted)
+                {
+                    throw new InvalidOperationException(
+                        $"Elasticsearch delete failed during promotion sync for product {productId}.");
+                }
+
+                _logger.LogInformation(
+                    "Deleted stale product search document after promotion update because SQL authority is unavailable or not searchable | ProductId: {ProductId} | TenantId: {TenantId}",
+                    productId,
+                    tenantId);
                 return;
             }
 
@@ -1257,14 +1282,16 @@ public class PromotionProjectionConsumer :
                 _logger.LogWarning(
                     "Failed to sync product to ES | ProductId: {ProductId}",
                     productId);
+                throw new InvalidOperationException(
+                    $"Elasticsearch index failed during promotion sync for product {productId}.");
             }
         }
         catch (Exception ex)
         {
-            // Don't throw - ES sync failure should not block promotion projection
-            _logger.LogWarning(ex,
-                "Exception syncing product to ES | ProductId: {ProductId}",
+            _logger.LogError(ex,
+                "Exception syncing product to ES after promotion projection - retrying | ProductId: {ProductId}",
                 productId);
+            throw;
         }
     }
 
@@ -1305,9 +1332,10 @@ public class PromotionProjectionConsumer :
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
-                "Failed to remove product promotion badge | ProductId: {ProductId}",
+            _logger.LogError(ex,
+                "Failed to remove product promotion badge - retrying | ProductId: {ProductId}",
                 productId);
+            throw;
         }
     }
 
@@ -1343,9 +1371,10 @@ public class PromotionProjectionConsumer :
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex,
-                "Failed to remove promotion from products | PromotionId: {PromotionId}",
+            _logger.LogError(ex,
+                "Failed to remove promotion from products - retrying | PromotionId: {PromotionId}",
                 promotionId);
+            throw;
         }
     }
 

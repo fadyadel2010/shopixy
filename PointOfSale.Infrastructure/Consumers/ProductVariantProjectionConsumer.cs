@@ -1758,10 +1758,12 @@ public class ProductVariantProjectionConsumer :
 
             if (product == null)
             {
-                _logger.LogDebug(
-                    "Product not found for ES HasVariants sync | ProductId: {ProductId}",
-                    productId);
-                return;
+                _logger.LogWarning(
+                    "Product not found for ES HasVariants sync - will retry | ProductId: {ProductId} | TenantId: {TenantId}",
+                    productId,
+                    tenantId);
+                throw new InvalidOperationException(
+                    $"Product read model {productId} not found before HasVariants search sync.");
             }
 
             if (_dbContext != null)
@@ -1772,13 +1774,19 @@ public class ProductVariantProjectionConsumer :
                     tenantId,
                     cancellationToken);
 
-                if (product == null)
+                if (product == null || !product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
                 {
                     _logger.LogWarning(
-                        "SQL product/variant authority not found for ES HasVariants sync; deleting search document fail-closed | ProductId: {ProductId} | TenantId: {TenantId}",
+                        "SQL product/variant authority unavailable or not searchable for ES HasVariants sync; deleting search document fail-closed | ProductId: {ProductId} | TenantId: {TenantId}",
                         productId,
                         tenantId);
-                    await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                    var deleted = await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                    if (!deleted)
+                    {
+                        throw new InvalidOperationException(
+                            $"Elasticsearch delete failed during HasVariants sync for product {productId}.");
+                    }
+
                     return;
                 }
             }
@@ -1803,14 +1811,16 @@ public class ProductVariantProjectionConsumer :
                 _logger.LogWarning(
                     "Failed to sync HasVariants to Elasticsearch | ProductId: {ProductId}",
                     productId);
+                throw new InvalidOperationException(
+                    $"Elasticsearch index failed during HasVariants sync for product {productId}.");
             }
         }
         catch (Exception ex)
         {
-            // Non-fatal - log and continue
-            _logger.LogWarning(ex,
-                "Exception syncing HasVariants to Elasticsearch | ProductId: {ProductId}",
+            _logger.LogError(ex,
+                "Exception syncing HasVariants to Elasticsearch - retrying | ProductId: {ProductId}",
                 productId);
+            throw;
         }
     }
 

@@ -40,6 +40,7 @@ public class StorefrontSearchController : ControllerBase
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontSearchController> _logger;
     private const string TenantIdHeader = "X-Tenant-Id";
+    private const int SqlAuthorityCandidateWindow = 10000;
 
     public StorefrontSearchController(
         IUnifiedSearchIndexService searchService,
@@ -144,8 +145,8 @@ public class StorefrontSearchController : ControllerBase
                 tenantId,
                 trimmedQuery,
                 entityTypes,
-                page,
-                pageSize,
+                page: 1,
+                pageSize: SqlAuthorityCandidateWindow,
                 language,
                 cancellationToken);
 
@@ -157,13 +158,32 @@ public class StorefrontSearchController : ControllerBase
                 return SearchUnavailableResult(traceId, "unified", "result_failure");
             }
 
+            if (result.TotalCount > SqlAuthorityCandidateWindow)
+            {
+                _logger.LogWarning(
+                    "Unified search result set exceeds SQL authority recomposition window | TenantId: {TenantId} | Query: {Query} | TotalCount: {TotalCount} | Window: {Window} | TraceId: {TraceId}",
+                    tenantId,
+                    trimmedQuery,
+                    result.TotalCount,
+                    SqlAuthorityCandidateWindow,
+                    traceId);
+                return SearchUnavailableResult(traceId, "unified", "authority_window_exceeded");
+            }
+
             var sqlVisibleItems = await FilterSearchItemsBySqlAuthorityAsync(
                 tenantId,
                 result.Items,
                 cancellationToken);
 
+            var totalCount = sqlVisibleItems.Count;
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
+            var pageItems = sqlVisibleItems
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToList();
+
             // Step 6: Map to response DTOs
-            var items = sqlVisibleItems.Select(item => new UnifiedSearchItemDto
+            var items = pageItems.Select(item => new UnifiedSearchItemDto
             {
                 EntityId = item.EntityId,
                 EntityType = item.EntityType,
@@ -175,9 +195,6 @@ public class StorefrontSearchController : ControllerBase
                 CategoryName = item.CategoryName,
                 Score = item.Score
             }).ToList();
-
-            var totalCount = sqlVisibleItems.Count;
-            var totalPages = (int)Math.Ceiling((double)totalCount / pageSize);
 
             _logger.LogInformation(
                 "Unified search success | TenantId: {TenantId} | Query: {Query} | Results: {Count} | TotalCount: {TotalCount} | TimeMs: {TimeMs} | TraceId: {TraceId}",
@@ -459,7 +476,7 @@ public class StorefrontSearchController : ControllerBase
                     tenantId,
                     cancellationToken);
 
-                if (product is not { IsActive: true, IsOnlineVisible: true })
+                if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
                 {
                     continue;
                 }
@@ -517,7 +534,7 @@ public class StorefrontSearchController : ControllerBase
                 tenantId,
                 cancellationToken);
 
-            if (product is not { IsActive: true, IsOnlineVisible: true })
+            if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
             {
                 continue;
             }

@@ -7,6 +7,7 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 
@@ -54,9 +55,13 @@ public interface IProductDiscoveryService
 /// </summary>
 public class ProductDiscoveryService : IProductDiscoveryService
 {
+    private const int DiscoveryCandidateWindow = 10000;
+    private const string SearchableFieldName = "isSearchable";
+
     private readonly IElasticClient _client;
     private readonly ApplicationDbContext _dbContext;
     private readonly ElasticsearchSettings _settings;
+    private readonly IReadModelEvolutionConvergenceService _readModelEvolution;
     private readonly ILogger<ProductDiscoveryService> _logger;
 
     // Price range buckets for faceting
@@ -74,11 +79,13 @@ public class ProductDiscoveryService : IProductDiscoveryService
         IElasticClient client,
         ApplicationDbContext dbContext,
         IOptions<ElasticsearchSettings> settings,
+        IReadModelEvolutionConvergenceService readModelEvolution,
         ILogger<ProductDiscoveryService> logger)
     {
         _client = client;
         _dbContext = dbContext;
         _settings = settings.Value;
+        _readModelEvolution = readModelEvolution;
         _logger = logger;
     }
 
@@ -103,8 +110,17 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 "Product discovery starting | TenantId: {TenantId} | Query: {Query} | Sort: {Sort} | Page: {Page}/{PageSize} | IsSearch: {IsSearch} | AffiliateMode: {AffiliateMode}",
                 tenantId, query.Q ?? "(browse)", query.Sort, query.Page, query.PageSize, query.IsSearchMode, affiliateModeOnly);
 
+            var productSearchCompatibility = await _readModelEvolution.GetCompatibilityDecisionAsync(
+                ReadModelEvolutionRegistry.StorefrontProduct,
+                ReadModelStore.Elasticsearch,
+                cancellationToken);
+
             // Build the Elasticsearch query
-            var searchDescriptor = BuildSearchDescriptor(tenantId, query, affiliateModeOnly);
+            var searchDescriptor = BuildSearchDescriptor(
+                tenantId,
+                query,
+                affiliateModeOnly,
+                productSearchCompatibility);
 
             // Execute search
             var searchResponse = await _client.SearchAsync<ProductSearchDocument>(
@@ -129,10 +145,17 @@ public class ProductDiscoveryService : IProductDiscoveryService
             }
 
             // Map results
+            if (searchResponse.Total > DiscoveryCandidateWindow)
+            {
+                throw new InvalidOperationException(
+                    $"Product discovery result set exceeds the SQL recomposition window of {DiscoveryCandidateWindow}. Refine filters before serving public pagination metadata.");
+            }
+
             var result = await MapSearchResponseAsync(
                 tenantId,
                 searchResponse,
                 query,
+                affiliateModeOnly,
                 stopwatch.ElapsedMilliseconds,
                 cancellationToken);
 
@@ -159,16 +182,15 @@ public class ProductDiscoveryService : IProductDiscoveryService
     private Func<SearchDescriptor<ProductSearchDocument>, ISearchRequest> BuildSearchDescriptor(
         Guid tenantId,
         ProductDiscoveryQuery query,
-        bool affiliateModeOnly)
+        bool affiliateModeOnly,
+        ReadModelCompatibilityDecision productSearchCompatibility)
     {
-        var skip = (query.Page - 1) * query.PageSize;
-
         return s => s
             .Index(_settings.ProductsIndexName)
-            .From(skip)
-            .Size(query.PageSize)
+            .From(0)
+            .Size(DiscoveryCandidateWindow)
             .TrackTotalHits(true)
-            .Query(q => BuildQuery(q, tenantId, query, affiliateModeOnly))
+            .Query(q => BuildQuery(q, tenantId, query, affiliateModeOnly, productSearchCompatibility))
             .Sort(sort => BuildSort(sort, query))
             .Aggregations(agg => BuildAggregations(agg, tenantId, query));
     }
@@ -180,13 +202,14 @@ public class ProductDiscoveryService : IProductDiscoveryService
         QueryContainerDescriptor<ProductSearchDocument> q,
         Guid tenantId,
         ProductDiscoveryQuery query,
-        bool affiliateModeOnly)
+        bool affiliateModeOnly,
+        ReadModelCompatibilityDecision productSearchCompatibility)
     {
         return q.FunctionScore(fs => fs
             .Query(innerQ => innerQ
                 .Bool(b => b
                     .Must(BuildMustQueries(tenantId, query))
-                    .Filter(BuildFilterQueries(tenantId, query, affiliateModeOnly))
+                    .Filter(BuildFilterQueries(tenantId, query, affiliateModeOnly, productSearchCompatibility))
                 )
             )
             .Functions(funcs => funcs
@@ -260,7 +283,8 @@ public class ProductDiscoveryService : IProductDiscoveryService
     private Func<QueryContainerDescriptor<ProductSearchDocument>, QueryContainer>[] BuildFilterQueries(
         Guid tenantId,
         ProductDiscoveryQuery query,
-        bool affiliateModeOnly)
+        bool affiliateModeOnly,
+        ReadModelCompatibilityDecision productSearchCompatibility)
     {
         var filters = new List<Func<QueryContainerDescriptor<ProductSearchDocument>, QueryContainer>>
         {
@@ -269,7 +293,13 @@ public class ProductDiscoveryService : IProductDiscoveryService
             // ALWAYS filter by active
             f => f.Term(t => t.Field(p => p.IsActive).Value(true)),
             // ALWAYS filter by online visible
-            f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true))
+            f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true)),
+            // Searchability is SQL-owned and runtime-required only after search index convergence.
+            f => ReadModelEvolutionQueryFilters.RequiredBoolean(
+                f,
+                SearchableFieldName,
+                requiredValue: true,
+                productSearchCompatibility)
         };
 
         // AF-12: Affiliate Mode filter (CRITICAL SECURITY FIX)
@@ -305,30 +335,19 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 .Terms(query.Brand)));
         }
 
-        // Price range filter
-        // NOTE: Variant products have price=0 in Elasticsearch (actual prices are on variants)
-        // We need to either exclude them from price filtering or handle them specially
+        // Price range filter. ProductSearchDocument.Price is SQL-recomposed visible storefront price
+        // for both simple and variant products, so variant products must not be excluded here.
         if (query.PriceFrom.HasValue || query.PriceTo.HasValue)
         {
-            filters.Add(f => f.Bool(b => b
-                .Must(
-                    // Either match the price range AND has no variants (simple product)
-                    m => m.Bool(bb => bb
-                        .Must(
-                            mm => mm.Range(r =>
-                            {
-                                var range = r.Field(p => p.Price);
-                                if (query.PriceFrom.HasValue)
-                                    range = range.GreaterThanOrEquals((double)query.PriceFrom.Value);
-                                if (query.PriceTo.HasValue)
-                                    range = range.LessThanOrEquals((double)query.PriceTo.Value);
-                                return range;
-                            }),
-                            mm => mm.Term(t => t.Field(p => p.HasVariants).Value(false))
-                        )
-                    )
-                )
-            ));
+            filters.Add(f => f.Range(r =>
+            {
+                var range = r.Field(p => p.Price);
+                if (query.PriceFrom.HasValue)
+                    range = range.GreaterThanOrEquals((double)query.PriceFrom.Value);
+                if (query.PriceTo.HasValue)
+                    range = range.LessThanOrEquals((double)query.PriceTo.Value);
+                return range;
+            }));
         }
 
         // Promotion filter
@@ -367,15 +386,9 @@ public class ProductDiscoveryService : IProductDiscoveryService
     {
         return query.Sort switch
         {
-            // Price ascending: Sort by price, but push variant products (price=0) to the end
-            ProductSortMode.PriceAsc => sort
-                .Ascending(p => p.HasVariants) // Non-variants first (false < true)
-                .Ascending(p => p.Price),
+            ProductSortMode.PriceAsc => sort.Ascending(p => p.Price),
             
-            // Price descending: Sort by price descending, variant products still at end
-            ProductSortMode.PriceDesc => sort
-                .Ascending(p => p.HasVariants) // Non-variants first
-                .Descending(p => p.Price),
+            ProductSortMode.PriceDesc => sort.Descending(p => p.Price),
             
             ProductSortMode.Newest => sort
                 .Descending(p => p.CreatedAtUtc),
@@ -420,22 +433,15 @@ public class ProductDiscoveryService : IProductDiscoveryService
             .Terms("stock", t => t
                 .Field(p => p.IsInStock)
             )
-            // Price range aggregation - ONLY count non-variant products
-            // Variant products have Price=0 (actual prices are on variants)
-            .Filter("price_ranges_filtered", f => f
-                .Filter(ff => ff.Term(t => t.Field(p => p.HasVariants).Value(false)))
-                .Aggregations(a => a
-                    .Range("price_ranges", r => r
-                        .Field(p => p.Price)
-                        .Ranges(
-                            rng => rng.To(50).Key("under_50"),
-                            rng => rng.From(50).To(100).Key("50_100"),
-                            rng => rng.From(100).To(200).Key("100_200"),
-                            rng => rng.From(200).To(500).Key("200_500"),
-                            rng => rng.From(500).To(1000).Key("500_1000"),
-                            rng => rng.From(1000).Key("over_1000")
-                        )
-                    )
+            .Range("price_ranges", r => r
+                .Field(p => p.Price)
+                .Ranges(
+                    rng => rng.To(50).Key("under_50"),
+                    rng => rng.From(50).To(100).Key("50_100"),
+                    rng => rng.From(100).To(200).Key("100_200"),
+                    rng => rng.From(200).To(500).Key("200_500"),
+                    rng => rng.From(500).To(1000).Key("500_1000"),
+                    rng => rng.From(1000).Key("over_1000")
                 )
             );
     }
@@ -447,6 +453,7 @@ public class ProductDiscoveryService : IProductDiscoveryService
         Guid tenantId,
         ISearchResponse<ProductSearchDocument> response,
         ProductDiscoveryQuery query,
+        bool affiliateModeOnly,
         long searchTimeMs,
         CancellationToken cancellationToken)
     {
@@ -479,7 +486,7 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 // CRITICAL: Variant-aware price handling
                 Price = doc.HasVariants ? null : (decimal?)doc.Price,
                 Pricing = BuildPricingPresentation(
-                    doc.HasVariants ? 0m : (decimal)doc.Price,
+                    (decimal)doc.Price,
                     doc.HasActivePromotion,
                     doc.HasActivePromotion
                         ? BuildPromotionBadge(doc.PromotionDiscountValue, doc.PromotionDiscountType)
@@ -495,13 +502,23 @@ public class ProductDiscoveryService : IProductDiscoveryService
         items = await RecomposeDiscoveryItemsFromSqlAuthorityAsync(
             tenantId,
             items,
+            query,
+            affiliateModeOnly,
             isRtl,
             cancellationToken);
 
+        items = SortSqlRecomposedItems(items, query).ToList();
+
+        var totalCount = items.Count;
+        var pageItems = items
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .ToList();
+
         return new ProductDiscoveryResult
         {
-            Items = items,
-            TotalCount = items.Count,
+            Items = pageItems,
+            TotalCount = totalCount,
             Page = query.Page,
             PageSize = query.PageSize,
             Query = query.Q,
@@ -515,6 +532,8 @@ public class ProductDiscoveryService : IProductDiscoveryService
     private async Task<List<ProductDiscoveryItemDto>> RecomposeDiscoveryItemsFromSqlAuthorityAsync(
         Guid tenantId,
         IReadOnlyCollection<ProductDiscoveryItemDto> candidates,
+        ProductDiscoveryQuery query,
+        bool affiliateModeOnly,
         bool isRtl,
         CancellationToken cancellationToken)
     {
@@ -532,7 +551,8 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 tenantId,
                 cancellationToken);
 
-            if (product is not { IsActive: true, IsOnlineVisible: true })
+            if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
+                !MatchesSqlAuthoritativeDiscoveryFilters(product, query, affiliateModeOnly))
             {
                 continue;
             }
@@ -541,7 +561,7 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 .Where(variant => variant.IsActive)
                 .ToList();
             var hasVariants = activeVariants.Count > 0;
-            var price = hasVariants ? 0m : product.StorefrontEffectivePrice;
+            var price = product.StorefrontVisiblePrice;
             var promotionBadge = product.HasActivePromotion
                 ? BuildPromotionBadge((double)(product.PromotionDiscountValue ?? 0m), product.PromotionDiscountType)
                 : null;
@@ -580,12 +600,89 @@ public class ProductDiscoveryService : IProductDiscoveryService
                     product.PromotionDiscountType,
                     product.PromotionDiscountValue),
                 DisplayPriceText = hasVariants
-                    ? (isRtl ? "Ù…ØªØ¹Ø¯Ø¯ Ø§Ù„Ø§Ø®ØªÙŠØ§Ø±Ø§Øª" : "Multiple options")
+                    ? (isRtl ? "متعدد الاختيارات" : "Multiple options")
                     : null
             });
         }
 
         return items;
+    }
+
+    private static bool MatchesSqlAuthoritativeDiscoveryFilters(
+        ProductDocument product,
+        ProductDiscoveryQuery query,
+        bool affiliateModeOnly)
+    {
+        if (affiliateModeOnly && !product.IsAffiliateEnabled)
+        {
+            return false;
+        }
+
+        if (query.Category?.Count > 0)
+        {
+            var categoryIds = query.Category
+                .Where(value => Guid.TryParse(value, out _))
+                .Select(Guid.Parse)
+                .ToHashSet();
+
+            if (categoryIds.Count > 0 && !categoryIds.Contains(product.CategoryId))
+            {
+                return false;
+            }
+        }
+
+        if (query.Brand?.Count > 0 &&
+            !query.Brand.Any(brand => string.Equals(brand, product.Brand, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var visiblePrice = product.StorefrontVisiblePrice;
+        if ((query.PriceFrom.HasValue && visiblePrice < query.PriceFrom.Value) ||
+            (query.PriceTo.HasValue && visiblePrice > query.PriceTo.Value))
+        {
+            return false;
+        }
+
+        if (query.HasPromotion.HasValue && product.HasActivePromotion != query.HasPromotion.Value)
+        {
+            return false;
+        }
+
+        var activeVariants = (product.Variants ?? new List<ProductVariantDocument>())
+            .Where(variant => variant.IsActive)
+            .ToList();
+        var hasVariants = activeVariants.Count > 0;
+        var inStock = hasVariants
+            ? activeVariants.Any(variant => variant.TotalStock > 0)
+            : product.InStock;
+
+        if (query.InStock.HasValue && inStock != query.InStock.Value)
+        {
+            return false;
+        }
+
+        if (query.HasVariants.HasValue && hasVariants != query.HasVariants.Value)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static IEnumerable<ProductDiscoveryItemDto> SortSqlRecomposedItems(
+        IEnumerable<ProductDiscoveryItemDto> items,
+        ProductDiscoveryQuery query)
+    {
+        return query.Sort switch
+        {
+            ProductSortMode.PriceAsc => items.OrderBy(item => item.Pricing.CurrentPrice).ThenBy(item => item.Id),
+            ProductSortMode.PriceDesc => items.OrderByDescending(item => item.Pricing.CurrentPrice).ThenBy(item => item.Id),
+            ProductSortMode.HighestDiscount => items
+                .OrderByDescending(item => item.PromotionDiscountValue ?? 0m)
+                .ThenByDescending(item => item.Score),
+            _ => items
+        };
     }
 
     private static ProductDiscoveryPricingDto BuildPricingPresentation(
@@ -677,17 +774,17 @@ public class ProductDiscoveryService : IProductDiscoveryService
         facets.Promotions.PromotedCount = promotedCount;
         facets.Promotions.NonPromotedCount = nonPromotedCount;
 
-        var nonVariantPrices = items
-            .Where(item => !item.HasVariants && item.Price.HasValue && item.Price.Value > 0)
-            .Select(item => item.Price!.Value)
+        var visiblePrices = items
+            .Select(item => item.Pricing.CurrentPrice)
+            .Where(price => price > 0)
             .ToList();
 
-        if (nonVariantPrices.Count > 0)
+        if (visiblePrices.Count > 0)
         {
             facets.PriceRanges = new List<PriceRangeBucket>();
             foreach (var (from, to, label) in PriceRanges)
             {
-                var count = nonVariantPrices.LongCount(price =>
+                var count = visiblePrices.LongCount(price =>
                     (!from.HasValue || price >= from.Value) &&
                     (!to.HasValue || price < to.Value));
                 if (count > 0)

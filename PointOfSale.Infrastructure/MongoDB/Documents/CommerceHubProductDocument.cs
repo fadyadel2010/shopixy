@@ -1,11 +1,15 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.MongoDB.Documents;
 
 [BsonIgnoreExtraElements]
-public class CommerceHubProductDocument
+public class CommerceHubProductDocument : IReadModelEvolutionDocument
 {
+    public const int CurrentReadModelSchemaVersion = ReadModelEvolutionRegistry.CommerceHubProductMongoSchemaVersion;
+    public const int CurrentProjectionVersion = ReadModelEvolutionRegistry.CommerceHubProductMongoProjectionVersion;
+
     public const string SearchSyncPending = "Pending";
     public const string SearchSyncSynced = "Synced";
     public const string SearchSyncFailed = "Failed";
@@ -16,6 +20,15 @@ public class CommerceHubProductDocument
     [BsonId]
     [BsonRepresentation(BsonType.String)]
     public Guid Id { get; set; }
+
+    public string ReadModelName { get; set; } = ReadModelEvolutionRegistry.CommerceHubProduct;
+
+    public int ReadModelSchemaVersion { get; set; } = CurrentReadModelSchemaVersion;
+
+    public int ProjectionVersion { get; set; } = CurrentProjectionVersion;
+
+    [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
+    public DateTime? ProjectionConvergedAtUtc { get; set; }
 
     [BsonRepresentation(BsonType.String)]
     public Guid TenantId { get; set; }

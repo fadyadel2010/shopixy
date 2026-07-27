@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using Nest;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
+using PointOfSale.Infrastructure.ReadModels.Evolution;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 
@@ -18,20 +19,25 @@ namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 /// </summary>
 public class ProductSearchIndexService : IProductSearchIndexService
 {
+    private const string SearchableFieldName = "isSearchable";
+
     private readonly IElasticClient _client;
     private readonly ElasticsearchSettings _settings;
     private readonly SearchTelemetry _telemetry;
+    private readonly IReadModelEvolutionConvergenceService _readModelEvolution;
     private readonly ILogger<ProductSearchIndexService> _logger;
 
     public ProductSearchIndexService(
         IElasticClient client,
         IOptions<ElasticsearchSettings> settings,
         SearchTelemetry telemetry,
+        IReadModelEvolutionConvergenceService readModelEvolution,
         ILogger<ProductSearchIndexService> logger)
     {
         _client = client;
         _settings = settings.Value;
         _telemetry = telemetry;
+        _readModelEvolution = readModelEvolution;
         _logger = logger;
     }
 
@@ -176,6 +182,25 @@ public class ProductSearchIndexService : IProductSearchIndexService
             
             if (existsResponse.Exists)
             {
+                var putMappingResponse = await _client.Indices.PutMappingAsync<ProductSearchDocument>(m => m
+                    .Index(indexName)
+                    .Properties(p => p
+                        .Keyword(k => k.Name(n => n.ReadModelName))
+                        .Number(n => n.Name(nn => nn.ReadModelSchemaVersion).Type(NumberType.Integer))
+                        .Number(n => n.Name(nn => nn.ProjectionVersion).Type(NumberType.Integer))
+                        .Date(d => d.Name(n => n.ProjectionConvergedAtUtc).Format("strict_date_optional_time||epoch_millis"))
+                        .Boolean(b => b.Name(n => n.IsSearchable))),
+                    cancellationToken);
+
+                if (!putMappingResponse.IsValid)
+                {
+                    _logger.LogError(
+                        "Failed to update Elasticsearch index '{IndexName}' mapping for SQL searchability authority | Error: {Error}",
+                        indexName,
+                        putMappingResponse.ServerError?.Error?.Reason ?? putMappingResponse.OriginalException?.Message);
+                    return false;
+                }
+
                 _logger.LogInformation("Elasticsearch index '{IndexName}' already exists", indexName);
                 return true;
             }
@@ -337,6 +362,7 @@ public class ProductSearchIndexService : IProductSearchIndexService
                 tenantId, query, page, pageSize, promotionRankingConfig?.Enabled ?? false, affiliateModeOnly);
 
             var skip = (page - 1) * pageSize;
+            var productSearchCompatibility = await ResolveProductSearchCompatibilityAsync(cancellationToken);
 
             // Build filter clauses (don't affect scoring)
             var filters = new List<Func<QueryContainerDescriptor<ProductSearchDocument>, QueryContainer>>
@@ -346,7 +372,13 @@ public class ProductSearchIndexService : IProductSearchIndexService
                 // Active products only
                 f => f.Term(t => t.Field(p => p.IsActive).Value(true)),
                 // Online visible only
-                f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true))
+                f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true)),
+                // Searchable/discoverable only after search index convergence.
+                f => ReadModelEvolutionQueryFilters.RequiredBoolean(
+                    f,
+                    SearchableFieldName,
+                    requiredValue: true,
+                    productSearchCompatibility)
             };
 
             // AF-12: Affiliate Mode filter
@@ -579,6 +611,8 @@ public class ProductSearchIndexService : IProductSearchIndexService
                 "Getting best sellers | TenantId: {TenantId} | Limit: {Limit} | AffiliateMode: {AffiliateMode}",
                 tenantId, limit, affiliateModeOnly);
 
+            var productSearchCompatibility = await ResolveProductSearchCompatibilityAsync(cancellationToken);
+
             // Build filter list
             var filters = new List<Func<QueryContainerDescriptor<ProductSearchDocument>, QueryContainer>>
             {
@@ -587,7 +621,13 @@ public class ProductSearchIndexService : IProductSearchIndexService
                 // Active products only
                 f => f.Term(t => t.Field(p => p.IsActive).Value(true)),
                 // Online visible only
-                f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true))
+                f => f.Term(t => t.Field(p => p.IsOnlineVisible).Value(true)),
+                // Searchable/discoverable only after search index convergence.
+                f => ReadModelEvolutionQueryFilters.RequiredBoolean(
+                    f,
+                    SearchableFieldName,
+                    requiredValue: true,
+                    productSearchCompatibility)
             };
 
             // AF-12: Affiliate Mode filter
@@ -719,5 +759,14 @@ public class ProductSearchIndexService : IProductSearchIndexService
             tenantId);
         
         return 0;
+    }
+
+    private async Task<ReadModelCompatibilityDecision> ResolveProductSearchCompatibilityAsync(
+        CancellationToken cancellationToken)
+    {
+        return await _readModelEvolution.GetCompatibilityDecisionAsync(
+            ReadModelEvolutionRegistry.StorefrontProduct,
+            ReadModelStore.Elasticsearch,
+            cancellationToken);
     }
 }
