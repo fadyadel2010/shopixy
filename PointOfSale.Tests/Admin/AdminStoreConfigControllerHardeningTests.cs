@@ -194,6 +194,7 @@ public sealed class AdminStoreConfigControllerHardeningTests
     {
         return new AdminStoreConfigController(
             service,
+            Mock.Of<IAdminThemeActivationService>(),
             Mock.Of<IStoreConfigAuditService>(),
             new TestTenantContext(tenantId),
             NullLogger<AdminStoreConfigController>.Instance)

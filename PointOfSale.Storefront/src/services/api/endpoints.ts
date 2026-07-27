@@ -7,6 +7,7 @@
 export const ENDPOINTS = {
     // Store Configuration
     STORE_CONFIG: '/api/storefront/store-config',
+    THEME_PREVIEW_CONFIG: '/api/storefront/theme-preview/config',
     SMART_OFFERS: '/api/storefront/smart-offers',
     HOME_FEATURED_PRODUCTS: '/api/storefront/home/featured-products',
     HOME_PRODUCTS_BY_IDS: '/api/storefront/home/products/by-ids',

@@ -40,6 +40,16 @@ import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig';
 import type { AxiosError } from 'axios';
 import type { ApiErrorResponse } from '@/types';
 
+function getThemePreviewToken(): string | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const token = new URLSearchParams(window.location.search).get('themePreviewToken');
+    const normalized = token?.trim();
+    return normalized ? normalized : null;
+}
+
 /**
  * Bootstrap result type
  */
@@ -115,21 +125,27 @@ export async function bootstrap(): Promise<BootstrapResult> {
     }
 
     try {
-        // Step 1: Resolve Tenant
-        const tenantResult = resolveTenant();
+        const themePreviewToken = getThemePreviewToken();
 
-        if (!tenantResult.success) {
-            if (import.meta.env.DEV) {
-                console.error('[Bootstrap] Tenant resolution failed');
+        if (!themePreviewToken) {
+            // Step 1: Resolve Tenant
+            const tenantResult = resolveTenant();
+
+            if (!tenantResult.success) {
+                if (import.meta.env.DEV) {
+                    console.error('[Bootstrap] Tenant resolution failed');
+                }
+                bootstrapState.error = tenantResult.error;
+                return { success: false, error: tenantResult.error };
             }
-            bootstrapState.error = tenantResult.error;
-            return { success: false, error: tenantResult.error };
-        }
 
-        setResolvedTenant(tenantResult.tenantId);
+            setResolvedTenant(tenantResult.tenantId);
 
-        if (import.meta.env.DEV) {
-            console.log('[Bootstrap] Tenant resolved:', tenantResult.tenantId, `(source: ${tenantResult.source})`);
+            if (import.meta.env.DEV) {
+                console.log('[Bootstrap] Tenant resolved:', tenantResult.tenantId, `(source: ${tenantResult.source})`);
+            }
+        } else if (import.meta.env.DEV) {
+            console.log('[Bootstrap] Theme preview mode detected; tenant will be resolved from signed preview authority.');
         }
 
         // Step 1.5: AF-12 — Capture affiliate ?ref= from browser URL
@@ -149,6 +165,18 @@ export async function bootstrap(): Promise<BootstrapResult> {
 
         try {
             const config = await fetchStoreConfig();
+
+            if (themePreviewToken) {
+                if (!config.tenantId) {
+                    throw new Error('Theme preview response did not include signed tenant scope.');
+                }
+
+                setResolvedTenant(config.tenantId, { overwrite: true });
+
+                if (import.meta.env.DEV) {
+                    console.log('[Bootstrap] Tenant resolved from theme preview authority:', config.tenantId);
+                }
+            }
 
             if (import.meta.env.DEV) {
                 const activeTheme = resolveActiveTheme(config.storefrontTheme);

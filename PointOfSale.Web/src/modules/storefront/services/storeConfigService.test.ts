@@ -171,4 +171,23 @@ describe('storeConfigService', () => {
             },
         })
     })
+
+    it('submits theme activation through the dedicated theme command endpoint', async () => {
+        apiPost.mockResolvedValue({ data: { rowVersion: '46', storefrontTheme: 'minimal' } })
+
+        const result = await storeConfigService.activateTheme('minimal', {
+            headers: {
+                'If-Match': '"45"',
+            },
+        })
+
+        expect(result).toEqual({ rowVersion: '46', storefrontTheme: 'minimal' })
+        expect(apiPost).toHaveBeenCalledWith('/admin/store-config/theme/activate', {
+            themeId: 'minimal',
+        }, {
+            headers: {
+                'If-Match': '"45"',
+            },
+        })
+    })
 })

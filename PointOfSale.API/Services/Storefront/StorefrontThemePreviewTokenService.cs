@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.DataProtection;
 using PointOfSale.Core.Constants;
 
@@ -12,17 +13,24 @@ public interface IStorefrontThemePreviewTokenService
         string token,
         Guid expectedTenantId,
         out string themeId);
+
+    bool TryValidate(
+        string token,
+        out Guid tenantId,
+        out string themeId);
 }
 
 public sealed record StorefrontThemePreviewTokenResult(
     string Token,
-    DateTime ExpiresAtUtc);
+    DateTime ExpiresAtUtc,
+    string Nonce);
 
 internal sealed class StorefrontThemePreviewTokenPayload
 {
     public Guid TenantId { get; set; }
     public string ThemeId { get; set; } = string.Empty;
     public DateTime ExpiresAtUtc { get; set; }
+    public string Nonce { get; set; } = string.Empty;
 }
 
 public sealed class StorefrontThemePreviewTokenService : IStorefrontThemePreviewTokenService
@@ -58,11 +66,12 @@ public sealed class StorefrontThemePreviewTokenService : IStorefrontThemePreview
         {
             TenantId = tenantId,
             ThemeId = StorefrontThemes.NormalizeOrDefault(themeId),
-            ExpiresAtUtc = expiresAtUtc
+            ExpiresAtUtc = expiresAtUtc,
+            Nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant()
         };
 
         var token = _protector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
-        return new StorefrontThemePreviewTokenResult(token, expiresAtUtc);
+        return new StorefrontThemePreviewTokenResult(token, expiresAtUtc, payload.Nonce);
     }
 
     public bool TryValidate(
@@ -71,7 +80,25 @@ public sealed class StorefrontThemePreviewTokenService : IStorefrontThemePreview
         out string themeId)
     {
         themeId = string.Empty;
-        if (string.IsNullOrWhiteSpace(token) || expectedTenantId == Guid.Empty)
+        if (expectedTenantId == Guid.Empty ||
+            !TryValidate(token, out var tenantId, out var validatedThemeId) ||
+            tenantId != expectedTenantId)
+        {
+            return false;
+        }
+
+        themeId = validatedThemeId;
+        return true;
+    }
+
+    public bool TryValidate(
+        string token,
+        out Guid tenantId,
+        out string themeId)
+    {
+        tenantId = Guid.Empty;
+        themeId = string.Empty;
+        if (string.IsNullOrWhiteSpace(token))
         {
             return false;
         }
@@ -81,13 +108,15 @@ public sealed class StorefrontThemePreviewTokenService : IStorefrontThemePreview
             var json = _protector.Unprotect(token);
             var payload = JsonSerializer.Deserialize<StorefrontThemePreviewTokenPayload>(json, JsonOptions);
             if (payload == null ||
-                payload.TenantId != expectedTenantId ||
+                payload.TenantId == Guid.Empty ||
                 payload.ExpiresAtUtc <= _timeProvider.GetUtcNow().UtcDateTime ||
-                !StorefrontThemes.IsSupported(payload.ThemeId))
+                !StorefrontThemes.IsSupported(payload.ThemeId) ||
+                string.IsNullOrWhiteSpace(payload.Nonce))
             {
                 return false;
             }
 
+            tenantId = payload.TenantId;
             themeId = StorefrontThemes.NormalizeOrDefault(payload.ThemeId);
             return true;
         }

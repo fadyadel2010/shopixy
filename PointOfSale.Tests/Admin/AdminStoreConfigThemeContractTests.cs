@@ -5,10 +5,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Cms;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -237,6 +239,136 @@ public sealed class AdminStoreConfigThemeContractTests
     }
 
     [Fact]
+    public async Task ActivateThemeAsync_ChangesOnlyStorefrontThemeAndPublishesProjectionEvent()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var databaseRoot = CreateInMemoryDatabaseRoot();
+        var storeConfigId = Guid.NewGuid();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var originalUpdatedAt = DateTime.UtcNow.AddMinutes(-10);
+        seedContext.StoreConfigs.Add(new StoreConfig
+        {
+            Id = storeConfigId,
+            TenantId = tenantId,
+            StoreName = "Theme Isolation Store",
+            StoreDescription = "Preserve this description",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            ThemeLivePresetKey = "default",
+            ThemeDraftOverridesJson = """{"colors":{"primary":"#111111"}}""",
+            ThemeLiveOverridesJson = """{"colors":{"background":"#eeeeee"}}""",
+            CustomizationJson = """
+            {
+              "storefrontTheme": "modern",
+              "pages": {
+                "home": {
+                  "draft": {
+                    "sections": []
+                  },
+                  "live": {
+                    "sections": []
+                  }
+                }
+              },
+              "seo": {
+                "title": "Keep me"
+              }
+            }
+            """,
+            Behavior = new StoreBehaviorConfig
+            {
+                EnableGuestCheckout = false,
+                ShowOutOfStockProducts = true,
+                EnableSearch = false,
+                FailCheckoutOnPromotionError = true
+            },
+            CommerceAiEnabled = true,
+            CommerceAiWidgetStyle = "sales",
+            CommerceAiWidgetPosition = "middle-right",
+            CommerceAiAutoGreetingEnabled = true,
+            CommerceAiAutoGreetingMessage = "Welcome back",
+            CommerceAiPersonality = "professional",
+            StorefrontStatus = "maintenance",
+            MaintenanceMessage = "Maintenance message",
+            UpdatedAtUtc = originalUpdatedAt,
+            CreatedAtUtc = originalUpdatedAt.AddDays(-1)
+        });
+        await seedContext.SaveChangesAsync();
+
+        await using var context = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var eventPublisher = new Mock<IEventPublisher>();
+        eventPublisher.SetReturnsDefault(Task.CompletedTask);
+        var service = CreateThemeActivationService(context, eventPublisher);
+
+        var response = await service.ActivateThemeAsync(
+            tenantId,
+            new AdminThemeActivationRequest { ThemeId = "minimal" },
+            "trace-theme-activation",
+            CancellationToken.None);
+
+        Assert.Equal("minimal", response.StorefrontTheme);
+
+        await using var verifyContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var config = await verifyContext.StoreConfigs.SingleAsync(item => item.TenantId == tenantId);
+
+        Assert.Equal("Theme Isolation Store", config.StoreName);
+        Assert.Equal("Preserve this description", config.StoreDescription);
+        Assert.Equal("default", config.ThemeId);
+        Assert.Equal("default", config.ThemePresetKey);
+        Assert.Equal("default", config.ThemeLivePresetKey);
+        Assert.Equal("""{"colors":{"primary":"#111111"}}""", config.ThemeDraftOverridesJson);
+        Assert.Equal("""{"colors":{"background":"#eeeeee"}}""", config.ThemeLiveOverridesJson);
+        Assert.False(config.Behavior.EnableGuestCheckout);
+        Assert.True(config.Behavior.ShowOutOfStockProducts);
+        Assert.False(config.Behavior.EnableSearch);
+        Assert.Equal("maintenance", config.StorefrontStatus);
+        Assert.Equal("Maintenance message", config.MaintenanceMessage);
+        Assert.True(config.CommerceAiEnabled);
+        Assert.Equal("sales", config.CommerceAiWidgetStyle);
+        Assert.Equal("middle-right", config.CommerceAiWidgetPosition);
+        Assert.True(config.CommerceAiAutoGreetingEnabled);
+        Assert.Equal("Welcome back", config.CommerceAiAutoGreetingMessage);
+        Assert.Equal("professional", config.CommerceAiPersonality);
+        Assert.True(config.UpdatedAtUtc > originalUpdatedAt);
+
+        using var customization = JsonDocument.Parse(config.CustomizationJson);
+        Assert.Equal("minimal", customization.RootElement.GetProperty("storefrontTheme").GetString());
+        Assert.True(customization.RootElement.TryGetProperty("pages", out _));
+        Assert.Equal("Keep me", customization.RootElement.GetProperty("seo").GetProperty("title").GetString());
+
+        var runtimeConfig = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
+        Assert.Equal("minimal", runtimeConfig.StorefrontTheme);
+
+        eventPublisher.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<StorefrontThemeActivatedEvent>(@event =>
+                    @event.TenantId == tenantId &&
+                    @event.StoreConfigId == storeConfigId &&
+                    @event.PreviousThemeId == "modern" &&
+                    @event.ThemeId == "minimal" &&
+                    @event.StoreName == "Theme Isolation Store"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        eventPublisher.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<StoreConfigUpdatedEvent>(@event =>
+                    @event.TenantId == tenantId &&
+                    @event.StoreConfigId == storeConfigId &&
+                    @event.StoreName == "Theme Isolation Store"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        eventPublisher.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<TenantUpdatedEvent>(@event =>
+                    @event.TenantId == tenantId &&
+                    @event.StoreName == "Theme Isolation Store"),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
     public async Task UpdateThemeOverridesAsync_RejectsUnsupportedAuthorityShapedFields()
     {
         var databaseName = Guid.NewGuid().ToString("N");
@@ -270,9 +402,11 @@ public sealed class AdminStoreConfigThemeContractTests
         return new ApplicationDbContext(options, new TestTenantContext(tenantId));
     }
 
-    private static AdminStoreConfigService CreateService(ApplicationDbContext context)
+    private static AdminStoreConfigService CreateService(
+        ApplicationDbContext context,
+        Mock<IEventPublisher>? publishEndpoint = null)
     {
-        var publishEndpoint = new Mock<IEventPublisher>();
+        publishEndpoint ??= new Mock<IEventPublisher>();
         publishEndpoint.SetReturnsDefault(Task.CompletedTask);
 
         var publishLockService = new Mock<IPublishLockService>();
@@ -298,6 +432,29 @@ public sealed class AdminStoreConfigThemeContractTests
             new StorefrontPublishTelemetry(),
             NullLogger<AdminStoreConfigService>.Instance,
             new HttpContextAccessor());
+    }
+
+    private static AdminThemeActivationService CreateThemeActivationService(
+        ApplicationDbContext context,
+        Mock<IEventPublisher>? publishEndpoint = null)
+    {
+        publishEndpoint ??= new Mock<IEventPublisher>();
+        publishEndpoint.SetReturnsDefault(Task.CompletedTask);
+
+        var publishLockService = new Mock<IPublishLockService>();
+        publishLockService
+            .Setup(service => service.TryAcquireAsync(It.IsAny<Guid>(), It.IsAny<string>()))
+            .ReturnsAsync(PublishLockResult.Success("theme-activation-lock"));
+
+        var readService = CreateService(context, publishEndpoint);
+
+        return new AdminThemeActivationService(
+            context,
+            publishEndpoint.Object,
+            publishLockService.Object,
+            readService,
+            new StorefrontPublishTelemetry(),
+            NullLogger<AdminThemeActivationService>.Instance);
     }
 
     private static void SeedThemePresets(ApplicationDbContext context)

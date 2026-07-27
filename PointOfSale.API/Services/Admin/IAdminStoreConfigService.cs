@@ -105,7 +105,7 @@ public interface IAdminStoreConfigService
         string traceId,
         CancellationToken cancellationToken = default,
         uint? expectedRowVersion = null);       
-        
+
     Task<AdminStoreConfigResponse> PublishThemeAsync(
         Guid tenantId,
         string traceId,

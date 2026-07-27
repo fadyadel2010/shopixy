@@ -52,6 +52,8 @@ public sealed class StoreBuilderEndToEndAuthorityCertificationTests
         Assert.Contains("Theme mutation requires accepted backend RowVersion evidence.", theme, StringComparison.Ordinal);
         Assert.Contains("storeConfigService.publishTheme(buildIfMatchOptions(rowVersion))", theme, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentStoreIdentityPresentation(response, user)", marketplace, StringComparison.Ordinal);
+        Assert.Contains("storeConfigService.activateTheme(", marketplace, StringComparison.Ordinal);
+        Assert.DoesNotContain("storeConfigService.updateStoreConfig({", marketplace, StringComparison.Ordinal);
         Assert.Contains("Theme activation response was rejected by backend store authority admission.", marketplace, StringComparison.Ordinal);
     }
 

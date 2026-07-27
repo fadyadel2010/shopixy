@@ -832,6 +832,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminInventoryService
 // PostgreSQL is the ONLY source of truth. Redis cache for storefront reads.
 // =============================================================================
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminStoreConfigService, PointOfSale.API.Services.Admin.AdminStoreConfigService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminThemeActivationService, PointOfSale.API.Services.Admin.AdminThemeActivationService>();
 
 // =============================================================================
 // ADMIN CMS SERVICE (Phase 9.11 - Static CMS Pages & Navigation Engine)
@@ -853,6 +854,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminStorefrontFooter
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontPreviewService, PointOfSale.API.Services.Storefront.StorefrontPreviewService>();
 builder.Services.AddSingleton<TimeProvider>(TimeProvider.System);
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontThemePreviewTokenService, PointOfSale.API.Services.Storefront.StorefrontThemePreviewTokenService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontThemePreviewService, PointOfSale.API.Services.Storefront.StorefrontThemePreviewService>();
 
 // Audit Service - Records all publish/rollback operations
 // Provides compliance trail for support and debugging
@@ -3328,6 +3330,14 @@ app.UseWhen(
     branch => branch.UseMiddleware<PointOfSale.API.Middleware.CookieCsrfProtectionMiddleware>());
 
 app.UseAuthentication();
+
+// =============================================================================
+// THEME PREVIEW AUTHORITY
+// Validates signed theme-preview capability tokens before normal tenant
+// resolution. It establishes tenant context only for constrained, read-only
+// storefront preview requests and never trusts tenant query/header input.
+// =============================================================================
+app.UseMiddleware<PointOfSale.API.Middleware.ThemePreviewAuthorityMiddleware>();
 
 // =============================================================================
 // TENANT RESOLUTION MIDDLEWARE

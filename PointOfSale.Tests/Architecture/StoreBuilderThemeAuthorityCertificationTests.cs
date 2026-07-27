@@ -15,7 +15,8 @@ public sealed class StoreBuilderThemeAuthorityCertificationTests
         Assert.Contains("storeConfigService.updateThemeOverrides({", editor, StringComparison.Ordinal);
         Assert.Contains("storeConfigService.publishTheme(buildIfMatchOptions(rowVersion))", editor, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentStoreIdentityPresentation(response, user)", marketplace, StringComparison.Ordinal);
-        Assert.Contains("storeConfigService.updateStoreConfig({", marketplace, StringComparison.Ordinal);
+        Assert.Contains("storeConfigService.activateTheme(", marketplace, StringComparison.Ordinal);
+        Assert.DoesNotContain("storeConfigService.updateStoreConfig({", marketplace, StringComparison.Ordinal);
         Assert.Contains("createThemePreviewLink(themeId)", service, StringComparison.Ordinal);
         Assert.DoesNotContain("previewTheme", marketplace, StringComparison.Ordinal);
     }
@@ -25,11 +26,16 @@ public sealed class StoreBuilderThemeAuthorityCertificationTests
     {
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminStoreConfigController.cs");
         var adminService = ReadRepoFile("PointOfSale.API/Services/Admin/AdminStoreConfigService.cs");
+        var themeActivationService = ReadRepoFile("PointOfSale.API/Services/Admin/AdminThemeActivationService.cs");
         var previewTokenService = ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontThemePreviewTokenService.cs");
         var runtimeController = ReadRepoFile("PointOfSale.API/Controllers/StorefrontStoreConfigController.cs");
 
         Assert.Contains("RequireExpectedRowVersion(traceId)", controller, StringComparison.Ordinal);
         Assert.Contains("UpdateThemeOverrides", controller, StringComparison.Ordinal);
+        Assert.Contains("ActivateTheme", controller, StringComparison.Ordinal);
+        Assert.Contains("IAdminThemeActivationService", controller, StringComparison.Ordinal);
+        Assert.Contains("ActivateThemeAsync", themeActivationService, StringComparison.Ordinal);
+        Assert.DoesNotContain("ActivateThemeAsync", adminService, StringComparison.Ordinal);
         Assert.Contains("PublishTheme", controller, StringComparison.Ordinal);
         Assert.Contains("ApplyExpectedRowVersion(config, expectedRowVersion)", adminService, StringComparison.Ordinal);
         Assert.Contains("ValidateThemeOverrideShape", adminService, StringComparison.Ordinal);

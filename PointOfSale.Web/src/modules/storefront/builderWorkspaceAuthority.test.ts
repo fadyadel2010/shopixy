@@ -65,6 +65,7 @@ describe('storefront builder workspace authority', () => {
 
         expect(marketplaceSource).toContain('deriveCurrentStoreIdentityPresentation(response, user)')
         expect(marketplaceSource).toContain("throw new Error('Theme activation response was rejected by backend store authority admission.')")
-        expect(marketplaceSource).toContain('storeConfigService.updateStoreConfig({')
+        expect(marketplaceSource).toContain('storeConfigService.activateTheme(')
+        expect(marketplaceSource).not.toContain('storeConfigService.updateStoreConfig({')
     })
 })

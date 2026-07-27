@@ -36,6 +36,7 @@ namespace PointOfSale.API.Controllers;
 public class AdminStoreConfigController : ControllerBase
 {
     private readonly IAdminStoreConfigService _storeConfigService;
+    private readonly IAdminThemeActivationService _themeActivationService;
     private readonly IStoreConfigAuditService _auditService;
     private readonly ITenantContext _tenantContext;
     private readonly IStorefrontThemePreviewTokenService? _themePreviewTokenService;
@@ -43,12 +44,14 @@ public class AdminStoreConfigController : ControllerBase
 
     public AdminStoreConfigController(
         IAdminStoreConfigService storeConfigService,
+        IAdminThemeActivationService themeActivationService,
         IStoreConfigAuditService auditService,
         ITenantContext tenantContext,
         ILogger<AdminStoreConfigController> logger,
         IStorefrontThemePreviewTokenService? themePreviewTokenService = null)
     {
         _storeConfigService = storeConfigService;
+        _themeActivationService = themeActivationService;
         _auditService = auditService;
         _tenantContext = tenantContext;
         _themePreviewTokenService = themePreviewTokenService;
@@ -525,6 +528,64 @@ public class AdminStoreConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "UpdateThemeOverrides failed");
+            return StatusCode(500, AdminStoreConfigApiErrorResponse.InternalError(traceId));
+        }
+    }
+
+    /// <summary>
+    /// Activates a storefront runtime theme without replacing unrelated StoreConfig domains.
+    /// </summary>
+    [HttpPost("theme/activate")]
+    [ProducesResponseType(typeof(AdminStoreConfigResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AdminStoreConfigApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(AdminStoreConfigApiErrorResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> ActivateTheme(
+        [FromBody] AdminThemeActivationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null) return validation.Error;
+
+        var validationError = request.Validate();
+        if (validationError != null)
+        {
+            _logger.LogWarning(
+                "ActivateTheme validation failed | TenantId: {TenantId} | Error: {Error} | TraceId: {TraceId}",
+                validation.TenantId,
+                validationError,
+                traceId);
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(validationError, traceId));
+        }
+
+        var precondition = RequireExpectedRowVersion(traceId, request.RowVersion);
+        if (precondition.Error != null) return precondition.Error;
+
+        try
+        {
+            var result = await _themeActivationService.ActivateThemeAsync(
+                validation.TenantId!.Value,
+                request,
+                traceId,
+                cancellationToken,
+                expectedRowVersion: precondition.RowVersion);
+            ApplyConcurrencyHeaders(result.RowVersion);
+            return Ok(result);
+        }
+        catch (ConcurrencyConflictException ex)
+        {
+            _logger.LogWarning(ex, "ActivateTheme concurrency conflict");
+            RecordAdminConflict("theme", "stale_row_version");
+            return Conflict(AdminStoreConfigApiErrorResponse.ConcurrencyConflict(traceId));
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "ActivateTheme rejected invalid theme");
+            return BadRequest(AdminStoreConfigApiErrorResponse.InvalidConfig(ex.Message, traceId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ActivateTheme failed");
             return StatusCode(500, AdminStoreConfigApiErrorResponse.InternalError(traceId));
         }
     }

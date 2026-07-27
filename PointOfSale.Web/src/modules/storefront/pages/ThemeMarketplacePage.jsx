@@ -13,15 +13,22 @@ import {
 
 const STOREFRONT_BASE_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174'
 
-function buildPreviewUrl(previewToken, tenantId) {
+function buildPreviewUrl(previewToken) {
     const url = new URL(STOREFRONT_BASE_URL)
-
-    if (tenantId) {
-        url.searchParams.set('tenant', tenantId)
-    }
 
     url.searchParams.set('themePreviewToken', previewToken)
     return url.toString()
+}
+
+const normalizeRowVersion = (rowVersion) => (
+    typeof rowVersion === 'string' && rowVersion.trim() ? rowVersion.trim() : ''
+)
+
+const buildIfMatchOptions = (rowVersion) => {
+    const acceptedRowVersion = normalizeRowVersion(rowVersion)
+    return acceptedRowVersion
+        ? { headers: { 'If-Match': `"${acceptedRowVersion}"` } }
+        : {}
 }
 
 function ThemePreviewArtwork({ theme }) {
@@ -113,7 +120,6 @@ export function ThemeMarketplacePage() {
     const { showError, showInfo, showSuccess } = useToast()
     const isRTL = i18n.language === 'ar'
 
-    const tenantId = user?.tenantId || ''
     const themes = useMemo(() => getAvailableMarketplaceThemes(), [])
 
     const [storeConfig, setStoreConfig] = useState(null)
@@ -160,7 +166,7 @@ export function ThemeMarketplacePage() {
     const openPreview = async (themeId) => {
         try {
             const preview = await storeConfigService.createThemePreviewLink(themeId)
-            window.open(buildPreviewUrl(preview.previewToken, tenantId), '_blank', 'noopener,noreferrer')
+            window.open(buildPreviewUrl(preview.previewToken), '_blank', 'noopener,noreferrer')
             showInfo(isRTL ? 'جارٍ فتح معاينة الثيم في المتجر' : 'Opening storefront theme preview...')
         } catch (error) {
             console.error('Failed to create storefront theme preview:', error)
@@ -175,10 +181,15 @@ export function ThemeMarketplacePage() {
 
         setActivatingThemeId(themeId)
         try {
-            const response = await storeConfigService.updateStoreConfig({
-                ...storeConfig,
-                storefrontTheme: themeId,
-            })
+            const rowVersion = normalizeRowVersion(storeConfig.rowVersion)
+            if (!rowVersion) {
+                throw new Error('Theme activation requires accepted backend RowVersion evidence.')
+            }
+
+            const response = await storeConfigService.activateTheme(
+                themeId,
+                buildIfMatchOptions(rowVersion)
+            )
             const updatedConfig = deriveCurrentStoreIdentityPresentation(response, user)
             if (!updatedConfig) {
                 throw new Error('Theme activation response was rejected by backend store authority admission.')

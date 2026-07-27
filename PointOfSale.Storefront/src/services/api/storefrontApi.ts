@@ -39,7 +39,7 @@ export const fetchStoreConfig = async (): Promise<StoreConfig> => {
         ? null
         : new URLSearchParams(window.location.search).get('themePreviewToken');
     const response = await httpClient.get<StoreConfig>(
-        ENDPOINTS.STORE_CONFIG,
+        previewToken ? ENDPOINTS.THEME_PREVIEW_CONFIG : ENDPOINTS.STORE_CONFIG,
         previewToken ? { params: { themePreviewToken: previewToken } } : undefined
     );
     return response.data;

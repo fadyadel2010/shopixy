@@ -15,6 +15,10 @@ public sealed class StorefrontThemePreviewTokenServiceTests
 
         var preview = service.Create(tenantId, "fashion");
 
+        Assert.True(service.TryValidate(preview.Token, out var capabilityTenantId, out var capabilityThemeId));
+        Assert.Equal(tenantId, capabilityTenantId);
+        Assert.Equal("fashion", capabilityThemeId);
+        Assert.False(string.IsNullOrWhiteSpace(preview.Nonce));
         Assert.True(service.TryValidate(preview.Token, tenantId, out var themeId));
         Assert.Equal("fashion", themeId);
         Assert.False(service.TryValidate(preview.Token, Guid.NewGuid(), out _));
@@ -34,6 +38,21 @@ public sealed class StorefrontThemePreviewTokenServiceTests
         clock.UtcNow = clock.UtcNow.AddMinutes(11);
 
         Assert.False(service.TryValidate(preview.Token, tenantId, out _));
+        Assert.False(service.TryValidate(preview.Token, out _, out _));
+    }
+
+    [Fact]
+    public void TamperedToken_IsRejected()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = new StorefrontThemePreviewTokenService(
+            new EphemeralDataProtectionProvider(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 6, 9, 12, 0, 0, TimeSpan.Zero)));
+
+        var preview = service.Create(tenantId, "modern");
+        var tamperedToken = preview.Token[..^1] + (preview.Token[^1] == 'a' ? "b" : "a");
+
+        Assert.False(service.TryValidate(tamperedToken, out _, out _));
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider

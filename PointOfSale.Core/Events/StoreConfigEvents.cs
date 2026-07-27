@@ -33,6 +33,22 @@ public class StoreConfigUpdatedEvent : IntegrationEvent
 }
 
 /// <summary>
+/// Event emitted when the storefront runtime theme is activated.
+/// </summary>
+public class StorefrontThemeActivatedEvent : IntegrationEvent
+{
+    public Guid StoreConfigId { get; set; }
+
+    public string PreviousThemeId { get; set; } = string.Empty;
+
+    public string ThemeId { get; set; } = string.Empty;
+
+    public string StoreName { get; set; } = string.Empty;
+
+    public DateTime ActivatedAtUtc { get; set; }
+}
+
+/// <summary>
 /// Event emitted when store configuration is created for the first time.
 /// </summary>
 public class StoreConfigCreatedEvent : IntegrationEvent

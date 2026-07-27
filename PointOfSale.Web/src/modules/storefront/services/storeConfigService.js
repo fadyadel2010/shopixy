@@ -122,6 +122,14 @@ export const storeConfigService = {
     },
 
     /**
+     * Activate storefront runtime theme without replacing unrelated store configuration.
+     */
+    async activateTheme(themeId, options = {}) {
+        const response = await api.post('/admin/store-config/theme/activate', { themeId }, options)
+        return response.data
+    },
+
+    /**
      * Publish theme
      */
     async publishTheme(options = {}) {

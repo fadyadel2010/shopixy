@@ -4,6 +4,7 @@
  */
 
 export interface StoreConfig {
+    tenantId?: string;
     storeName: string;
     storeDescription?: string;
     themeId: string;

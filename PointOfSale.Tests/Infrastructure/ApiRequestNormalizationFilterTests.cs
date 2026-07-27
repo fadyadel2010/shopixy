@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.Mvc;
 
@@ -149,12 +150,108 @@ public class ApiRequestNormalizationFilterTests
         Assert.Null(context.Result);
     }
 
+    [Fact]
+    public async Task OnActionExecutionAsync_ThemeActivationRequest_DoesNotRequireCommerceAiGraph()
+    {
+        var filter = new ApiRequestNormalizationFilter();
+        var controller = new ThemeActivationProbeController();
+        var context = CreateActionExecutingContext(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["request"] = new AdminThemeActivationRequest
+                {
+                    ThemeId = "minimal"
+                }
+            },
+            traceIdentifier: "corr-theme-activation",
+            controller,
+            nameof(ThemeActivationProbeController.Post));
+
+        var nextInvoked = false;
+
+        await filter.OnActionExecutionAsync(
+            context,
+            () =>
+            {
+                nextInvoked = true;
+                return Task.FromResult(new ActionExecutedContext(context, [], context.Controller));
+            });
+
+        Assert.True(nextInvoked);
+        Assert.Null(context.Result);
+    }
+
+    [Fact]
+    public async Task OnActionExecutionAsync_FullStoreConfigRequest_StillRequiresCommerceAiAutoGreetingMessage()
+    {
+        var filter = new ApiRequestNormalizationFilter();
+        var controller = new StoreConfigProbeController();
+        var context = CreateActionExecutingContext(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["request"] = new AdminStoreConfigRequest
+                {
+                    StoreName = "Validation Store",
+                    ThemeId = "default",
+                    Theme = new AdminThemeConfigDto(),
+                    Behavior = new AdminBehaviorConfigDto(),
+                    CommerceAi = new AdminCommerceAiConfigDto
+                    {
+                        Enabled = true,
+                        WidgetStyle = "minimal",
+                        WidgetPosition = "bottom-right",
+                        AutoGreetingEnabled = true,
+                        AutoGreetingMessage = string.Empty,
+                        Personality = "friendly"
+                    },
+                    StorefrontStatus = "live"
+                }
+            },
+            traceIdentifier: "corr-store-config-commerce-ai",
+            controller,
+            nameof(StoreConfigProbeController.Put));
+
+        var nextInvoked = false;
+
+        await filter.OnActionExecutionAsync(
+            context,
+            () =>
+            {
+                nextInvoked = true;
+                return Task.FromResult(new ActionExecutedContext(context, [], context.Controller));
+            });
+
+        Assert.False(nextInvoked);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(context.Result);
+        var response = Assert.IsType<ApiErrorResponse>(badRequest.Value);
+        var details = Assert.IsType<Dictionary<string, string[]>>(response.Details);
+
+        Assert.Equal("VALIDATION_ERROR", response.Code);
+        Assert.True(details.ContainsKey("request.CommerceAi.AutoGreetingMessage"));
+        Assert.Contains(details["request.CommerceAi.AutoGreetingMessage"], message =>
+            message.Contains("required", StringComparison.OrdinalIgnoreCase));
+    }
+
     private static ActionExecutingContext CreateActionExecutingContext(
         IDictionary<string, object?> actionArguments,
         string traceIdentifier)
     {
-        var controller = new ValidationProbeController();
-        var methodInfo = typeof(ValidationProbeController).GetMethod(nameof(ValidationProbeController.Post), BindingFlags.Instance | BindingFlags.Public)!;
+        return CreateActionExecutingContext(
+            actionArguments,
+            traceIdentifier,
+            new ValidationProbeController(),
+            nameof(ValidationProbeController.Post));
+    }
+
+    private static ActionExecutingContext CreateActionExecutingContext<TController>(
+        IDictionary<string, object?> actionArguments,
+        string traceIdentifier,
+        TController controller,
+        string actionName)
+        where TController : ControllerBase
+    {
+        var methodInfo = typeof(TController).GetMethod(actionName, BindingFlags.Instance | BindingFlags.Public)!;
         var parameterInfo = methodInfo.GetParameters().Single();
 
         var httpContext = new DefaultHttpContext
@@ -165,9 +262,9 @@ public class ApiRequestNormalizationFilterTests
 
         var actionDescriptor = new ControllerActionDescriptor
         {
-            ControllerName = nameof(ValidationProbeController),
-            ActionName = nameof(ValidationProbeController.Post),
-            ControllerTypeInfo = typeof(ValidationProbeController).GetTypeInfo(),
+            ControllerName = typeof(TController).Name,
+            ActionName = actionName,
+            ControllerTypeInfo = typeof(TController).GetTypeInfo(),
             MethodInfo = methodInfo,
             Parameters =
             [
@@ -187,6 +284,16 @@ public class ApiRequestNormalizationFilterTests
     private sealed class ValidationProbeController : ControllerBase
     {
         public IActionResult Post(ValidationProbeDto request) => Ok(request);
+    }
+
+    private sealed class ThemeActivationProbeController : ControllerBase
+    {
+        public IActionResult Post(AdminThemeActivationRequest request) => Ok(request);
+    }
+
+    private sealed class StoreConfigProbeController : ControllerBase
+    {
+        public IActionResult Put(AdminStoreConfigRequest request) => Ok(request);
     }
 
     private sealed class OptionalParameterProbeController : ControllerBase

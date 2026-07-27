@@ -178,6 +178,37 @@ public class AdminStorefrontStatusRequest
     }
 }
 
+/// <summary>
+/// Request DTO for activating a storefront theme shell.
+/// POST /api/admin/store-config/theme/activate
+/// </summary>
+public class AdminThemeActivationRequest
+{
+    /// <summary>
+    /// Storefront runtime theme identifier, for example "modern", "minimal", or "fashion".
+    /// </summary>
+    [Required]
+    [StringLength(50, MinimumLength = 1)]
+    public string ThemeId { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Required optimistic concurrency token for admin mutations.
+    /// Accepts the current RowVersion returned by GET or the If-Match ETag value.
+    /// </summary>
+    public string? RowVersion { get; set; }
+
+    public string? Validate()
+    {
+        if (string.IsNullOrWhiteSpace(ThemeId))
+            return "ThemeId is required";
+
+        if (!StorefrontThemes.IsSupported(ThemeId))
+            return "ThemeId is not supported";
+
+        return null;
+    }
+}
+
 public class AdminThemeViewDto
 {
     public string PresetKey { get; set; } = "default";

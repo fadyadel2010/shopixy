@@ -59,6 +59,7 @@ export function normalizeError(error: AxiosError<ApiErrorResponse>): NormalizedE
 
 // Base URL - defaults to proxy path
 const BASE_URL = import.meta.env.VITE_API_URL || '';
+const THEME_PREVIEW_TOKEN_HEADER = 'X-Theme-Preview-Token';
 type AuthRefreshResult = 'authenticated' | 'degraded' | 'unauthenticated';
 
 // Track if we're currently refreshing to prevent loops
@@ -88,6 +89,27 @@ function isAuthEndpoint(url: string): boolean {
         url.includes('/auth/register') ||
         url.includes('/auth/refresh') ||
         url.includes('/auth/logout');
+}
+
+function getThemePreviewToken(): string | null {
+    if (typeof window === 'undefined') {
+        return null;
+    }
+
+    const token = new URLSearchParams(window.location.search).get('themePreviewToken');
+    const normalized = token?.trim();
+    return normalized ? normalized : null;
+}
+
+function isReadOnlyStorefrontRequest(config: InternalAxiosRequestConfig): boolean {
+    const method = (config.method || 'get').toLowerCase();
+    const url = config.url || '';
+
+    return (method === 'get' || method === 'head') &&
+        url.startsWith('/api/storefront/') &&
+        !url.startsWith('/api/storefront/cart') &&
+        !url.startsWith('/api/storefront/account') &&
+        !url.startsWith('/api/storefront/orders');
 }
 
 function triggerForcedLogout(): Promise<void> {
@@ -159,7 +181,9 @@ const createHttpClient = (): AxiosInstance => {
             // Check if request context is ready
             if (!isRequestContextReady()) {
                 // Allow store-config fetch during bootstrap (it's needed to complete bootstrap)
-                const isBootstrapRequest = config.url?.includes('/store-config');
+                const isBootstrapRequest =
+                    config.url?.includes('/store-config') ||
+                    config.url?.includes('/theme-preview/config');
 
                 if (!isBootstrapRequest) {
                     const error = new Error(
@@ -169,6 +193,11 @@ const createHttpClient = (): AxiosInstance => {
                     console.error(error.message);
                     return Promise.reject(error);
                 }
+            }
+
+            const themePreviewToken = getThemePreviewToken();
+            if (themePreviewToken && isReadOnlyStorefrontRequest(config)) {
+                config.headers[THEME_PREVIEW_TOKEN_HEADER] = themePreviewToken;
             }
 
             // Attach headers from request context
