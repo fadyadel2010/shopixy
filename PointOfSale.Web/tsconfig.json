@@ -24,9 +24,10 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@web/*": ["./src/*"]
+      "@web/*": ["./src/*"],
+      "@theme-authority/*": ["../theme-authority/*"]
     }
   },
-  "include": ["src"],
+  "include": ["src", "../theme-authority/shopixy-theme-authority.json"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -18,6 +18,8 @@ import { useLanguageStore, selectLanguage } from '@/i18n/languageStore';
 import { useTranslation } from '@/i18n/useTranslation';
 import { useBodyScrollLock } from '@/hooks';
 import type { ProductDiscoveryFacets, CategoryTreeDto } from '@/types';
+import { useTheme } from '@/storefront/themes/ThemeContext';
+import { normalizeCommerceTheme } from '@/storefront/commerce/CommerceBrowsingExperience';
 import {
     BrandFilter,
     CategoryFilter,
@@ -25,6 +27,73 @@ import {
     StockFilter,
     PromotionFilter,
 } from './FilterComponents';
+
+const filterPanelStyles = {
+    modern: {
+        aside: 'w-64 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-md border border-muted/15 bg-background shadow-sm',
+        header: 'border-b border-muted/10 px-4 py-3',
+        title: 'font-semibold text-text',
+        content: 'px-4',
+        count: 'rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-white',
+    },
+    minimal: {
+        aside: 'w-60 flex-shrink-0',
+        panel: 'sticky top-6 border-y border-muted/20 bg-background',
+        header: 'border-b border-muted/15 px-2 py-4',
+        title: 'text-sm font-normal uppercase tracking-[0.14em] text-text',
+        content: 'px-2',
+        count: 'text-xs font-medium text-muted',
+    },
+    fashion: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 border-2 border-text bg-background',
+        header: 'border-b-2 border-text px-4 py-3',
+        title: 'text-sm font-black uppercase tracking-[0.2em] text-text',
+        content: 'px-4',
+        count: 'bg-text px-2 py-0.5 text-xs font-black text-background',
+    },
+    pearl: {
+        aside: 'w-64 flex-shrink-0',
+        panel: 'sticky top-6 border border-secondary/25 bg-background shadow-[0_18px_40px_rgba(15,23,42,0.04)]',
+        header: 'border-b border-secondary/20 px-4 py-4',
+        title: 'text-sm font-semibold uppercase tracking-[0.24em] text-secondary',
+        content: 'px-4',
+        count: 'border border-secondary/30 px-2 py-0.5 text-xs font-semibold text-secondary',
+    },
+    phoenix: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 border border-black/10 bg-background shadow-sm',
+        header: 'border-b border-black/10 px-4 py-3',
+        title: 'text-sm font-black uppercase tracking-[0.2em] text-text',
+        content: 'px-4',
+        count: 'bg-primary px-2 py-0.5 text-xs font-black text-white',
+    },
+    hype: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-lg border border-muted/20 bg-background shadow-sm ring-1 ring-muted/5',
+        header: 'border-b border-muted/20 px-3 py-3',
+        title: 'text-xs font-bold uppercase tracking-[0.12em] text-text',
+        content: 'px-3',
+        count: 'rounded-sm bg-primary px-2 py-0.5 text-xs font-bold text-white',
+    },
+    electronics: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-md border border-muted/25 bg-background shadow-sm ring-1 ring-muted/5',
+        header: 'border-b border-muted/20 px-3 py-3',
+        title: 'font-mono text-xs font-bold uppercase tracking-[0.08em] text-text',
+        content: 'px-3',
+        count: 'rounded-sm bg-primary px-2 py-0.5 font-mono text-xs font-bold text-white',
+    },
+    default: {
+        aside: 'w-64 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-xl bg-surface shadow-sm',
+        header: 'border-b border-muted/10 px-4 py-3',
+        title: 'font-semibold text-text',
+        content: 'px-4',
+        count: 'rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white',
+    },
+};
 
 interface ProductFiltersSidebarProps {
     /** Facets from discovery API response */
@@ -91,6 +160,9 @@ const DesktopSidebar: React.FC<ProductFiltersSidebarProps> = ({
     const { t } = useTranslation();
     const language = useLanguageStore(selectLanguage);
     const isRTL = language === 'ar';
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const styles = filterPanelStyles[theme];
 
     const categoryNameMap = React.useMemo(
         () => buildCategoryNameMap(categories),
@@ -104,8 +176,8 @@ const DesktopSidebar: React.FC<ProductFiltersSidebarProps> = ({
 
     if (!facets) {
         return (
-            <aside className={`w-64 flex-shrink-0 ${isRTL ? 'ml-6' : 'mr-6'}`}>
-                <div className="sticky top-6 bg-surface rounded-xl p-4 shadow-sm animate-pulse">
+            <aside className={`${styles.aside} ${isRTL ? 'ml-6' : 'mr-6'}`}>
+                <div className={`${styles.panel} animate-pulse p-4`}>
                     <div className="h-6 bg-muted/20 rounded w-24 mb-4"></div>
                     <div className="space-y-3">
                         {[...Array(5)].map((_, i) => (
@@ -118,17 +190,17 @@ const DesktopSidebar: React.FC<ProductFiltersSidebarProps> = ({
     }
 
     return (
-        <aside className={`w-64 flex-shrink-0 ${isRTL ? 'ml-6' : 'mr-6'}`}>
-            <div className="sticky top-6 bg-surface rounded-xl shadow-sm overflow-hidden">
+        <aside className={`${styles.aside} ${isRTL ? 'ml-6' : 'mr-6'}`}>
+            <div className={styles.panel} data-commerce-filters-theme={theme}>
                 {/* Header */}
-                <div className="px-4 py-3 border-b border-muted/10 flex items-center justify-between">
-                    <h3 className="font-semibold text-text flex items-center gap-2">
+                <div className={`${styles.header} flex items-center justify-between`}>
+                    <h3 className={`${styles.title} flex items-center gap-2`}>
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                         </svg>
                         {t('filters.title')}
                         {activeFilterCount > 0 && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-primary text-white rounded-full">
+                            <span className={styles.count}>
                                 {activeFilterCount}
                             </span>
                         )}
@@ -145,7 +217,7 @@ const DesktopSidebar: React.FC<ProductFiltersSidebarProps> = ({
                 </div>
 
                 {/* Filter content */}
-                <div className={`px-4 max-h-[calc(100vh-200px)] overflow-y-auto ${isLoading ? 'opacity-60' : ''}`}>
+                <div className={`${styles.content} max-h-[calc(100vh-200px)] overflow-y-auto ${isLoading ? 'opacity-60' : ''}`}>
                     {/* Category Filter */}
                     {facets.categories && facets.categories.length > 0 && (
                         <CategoryFilter
@@ -224,6 +296,9 @@ const MobileDrawer: React.FC<MobileDrawerProps> = ({
     const { t } = useTranslation();
     const language = useLanguageStore(selectLanguage);
     const isRTL = language === 'ar';
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const styles = filterPanelStyles[theme];
 
     // Lock body scroll when drawer is open
     useBodyScrollLock(isOpen);
@@ -261,18 +336,19 @@ const MobileDrawer: React.FC<MobileDrawerProps> = ({
 
             {/* Drawer */}
             <div
-                className={`fixed inset-y-0 ${isRTL ? 'left-0' : 'right-0'} w-80 max-w-full bg-surface z-50 shadow-xl flex flex-col transform transition-transform duration-300 ${isOpen ? 'translate-x-0' : isRTL ? '-translate-x-full' : 'translate-x-full'
+                className={`fixed inset-y-0 ${isRTL ? 'left-0' : 'right-0'} w-80 max-w-full bg-background z-50 shadow-xl flex flex-col transform transition-transform duration-300 ${isOpen ? 'translate-x-0' : isRTL ? '-translate-x-full' : 'translate-x-full'
                     }`}
+                data-commerce-filters-theme={theme}
             >
                 {/* Header */}
-                <div className="px-4 py-4 border-b border-muted/10 flex items-center justify-between">
-                    <h3 className="font-semibold text-text flex items-center gap-2">
+                <div className={`${styles.header} flex items-center justify-between`}>
+                    <h3 className={`${styles.title} flex items-center gap-2`}>
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
                         </svg>
                         {t('filters.title')}
                         {activeFilterCount > 0 && (
-                            <span className="px-2 py-0.5 text-xs font-medium bg-primary text-white rounded-full">
+                            <span className={styles.count}>
                                 {activeFilterCount}
                             </span>
                         )}
@@ -385,12 +461,24 @@ export const MobileFilterButton: React.FC<FilterButtonProps> = ({
     onClick,
 }) => {
     const { t } = useTranslation();
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const themeClass = {
+        modern: 'rounded-md border border-muted/20 text-text hover:bg-muted/10',
+        minimal: 'border-y border-muted/20 px-3 text-muted hover:text-text',
+        fashion: 'border-2 border-text font-black uppercase tracking-[0.16em] text-text hover:bg-text hover:text-background',
+        pearl: 'border border-secondary/25 text-secondary hover:border-secondary',
+        phoenix: 'border border-black/10 font-black uppercase tracking-[0.16em] text-text hover:border-primary/50',
+        hype: 'rounded-lg border border-muted/20 text-xs font-bold uppercase tracking-[0.1em] text-text hover:border-primary/50',
+        electronics: 'rounded-md border border-muted/25 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:border-primary/50',
+        default: 'rounded-lg border border-muted/20 text-text hover:bg-muted/10',
+    }[theme];
 
     return (
         <button
             type="button"
             onClick={onClick}
-            className="flex items-center gap-2 px-4 py-2.5 border border-muted/20 rounded-lg text-sm font-medium text-text hover:bg-muted/10 transition-colors lg:hidden"
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors lg:hidden ${themeClass}`}
         >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />

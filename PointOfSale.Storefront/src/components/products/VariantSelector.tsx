@@ -22,6 +22,8 @@ interface VariantSelectorProps {
     onSelect: (attributeName: string, value: string) => void;
     /** Check if a value is available */
     isValueAvailable?: (attributeName: string, value: string) => boolean;
+    /** Presentation-only purchase experience styling */
+    presentationVariant?: string;
 }
 
 /**
@@ -38,13 +40,14 @@ export const VariantSelector: React.FC<VariantSelectorProps> = ({
     selectedAttributes,
     onSelect,
     isValueAvailable = () => true,
+    presentationVariant = 'modern',
 }) => {
     if (!attributeGroups || attributeGroups.length === 0) {
         return null;
     }
 
     return (
-        <div className="variant-selector">
+        <div className="variant-selector" data-purchase-experience={presentationVariant}>
             {attributeGroups.map((group) => (
                 <div key={group.name} className="variant-group">
                     <label className="variant-label">

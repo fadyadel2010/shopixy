@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { ComponentType, KeyboardEvent, MouseEvent } from 'react';
 import { SectionErrorBoundary } from '../../storefront/components/errors/SectionErrorBoundary';
+import { RuntimeSectionContainer } from '../../storefront/runtime/containers/RuntimeSectionContainer';
 import { useTheme } from '../../storefront/themes/ThemeContext';
 import {
     getDefaultSectionComponent,
     resolveSectionComponent,
 } from '../../storefront/themes/ThemeSectionResolver';
 import {
-    normalizeSection,
     normalizeSections,
     type HomepageSection,
     type SectionRendererInputSection,
@@ -130,7 +130,12 @@ function RenderedSectionItem({
             tabIndex={onSectionSelect ? 0 : undefined}
         >
             <SectionErrorBoundary sectionType={section.type} resetKey={`${section.id}:${themeId}`}>
-                <Component {...section.data} sectionId={section.id} {...sectionProps} />
+                <RuntimeSectionContainer
+                    component={Component}
+                    sectionType={section.type}
+                    themeId={themeId}
+                    sectionProps={{ ...section.data, sectionId: section.id, ...sectionProps }}
+                />
             </SectionErrorBoundary>
         </div>
     );
@@ -149,7 +154,7 @@ export const SectionRenderer: React.FC<SectionRendererProps> = ({
         }
 
         if (section) {
-            return [normalizeSection(section)];
+            return normalizeSections([section]);
         }
 
         return [];

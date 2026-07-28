@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import themeAuthority from '@theme-authority/shopixy-theme-authority.json';
 import {
     getAvailableMarketplaceThemes,
     getMarketplaceThemeById,
@@ -29,5 +30,14 @@ describe('Pearl theme — Marketplace registry (Phase T1.0 scaffold)', () => {
         const ids = themes.map((t) => t.id.toLowerCase());
         expect(new Set(ids).size).toBe(ids.length);
         expect(getDefaultMarketplaceTheme().id).toBe('modern');
+    });
+
+    it('derives marketplace visibility from the canonical theme authority', () => {
+        const canonicalMarketplaceIds = themeAuthority.themes
+            .filter((theme) => theme.officialStatus === 'official' && theme.marketplaceVisibility === 'visible')
+            .map((theme) => theme.id);
+
+        expect(getAvailableMarketplaceThemes().map((theme) => theme.id)).toEqual(canonicalMarketplaceIds);
+        expect(getAvailableMarketplaceThemes().map((theme) => theme.id)).not.toContain('electronics');
     });
 });

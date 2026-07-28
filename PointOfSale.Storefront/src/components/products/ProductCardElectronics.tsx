@@ -1,13 +1,15 @@
 import React from 'react';
 import type { ProductListItemDto } from '@/types';
-import { ProductCardDefault } from './ProductCardDefault';
+import { ElectronicsProductCardRenderer } from './ProductCardRenderers';
+import { useProductCardRuntime } from './ProductCardRuntime';
 
 interface ProductCardElectronicsProps {
     product: ProductListItemDto;
 }
 
-export const ProductCardElectronics: React.FC<ProductCardElectronicsProps> = ({ product }) => (
-    <ProductCardDefault product={product} />
-);
+export const ProductCardElectronics: React.FC<ProductCardElectronicsProps> = ({ product }) => {
+    const runtime = useProductCardRuntime({ product, layout: 'electronics', themeId: 'modern' });
+    return <ElectronicsProductCardRenderer runtime={runtime} />;
+};
 
 export default ProductCardElectronics;

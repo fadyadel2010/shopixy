@@ -22,8 +22,8 @@ export const pearlThemeConfig: ThemeConfig = {
         primary: '#DC2626',
         // Gold footer text (design: #C9A863)
         secondary: '#C9A863',
-        // Light page canvas (design: #FFFFFF)
-        background: '#FFFFFF',
+        // Warm pearl page canvas, intentionally distinct from Modern white.
+        background: '#FBFAF7',
         // Body / price text (design: #131316)
         text: '#131316',
         // Navy section headings (design: #313E61)
@@ -34,7 +34,7 @@ export const pearlThemeConfig: ThemeConfig = {
         // font loaded for hero headings via index.html Google Fonts link.
         family: "'Jost', sans-serif",
         familyAr: "'Cairo', 'Tajawal', 'Noto Sans Arabic'",
-        baseSize: '16px',
+        baseSize: '15px',
     },
     ui: {
         // Editorial, sharp corners (design: border-radius 0)

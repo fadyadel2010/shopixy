@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\theme-authority\shopixy-theme-authority.json" LogicalName="shopixy-theme-authority.json" />
+  </ItemGroup>
+
 </Project>

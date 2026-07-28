@@ -1,4 +1,5 @@
 import type { ProductReadDto, StorefrontProductTemplate, StorefrontSection } from '../../types';
+import { getSectionDefaultSettings } from '../runtime/sectionContract';
 
 const createSection = (
     id: string,
@@ -10,7 +11,10 @@ const createSection = (
     type,
     enabled: true,
     order,
-    settings,
+    settings: {
+        ...getSectionDefaultSettings(type),
+        ...settings,
+    },
 });
 
 const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
@@ -33,11 +37,83 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
                 useDescription: true,
                 items: [],
             }),
-            createSection('related_products_default', 'related-products', 2, {
-                title: 'You May Also Like',
+            createSection('customer_reviews_default', 'customer-reviews', 2, {
+                layoutVariant: 'default',
+                title: 'Customer Reviews',
+                reviews: [],
+            }),
+            createSection('related_products_default', 'related-products', 3, {
+                layoutVariant: 'default',
+                title: 'Recommended Products',
                 limit: 4,
                 showPrice: true,
                 showRating: true,
+            }),
+        ],
+    },
+    modern: {
+        templateId: 'modern',
+        name: 'Modern Purchase Template',
+        sections: [
+            createSection('product_hero_modern', 'product-hero', 0, {
+                layoutVariant: 'modern',
+                showDescription: true,
+                showMediaGallery: true,
+                showVariantSelector: true,
+                showAddToCart: true,
+                showSku: true,
+                showStockStatus: true,
+            }),
+            createSection('product_specs_modern', 'product-specs', 1, {
+                layoutVariant: 'modern',
+                title: 'Product Details',
+                useDescription: true,
+                items: [],
+            }),
+            createSection('customer_reviews_modern', 'customer-reviews', 2, {
+                layoutVariant: 'modern',
+                title: 'Customer Reviews',
+                reviews: [],
+            }),
+            createSection('related_products_modern', 'related-products', 3, {
+                layoutVariant: 'modern',
+                title: 'Recommended Products',
+                limit: 4,
+                showPrice: true,
+                showRating: true,
+            }),
+        ],
+    },
+    minimal: {
+        templateId: 'minimal',
+        name: 'Minimal Purchase Template',
+        sections: [
+            createSection('product_hero_minimal', 'product-hero', 0, {
+                layoutVariant: 'minimal',
+                showDescription: true,
+                showMediaGallery: true,
+                showVariantSelector: true,
+                showAddToCart: true,
+                showSku: true,
+                showStockStatus: true,
+            }),
+            createSection('product_specs_minimal', 'product-specs', 1, {
+                layoutVariant: 'minimal',
+                title: 'Details',
+                useDescription: true,
+                items: [],
+            }),
+            createSection('customer_reviews_minimal', 'customer-reviews', 2, {
+                layoutVariant: 'minimal',
+                title: 'Customer Notes',
+                reviews: [],
+            }),
+            createSection('related_products_minimal', 'related-products', 3, {
+                layoutVariant: 'minimal',
+                title: 'Curated Selection',
+                limit: 4,
+                showPrice: true,
+                showRating: false,
             }),
         ],
     },
@@ -67,11 +143,13 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
                 showControls: true,
             }),
             createSection('customer_reviews_electronics', 'customer-reviews', 3, {
-                title: 'Customer Reviews',
+                layoutVariant: 'electronics',
+                title: 'Verified Buyer Feedback',
                 reviews: [],
             }),
             createSection('related_products_electronics', 'related-products', 4, {
-                title: 'Compare Similar Products',
+                layoutVariant: 'electronics',
+                title: 'Compatible Products',
                 limit: 4,
                 showPrice: true,
                 showRating: true,
@@ -83,6 +161,7 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
         name: 'Fashion Template',
         sections: [
             createSection('product_gallery_fashion', 'product-gallery', 0, {
+                layoutVariant: 'fashion',
                 title: 'Gallery',
                 showThumbnails: true,
                 maxImages: 6,
@@ -102,11 +181,122 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
                 useDescription: true,
                 items: [],
             }),
-            createSection('related_products_fashion', 'related-products', 3, {
-                title: 'Complete The Look',
+            createSection('customer_reviews_fashion', 'customer-reviews', 3, {
+                layoutVariant: 'fashion',
+                title: 'Style Reviews',
+                reviews: [],
+            }),
+            createSection('related_products_fashion', 'related-products', 4, {
+                layoutVariant: 'fashion',
+                title: 'Complete the Look',
                 limit: 4,
                 showPrice: true,
                 showRating: false,
+            }),
+        ],
+    },
+    pearl: {
+        templateId: 'pearl',
+        name: 'Pearl Purchase Template',
+        sections: [
+            createSection('product_hero_pearl', 'product-hero', 0, {
+                layoutVariant: 'pearl',
+                showDescription: true,
+                showMediaGallery: true,
+                showVariantSelector: true,
+                showAddToCart: true,
+                showSku: true,
+                showStockStatus: true,
+            }),
+            createSection('product_specs_pearl', 'product-specs', 1, {
+                layoutVariant: 'pearl',
+                title: 'Craftsmanship',
+                useDescription: true,
+                items: [],
+            }),
+            createSection('customer_reviews_pearl', 'customer-reviews', 2, {
+                layoutVariant: 'pearl',
+                title: 'Client Impressions',
+                reviews: [],
+            }),
+            createSection('related_products_pearl', 'related-products', 3, {
+                layoutVariant: 'pearl',
+                title: 'Boutique Collection',
+                limit: 4,
+                showPrice: true,
+                showRating: false,
+            }),
+        ],
+    },
+    phoenix: {
+        templateId: 'phoenix',
+        name: 'Phoenix Sports Purchase Template',
+        sections: [
+            createSection('product_hero_phoenix', 'product-hero', 0, {
+                layoutVariant: 'phoenix',
+                showDescription: true,
+                showMediaGallery: true,
+                showVariantSelector: true,
+                showAddToCart: true,
+                showSku: true,
+                showStockStatus: true,
+            }),
+            createSection('product_specs_phoenix', 'product-specs', 1, {
+                layoutVariant: 'phoenix',
+                title: 'Performance Details',
+                useDescription: true,
+                items: [],
+            }),
+            createSection('customer_reviews_phoenix', 'customer-reviews', 2, {
+                layoutVariant: 'phoenix',
+                title: 'Athlete Notes',
+                reviews: [],
+            }),
+            createSection('related_products_phoenix', 'related-products', 3, {
+                layoutVariant: 'phoenix',
+                title: 'Training Rotation',
+                limit: 4,
+                showPrice: true,
+                showRating: false,
+            }),
+        ],
+    },
+    hype: {
+        templateId: 'hype',
+        name: 'Hype Electronics Purchase Template',
+        sections: [
+            createSection('product_hero_hype', 'product-hero', 0, {
+                layoutVariant: 'hype',
+                showDescription: true,
+                showMediaGallery: true,
+                showVariantSelector: true,
+                showAddToCart: true,
+                showSku: true,
+                showStockStatus: true,
+            }),
+            createSection('product_specs_hype', 'product-specs', 1, {
+                layoutVariant: 'hype',
+                title: 'Tech Specifications',
+                useDescription: true,
+                items: [],
+            }),
+            createSection('product_video_hype', 'product-video', 2, {
+                title: 'Watch It In Action',
+                videoUrl: '',
+                autoplay: false,
+                showControls: true,
+            }),
+            createSection('customer_reviews_hype', 'customer-reviews', 3, {
+                layoutVariant: 'hype',
+                title: 'Verified Hype Feedback',
+                reviews: [],
+            }),
+            createSection('related_products_hype', 'related-products', 4, {
+                layoutVariant: 'hype',
+                title: 'Compatible Drops',
+                limit: 4,
+                showPrice: true,
+                showRating: true,
             }),
         ],
     },
@@ -130,10 +320,12 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
                 items: [],
             }),
             createSection('customer_reviews_cosmetics', 'customer-reviews', 2, {
+                layoutVariant: 'cosmetics',
                 title: 'What Customers Say',
                 reviews: [],
             }),
             createSection('related_products_cosmetics', 'related-products', 3, {
+                layoutVariant: 'cosmetics',
                 title: 'More To Explore',
                 limit: 4,
                 showPrice: true,

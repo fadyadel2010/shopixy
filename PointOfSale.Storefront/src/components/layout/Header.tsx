@@ -315,17 +315,17 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
                 role="banner"
             >
                 <div className="container mx-auto px-4">
-                    <div className="flex items-center justify-between h-16 md:h-18">
+                    <div className="flex h-16 items-center justify-between gap-3 md:h-18">
                         {/* Logo / Store Name */}
                         <AffiliateLink
                             href="/"
-                            className="text-xl md:text-2xl font-bold text-white hover:opacity-90 transition-opacity tracking-tight focus-visible:ring-2 focus-visible:ring-white/50 rounded"
+                            className="min-w-0 max-w-[52vw] truncate rounded text-xl font-bold tracking-tight text-white transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-white/50 md:max-w-xs md:text-2xl"
                         >
                             {storeName}
                         </AffiliateLink>
 
                         {/* Desktop Navigation - Dynamic from CMS */}
-                        <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
+                        <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-1 md:flex" aria-label="Main navigation">
                             {/* AF-12: Affiliate Mode Indicator */}
                             <AffiliateModeIndicator className="ltr:mr-2 rtl:ml-2" />
 
@@ -335,7 +335,7 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
                                     <AffiliateLink
                                         key={`${link.label}-${index}`}
                                         href={url}
-                                        className={`px-4 py-2 rounded-lg transition-all font-medium focus-visible:ring-2 focus-visible:ring-white/50 ${isActive(url)
+                                        className={`rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${isActive(url)
                                             ? 'text-white bg-white/20'
                                             : 'text-white/80 hover:text-white hover:bg-white/10'
                                             }`}
@@ -350,7 +350,7 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
                         </nav>
 
                         {/* Actions */}
-                        <div className="flex items-center gap-1">
+                        <div className="flex shrink-0 items-center gap-1">
                             {behavior.enableSearch && (
                                 <SearchButton
                                     className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex"
@@ -450,7 +450,7 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                         {/* Centered Logo */}
                         <a
                             href="/"
-                            className="text-2xl md:text-3xl font-bold text-white hover:opacity-90 transition-opacity tracking-tight focus-visible:ring-2 focus-visible:ring-white/50 rounded"
+                            className="min-w-0 max-w-[54vw] truncate rounded text-2xl font-bold tracking-tight text-white transition-opacity hover:opacity-90 focus-visible:ring-2 focus-visible:ring-white/50 md:max-w-md md:text-3xl"
                         >
                             {storeName}
                         </a>
@@ -469,7 +469,7 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                     </div>
 
                     {/* Desktop Navigation row */}
-                    <nav className="hidden md:flex items-center justify-center gap-1 h-12" aria-label="Main navigation">
+                    <nav className="hidden min-h-12 flex-wrap items-center justify-center gap-1 py-2 md:flex" aria-label="Main navigation">
                         {headerLinks.map((link, index) => {
                             const url = resolveNavLinkUrl(link);
                             return (
@@ -478,7 +478,7 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                                     href={url}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={`px-4 py-2 rounded-lg transition-all font-medium focus-visible:ring-2 focus-visible:ring-white/50 ${isActive(url)
+                                    className={`rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${isActive(url)
                                         ? 'text-white bg-white/20'
                                         : 'text-white/80 hover:text-white hover:bg-white/10'
                                         }`}

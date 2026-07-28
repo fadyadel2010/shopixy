@@ -55,46 +55,11 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         "visibilityRules"
     };
 
-    private static readonly HashSet<string> AllowedBuilderSectionTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "hero-banner",
-        "product-grid",
-        "category-grid",
-        "subcategory-grid",
-        "text-block",
-        "image-block",
-        "video-block",
-        "newsletter-signup",
-        "testimonials",
-        "featured-products",
-        "product-hero",
-        "product-gallery",
-        "product-specs",
-        "product-video",
-        "customer-reviews",
-        "related-products"
-    };
+    private static readonly HashSet<string> AllowedBuilderSectionTypes =
+        new(StorefrontSectionContracts.SupportedTypes, StringComparer.OrdinalIgnoreCase);
 
-    private static readonly IReadOnlyDictionary<string, HashSet<string>> AllowedBuilderSectionSettingKeys =
-        new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["hero-banner"] = SettingKeys("title", "subtitle", "ctaText", "ctaLink", "backgroundImage", "backgroundColor", "overlayOpacity", "textColor", "alignment", "height"),
-            ["product-grid"] = SettingKeys("title", "productSource", "categoryId", "productIds", "columns", "rows", "showPrice", "showRating", "showAddToCart"),
-            ["category-grid"] = SettingKeys("title", "columns", "categoryIds", "showProductCount", "cardStyle"),
-            ["subcategory-grid"] = SettingKeys("title", "columns", "showProductCount", "cardStyle"),
-            ["text-block"] = SettingKeys("heading", "content", "alignment", "backgroundColor", "textColor", "maxWidth"),
-            ["image-block"] = SettingKeys("images", "layout", "aspectRatio", "fullWidth"),
-            ["video-block"] = SettingKeys("videoUrl", "autoplay", "showControls"),
-            ["newsletter-signup"] = SettingKeys("heading", "subheading", "buttonText", "backgroundColor", "textColor", "showName"),
-            ["testimonials"] = SettingKeys("heading", "testimonials", "layout", "showRating", "autoplay"),
-            ["featured-products"] = SettingKeys("title", "productIds", "limit", "showPrice", "showRating", "showBadge", "badgeText"),
-            ["product-hero"] = SettingKeys("showDescription", "showVariantSelector", "showAddToCart", "showSku", "showStockStatus"),
-            ["product-gallery"] = SettingKeys("title", "showThumbnails", "maxImages"),
-            ["product-specs"] = SettingKeys("title", "useDescription", "items"),
-            ["product-video"] = SettingKeys("title", "videoUrl", "autoplay", "showControls"),
-            ["customer-reviews"] = SettingKeys("title", "reviews"),
-            ["related-products"] = SettingKeys("title", "limit", "showPrice", "showRating")
-        };
+    private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AllowedBuilderSectionSettingKeys =
+        StorefrontSectionContracts.GetAllowedSettingKeysBySectionType();
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IEventPublisher _eventPublisher;
@@ -428,11 +393,18 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                  throw new ArgumentException($"No draft content to publish for {pageId}");
             }
 
-            // Copy Draft -> Live
+            // Publish is an admission boundary: the draft must still satisfy the
+            // canonical builder/runtime contract before it can become live.
             var draftJson = System.Text.Json.JsonSerializer.Serialize(draftObj);
-            var liveObj = System.Text.Json.JsonSerializer.Deserialize<object>(draftJson); 
-        
-            pageContent["live"] = liveObj!;
+            var draftConfig = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(draftJson)
+                              ?? throw new ArgumentException($"Draft content for {pageId} is invalid.");
+            var normalizedDraft = !string.IsNullOrWhiteSpace(templateId)
+                ? NormalizeBuilderPageComposition(draftConfig, pageContent, authoritativeTemplateId: templateId)
+                : NormalizeBuilderPageComposition(draftConfig, pageContent);
+
+            pageContent["draft"] = normalizedDraft;
+            pageContent["live"] = System.Text.Json.JsonSerializer.Deserialize<object>(
+                System.Text.Json.JsonSerializer.Serialize(normalizedDraft))!;
             pageContent["lastPublishedAt"] = DateTime.UtcNow;
 
             root[containerKey] = container;
@@ -1231,8 +1203,29 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                 .FirstOrDefaultAsync(p => p.Key == "default", cancellationToken);
         }
 
-        var draftTheme = StorefrontDraftConfigMapper.MapThemeConfig(config, draftThemePreset, useDraftOverrides: true);
-        var liveTheme = StorefrontDraftConfigMapper.MapThemeConfig(config, liveThemePreset, useDraftOverrides: false);
+        var draftTheme = StorefrontDraftConfigMapper.MapThemeConfig(config, draftThemePreset, useDraftOverrides: true, storefrontTheme);
+        var liveTheme = StorefrontDraftConfigMapper.MapThemeConfig(config, liveThemePreset, useDraftOverrides: false, storefrontTheme);
+        var admittedDraftConfig = StorefrontDraftConfigMapper.Map(
+            config,
+            draftThemePreset,
+            currency: "EGP",
+            defaultCountryCode: "EG",
+            errorCallback: (exception, operation) => _logger.LogWarning(
+                exception,
+                "Failed to admit builder draft configuration | TenantId: {TenantId} | Operation: {Operation}",
+                config.TenantId,
+                operation));
+
+        pages = new Dictionary<string, object>
+        {
+            ["home"] = admittedDraftConfig.Pages.Home,
+            ["product"] = admittedDraftConfig.Pages.Product,
+            ["category"] = admittedDraftConfig.Pages.Category
+        };
+        productTemplates = admittedDraftConfig.ProductTemplates.ToDictionary(
+            entry => entry.Key,
+            entry => (object)entry.Value,
+            StringComparer.OrdinalIgnoreCase);
 
         return new AdminStoreConfigResponse
         {
@@ -1243,32 +1236,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             StoreDescription = config.StoreDescription,
             StorefrontTheme = storefrontTheme,
             ThemeId = config.ThemeId,
-            Theme = new AdminThemeConfigDto
-            {
-                Colors = new AdminColorsConfigDto
-                {
-                    Primary = config.Theme.Colors.Primary,
-                    Secondary = config.Theme.Colors.Secondary,
-                    Background = config.Theme.Colors.Background,
-                    Text = config.Theme.Colors.Text,
-                    Muted = config.Theme.Colors.Muted
-                },
-                Font = new AdminFontConfigDto
-                {
-                    Family = config.Theme.Font.Family,
-                    BaseSize = config.Theme.Font.BaseSize
-                },
-                Ui = new AdminUiConfigDto
-                {
-                    BorderRadius = config.Theme.Ui.BorderRadius,
-                    ButtonStyle = config.Theme.Ui.ButtonStyle
-                },
-                Layout = new AdminLayoutConfigDto
-                {
-                    ProductCardVariant = config.Theme.Layout.ProductCardVariant,
-                    HeaderVariant = config.Theme.Layout.HeaderVariant
-                }
-            },
+            Theme = MapAdminThemeConfig(liveTheme),
             Behavior = new AdminBehaviorConfigDto
             {
                 EnableGuestCheckout = config.Behavior.EnableGuestCheckout,
@@ -1542,6 +1510,36 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             },
             Font = theme.Font.Family,
             BorderRadius = ParseBorderRadius(theme.Ui.BorderRadius)
+        };
+    }
+
+    private static AdminThemeConfigDto MapAdminThemeConfig(StorefrontThemeConfigDto theme)
+    {
+        return new AdminThemeConfigDto
+        {
+            Colors = new AdminColorsConfigDto
+            {
+                Primary = theme.Colors.Primary,
+                Secondary = theme.Colors.Secondary,
+                Background = theme.Colors.Background,
+                Text = theme.Colors.Text,
+                Muted = theme.Colors.Muted
+            },
+            Font = new AdminFontConfigDto
+            {
+                Family = theme.Font.Family,
+                BaseSize = theme.Font.BaseSize
+            },
+            Ui = new AdminUiConfigDto
+            {
+                BorderRadius = theme.Ui.BorderRadius,
+                ButtonStyle = theme.Ui.ButtonStyle
+            },
+            Layout = new AdminLayoutConfigDto
+            {
+                ProductCardVariant = theme.Layout.ProductCardVariant,
+                HeaderVariant = theme.Layout.HeaderVariant
+            }
         };
     }
 
@@ -1969,30 +1967,86 @@ public class AdminStoreConfigService : IAdminStoreConfigService
     {
         if (sectionObject["settings"] is not JsonObject settingsObject)
         {
-            return new Dictionary<string, object>();
+            throw new ArgumentException($"Section settings are required for section type '{sectionType}'.");
         }
 
-        if (!AllowedBuilderSectionSettingKeys.TryGetValue(sectionType, out var allowedKeys))
+        var submittedSettings = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var setting in settingsObject)
         {
-            return new Dictionary<string, object>();
+            if (ReservedBuilderLayoutAuthorityKeys.Contains(setting.Key))
+            {
+                throw new ArgumentException($"Section setting '{setting.Key}' is reserved for layout authority.");
+            }
+
+            submittedSettings[setting.Key] = ConvertBuilderJsonNode(setting.Value);
+        }
+
+        if (!StorefrontSectionContracts.TryValidateSettingsStrict(sectionType, submittedSettings, out var diagnostics))
+        {
+            throw new ArgumentException(diagnostics.FirstOrDefault()
+                ?? $"Section settings are invalid for section type '{sectionType}'.");
         }
 
         var normalized = new Dictionary<string, object?>(StringComparer.Ordinal);
-        foreach (var setting in settingsObject)
+        foreach (var field in StorefrontSectionContracts.GetFields(sectionType))
         {
-            if (!allowedKeys.Contains(setting.Key) || ReservedBuilderLayoutAuthorityKeys.Contains(setting.Key))
-            {
-                continue;
-            }
-
-            var normalizedValue = NormalizeSectionSettingValue(sectionType, setting.Key, setting.Value);
-            if (normalizedValue != null)
-            {
-                normalized[setting.Key] = normalizedValue;
-            }
+            normalized[field.Key] = submittedSettings[field.Key];
         }
 
         return normalized;
+    }
+
+    private static object? ConvertBuilderJsonNode(JsonNode? value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+
+        if (value is JsonValue jsonValue)
+        {
+            if (jsonValue.TryGetValue<string>(out var stringValue))
+            {
+                return stringValue;
+            }
+
+            if (jsonValue.TryGetValue<bool>(out var boolValue))
+            {
+                return boolValue;
+            }
+
+            if (jsonValue.TryGetValue<int>(out var intValue))
+            {
+                return intValue;
+            }
+
+            if (jsonValue.TryGetValue<long>(out var longValue))
+            {
+                return longValue;
+            }
+
+            if (jsonValue.TryGetValue<double>(out var doubleValue))
+            {
+                return doubleValue;
+            }
+
+            return null;
+        }
+
+        if (value is JsonArray array)
+        {
+            return array.Select(ConvertBuilderJsonNode).ToList();
+        }
+
+        if (value is JsonObject obj)
+        {
+            return obj.ToDictionary(
+                property => property.Key,
+                property => ConvertBuilderJsonNode(property.Value),
+                StringComparer.Ordinal);
+        }
+
+        return null;
     }
 
     private static object? NormalizeSectionSettingValue(string sectionType, string key, JsonNode? value)
@@ -2021,39 +2075,37 @@ public class AdminStoreConfigService : IAdminStoreConfigService
 
         if (key.Equals("alignment", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "center", "left", "center", "right");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (key.Equals("height", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "medium", "small", "medium", "large", "full");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (key.Equals("maxWidth", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "full", "sm", "md", "lg", "xl", "full");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (key.Equals("layout", StringComparison.OrdinalIgnoreCase))
         {
-            return sectionType.Equals("testimonials", StringComparison.OrdinalIgnoreCase)
-                ? ReadAllowedString(value, "carousel", "carousel", "grid")
-                : ReadAllowedString(value, "single", "single", "grid", "carousel", "masonry");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (key.Equals("cardStyle", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "overlay", "overlay", "card");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
-        if (key.Equals("productSource", StringComparison.OrdinalIgnoreCase))
+        if (key.Equals("source", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "featured", "featured", "latest", "category", "manual");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (key.Equals("displayStyle", StringComparison.OrdinalIgnoreCase))
         {
-            return ReadAllowedString(value, "carousel", "carousel", "grid");
+            return ReadContractAllowedString(sectionType, key, value);
         }
 
         if (IsBooleanSetting(key))
@@ -2405,9 +2457,25 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             : fallback;
     }
 
-    private static HashSet<string> SettingKeys(params string[] keys)
+    private static string ReadContractAllowedString(string sectionType, string key, JsonNode value)
     {
-        return new HashSet<string>(keys, StringComparer.OrdinalIgnoreCase);
+        var allowedValues = StorefrontSectionContracts.GetAllowedStringValues(sectionType, key);
+        var fallback = StorefrontSectionContracts.GetDefaultString(sectionType, key)
+            ?? allowedValues.FirstOrDefault()
+            ?? string.Empty;
+
+        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
+        {
+            return fallback;
+        }
+
+        if (allowedValues.Contains(raw, StringComparer.OrdinalIgnoreCase))
+        {
+            return raw;
+        }
+
+        throw new ArgumentException(
+            $"Section setting '{key}' for section type '{sectionType}' has unsupported value '{raw}'.");
     }
 
     private static HashSet<string> ExtractAcceptedSectionIds(Dictionary<string, object>? currentContent)

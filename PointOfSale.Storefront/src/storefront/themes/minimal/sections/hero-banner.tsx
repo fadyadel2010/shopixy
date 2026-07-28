@@ -1,12 +1,11 @@
 import React from 'react';
-import { Button } from '@/components/common';
-import { AffiliateLink } from '@/components/common/AffiliateLink';
+import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
 const heightClasses: Record<string, string> = {
-    small: 'min-h-[420px]',
-    medium: 'min-h-[520px]',
-    large: 'min-h-[640px]',
+    small: 'min-h-[560px]',
+    medium: 'min-h-[700px]',
+    large: 'min-h-[800px]',
 };
 
 const alignmentClasses: Record<string, string> = {
@@ -21,7 +20,6 @@ const HeroBanner: React.FC<any> = ({
     ctaText,
     ctaLink,
     backgroundImage,
-    imageUrl,
     backgroundColor,
     overlayOpacity,
     textColor,
@@ -31,64 +29,61 @@ const HeroBanner: React.FC<any> = ({
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 20), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
-    const resolvedBackgroundImage = backgroundImage || imageUrl;
-
+    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.center;
     return (
         <section
-            className="border-y border-slate-200"
+            className="border-b border-slate-200 bg-white"
             style={{
                 backgroundColor: backgroundColor || '#ffffff',
                 color: textColor || '#0f172a',
             }}
         >
-            <div className={`mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 py-14 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:px-10 ${resolvedHeightClass}`}>
-                <div className={`flex flex-col justify-center ${resolvedAlignmentClass}`}>
-                    <div className="mb-5 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+            <div className={`mx-auto flex max-w-5xl flex-col justify-center px-6 py-16 lg:px-10 ${resolvedHeightClass}`}>
+                <div className={`mx-auto flex max-w-3xl flex-col ${resolvedAlignmentClass}`}>
+                    <div className="mb-8 text-xs font-medium uppercase tracking-[0.3em] text-slate-500">
                         {t('home.welcome', { storeName: '' })}
                     </div>
 
-                    <h1 className="max-w-2xl text-4xl font-medium leading-tight tracking-tight text-slate-950 sm:text-5xl">
+                    <h1 className="max-w-3xl text-balance text-4xl font-normal leading-tight text-slate-950 sm:text-5xl lg:text-6xl">
                         {title || t('home.welcome', { storeName: '' })}
                     </h1>
 
                     {subtitle && (
-                        <p className="mt-5 max-w-xl text-base leading-7 text-slate-600 sm:text-lg">
+                        <p className="mx-auto mt-6 max-w-xl text-base leading-8 text-slate-600">
                             {subtitle}
                         </p>
                     )}
 
                     {ctaText && (
-                        <div className="mt-8">
-                            <AffiliateLink href={ctaLink || '/products'}>
-                                <Button
-                                    size="md"
-                                    styleOverride="outline"
-                                    className="rounded-none border-slate-950 px-6"
-                                >
-                                    {ctaText}
-                                </Button>
-                            </AffiliateLink>
-                        </div>
+                        <ThemeHeroCTA
+                            themeId="minimal"
+                            href={ctaLink || '/products'}
+                            align={alignment || 'center'}
+                            className="mt-9"
+                        >
+                            {ctaText}
+                        </ThemeHeroCTA>
                     )}
                 </div>
 
-                <div className="relative">
-                    <div className="aspect-[5/4] overflow-hidden border border-slate-200 bg-slate-50">
-                        {resolvedBackgroundImage ? (
-                            <div className="relative h-full w-full">
-                                <img
-                                    src={resolvedBackgroundImage}
-                                    alt={title || 'Hero background'}
-                                    className="h-full w-full object-cover"
-                                />
-                                <div className="absolute inset-0 bg-black" style={{ opacity: resolvedOverlayOpacity }} />
-                            </div>
+                <div className="mx-auto mt-14 w-full max-w-xl">
+                    <div className="relative aspect-[4/5] overflow-hidden border border-slate-200 bg-slate-50">
+                        {backgroundImage ? (
+                            <img
+                                src={backgroundImage}
+                                alt={title || 'Focused product image'}
+                                className="h-full w-full object-cover"
+                            />
                         ) : (
-                            <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#f8fafc_0%,#e2e8f0_100%)] px-8 text-center text-sm font-medium uppercase tracking-[0.25em] text-slate-500">
-                                {t('common.products')}
+                            <div className="grid h-full w-full place-items-center bg-[linear-gradient(180deg,#ffffff_0%,#f8fafc_100%)] px-10">
+                                <div className="h-2/3 w-2/3 border border-slate-300 bg-white" />
                             </div>
                         )}
+                        <div className="absolute inset-0 bg-white" style={{ opacity: resolvedOverlayOpacity * 0.12 }} />
+                    </div>
+                    <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4 text-xs uppercase tracking-[0.22em] text-slate-500">
+                        <span>selected</span>
+                        <span>quiet edit</span>
                     </div>
                 </div>
             </div>

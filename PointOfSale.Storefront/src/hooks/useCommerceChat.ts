@@ -13,6 +13,7 @@ import {
     detectLanguage,
     generateMessageId,
 } from '../services/api/chatService';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 
 interface UseChatOptions {
     /** Maximum messages to keep in history */
@@ -53,10 +54,15 @@ const SESSION_ID_KEY = 'commerce_ai_session_id';
  * Generate or retrieve a persistent session ID
  */
 function getOrCreateSessionId(): string {
-    let sessionId = sessionStorage.getItem(SESSION_ID_KEY);
+    const storageKey = tryGetTenantScopedStorageKey(SESSION_ID_KEY);
+    if (!storageKey) {
+        return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    let sessionId = sessionStorage.getItem(storageKey);
     if (!sessionId) {
         sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        sessionStorage.setItem(SESSION_ID_KEY, sessionId);
+        sessionStorage.setItem(storageKey, sessionId);
     }
     return sessionId;
 }
@@ -66,7 +72,8 @@ function getOrCreateSessionId(): string {
  */
 function loadHistory(): ChatMessage[] {
     try {
-        const stored = localStorage.getItem(CHAT_STORAGE_KEY);
+        const storageKey = tryGetTenantScopedStorageKey(CHAT_STORAGE_KEY);
+        const stored = storageKey ? localStorage.getItem(storageKey) : null;
         if (stored) {
             const parsed = JSON.parse(stored);
             return parsed.map((msg: any) => ({
@@ -85,8 +92,13 @@ function loadHistory(): ChatMessage[] {
  */
 function saveHistory(messages: ChatMessage[], maxHistory: number): void {
     try {
+        const storageKey = tryGetTenantScopedStorageKey(CHAT_STORAGE_KEY);
+        if (!storageKey) {
+            return;
+        }
+
         const toSave = messages.slice(-maxHistory);
-        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(toSave));
+        localStorage.setItem(storageKey, JSON.stringify(toSave));
     } catch {
         // Ignore storage errors
     }
@@ -190,7 +202,10 @@ export function useCommerceChat(options: UseChatOptions = {}): UseChatReturn {
     const clearHistory = useCallback(() => {
         setMessages([]);
         setCurrentDraft(null);
-        localStorage.removeItem(CHAT_STORAGE_KEY);
+        const storageKey = tryGetTenantScopedStorageKey(CHAT_STORAGE_KEY);
+        if (storageKey) {
+            localStorage.removeItem(storageKey);
+        }
     }, []);
 
     const acceptDraft = useCallback(() => {

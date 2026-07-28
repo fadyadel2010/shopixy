@@ -1,3 +1,5 @@
+import themeAuthority from '@theme-authority/shopixy-theme-authority.json';
+
 export interface ThemeDefinition {
     id: string;
     name: string;
@@ -6,41 +8,19 @@ export interface ThemeDefinition {
     isDefault?: boolean;
 }
 
-const THEME_CAPABILITIES = [
-    'layout.header',
-    'layout.footer',
-    'section.hero-banner',
-    'section.product-grid',
-    'section.category-grid',
-] as const;
+export const canonicalThemeAuthority = themeAuthority;
 
-const AVAILABLE_THEMES: ThemeDefinition[] = validateThemeRegistry([
-    {
-        id: 'modern',
-        name: 'Modern',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-        isDefault: true,
-    },
-    {
-        id: 'minimal',
-        name: 'Minimal',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-    },
-    {
-        id: 'fashion',
-        name: 'Fashion',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-    },
-    {
-        id: 'pearl',
-        name: 'Pearl',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-    },
-]);
+const AVAILABLE_THEMES: ThemeDefinition[] = validateThemeRegistry(
+    themeAuthority.themes
+        .filter((theme) => theme.officialStatus === 'official' && theme.activationStatus === 'active' && theme.runtimeAvailability)
+        .map((theme) => ({
+            id: theme.id,
+            name: theme.displayName,
+            version: theme.version,
+            capabilities: theme.capabilities,
+            isDefault: theme.id === themeAuthority.defaultThemeId,
+        }))
+);
 
 export function getAvailableThemes(): ThemeDefinition[] {
     return AVAILABLE_THEMES;

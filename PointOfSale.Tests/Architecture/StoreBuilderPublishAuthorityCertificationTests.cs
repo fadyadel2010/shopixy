@@ -51,7 +51,10 @@ public sealed class StoreBuilderPublishAuthorityCertificationTests
         Assert.Contains("ApplyExpectedRowVersion(config, expectedRowVersion)", service, StringComparison.Ordinal);
         Assert.Contains("throw new KeyNotFoundException($\"Publish target '{pageId}' was not found.\");", service, StringComparison.Ordinal);
         Assert.Contains("throw new ArgumentException($\"No draft content to publish for {pageId}\");", service, StringComparison.Ordinal);
-        Assert.Contains("pageContent[\"live\"] = liveObj!;", service, StringComparison.Ordinal);
+        Assert.Contains("var normalizedDraft = !string.IsNullOrWhiteSpace(templateId)", service, StringComparison.Ordinal);
+        Assert.Contains("NormalizeBuilderPageComposition(draftConfig, pageContent, authoritativeTemplateId: templateId)", service, StringComparison.Ordinal);
+        Assert.Contains("pageContent[\"draft\"] = normalizedDraft;", service, StringComparison.Ordinal);
+        Assert.Contains("pageContent[\"live\"] = System.Text.Json.JsonSerializer.Deserialize<object>(", service, StringComparison.Ordinal);
         Assert.Contains("CreateAndAppendVersionSnapshot(config, \"Page Published\", actor);", service, StringComparison.Ordinal);
         Assert.Contains("await PersistStoreConfigChangeAsync(", service, StringComparison.Ordinal);
         Assert.Contains("StoreConfigPublishAction.Published", service, StringComparison.Ordinal);

@@ -150,3 +150,95 @@
 .variant-option.selected {
     animation: variant-select 0.2s ease-out;
 }
+
+.variant-selector[data-purchase-experience="minimal"] {
+    gap: 1.5rem;
+}
+
+.variant-selector[data-purchase-experience="minimal"] .variant-label {
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: #475569;
+}
+
+.variant-selector[data-purchase-experience="minimal"] .variant-option {
+    border-width: 1px;
+    border-radius: 0;
+    background: transparent;
+}
+
+.variant-selector[data-purchase-experience="minimal"] .variant-option.selected {
+    background: #0f172a;
+    border-color: #0f172a;
+}
+
+.variant-selector[data-purchase-experience="fashion"] .variant-label {
+    color: #44403c;
+    letter-spacing: 0.14em;
+}
+
+.variant-selector[data-purchase-experience="fashion"] .variant-option {
+    border-width: 1px;
+    border-color: #d6d3d1;
+    border-radius: 0;
+    background: #fffaf5;
+    color: #1c1917;
+}
+
+.variant-selector[data-purchase-experience="fashion"] .variant-option:hover:not(:disabled) {
+    border-color: #1c1917;
+    background: #ffffff;
+}
+
+.variant-selector[data-purchase-experience="fashion"] .variant-option.selected {
+    background: #1c1917;
+    border-color: #1c1917;
+    color: #ffffff;
+}
+
+.variant-selector[data-purchase-experience="pearl"] .variant-label {
+    color: #4f3d20;
+    letter-spacing: 0.12em;
+}
+
+.variant-selector[data-purchase-experience="pearl"] .variant-option {
+    border-width: 1px;
+    border-color: #d8c7a3;
+    border-radius: 0;
+    background: #fffefa;
+    color: #241d16;
+}
+
+.variant-selector[data-purchase-experience="pearl"] .variant-option:hover:not(:disabled) {
+    border-color: #b99a5f;
+    background: #f4efe2;
+}
+
+.variant-selector[data-purchase-experience="pearl"] .variant-option.selected {
+    background: #241d16;
+    border-color: #241d16;
+    color: #ffffff;
+}
+
+.variant-selector[data-purchase-experience="electronics"] .variant-label {
+    color: #0f172a;
+    letter-spacing: 0.08em;
+}
+
+.variant-selector[data-purchase-experience="electronics"] .variant-option {
+    border-color: #cbd5e1;
+    border-radius: 0.375rem;
+    background: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.variant-selector[data-purchase-experience="electronics"] .variant-option:hover:not(:disabled) {
+    border-color: #0369a1;
+    background: #e0f2fe;
+}
+
+.variant-selector[data-purchase-experience="electronics"] .variant-option.selected {
+    background: #0369a1;
+    border-color: #0369a1;
+    color: #ffffff;
+}

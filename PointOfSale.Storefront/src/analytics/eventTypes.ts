@@ -84,6 +84,7 @@ export interface AnalyticsActor {
  * Backend captures them server-side for security.
  */
 export interface AnalyticsContext {
+    tenantId?: string;
     pageUrl: string;
     referrer?: string;
     language?: string;

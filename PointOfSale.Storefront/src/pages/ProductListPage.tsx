@@ -23,12 +23,10 @@ import { ProductCard } from '@/components/common';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import {
     SkeletonGrid,
-    DataEmptyState,
     InlineError,
     CategoryNav,
     SearchInput,
     Pagination,
-    SearchEmptyState,
 } from '@/components/data';
 import { useProductListDiscovery, useCategories } from '@/hooks';
 import { useStoreConfigStore, selectConfig } from '@/store';
@@ -45,6 +43,16 @@ import {
 } from '@/components/filters';
 import { useTranslation } from '@/i18n/useTranslation';
 import { useLanguageStore, selectLanguage } from '@/i18n/languageStore';
+import { useTheme } from '@/storefront/themes/ThemeContext';
+import {
+    CommerceEmptyState,
+    CommerceMerchandisingBlock,
+    CommercePageHeader,
+    commerceGridStyles,
+    commercePageStyles,
+    getCommerceGridItemClass,
+    normalizeCommerceTheme,
+} from '@/storefront/commerce/CommerceBrowsingExperience';
 
 // ============================================================================
 // Constants
@@ -61,11 +69,13 @@ const DEFAULT_PAGE_SIZE = 20;
  */
 export const ProductListPage: React.FC = () => {
     const config = useStoreConfigStore(selectConfig);
-    const layout = config.theme.layout;
     const searchInputRef = useRef<SearchInputHandle>(null);
     const { t } = useTranslation();
     const language = useLanguageStore(selectLanguage);
     const isRTL = language === 'ar';
+    const { themeId } = useTheme();
+    const commerceTheme = normalizeCommerceTheme(themeId);
+    const commerceStyles = commercePageStyles[commerceTheme];
 
     // Mobile filter drawer state
     const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
@@ -135,17 +145,7 @@ export const ProductListPage: React.FC = () => {
     // Computed State
     // ========================================================================
 
-    // Grid class based on variant
-    const gridClass = useMemo(() => {
-        switch (layout.productCardVariant) {
-            case 'compact':
-                return 'grid grid-cols-1 md:grid-cols-2 gap-3';
-            case 'detailed':
-            case 'default':
-            default:
-                return 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6';
-        }
-    }, [layout.productCardVariant]);
+    const gridClass = commerceGridStyles[commerceTheme];
 
     // ========================================================================
     // Handlers
@@ -246,33 +246,52 @@ export const ProductListPage: React.FC = () => {
         // Empty state - search
         if (products.length === 0 && searchQuery) {
             return (
-                <SearchEmptyState
-                    query={searchQuery}
-                    onClear={handleSearchClear}
-                />
+                <div>
+                    <CommerceEmptyState
+                        themeId={themeId}
+                        title={t('common.noResults')}
+                        message={`${t('search.noResultsFor', { query: searchQuery })} ${t('filters.tryDifferent') || ''}`}
+                    />
+                    <div className="mt-5 flex justify-center">
+                        <button
+                            type="button"
+                            onClick={handleSearchClear}
+                            className="min-h-10 px-5 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-colors font-medium text-sm"
+                        >
+                            {t('filters.clearAll')}
+                        </button>
+                    </div>
+                </div>
             );
         }
 
         // Empty state - filtered
         if (products.length === 0 && hasActiveFilters) {
             return (
-                <DataEmptyState
-                    variant="category"
-                    title={t('filters.noResults') || 'No products found'}
-                    message={t('filters.tryDifferent') || 'Try adjusting your filters or clearing them.'}
-                    action={{
-                        label: t('filters.clearAll'),
-                        onClick: clearAllFilters,
-                    }}
-                />
+                <div>
+                    <CommerceEmptyState
+                        themeId={themeId}
+                        title={t('filters.noResults') || 'No products found'}
+                        message={t('filters.tryDifferent') || 'Try adjusting your filters or clearing them.'}
+                    />
+                    <div className="mt-5 flex justify-center">
+                        <button
+                            type="button"
+                            onClick={clearAllFilters}
+                            className="min-h-10 px-5 py-2 bg-primary text-white rounded-md hover:bg-primary/90 transition-colors font-medium text-sm"
+                        >
+                            {t('filters.clearAll')}
+                        </button>
+                    </div>
+                </div>
             );
         }
 
         // Empty state - default
         if (products.length === 0) {
             return (
-                <DataEmptyState
-                    variant="default"
+                <CommerceEmptyState
+                    themeId={themeId}
                     title={t('home.noProductsYet')}
                     message={t('home.productsWillAppear')}
                 />
@@ -285,18 +304,19 @@ export const ProductListPage: React.FC = () => {
                 {/* Loading overlay for subsequent fetches */}
                 <div className={`relative ${isLoading ? 'opacity-70' : ''} transition-opacity duration-200`}>
                     <div className={gridClass}>
-                        {products.map((product) => (
-                            <ProductCard
-                                key={product.id}
-                                product={product}
-                            />
+                        {products.map((product, index) => (
+                            <div key={product.id} className={getCommerceGridItemClass(themeId, index)}>
+                                <ProductCard
+                                    product={product}
+                                />
+                            </div>
                         ))}
                     </div>
                 </div>
 
                 {/* Pagination */}
                 {totalPages > 1 && (
-                    <div className="mt-10 pt-8 border-t border-muted/20">
+                    <div className={commerceStyles.pagination}>
                         <Pagination
                             currentPage={page}
                             totalPages={totalPages}
@@ -329,12 +349,13 @@ export const ProductListPage: React.FC = () => {
                         ))}
                 </div>
             ) : (
-                <div className="container mx-auto px-4 py-6 md:py-10">
+                <div className={commerceStyles.page} data-commerce-theme={commerceTheme}>
+                    <div className={commerceStyles.container}>
                     {/* Page Header */}
-                    <div className="mb-6">
+                    <div>
                         {/* Breadcrumb */}
                         <nav
-                            className={`flex items-center gap-2 text-sm mb-4 ${isRTL ? 'flex-row-reverse' : ''}`}
+                            className={`flex items-center gap-2 ${commerceStyles.breadcrumb} ${isRTL ? 'flex-row-reverse' : ''}`}
                             aria-label="Breadcrumb"
                         >
                             <AffiliateLink href="/" className="text-muted hover:text-primary transition-colors">
@@ -366,20 +387,16 @@ export const ProductListPage: React.FC = () => {
                         </nav>
 
                         {/* Title and Controls */}
-                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                            <div>
-                                <h1 className="text-2xl md:text-3xl font-bold text-text">
-                                    {currentCategory ? currentCategory.name : t('header.allProducts')}
-                                </h1>
-                                {!isLoading && (
-                                    <p className="text-muted text-sm mt-1">
-                                        {t('search.results', { count: totalCount })}
-                                    </p>
-                                )}
-                            </div>
+                        <CommercePageHeader
+                            themeId={themeId}
+                            title={currentCategory ? currentCategory.name : t('header.allProducts')}
+                            categoryName={currentCategory?.name}
+                            resultText={!isLoading ? t('search.results', { count: totalCount }) : undefined}
+                        />
 
+                        <div className={commerceStyles.controls}>
                             {/* Top Controls: Search, Sort, Mobile Filter Button */}
-                            <div className={`flex items-center gap-3 flex-wrap ${isRTL ? 'flex-row-reverse' : ''}`}>
+                            <div className={`${commerceStyles.controlPanel} ${isRTL ? 'flex-row-reverse' : ''}`}>
                                 {/* Search Input */}
                                 <div className="w-full sm:w-64 lg:w-72">
                                     <SearchInput
@@ -409,7 +426,7 @@ export const ProductListPage: React.FC = () => {
                     </div>
 
                     {/* Category Navigation */}
-                    <div className={`transition-opacity duration-200 ${hasActiveFilters ? 'opacity-50' : ''}`}>
+                    <div className={`${commerceStyles.categoryNav} transition-opacity duration-200 ${hasActiveFilters ? 'opacity-50' : ''}`}>
                         <CategoryNav
                             categories={categories}
                             selectedId={currentCategoryId}
@@ -460,9 +477,17 @@ export const ProductListPage: React.FC = () => {
                         </div>
                     )}
 
+                    <CommerceMerchandisingBlock
+                        themeId={themeId}
+                        products={products}
+                        facets={facets}
+                        categoryName={currentCategory?.name}
+                        isRTL={isRTL}
+                    />
+
                     {/* Active Filters Bar */}
                     {hasActiveFilters && (
-                        <div className="mb-6">
+                        <div className={commerceStyles.activeFilters}>
                             <ActiveFiltersBar
                                 filters={{
                                     q: searchQuery,
@@ -482,9 +507,9 @@ export const ProductListPage: React.FC = () => {
                     )}
 
                     {/* Main Content with Sidebar */}
-                    <div className={`flex gap-6 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                    <div className={`${commerceStyles.main} ${isRTL ? 'flex-row-reverse' : ''}`}>
                         {/* Desktop Filters Sidebar */}
-                        <div className="hidden lg:block">
+                        <div className={commerceStyles.sidebar}>
                             <ProductFiltersSidebar
                                 facets={facets}
                                 filters={filters}
@@ -504,7 +529,7 @@ export const ProductListPage: React.FC = () => {
                         </div>
 
                         {/* Products Grid */}
-                        <div className="flex-1 min-w-0">
+                        <div className={commerceStyles.resultPanel}>
                             {renderContent()}
                         </div>
                     </div>
@@ -528,6 +553,7 @@ export const ProductListPage: React.FC = () => {
                         currency={config.currency}
                         isLoading={isLoading}
                     />
+                    </div>
                 </div>
             )}
         </Layout>

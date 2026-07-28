@@ -360,13 +360,23 @@ public sealed class CouponUsageServiceCqrsConsistencyTests
             .UseSqlite(connection)
             .Options;
 
-        var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        var context = new CouponConsistencyApplicationDbContext(options, new TestTenantContext(tenantId));
         await context.Database.EnsureCreatedAsync();
         return context;
     }
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)
     {
+        connection.CreateFunction<string?, string?>(
+            "btrim",
+            input => input?.Trim());
+        connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (input, characters) => input?.Trim((characters ?? " \t\n\r").ToCharArray()));
+        connection.CreateFunction<string?, int>(
+            "char_length",
+            input => input?.Length ?? 0);
+
         connection.CreateFunction<string?, string?, string?, string?, string?>(
             "REGEXP_REPLACE",
             (input, pattern, replacement, options) =>
@@ -407,6 +417,26 @@ public sealed class CouponUsageServiceCqrsConsistencyTests
 
         context.Coupons.Local.Single(coupon => coupon.Id == couponId).SetCode("SAVE10");
         await context.SaveChangesAsync();
+    }
+
+    private sealed class CouponConsistencyApplicationDbContext : ApplicationDbContext
+    {
+        public CouponConsistencyApplicationDbContext(
+            DbContextOptions<ApplicationDbContext> options,
+            ITenantContext tenantContext)
+            : base(options, tenantContext)
+        {
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Order>()
+                .Property<uint>("xmin")
+                .HasDefaultValue(1u)
+                .ValueGeneratedOnAdd();
+        }
     }
 
     private static async Task SeedCustomerAsync(ApplicationDbContext context, Guid tenantId, Guid customerId)

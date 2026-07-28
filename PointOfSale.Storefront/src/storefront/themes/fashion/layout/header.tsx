@@ -41,7 +41,7 @@ const FashionHeader: React.FC = () => {
     return (
         <>
             <header className="sticky top-0 z-30 border-b border-white/10 bg-[#161311] text-white shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
-                <div className="mx-auto max-w-7xl px-4 py-4">
+                <div className="mx-auto max-w-7xl px-4 py-3 sm:py-4">
                     <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.32em] text-white/60">
                         <span>Editorial storefront</span>
                         <div className="hidden items-center gap-2 md:flex">
@@ -70,7 +70,7 @@ const FashionHeader: React.FC = () => {
 
                         <AffiliateLink
                             href="/"
-                            className="flex-1 text-center text-3xl font-semibold uppercase tracking-[0.4em] text-white md:text-4xl"
+                            className="min-w-0 flex-1 truncate text-center text-2xl font-semibold uppercase tracking-[0.18em] text-white md:text-3xl lg:tracking-[0.28em]"
                         >
                             {storeName}
                         </AffiliateLink>
@@ -82,14 +82,14 @@ const FashionHeader: React.FC = () => {
                         </div>
                     </div>
 
-                    <nav className="mt-5 hidden items-center justify-center gap-8 border-t border-white/10 pt-4 md:flex" aria-label="Fashion navigation">
+                    <nav className="mt-5 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex" aria-label="Fashion navigation">
                         {links.map((link) => (
                             <AffiliateLink
                                 key={link.key}
                                 href={link.url}
                                 target={link.openInNewTab ? '_blank' : undefined}
                                 rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={`text-sm uppercase tracking-[0.28em] transition-colors ${
+                                className={`text-xs uppercase tracking-[0.18em] transition-colors lg:text-sm lg:tracking-[0.22em] ${
                                     isActive(link.url) ? 'text-white' : 'text-white/60 hover:text-white'
                                 }`}
                             >

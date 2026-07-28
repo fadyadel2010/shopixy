@@ -8,14 +8,13 @@ import { useTranslation } from 'react-i18next'
 export const settingsSchema = [
     { key: 'title', type: 'text', label: 'Title' },
     {
-        key: 'productSource',
+        key: 'source',
         type: 'select',
         label: 'Product Source',
         options: [
-            { value: 'featured', label: 'Featured' },
-            { value: 'new', label: 'New Arrivals' },
-            { value: 'bestseller', label: 'Best Sellers' },
-            { value: 'category', label: 'By Category' },
+            { value: 'all', label: 'All Products' },
+            { value: 'random', label: 'Random' },
+            { value: 'curated', label: 'Curated' },
         ],
     },
     { key: 'columns', type: 'number', label: 'Columns', min: 2, max: 5 },
@@ -56,14 +55,13 @@ export function ProductGridEditor({ section, onUpdate }) {
                     {isRTL ? 'مصدر المنتجات' : 'Product Source'}
                 </label>
                 <select
-                    value={settings.productSource || 'featured'}
-                    onChange={(e) => handleChange('productSource', e.target.value)}
+                    value={settings.source || 'all'}
+                    onChange={(e) => handleChange('source', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                 >
-                    <option value="featured">{isRTL ? 'مميزة' : 'Featured'}</option>
-                    <option value="new">{isRTL ? 'جديدة' : 'New Arrivals'}</option>
-                    <option value="bestseller">{isRTL ? 'الأكثر مبيعاً' : 'Best Sellers'}</option>
-                    <option value="category">{isRTL ? 'من تصنيف' : 'By Category'}</option>
+                    <option value="all">{isRTL ? 'كل المنتجات' : 'All Products'}</option>
+                    <option value="random">{isRTL ? 'عشوائي' : 'Random'}</option>
+                    <option value="curated">{isRTL ? 'مختار' : 'Curated'}</option>
                 </select>
             </div>
 

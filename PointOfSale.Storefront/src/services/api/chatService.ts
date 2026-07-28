@@ -4,54 +4,28 @@
  */
 
 import type { ChatRequest, ChatResponse, ChatStatus } from '../../types/chat';
+import { httpClient } from './httpClient';
 
 const API_BASE = '/api/storefront/chat';
-
-/**
- * Get the cart session ID from localStorage
- */
-function getCartSessionId(): string | undefined {
-    return localStorage.getItem('cart_session_id') || undefined;
-}
 
 /**
  * Send a message to the AI Commerce Assistant
  */
 export async function sendMessage(request: ChatRequest): Promise<ChatResponse> {
-    const response = await fetch(API_BASE, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Cart-Session-Id': getCartSessionId() || '',
-        },
-        credentials: 'include',
-        body: JSON.stringify(request),
-    });
-
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.message || error.error || 'Failed to send message');
-    }
-
-    return response.json();
+    const response = await httpClient.post<ChatResponse>(API_BASE, request);
+    return response.data;
 }
 
 /**
  * Check if the AI assistant is available
  */
 export async function getChatStatus(): Promise<ChatStatus> {
-    const response = await fetch(`${API_BASE}/status`, {
-        method: 'GET',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    });
-
-    if (!response.ok) {
+    try {
+        const response = await httpClient.get<ChatStatus>(`${API_BASE}/status`);
+        return response.data;
+    } catch {
         return { enabled: false, available: false };
     }
-
-    return response.json();
 }
 
 /**

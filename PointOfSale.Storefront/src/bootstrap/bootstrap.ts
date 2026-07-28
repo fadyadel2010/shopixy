@@ -152,11 +152,13 @@ export async function bootstrap(): Promise<BootstrapResult> {
         // Must run BEFORE httpClient starts making API calls.
         initAffiliateRefTracker();
 
-        // Step 2: Initialize Session
-        const sessionId = initializeSession();
+        // Step 2: Initialize Session after tenant resolution so browser storage is tenant-scoped.
+        if (!themePreviewToken) {
+            const sessionId = initializeSession();
 
-        if (import.meta.env.DEV) {
-            console.log('[Bootstrap] Session initialized:', sessionId.substring(0, 8) + '...');
+            if (import.meta.env.DEV) {
+                console.log('[Bootstrap] Session initialized:', sessionId.substring(0, 8) + '...');
+            }
         }
 
         // Step 3: Load Store Config
@@ -173,8 +175,11 @@ export async function bootstrap(): Promise<BootstrapResult> {
 
                 setResolvedTenant(config.tenantId, { overwrite: true });
 
+                const sessionId = initializeSession();
+
                 if (import.meta.env.DEV) {
                     console.log('[Bootstrap] Tenant resolved from theme preview authority:', config.tenantId);
+                    console.log('[Bootstrap] Session initialized:', sessionId.substring(0, 8) + '...');
                 }
             }
 

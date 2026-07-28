@@ -12,6 +12,7 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, '../PointOfSale.Storefront/src'),
       '@web': path.resolve(__dirname, './src'),
+      '@theme-authority': path.resolve(__dirname, '../theme-authority'),
     },
   },
 });

@@ -58,8 +58,9 @@ describe('Pearl theme — Phase T1.0 scaffold registration', () => {
     it('initial ThemeConfig tokens are well-formed (no visual changes yet)', () => {
         expect(pearlThemeConfig.colors.primary).toBe('#DC2626');
         expect(pearlThemeConfig.colors.secondary).toBe('#C9A863');
-        expect(pearlThemeConfig.colors.background).toBe('#FFFFFF');
+        expect(pearlThemeConfig.colors.background).toBe('#FBFAF7');
         expect(pearlThemeConfig.font.family).toContain('Jost');
+        expect(pearlThemeConfig.font.baseSize).toBe('15px');
         expect(pearlThemeConfig.ui.borderRadius).toBe('0px');
         expect(['compact', 'default', 'detailed']).toContain(pearlThemeConfig.layout.productCardVariant);
         expect(['standard', 'centered', 'minimal']).toContain(pearlThemeConfig.layout.headerVariant);

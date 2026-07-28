@@ -33,6 +33,7 @@ import { useBuilderStore, selectSections, selectCurrentPage } from '../store'
 import { storeConfigService } from '../services'
 import { isRequestCanceled } from '../../../services/api'
 import { sectionRegistry } from '../builder'
+import { validateSectionsAgainstContract } from '../builder/sectionContractRegistry'
 import { useAuthStore } from '../../../store/authStore'
 import {
     deriveCurrentStoreIdentityPresentation,
@@ -318,6 +319,8 @@ export function StorefrontBuilderPage() {
         setSaveError(null)
 
         try {
+            validateSectionsAgainstContract(sectionsToSave)
+
             const storageKey = getActiveStorageKey()
             const payload = isProductTemplatePage
                 ? {

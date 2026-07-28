@@ -13,7 +13,7 @@
  */
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { httpClient, normalizeError, isRetryableError } from '@/services/api';
 import { useCartStore, waitForCartMerge } from './cartStore';
 import { useAuthStore, selectIsAuthenticated, selectAuthStatus } from '@/auth/store/authStore';
@@ -23,6 +23,7 @@ import { persistActiveCheckoutOrderContext } from '@/features/checkout/activeChe
 import { requireStorefrontPaymentSessionAuthority } from '@/features/checkout/paymentSessionAuthority';
 import { emitCheckoutSelectionInvalidated } from '@/features/checkout/checkoutSelectionTelemetry';
 import { getRequestHeaders } from '@/bootstrap/requestContext';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 import type {
     CheckoutStep,
     ShippingAddress,
@@ -762,6 +763,18 @@ function admitStorefrontPaymentMethods(payload: unknown): PaymentMethodDto[] {
     return admitted;
 }
 
+function findAdmittedAvailablePaymentMethod(
+    methods: PaymentMethodDto[],
+    code: string | null | undefined
+): PaymentMethodDto | null {
+    const normalizedCode = code?.trim().toUpperCase();
+    if (!normalizedCode) {
+        return null;
+    }
+
+    return methods.find((method) => method.code === normalizedCode && method.isAvailable) ?? null;
+}
+
 /**
  * Validate shipping address
  */
@@ -979,6 +992,44 @@ function getSessionStorageSafe(): Storage | null {
     }
 }
 
+function getTenantScopedLocalStorageKey(key: string): string | null {
+    return tryGetTenantScopedStorageKey(key);
+}
+
+function getTenantScopedSessionStorageKey(key: string): string | null {
+    return tryGetTenantScopedStorageKey(key);
+}
+
+const checkoutStateStorage: StateStorage = {
+    getItem: (name) => {
+        const storage = getLocalStorageSafe();
+        const scopedKey = getTenantScopedLocalStorageKey(name);
+        if (!storage || !scopedKey) {
+            return null;
+        }
+
+        return storage.getItem(scopedKey);
+    },
+    setItem: (name, value) => {
+        const storage = getLocalStorageSafe();
+        const scopedKey = getTenantScopedLocalStorageKey(name);
+        if (!storage || !scopedKey) {
+            return;
+        }
+
+        storage.setItem(scopedKey, value);
+    },
+    removeItem: (name) => {
+        const storage = getLocalStorageSafe();
+        const scopedKey = getTenantScopedLocalStorageKey(name);
+        if (!storage || !scopedKey) {
+            return;
+        }
+
+        storage.removeItem(scopedKey);
+    },
+};
+
 function buildSensitiveCheckoutStateSnapshot(state: {
     address: ShippingAddress;
 }): SensitiveCheckoutStateSnapshot {
@@ -1009,7 +1060,12 @@ function readSensitiveCheckoutSessionStorage(): SensitiveCheckoutStateSnapshot |
     }
 
     try {
-        const raw = storage.getItem(SENSITIVE_STORAGE_KEY);
+        const storageKey = getTenantScopedSessionStorageKey(SENSITIVE_STORAGE_KEY);
+        if (!storageKey) {
+            return null;
+        }
+
+        const raw = storage.getItem(storageKey);
         if (!raw) {
             return null;
         }
@@ -1048,12 +1104,17 @@ function writeSensitiveCheckoutSessionStorage(snapshot: SensitiveCheckoutStateSn
     }
 
     try {
-        if (isSensitiveCheckoutStateEmpty(snapshot)) {
-            storage.removeItem(SENSITIVE_STORAGE_KEY);
+        const storageKey = getTenantScopedSessionStorageKey(SENSITIVE_STORAGE_KEY);
+        if (!storageKey) {
             return;
         }
 
-        storage.setItem(SENSITIVE_STORAGE_KEY, JSON.stringify(snapshot));
+        if (isSensitiveCheckoutStateEmpty(snapshot)) {
+            storage.removeItem(storageKey);
+            return;
+        }
+
+        storage.setItem(storageKey, JSON.stringify(snapshot));
     } catch {
         // Storage may be unavailable or blocked by the browser.
     }
@@ -1066,7 +1127,10 @@ export function clearSensitiveCheckoutSessionStorage(): void {
     }
 
     try {
-        storage.removeItem(SENSITIVE_STORAGE_KEY);
+        const storageKey = getTenantScopedSessionStorageKey(SENSITIVE_STORAGE_KEY);
+        if (storageKey) {
+            storage.removeItem(storageKey);
+        }
     } catch {
         // Storage may be unavailable or blocked by the browser.
     }
@@ -1080,7 +1144,10 @@ export function clearPersistedCheckoutStateStorage(): void {
     }
 
     try {
-        storage.removeItem(STORAGE_KEY);
+        const storageKey = getTenantScopedLocalStorageKey(STORAGE_KEY);
+        if (storageKey) {
+            storage.removeItem(storageKey);
+        }
     } catch {
         // Storage may be unavailable or blocked by the browser.
     }
@@ -1247,13 +1314,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             // ================================================================
 
             setPaymentMethod: (method) => {
-                set({
-                    paymentMethod: method,
-                    selectedPaymentMethodCode: method,
-                    paymentSelectionStatus: 'valid',
-                    stalePaymentSelection: null,
-                });
-                get().autosaveCheckoutSession();
+                get().selectPaymentMethod(method);
             },
 
             /**
@@ -1344,16 +1405,38 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             },
 
             selectPaymentMethod: (code) => {
+                const normalizedCode = code.trim().toUpperCase();
+                const admittedMethod = findAdmittedAvailablePaymentMethod(get().paymentMethods, normalizedCode);
+
+                if (!admittedMethod) {
+                    set({
+                        selectedPaymentMethodCode: null,
+                        paymentMethod: null,
+                        paymentSelectionStatus: 'stale',
+                        stalePaymentSelection: {
+                            value: normalizedCode,
+                            label: normalizedCode,
+                            message: STALE_SELECTION_ERROR_KEY,
+                        },
+                        manualWalletType: null,
+                        manualWalletPhoneNumber: '',
+                        manualWalletProofFileKey: null,
+                    });
+                    emitCheckoutSelectionInvalidated('payment', 'client_selection_not_admitted', normalizedCode);
+                    get().autosaveCheckoutSession();
+                    return;
+                }
+
                 set((state) => ({
-                    selectedPaymentMethodCode: code,
-                    paymentMethod: code,
+                    selectedPaymentMethodCode: admittedMethod.code,
+                    paymentMethod: admittedMethod.code,
                     paymentSelectionStatus: 'valid',
                     stalePaymentSelection: null,
-                    manualWalletType: code === 'MANUALWALLET' ? state.manualWalletType : null,
-                    manualWalletPhoneNumber: code === 'MANUALWALLET'
+                    manualWalletType: admittedMethod.code === 'MANUALWALLET' ? state.manualWalletType : null,
+                    manualWalletPhoneNumber: admittedMethod.code === 'MANUALWALLET'
                         ? state.manualWalletPhoneNumber
                         : '',
-                    manualWalletProofFileKey: code === 'MANUALWALLET'
+                    manualWalletProofFileKey: admittedMethod.code === 'MANUALWALLET'
                         ? state.manualWalletProofFileKey
                         : null,
                 }));
@@ -2006,6 +2089,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
         {
             name: STORAGE_KEY,
             version: 5,
+            storage: createJSONStorage(() => checkoutStateStorage),
             migrate: (persistedState) => {
                 const state = (persistedState ?? {}) as Partial<CheckoutState>;
 

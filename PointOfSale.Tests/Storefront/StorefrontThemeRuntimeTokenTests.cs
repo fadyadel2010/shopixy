@@ -1,0 +1,249 @@
+using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Services.Storefront;
+using PointOfSale.Core.Constants;
+using PointOfSale.Core.Entities;
+using System.Text.Json;
+
+namespace PointOfSale.Tests.Storefront;
+
+public sealed class StorefrontThemeRuntimeTokenTests
+{
+    [Fact]
+    public void RuntimeThemeRegistry_EveryThemeExposesCanonicalThemeConfig()
+    {
+        var ids = StorefrontThemes.All.Select(theme => theme.Id).ToArray();
+
+        Assert.Equal(ids.Length, ids.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+
+        foreach (var theme in StorefrontThemes.All)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Colors.Primary));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Colors.Secondary));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Colors.Background));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Colors.Text));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Colors.Muted));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Font.Family));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Font.BaseSize));
+            Assert.False(string.IsNullOrWhiteSpace(theme.DefaultThemeConfig.Ui.BorderRadius));
+            Assert.Contains("layout.header", theme.Capabilities);
+            Assert.Contains("layout.footer", theme.Capabilities);
+        }
+    }
+
+    [Fact]
+    public void BackendThemeRegistry_IsDerivedFromCanonicalThemeAuthority()
+    {
+        var root = DiscoverSolutionRoot(AppContext.BaseDirectory);
+        var manifestPath = Path.Combine(root, "theme-authority", "shopixy-theme-authority.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var rootElement = document.RootElement;
+        var expectedIds = rootElement
+            .GetProperty("themes")
+            .EnumerateArray()
+            .Where(theme =>
+                theme.GetProperty("officialStatus").GetString() == "official" &&
+                theme.GetProperty("activationStatus").GetString() == "active" &&
+                theme.GetProperty("backendAvailability").GetBoolean())
+            .Select(theme => theme.GetProperty("id").GetString())
+            .ToArray();
+
+        Assert.Equal(rootElement.GetProperty("defaultThemeId").GetString(), StorefrontThemes.Default);
+        Assert.Equal(expectedIds, StorefrontThemes.All.Select(theme => theme.Id).ToArray());
+        Assert.DoesNotContain("electronics", StorefrontThemes.All.Select(theme => theme.Id));
+
+        foreach (var theme in StorefrontThemes.All)
+        {
+            var manifestTheme = rootElement
+                .GetProperty("themes")
+                .EnumerateArray()
+                .Single(candidate => candidate.GetProperty("id").GetString() == theme.Id);
+            var colors = manifestTheme.GetProperty("defaultThemeConfig").GetProperty("colors");
+
+            Assert.Equal(manifestTheme.GetProperty("displayName").GetString(), theme.Name);
+            Assert.Equal(manifestTheme.GetProperty("version").GetString(), theme.Version);
+            Assert.Equal(colors.GetProperty("primary").GetString(), theme.DefaultThemeConfig.Colors.Primary);
+            Assert.Equal(colors.GetProperty("background").GetString(), theme.DefaultThemeConfig.Colors.Background);
+        }
+    }
+
+    [Theory]
+    [InlineData("modern", "#2563eb", "#ffffff", "Inter", "16px", "8px")]
+    [InlineData("pearl", "#DC2626", "#FBFAF7", "'Jost', sans-serif", "15px", "0px")]
+    [InlineData("phoenix", "#cd1515", "#ece9e2", "'Jost', sans-serif", "15px", "0px")]
+    [InlineData("hype", "#F06736", "#FFFFFF", "'Jost', sans-serif", "16px", "8px")]
+    [InlineData("fashion", "#e11d48", "#fff7ed", "Poppins", "17px", "16px")]
+    [InlineData("minimal", "#111827", "#f9fafb", "Inter", "14px", "4px")]
+    public void ThemeDefaultsApplyWhenTenantOverridesAreAbsent(
+        string storefrontTheme,
+        string expectedPrimary,
+        string expectedBackground,
+        string expectedFont,
+        string expectedBaseSize,
+        string expectedBorderRadius)
+    {
+        var runtime = StorefrontDraftConfigMapper.MapLive(
+            CreateConfig(storefrontTheme),
+            themePreset: null,
+            currency: "EGP",
+            defaultCountryCode: "EG");
+
+        Assert.Equal(storefrontTheme, runtime.StorefrontTheme);
+        Assert.Equal(expectedPrimary, runtime.Theme.Colors.Primary);
+        Assert.Equal(expectedBackground, runtime.Theme.Colors.Background);
+        Assert.Equal(expectedFont, runtime.Theme.Font.Family);
+        Assert.Equal(expectedBaseSize, runtime.Theme.Font.BaseSize);
+        Assert.Equal(expectedBorderRadius, runtime.Theme.Ui.BorderRadius);
+    }
+
+    [Fact]
+    public void ThemeSwitchSequence_ChangesEveryCssVariableProjection()
+    {
+        var modern = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("modern"), null, "EGP", "EG").Theme);
+        var pearl = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("pearl"), null, "EGP", "EG").Theme);
+        var fashion = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("fashion"), null, "EGP", "EG").Theme);
+        var minimal = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("minimal"), null, "EGP", "EG").Theme);
+
+        AssertAllVariablesChanged(modern, pearl);
+        AssertAllVariablesChanged(pearl, fashion);
+        AssertAllVariablesChanged(fashion, minimal);
+    }
+
+    [Fact]
+    public void TenantOverridesTakePrecedenceOverThemeDefaults()
+    {
+        var config = CreateConfig(
+            "pearl",
+            themeLiveOverridesJson: """
+            {
+              "colors": {
+                "primary": "#123456",
+                "background": "#abcdef"
+              },
+              "font": "Cairo",
+              "borderRadius": 22
+            }
+            """);
+
+        var runtime = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
+
+        Assert.Equal("#123456", runtime.Theme.Colors.Primary);
+        Assert.Equal("#abcdef", runtime.Theme.Colors.Background);
+        Assert.Equal("Cairo", runtime.Theme.Font.Family);
+        Assert.Equal("22px", runtime.Theme.Ui.BorderRadius);
+        Assert.Equal("#C9A863", runtime.Theme.Colors.Secondary);
+        Assert.Equal("#131316", runtime.Theme.Colors.Text);
+    }
+
+    [Fact]
+    public void LegacyStoreThemeCustomizationsRemainTenantOverrides()
+    {
+        var config = CreateConfig("fashion");
+        config.Theme = new StoreThemeConfig
+        {
+            Colors = new ColorsConfig
+            {
+                Primary = "#654321",
+                Secondary = new ColorsConfig().Secondary,
+                Background = new ColorsConfig().Background,
+                Text = new ColorsConfig().Text,
+                Muted = new ColorsConfig().Muted
+            },
+            Font = new FontConfig
+            {
+                Family = "Tajawal",
+                BaseSize = new FontConfig().BaseSize
+            },
+            Ui = new UiConfig
+            {
+                BorderRadius = new UiConfig().BorderRadius,
+                ButtonStyle = new UiConfig().ButtonStyle
+            },
+            Layout = new LayoutConfig
+            {
+                ProductCardVariant = new LayoutConfig().ProductCardVariant,
+                HeaderVariant = new LayoutConfig().HeaderVariant
+            }
+        };
+
+        var runtime = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
+
+        Assert.Equal("#654321", runtime.Theme.Colors.Primary);
+        Assert.Equal("Tajawal", runtime.Theme.Font.Family);
+        Assert.Equal("#fff7ed", runtime.Theme.Colors.Background);
+        Assert.Equal("17px", runtime.Theme.Font.BaseSize);
+        Assert.Equal("16px", runtime.Theme.Ui.BorderRadius);
+    }
+
+    [Fact]
+    public void RuntimeMapperUsesStorefrontThemeRegistryWithoutThemeIdSwitches()
+    {
+        var root = DiscoverSolutionRoot(AppContext.BaseDirectory);
+        var mapper = File.ReadAllText(Path.Combine(root, "PointOfSale.API", "Services", "Storefront", "StorefrontDraftConfigMapper.cs"));
+        var registry = File.ReadAllText(Path.Combine(root, "PointOfSale.Core", "Constants", "StorefrontThemes.cs"));
+
+        Assert.Contains("StorefrontThemes.GetThemeConfig", mapper, StringComparison.Ordinal);
+        Assert.DoesNotContain("switch (storefrontTheme", mapper, StringComparison.Ordinal);
+        Assert.DoesNotContain("switch (activatedTheme", mapper, StringComparison.Ordinal);
+        Assert.Contains("StoreThemeConfig DefaultThemeConfig", registry, StringComparison.Ordinal);
+        Assert.Equal(2, registry.Split("public static readonly IReadOnlyList<StorefrontThemeDefinition> All").Length);
+    }
+
+    private static StoreConfig CreateConfig(string storefrontTheme, string themeLiveOverridesJson = "{}")
+    {
+        return new StoreConfig
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Guid.NewGuid(),
+            StoreName = "Runtime Token Store",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            ThemeLivePresetKey = "default",
+            ThemeDraftOverridesJson = "{}",
+            ThemeLiveOverridesJson = themeLiveOverridesJson,
+            CustomizationJson = $$"""{"storefrontTheme":"{{storefrontTheme}}"}"""
+        };
+    }
+
+    private static Dictionary<string, string> CssVariables(StorefrontThemeConfigDto theme)
+    {
+        return new Dictionary<string, string>
+        {
+            ["--color-primary"] = theme.Colors.Primary,
+            ["--color-secondary"] = theme.Colors.Secondary,
+            ["--color-background"] = theme.Colors.Background,
+            ["--color-text"] = theme.Colors.Text,
+            ["--color-muted"] = theme.Colors.Muted,
+            ["--font-family"] = theme.Font.Family,
+            ["--font-family-ar"] = $"arabic-stack, {theme.Font.Family}",
+            ["--font-base-size"] = theme.Font.BaseSize,
+            ["--border-radius"] = theme.Ui.BorderRadius
+        };
+    }
+
+    private static void AssertAllVariablesChanged(
+        IReadOnlyDictionary<string, string> before,
+        IReadOnlyDictionary<string, string> after)
+    {
+        Assert.Equal(before.Keys.OrderBy(key => key), after.Keys.OrderBy(key => key));
+        foreach (var variable in before.Keys)
+        {
+            Assert.NotEqual(before[variable], after[variable]);
+        }
+    }
+
+    private static string DiscoverSolutionRoot(string startPath)
+    {
+        var current = new DirectoryInfo(startPath);
+        while (current != null)
+        {
+            if (current.GetFiles("*.sln").Any() || current.GetDirectories("PointOfSale.API").Any())
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        throw new InvalidOperationException($"Could not discover solution root from '{startPath}'.");
+    }
+}

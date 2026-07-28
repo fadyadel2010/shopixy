@@ -1,3 +1,5 @@
+import { ThemeBadge } from '@/components/theme-components';
+
 type BadgeProduct = {
     isFeatured?: boolean;
     hasActivePromotion?: boolean;
@@ -9,6 +11,7 @@ type BadgeProduct = {
 
 interface ProductBadgesProps {
     product: BadgeProduct;
+    themeId?: string | null;
 }
 
 function getDiscountBadge(product: BadgeProduct): string | null {
@@ -24,7 +27,7 @@ function getDiscountBadge(product: BadgeProduct): string | null {
     return null;
 }
 
-export default function ProductBadges({ product }: ProductBadgesProps) {
+export default function ProductBadges({ product, themeId }: ProductBadgesProps) {
     const discountBadge = getDiscountBadge(product);
 
     if (!product.isFeatured && !discountBadge) {
@@ -34,15 +37,15 @@ export default function ProductBadges({ product }: ProductBadgesProps) {
     return (
         <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-col gap-2">
             {product.isFeatured ? (
-                <span className="rounded-full bg-amber-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-sm">
+                <ThemeBadge themeId={themeId}>
                     Featured
-                </span>
+                </ThemeBadge>
             ) : null}
 
             {discountBadge ? (
-                <span className="rounded-full bg-rose-500 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-white shadow-sm">
+                <ThemeBadge themeId={themeId} tone="accent">
                     {discountBadge}
-                </span>
+                </ThemeBadge>
             ) : null}
         </div>
     );

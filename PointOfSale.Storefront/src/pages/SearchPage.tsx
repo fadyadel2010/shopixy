@@ -24,8 +24,14 @@ import { useSearchParams } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import { SearchInput } from '@/components/search/SearchInput';
 import { SearchResultItem } from '@/components/search/SearchResultItem';
+import { ThemeEmptyState } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 import { useAnalytics } from '@/analytics';
+import { useTheme } from '@/storefront/themes/ThemeContext';
+import {
+    normalizeCommerceTheme,
+    searchPageStyles,
+} from '@/storefront/commerce/CommerceBrowsingExperience';
 import {
     useSearchStore,
     selectSearchResults,
@@ -47,6 +53,9 @@ type EntityTab = 'all' | 'product' | 'category' | 'cms';
 export const SearchPage: React.FC = () => {
     const { t } = useTranslation();
     const [searchParams, setSearchParams] = useSearchParams();
+    const { themeId } = useTheme();
+    const commerceTheme = normalizeCommerceTheme(themeId);
+    const styles = searchPageStyles[commerceTheme];
 
     // Get query from URL
     const urlQuery = searchParams.get('q') || '';
@@ -137,10 +146,25 @@ export const SearchPage: React.FC = () => {
 
     return (
         <Layout>
-            <div className="flex-1 container mx-auto px-4 py-8">
+            <div className={styles.page} data-commerce-search-theme={commerceTheme}>
                 {/* Search Header */}
-                <div className="max-w-3xl mx-auto mb-8">
-                    <h1 className="text-2xl md:text-3xl font-bold text-text mb-4">
+                <div className={styles.header}>
+                    <p className={styles.eyebrow}>
+                        {commerceTheme === 'electronics'
+                            ? 'Search index'
+                            : commerceTheme === 'hype'
+                                ? 'Search drops'
+                                : commerceTheme === 'phoenix'
+                                    ? 'Find the drop'
+                            : commerceTheme === 'fashion'
+                                ? 'Find the edit'
+                                : commerceTheme === 'pearl'
+                                    ? 'Catalog request'
+                                    : commerceTheme === 'minimal'
+                                        ? 'Search quietly'
+                                        : 'Search storefront'}
+                    </p>
+                    <h1 className={styles.title}>
                         {t('common.search')}
                     </h1>
 
@@ -158,18 +182,18 @@ export const SearchPage: React.FC = () => {
 
                 {/* Results Section */}
                 {urlQuery.trim().length >= MIN_SEARCH_LENGTH && (
-                    <div className="max-w-4xl mx-auto">
+                    <div className={styles.resultWrap}>
                         {/* Tabs */}
-                        <div className="flex gap-1 mb-6 overflow-x-auto pb-2">
+                        <div className={styles.tabs}>
                             {tabs.map(tab => (
                                 <button
                                     key={tab.key}
                                     onClick={() => handleTabChange(tab.key)}
                                     className={`
-                                        px-4 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-colors
+                                        px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors
                                         ${activeTab === tab.key
-                                            ? 'bg-primary text-white'
-                                            : 'bg-muted/10 text-muted hover:bg-muted/20 hover:text-text'
+                                            ? styles.activeTab
+                                            : styles.inactiveTab
                                         }
                                     `}
                                 >
@@ -180,7 +204,7 @@ export const SearchPage: React.FC = () => {
 
                         {/* Search Meta */}
                         {searchStatus === 'success' && searchResults && (
-                            <div className="text-sm text-muted mb-4">
+                            <div className={styles.meta}>
                                 {t('search.results', { count: searchResults.totalCount })} {t('search.searching')} "{urlQuery}" ({searchResults.searchTimeMs}ms)
                             </div>
                         )}
@@ -221,23 +245,18 @@ export const SearchPage: React.FC = () => {
 
                         {/* Empty State */}
                         {searchStatus === 'empty' && (
-                            <div className="text-center py-16">
-                                <svg className="w-12 h-12 mx-auto mb-4 text-muted/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                                </svg>
-                                <h3 className="text-lg font-semibold text-text mb-2">
-                                    {t('common.noResults')}
-                                </h3>
-                                <p className="text-muted">
-                                    {t('search.noResultsFor', { query: urlQuery })}
-                                </p>
-                            </div>
+                            <ThemeEmptyState
+                                themeId={themeId}
+                                title={t('common.noResults')}
+                                message={t('search.noResultsFor', { query: urlQuery })}
+                                className="my-8"
+                            />
                         )}
 
                         {/* Results List */}
                         {searchStatus === 'success' && searchResults && searchResults.items.length > 0 && (
                             <>
-                                <div className="bg-background border border-muted/20 rounded-xl overflow-hidden divide-y divide-muted/10">
+                                <div className={styles.list}>
                                     {searchResults.items.map(item => (
                                         <SearchResultItem
                                             key={`${item.entityType}-${item.entityId}`}
@@ -254,10 +273,10 @@ export const SearchPage: React.FC = () => {
                                             onClick={() => handlePageChange(urlPage - 1)}
                                             disabled={!searchResults.hasPreviousPage}
                                             className={`
-                                                px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                                                px-4 py-2 text-sm font-medium transition-colors
                                                 ${searchResults.hasPreviousPage
-                                                    ? 'bg-muted/10 text-text hover:bg-muted/20'
-                                                    : 'bg-muted/5 text-muted cursor-not-allowed'
+                                                    ? styles.pagerButton
+                                                    : styles.disabledPagerButton
                                                 }
                                             `}
                                         >
@@ -272,10 +291,10 @@ export const SearchPage: React.FC = () => {
                                             onClick={() => handlePageChange(urlPage + 1)}
                                             disabled={!searchResults.hasNextPage}
                                             className={`
-                                                px-4 py-2 rounded-lg text-sm font-medium transition-colors
+                                                px-4 py-2 text-sm font-medium transition-colors
                                                 ${searchResults.hasNextPage
-                                                    ? 'bg-muted/10 text-text hover:bg-muted/20'
-                                                    : 'bg-muted/5 text-muted cursor-not-allowed'
+                                                    ? styles.pagerButton
+                                                    : styles.disabledPagerButton
                                                 }
                                             `}
                                         >
@@ -290,16 +309,12 @@ export const SearchPage: React.FC = () => {
 
                 {/* Initial State (no query) */}
                 {urlQuery.trim().length < MIN_SEARCH_LENGTH && (
-                    <div className="max-w-3xl mx-auto text-center py-16">
-                        <svg className="w-16 h-16 mx-auto mb-4 text-muted/30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
-                        <h2 className="text-xl font-semibold text-text mb-2">
-                            {t('search.placeholder')}
-                        </h2>
-                        <p className="text-muted">
-                            {t('search.minChars')}
-                        </p>
+                    <div className="mx-auto max-w-3xl py-10">
+                        <ThemeEmptyState
+                            themeId={themeId}
+                            title={t('search.placeholder')}
+                            message={t('search.minChars')}
+                        />
                     </div>
                 )}
             </div>

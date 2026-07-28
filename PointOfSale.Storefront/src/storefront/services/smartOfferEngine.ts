@@ -1,4 +1,5 @@
 import { fetchSmartOffers } from '@/services/api';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 import type {
     SmartOffer,
     SmartOfferPagesScope,
@@ -26,13 +27,18 @@ function canUseStorage() {
     return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
+function getScopedStorageKey(key: string): string | null {
+    return tryGetTenantScopedStorageKey(key);
+}
+
 function safelyReadSessionCache(): SmartOffer[] | null {
     if (!canUseStorage()) {
         return null;
     }
 
     try {
-        const cached = window.sessionStorage.getItem(SESSION_CACHE_KEY);
+        const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
+        const cached = storageKey ? window.sessionStorage.getItem(storageKey) : null;
         if (!cached) {
             return null;
         }
@@ -50,7 +56,10 @@ function writeSessionCache(offers: SmartOffer[]) {
     }
 
     try {
-        window.sessionStorage.setItem(SESSION_CACHE_KEY, JSON.stringify(offers));
+        const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
+        if (storageKey) {
+            window.sessionStorage.setItem(storageKey, JSON.stringify(offers));
+        }
     } catch {
         // Ignore storage quota errors.
     }
@@ -61,7 +70,8 @@ function getDisplayCount(offerId: string): number {
         return 0;
     }
 
-    const rawValue = window.localStorage.getItem(`${LOCAL_SEEN_PREFIX}${offerId}`);
+    const storageKey = getScopedStorageKey(`${LOCAL_SEEN_PREFIX}${offerId}`);
+    const rawValue = storageKey ? window.localStorage.getItem(storageKey) : null;
     return rawValue ? Number.parseInt(rawValue, 10) || 0 : 0;
 }
 
@@ -70,7 +80,8 @@ function hasSeenOfferThisSession(offerId: string): boolean {
         return false;
     }
 
-    return window.sessionStorage.getItem(`${SESSION_SEEN_PREFIX}${offerId}`) === '1';
+    const storageKey = getScopedStorageKey(`${SESSION_SEEN_PREFIX}${offerId}`);
+    return storageKey ? window.sessionStorage.getItem(storageKey) === '1' : false;
 }
 
 function matchesPageScope(scope: SmartOfferPagesScope, pageType: StorefrontPageType): boolean {
@@ -217,8 +228,14 @@ export function markOfferDisplayed(offer: SmartOffer) {
     }
 
     const count = getDisplayCount(offer.id) + 1;
-    window.localStorage.setItem(`${LOCAL_SEEN_PREFIX}${offer.id}`, String(count));
-    window.sessionStorage.setItem(`${SESSION_SEEN_PREFIX}${offer.id}`, '1');
+    const localSeenKey = getScopedStorageKey(`${LOCAL_SEEN_PREFIX}${offer.id}`);
+    const sessionSeenKey = getScopedStorageKey(`${SESSION_SEEN_PREFIX}${offer.id}`);
+    if (localSeenKey) {
+        window.localStorage.setItem(localSeenKey, String(count));
+    }
+    if (sessionSeenKey) {
+        window.sessionStorage.setItem(sessionSeenKey, '1');
+    }
 }
 
 export function resetSmartOfferSessionCache() {
@@ -228,5 +245,8 @@ export function resetSmartOfferSessionCache() {
         return;
     }
 
-    window.sessionStorage.removeItem(SESSION_CACHE_KEY);
+    const storageKey = getScopedStorageKey(SESSION_CACHE_KEY);
+    if (storageKey) {
+        window.sessionStorage.removeItem(storageKey);
+    }
 }

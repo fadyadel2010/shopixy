@@ -148,6 +148,10 @@ class AnalyticsEventBuilder {
             throw new Error('[AnalyticsEventBuilder] SessionId is required');
         }
 
+        if (!event.context.tenantId) {
+            throw new Error('[AnalyticsEventBuilder] TenantId is required');
+        }
+
         // All events require page URL
         if (!event.context.pageUrl) {
             throw new Error('[AnalyticsEventBuilder] PageUrl is required');

@@ -23,11 +23,15 @@
         "paths": {
             "@/*": [
                 "src/*"
+            ],
+            "@theme-authority/*": [
+                "../theme-authority/*"
             ]
         }
     },
     "include": [
-        "src"
+        "src",
+        "../theme-authority/shopixy-theme-authority.json"
     ],
     "references": [
         {

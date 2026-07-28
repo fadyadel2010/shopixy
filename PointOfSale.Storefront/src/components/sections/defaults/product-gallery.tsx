@@ -1,5 +1,7 @@
 import React from 'react';
 import { ProductMediaGallery } from '@/components/products';
+import { getPurchaseExperienceProfile } from '@/storefront/products/purchaseExperience';
+import { useTheme } from '@/storefront/themes/ThemeContext';
 import type { ProductReadDto } from '@/types';
 
 interface ProductGalleryProps {
@@ -7,6 +9,7 @@ interface ProductGalleryProps {
     title?: string;
     showThumbnails?: boolean;
     maxImages?: number;
+    layoutVariant?: string;
 }
 
 const ProductGallery: React.FC<ProductGalleryProps> = ({
@@ -14,21 +17,26 @@ const ProductGallery: React.FC<ProductGalleryProps> = ({
     title,
     showThumbnails = true,
     maxImages = 6,
+    layoutVariant = 'default',
 }) => {
+    const { themeId } = useTheme();
+    const profile = getPurchaseExperienceProfile(layoutVariant, themeId);
+
     if (!product) {
         return null;
     }
 
     return (
-        <section className="container mx-auto px-4 py-8">
-            <div className="rounded-3xl border border-muted/20 bg-background p-6 shadow-sm">
+        <section className={`${profile.sectionClassName} px-4 py-8`} data-purchase-experience={profile.variant}>
+            <div className="container mx-auto">
                 {title ? <h2 className="mb-6 text-2xl font-bold text-text">{title}</h2> : null}
 
                 <ProductMediaGallery
                     product={product}
                     showThumbnails={showThumbnails}
                     maxThumbnails={Math.max(1, Number(maxImages || 6))}
-                    aspectClassName="aspect-[4/3]"
+                    aspectClassName={profile.galleryAspectClassName}
+                    presentationVariant={profile.variant}
                 />
             </div>
         </section>

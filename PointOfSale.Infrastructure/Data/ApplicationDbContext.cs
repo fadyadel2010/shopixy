@@ -2847,9 +2847,22 @@ public class ApplicationDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"IsDeleted\" = false");
             entity.HasIndex(c => c.IsActive);
-            entity.Property(c => c.RowVersion)
-                .HasColumnName("xmin")
-                .IsRowVersion();
+            var couponRowVersion = entity.Property(c => c.RowVersion);
+            if (Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                couponRowVersion
+                    .HasColumnName("xmin")
+                    .HasColumnType("xid")
+                    .IsRowVersion();
+            }
+            else
+            {
+                couponRowVersion
+                    .HasColumnName(nameof(Coupon.RowVersion))
+                    .IsConcurrencyToken()
+                    .ValueGeneratedOnAddOrUpdate()
+                    .HasDefaultValue(0u);
+            }
         });
 
         // CouponUsage Configuration (PHASE: Shopify-grade Coupon Engine)

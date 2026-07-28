@@ -18,6 +18,7 @@
  */
 
 import type { AnalyticsContext } from './eventTypes';
+import { getTenantId, isTenantResolved } from '@/bootstrap';
 
 /**
  * Get current language from document or navigator
@@ -88,6 +89,7 @@ class AnalyticsContextResolver {
         const viewport = getViewportDimensions();
 
         return {
+            tenantId: isTenantResolved() ? getTenantId() : undefined,
             pageUrl: sanitizeAnalyticsUrl(window.location.href) || window.location.origin,
             referrer: sanitizeAnalyticsUrl(document.referrer),
             language: getCurrentLanguage(),

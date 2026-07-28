@@ -25,6 +25,7 @@ internal static class StorefrontDraftConfigMapper
             currency,
             defaultCountryCode,
             useDraftContent: true,
+            storefrontThemeOverride: null,
             errorCallback: errorCallback);
     }
 
@@ -33,7 +34,8 @@ internal static class StorefrontDraftConfigMapper
         ThemePreset? themePreset,
         string currency,
         string defaultCountryCode,
-        Action<Exception, string>? errorCallback = null)
+        Action<Exception, string>? errorCallback = null,
+        string? storefrontThemeOverride = null)
     {
         return Map(
             config,
@@ -41,6 +43,7 @@ internal static class StorefrontDraftConfigMapper
             currency,
             defaultCountryCode,
             useDraftContent: false,
+            storefrontThemeOverride: storefrontThemeOverride,
             errorCallback: errorCallback);
     }
 
@@ -50,16 +53,21 @@ internal static class StorefrontDraftConfigMapper
         string currency,
         string defaultCountryCode,
         bool useDraftContent,
+        string? storefrontThemeOverride,
         Action<Exception, string>? errorCallback)
     {
+        var storefrontTheme = !string.IsNullOrWhiteSpace(storefrontThemeOverride)
+            ? StorefrontThemes.NormalizeOrDefault(storefrontThemeOverride)
+            : ExtractStorefrontTheme(config.CustomizationJson, config.ThemeId, errorCallback);
+
         return new StorefrontStoreConfigDto
         {
             TenantId = config.TenantId,
             StoreName = config.StoreName,
             StoreDescription = config.StoreDescription,
-            StorefrontTheme = ExtractStorefrontTheme(config.CustomizationJson, config.ThemeId, errorCallback),
+            StorefrontTheme = storefrontTheme,
             ThemeId = themePreset?.Key ?? "default",
-            Theme = MapThemeConfig(config, themePreset, useDraftOverrides: useDraftContent, errorCallback),
+            Theme = MapThemeConfig(config, themePreset, useDraftOverrides: useDraftContent, storefrontTheme, errorCallback),
             Behavior = new StorefrontBehaviorConfigDto
             {
                 EnableGuestCheckout = config.Behavior.EnableGuestCheckout,
@@ -115,39 +123,104 @@ internal static class StorefrontDraftConfigMapper
         StoreConfig config,
         ThemePreset? themePreset,
         bool useDraftOverrides,
+        string? storefrontTheme = null,
         Action<Exception, string>? errorCallback = null)
     {
-        var theme = new StorefrontThemeConfigDto
-        {
-            Colors = new StorefrontColorsConfigDto
-            {
-                Primary = config.Theme.Colors.Primary,
-                Secondary = config.Theme.Colors.Secondary,
-                Background = config.Theme.Colors.Background,
-                Text = config.Theme.Colors.Text,
-                Muted = config.Theme.Colors.Muted
-            },
-            Font = new StorefrontFontConfigDto
-            {
-                Family = config.Theme.Font.Family,
-                BaseSize = config.Theme.Font.BaseSize
-            },
-            Ui = new StorefrontUiConfigDto
-            {
-                BorderRadius = config.Theme.Ui.BorderRadius,
-                ButtonStyle = config.Theme.Ui.ButtonStyle
-            },
-            Layout = new StorefrontLayoutConfigDto
-            {
-                ProductCardVariant = config.Theme.Layout.ProductCardVariant,
-                HeaderVariant = config.Theme.Layout.HeaderVariant
-            }
-        };
+        var activatedTheme = !string.IsNullOrWhiteSpace(storefrontTheme)
+            ? StorefrontThemes.NormalizeOrDefault(storefrontTheme)
+            : ExtractStorefrontTheme(config.CustomizationJson, config.ThemeId, errorCallback);
 
-        ApplyThemePreset(theme, themePreset, errorCallback);
+        var theme = CreateThemeDto(new StoreThemeConfig());
+        ApplyThemeConfig(theme, StorefrontThemes.GetThemeConfig(activatedTheme));
+
+        if (themePreset != null &&
+            !string.Equals(themePreset.Key, "default", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyThemePreset(theme, themePreset, errorCallback);
+        }
+
+        ApplyLegacyTenantThemeOverrides(theme, config.Theme);
         ApplyThemeOverrides(theme, useDraftOverrides ? config.ThemeDraftOverridesJson : config.ThemeLiveOverridesJson, errorCallback);
 
         return theme;
+    }
+
+    private static StorefrontThemeConfigDto CreateThemeDto(StoreThemeConfig theme)
+    {
+        return new StorefrontThemeConfigDto
+        {
+            Colors = new StorefrontColorsConfigDto
+            {
+                Primary = theme.Colors.Primary,
+                Secondary = theme.Colors.Secondary,
+                Background = theme.Colors.Background,
+                Text = theme.Colors.Text,
+                Muted = theme.Colors.Muted
+            },
+            Font = new StorefrontFontConfigDto
+            {
+                Family = theme.Font.Family,
+                BaseSize = theme.Font.BaseSize
+            },
+            Ui = new StorefrontUiConfigDto
+            {
+                BorderRadius = theme.Ui.BorderRadius,
+                ButtonStyle = theme.Ui.ButtonStyle
+            },
+            Layout = new StorefrontLayoutConfigDto
+            {
+                ProductCardVariant = theme.Layout.ProductCardVariant,
+                HeaderVariant = theme.Layout.HeaderVariant
+            }
+        };
+    }
+
+    private static void ApplyThemeConfig(StorefrontThemeConfigDto theme, StoreThemeConfig source)
+    {
+        theme.Colors.Primary = source.Colors.Primary;
+        theme.Colors.Secondary = source.Colors.Secondary;
+        theme.Colors.Background = source.Colors.Background;
+        theme.Colors.Text = source.Colors.Text;
+        theme.Colors.Muted = source.Colors.Muted;
+        theme.Font.Family = source.Font.Family;
+        theme.Font.BaseSize = source.Font.BaseSize;
+        theme.Ui.BorderRadius = source.Ui.BorderRadius;
+        theme.Ui.ButtonStyle = source.Ui.ButtonStyle;
+        theme.Layout.ProductCardVariant = source.Layout.ProductCardVariant;
+        theme.Layout.HeaderVariant = source.Layout.HeaderVariant;
+    }
+
+    private static void ApplyLegacyTenantThemeOverrides(StorefrontThemeConfigDto theme, StoreThemeConfig? legacyTheme)
+    {
+        if (legacyTheme == null)
+        {
+            return;
+        }
+
+        var frameworkDefaults = new StoreThemeConfig();
+
+        ApplyIfCustomized(legacyTheme.Colors.Primary, frameworkDefaults.Colors.Primary, value => theme.Colors.Primary = value);
+        ApplyIfCustomized(legacyTheme.Colors.Secondary, frameworkDefaults.Colors.Secondary, value => theme.Colors.Secondary = value);
+        ApplyIfCustomized(legacyTheme.Colors.Background, frameworkDefaults.Colors.Background, value => theme.Colors.Background = value);
+        ApplyIfCustomized(legacyTheme.Colors.Text, frameworkDefaults.Colors.Text, value => theme.Colors.Text = value);
+        ApplyIfCustomized(legacyTheme.Colors.Muted, frameworkDefaults.Colors.Muted, value => theme.Colors.Muted = value);
+        ApplyIfCustomized(legacyTheme.Font.Family, frameworkDefaults.Font.Family, value => theme.Font.Family = value);
+        ApplyIfCustomized(legacyTheme.Font.BaseSize, frameworkDefaults.Font.BaseSize, value => theme.Font.BaseSize = value);
+        ApplyIfCustomized(legacyTheme.Ui.BorderRadius, frameworkDefaults.Ui.BorderRadius, value => theme.Ui.BorderRadius = value);
+        ApplyIfCustomized(legacyTheme.Ui.ButtonStyle, frameworkDefaults.Ui.ButtonStyle, value => theme.Ui.ButtonStyle = value);
+        ApplyIfCustomized(legacyTheme.Layout.ProductCardVariant, frameworkDefaults.Layout.ProductCardVariant, value => theme.Layout.ProductCardVariant = value);
+        ApplyIfCustomized(legacyTheme.Layout.HeaderVariant, frameworkDefaults.Layout.HeaderVariant, value => theme.Layout.HeaderVariant = value);
+    }
+
+    private static void ApplyIfCustomized(string? candidate, string frameworkDefault, Action<string> apply)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) ||
+            string.Equals(candidate, frameworkDefault, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        apply(candidate);
     }
 
     private static void ApplyThemePreset(StorefrontThemeConfigDto theme, ThemePreset? themePreset, Action<Exception, string>? errorCallback = null)
@@ -318,7 +391,10 @@ internal static class StorefrontDraftConfigMapper
                 template.Name = string.IsNullOrWhiteSpace(template.Name)
                     ? template.TemplateId
                     : template.Name;
-                template.Sections = NormalizeSections(template.Sections);
+                template.Sections = NormalizeSections(
+                    template.Sections,
+                    errorCallback,
+                    $"MapProductTemplates: {templateNode.Name}");
 
                 templates[templateNode.Name] = template;
             }
@@ -354,7 +430,7 @@ internal static class StorefrontDraftConfigMapper
             var page = JsonSerializer.Deserialize<StorefrontPageConfigDto>(content.Value.GetRawText(), JsonOptions)
                 ?? new StorefrontPageConfigDto();
 
-            page.Sections = NormalizeSections(page.Sections);
+            page.Sections = NormalizeSections(page.Sections, errorCallback, $"MapPage: {pageKey}");
             return page;
         }
         catch (Exception ex)
@@ -394,31 +470,47 @@ internal static class StorefrontDraftConfigMapper
         return candidate;
     }
 
-    private static List<StorefrontSectionDto> NormalizeSections(List<StorefrontSectionDto>? sections)
+    private static List<StorefrontSectionDto> NormalizeSections(
+        List<StorefrontSectionDto>? sections,
+        Action<Exception, string>? errorCallback,
+        string operation)
     {
         if (sections == null || sections.Count == 0)
         {
             return new List<StorefrontSectionDto>();
         }
 
+        var normalizedSections = new List<StorefrontSectionDto>();
         foreach (var section in sections)
         {
-            if (section.Settings == null || section.Settings.Count == 0)
+            var normalizedSettings = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (key, value) in section.Settings ?? new Dictionary<string, object>())
             {
-                section.Settings = new Dictionary<string, object>();
+                normalizedSettings[key] = ConvertJsonElement(value);
+            }
+
+            var canonicalSectionType = StorefrontSectionContracts.NormalizeSectionType(section.Type);
+            if (!StorefrontSectionContracts.TryValidateSettingsStrict(
+                    canonicalSectionType,
+                    normalizedSettings,
+                    out var diagnostics))
+            {
+                errorCallback?.Invoke(
+                    new InvalidOperationException(string.Join(" | ", diagnostics)),
+                    $"{operation}: Skipped invalid section '{section.Id}' of type '{section.Type}'");
                 continue;
             }
 
-            var normalizedSettings = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (key, value) in section.Settings)
-            {
-                normalizedSettings[key] = ConvertJsonElement(value)!;
-            }
-
-            section.Settings = normalizedSettings;
+            section.Type = canonicalSectionType;
+            section.Settings = StorefrontSectionContracts.GetFields(canonicalSectionType)
+                .ToDictionary(
+                    field => field.Key,
+                    field => normalizedSettings[field.Key]!,
+                    StringComparer.OrdinalIgnoreCase);
+            normalizedSections.Add(section);
         }
 
-        return sections
+        return normalizedSections
             .OrderBy(section => section.Order)
             .ToList();
     }

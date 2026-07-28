@@ -273,6 +273,29 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
                 )
             }
 
+            case 'guid-list': {
+                const items = Array.isArray(value) ? value : []
+
+                return (
+                    <div key={fieldKey}>
+                        <FieldLabel>{label}</FieldLabel>
+                        <textarea
+                            value={items.join('\n')}
+                            rows={field.rows || 4}
+                            placeholder={field.placeholder || 'One ID per line'}
+                            onChange={(e) => onValueChange(
+                                e.target.value
+                                    .split(/\r?\n/)
+                                    .map((item) => item.trim())
+                                    .filter(Boolean)
+                            )}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                        />
+                        {helpText ? <p className="mt-1 text-xs text-gray-500">{helpText}</p> : null}
+                    </div>
+                )
+            }
+
             case 'video': {
                 const embedUrl = getYoutubeEmbedUrl(value)
 

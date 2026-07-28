@@ -44,6 +44,12 @@ export {
     type RequestHeaders,
 } from './requestContext';
 
+// Tenant-scoped storage
+export {
+    getTenantScopedStorageKey,
+    tryGetTenantScopedStorageKey,
+} from './tenantScopedStorage';
+
 // Error utilities
 export {
     createBootstrapError,

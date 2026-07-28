@@ -71,9 +71,13 @@ export default defineConfig(({ command }) => {
         resolve: {
             alias: {
                 '@': path.resolve(__dirname, './src'),
+                '@theme-authority': path.resolve(__dirname, '../theme-authority'),
             },
         },
         server: {
+            fs: {
+                allow: [path.resolve(__dirname), path.resolve(__dirname, '../theme-authority')],
+            },
             headers: {
                 'Content-Security-Policy': storefrontCsp,
             },

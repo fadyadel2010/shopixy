@@ -1,50 +1,19 @@
-const THEME_CAPABILITIES = [
-    'layout.header',
-    'layout.footer',
-    'section.hero-banner',
-    'section.product-grid',
-    'section.category-grid',
-]
+import themeAuthority from '@theme-authority/shopixy-theme-authority.json'
 
-const THEME_MARKETPLACE_REGISTRY = validateThemeMarketplaceRegistry([
-    {
-        id: 'modern',
-        name: 'Modern',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-        isDefault: true,
-        previewImage: null,
-        description: 'Bold, editorial cards with stronger imagery and motion.',
-        accent: 'from-slate-900 via-slate-700 to-cyan-400',
-    },
-    {
-        id: 'minimal',
-        name: 'Minimal',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-        previewImage: null,
-        description: 'Quiet layouts, clean borders, and generous white space.',
-        accent: 'from-stone-100 via-white to-stone-300',
-    },
-    {
-        id: 'fashion',
-        name: 'Fashion',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-        previewImage: null,
-        description: 'Image-led storytelling with overlay typography.',
-        accent: 'from-rose-950 via-fuchsia-800 to-amber-300',
-    },
-    {
-        id: 'pearl',
-        name: 'Pearl',
-        version: '1.0.0',
-        capabilities: THEME_CAPABILITIES,
-        previewImage: null,
-        description: 'Editorial luxury boutique: light canvas, dark hero blocks, red accent, gold footer.',
-        accent: 'from-neutral-900 via-stone-800 to-red-500',
-    },
-])
+const THEME_MARKETPLACE_REGISTRY = validateThemeMarketplaceRegistry(
+    themeAuthority.themes
+        .filter((theme) => theme.officialStatus === 'official' && theme.marketplaceVisibility === 'visible')
+        .map((theme) => ({
+            id: theme.id,
+            name: theme.displayName,
+            version: theme.version,
+            capabilities: theme.capabilities,
+            isDefault: theme.id === themeAuthority.defaultThemeId,
+            previewImage: theme.marketplace.previewImage,
+            description: theme.marketplace.description,
+            accent: theme.marketplace.accent,
+        }))
+)
 
 export function getAvailableMarketplaceThemes() {
     return THEME_MARKETPLACE_REGISTRY

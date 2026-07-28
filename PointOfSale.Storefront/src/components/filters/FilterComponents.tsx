@@ -15,6 +15,8 @@
 import React, { useMemo, useState } from 'react';
 import { useLanguageStore, selectLanguage } from '@/i18n/languageStore';
 import { useTranslation } from '@/i18n/useTranslation';
+import { useTheme } from '@/storefront/themes/ThemeContext';
+import { normalizeCommerceTheme } from '@/storefront/commerce/CommerceBrowsingExperience';
 import type {
     FacetBucket,
     CategoryFacetBucket,
@@ -47,19 +49,51 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
     count,
 }) => {
     const [isOpen, setIsOpen] = useState(defaultOpen);
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const sectionClass = {
+        modern: 'border-b border-muted/10 py-4 last:border-b-0',
+        minimal: 'border-b border-muted/15 py-5 last:border-b-0',
+        fashion: 'border-b-2 border-text py-4 last:border-b-0',
+        pearl: 'border-b border-secondary/20 py-5 last:border-b-0',
+        phoenix: 'border-b border-black/10 py-4 last:border-b-0',
+        hype: 'border-b border-muted/20 py-3 last:border-b-0',
+        electronics: 'border-b border-muted/20 py-3 last:border-b-0',
+        default: 'border-b border-muted/10 py-4 last:border-b-0',
+    }[theme];
+    const titleClass = {
+        modern: 'text-sm font-semibold text-text',
+        minimal: 'text-xs font-medium uppercase tracking-[0.12em] text-muted',
+        fashion: 'text-xs font-black uppercase tracking-[0.18em] text-text',
+        pearl: 'text-[11px] font-semibold uppercase tracking-[0.22em] text-secondary',
+        phoenix: 'text-xs font-black uppercase tracking-[0.2em] text-text',
+        hype: 'text-[11px] font-bold uppercase tracking-[0.12em] text-text',
+        electronics: 'font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text',
+        default: 'text-sm font-semibold text-text',
+    }[theme];
+    const countClass = {
+        modern: 'rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary',
+        minimal: 'text-xs font-medium text-muted',
+        fashion: 'bg-text px-1.5 py-0.5 text-xs font-black text-background',
+        pearl: 'border border-secondary/30 px-1.5 py-0.5 text-xs font-semibold text-secondary',
+        phoenix: 'bg-primary px-1.5 py-0.5 text-xs font-black text-white',
+        hype: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary',
+        electronics: 'rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary',
+        default: 'rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary',
+    }[theme];
 
     return (
-        <div className="border-b border-muted/10 py-4 last:border-b-0">
+        <div className={sectionClass}>
             <button
                 type="button"
                 className="flex w-full items-center justify-between text-left"
                 onClick={() => isCollapsible && setIsOpen(!isOpen)}
                 disabled={!isCollapsible}
             >
-                <span className="text-sm font-semibold text-text flex items-center gap-2">
+                <span className={`${titleClass} flex items-center gap-2`}>
                     {title}
                     {count !== undefined && count > 0 && (
-                        <span className="px-1.5 py-0.5 text-xs font-medium bg-primary/10 text-primary rounded-full">
+                        <span className={countClass}>
                             {count}
                         </span>
                     )}
@@ -444,6 +478,18 @@ export const ActiveFiltersBar: React.FC<ActiveFiltersBarProps> = ({
     const { t } = useTranslation();
     const language = useLanguageStore(selectLanguage);
     const isRTL = language === 'ar';
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const chipClass = {
+        modern: 'rounded-md bg-primary/10 text-primary',
+        minimal: 'border border-muted/20 bg-background text-muted',
+        fashion: 'bg-text text-background',
+        pearl: 'border border-secondary/25 bg-background text-secondary',
+        phoenix: 'border border-primary/25 bg-primary/5 text-primary',
+        hype: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
+        electronics: 'rounded-sm border border-primary/25 bg-primary/5 font-mono text-primary',
+        default: 'rounded-full bg-primary/10 text-primary',
+    }[theme];
 
     const chips = useMemo(() => {
         const result: { key: string; label: string; onRemove: () => void }[] = [];
@@ -510,7 +556,7 @@ export const ActiveFiltersBar: React.FC<ActiveFiltersBarProps> = ({
             {chips.map(chip => (
                 <span
                     key={chip.key}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-primary/10 text-primary text-sm rounded-full"
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-sm ${chipClass}`}
                 >
                     {chip.label}
                     <button
@@ -555,6 +601,28 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
     const { t } = useTranslation();
     const language = useLanguageStore(selectLanguage);
     const isRTL = language === 'ar';
+    const { themeId } = useTheme();
+    const theme = normalizeCommerceTheme(themeId);
+    const selectClass = {
+        modern: 'rounded-md border border-muted/20 bg-background text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        minimal: 'border-y border-muted/20 bg-background text-text focus:border-text focus:ring-0',
+        fashion: 'border-2 border-text bg-background font-bold uppercase tracking-[0.08em] text-text focus:ring-2 focus:ring-text/20',
+        pearl: 'border border-secondary/25 bg-background text-text focus:border-secondary focus:ring-2 focus:ring-secondary/20',
+        phoenix: 'border border-black/10 bg-background font-bold uppercase tracking-[0.08em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        hype: 'rounded-lg border border-muted/20 bg-background text-xs font-bold uppercase tracking-[0.06em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        electronics: 'rounded-md border border-muted/25 bg-background font-mono text-xs font-bold uppercase tracking-[0.04em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        default: 'rounded-lg border border-muted/20 bg-background text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+    }[theme];
+    const labelClass = {
+        modern: 'text-sm text-muted',
+        minimal: 'text-xs uppercase tracking-[0.12em] text-muted',
+        fashion: 'text-xs font-black uppercase tracking-[0.16em] text-text',
+        pearl: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        phoenix: 'text-xs font-black uppercase tracking-[0.18em] text-text',
+        hype: 'text-[11px] font-bold uppercase tracking-[0.12em] text-muted',
+        electronics: 'font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted',
+        default: 'text-sm text-muted',
+    }[theme];
 
     const options = [
         { value: 'relevance', label: t('sort.relevance') },
@@ -566,14 +634,14 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
 
     return (
         <div className={`flex items-center gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
-            <label htmlFor="sort-select" className="text-sm text-muted">
+            <label htmlFor="sort-select" className={labelClass}>
                 {t('sort.sortBy')}:
             </label>
             <select
                 id="sort-select"
                 value={value}
                 onChange={(e) => onChange(e.target.value as ProductSortMode)}
-                className="text-sm border border-muted/20 rounded-lg px-3 py-2 bg-background text-text focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                className={`px-3 py-2 text-sm ${selectClass}`}
             >
                 {options.map(option => (
                     <option key={option.value} value={option.value}>

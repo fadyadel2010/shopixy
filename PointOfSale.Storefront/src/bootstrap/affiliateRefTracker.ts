@@ -36,6 +36,8 @@
  * - NOT localStorage (we don't want ref to persist across sessions)
  */
 
+import { tryGetTenantScopedStorageKey } from './tenantScopedStorage';
+
 const SESSION_KEY = 'affiliate_ref_code';
 
 let currentRefCode: string | null = null;
@@ -72,7 +74,10 @@ export function initAffiliateRefTracker(): void {
         // New ref code from URL — store it
         currentRefCode = refFromUrl;
         try {
-            sessionStorage.setItem(SESSION_KEY, refFromUrl);
+            const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
+            if (storageKey) {
+                sessionStorage.setItem(storageKey, refFromUrl);
+            }
         } catch {
             // sessionStorage unavailable (private browsing, etc.) — continue with in-memory
         }
@@ -83,7 +88,8 @@ export function initAffiliateRefTracker(): void {
     } else {
         // PRIORITY 3: No ref in URL — check sessionStorage for existing session
         try {
-            currentRefCode = sessionStorage.getItem(SESSION_KEY);
+            const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
+            currentRefCode = storageKey ? sessionStorage.getItem(storageKey) : null;
         } catch {
             currentRefCode = null;
         }
@@ -116,7 +122,10 @@ export function isAffiliateRefActive(): boolean {
 export function clearAffiliateRef(): void {
     currentRefCode = null;
     try {
-        sessionStorage.removeItem(SESSION_KEY);
+        const storageKey = tryGetTenantScopedStorageKey(SESSION_KEY);
+        if (storageKey) {
+            sessionStorage.removeItem(storageKey);
+        }
     } catch {
         // Ignore
     }

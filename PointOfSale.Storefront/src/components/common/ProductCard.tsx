@@ -13,29 +13,14 @@
 import React from 'react';
 import type { ProductListItemDto } from '@/types';
 import { useStoreConfigStore, selectLayout } from '@/store';
-import {
-    ProductCardDefault,
-    ProductCardCompact,
-    ProductCardDetailed,
-    ProductCardFashion,
-    ProductCardElectronics,
-} from '@/components/products';
+import { PRODUCT_CARD_RENDERERS, useProductCardRuntime } from '@/components/products';
+import { resolveProductCardRenderer } from '@/components/products/productCardRendererResolver';
 import { resolveProductCardLayout } from '@/storefront/utils/resolveProductCardLayout';
+import { useTheme } from '@/storefront/themes/ThemeContext';
 
 interface ProductCardProps {
     product: ProductListItemDto;
 }
-
-/**
- * Product card variants mapping
- */
-const PRODUCT_CARD_VARIANTS = {
-    default: ProductCardDefault,
-    compact: ProductCardCompact,
-    detailed: ProductCardDetailed,
-    fashion: ProductCardFashion,
-    electronics: ProductCardElectronics,
-} as const;
 
 /**
  * Main ProductCard Component
@@ -43,20 +28,22 @@ const PRODUCT_CARD_VARIANTS = {
  */
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     const layout = useStoreConfigStore(selectLayout);
+    const { themeId } = useTheme();
     const resolvedLayout = resolveProductCardLayout(product, layout.productCardVariant);
+    const rendererId = resolveProductCardRenderer(themeId, resolvedLayout);
+    const runtime = useProductCardRuntime({ product, layout: resolvedLayout, themeId });
 
-    // Product-level storefront layout wins. Theme layout is the fallback.
-    const CardComponent = PRODUCT_CARD_VARIANTS[resolvedLayout] || ProductCardDefault;
+    const CardComponent = PRODUCT_CARD_RENDERERS[rendererId] || PRODUCT_CARD_RENDERERS.modern;
 
     // Log variant in development mode
     if (import.meta.env.DEV) {
-        console.log('[ProductCard] Layout:', resolvedLayout, 'Theme fallback:', layout.productCardVariant);
+        console.log('[ProductCard] Layout:', resolvedLayout, 'Theme:', themeId, 'Renderer:', rendererId);
     }
 
     return (
         <>
             <div data-ai-product-id={product.id} hidden aria-hidden="true" />
-            <CardComponent product={product} />
+            <CardComponent runtime={runtime} />
         </>
     );
 };

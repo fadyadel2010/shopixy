@@ -14,6 +14,7 @@
  */
 
 import { getSessionId as getBootstrapSessionId } from '@/bootstrap/sessionManager';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 
 const LAST_ACTIVITY_KEY = 'analytics_last_activity';
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -23,7 +24,10 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
  */
 function updateLastActivity(): void {
     try {
-        localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
+        const storageKey = tryGetTenantScopedStorageKey(LAST_ACTIVITY_KEY);
+        if (storageKey) {
+            localStorage.setItem(storageKey, Date.now().toString());
+        }
     } catch {
         // localStorage might not be available
     }
@@ -34,7 +38,8 @@ function updateLastActivity(): void {
  */
 function getLastActivity(): number {
     try {
-        const stored = localStorage.getItem(LAST_ACTIVITY_KEY);
+        const storageKey = tryGetTenantScopedStorageKey(LAST_ACTIVITY_KEY);
+        const stored = storageKey ? localStorage.getItem(storageKey) : null;
         return stored ? parseInt(stored, 10) : Date.now();
     } catch {
         return Date.now();

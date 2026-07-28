@@ -20,7 +20,6 @@ const HeroBanner: React.FC<any> = ({
     ctaText,
     ctaLink,
     backgroundImage,
-    imageUrl,
     backgroundColor,
     overlayOpacity,
     textColor,
@@ -31,8 +30,6 @@ const HeroBanner: React.FC<any> = ({
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 45), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
     const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.center;
-    const resolvedBackgroundImage = backgroundImage || imageUrl;
-
     return (
         <section
             className="relative isolate overflow-hidden px-6"
@@ -41,10 +38,10 @@ const HeroBanner: React.FC<any> = ({
                 color: textColor || '#ffffff',
             }}
         >
-            {resolvedBackgroundImage && (
+            {backgroundImage && (
                 <>
                     <img
-                        src={resolvedBackgroundImage}
+                        src={backgroundImage}
                         alt={title || 'Hero background'}
                         className="absolute inset-0 h-full w-full object-cover"
                     />

@@ -26,6 +26,8 @@ import ChatMessage from './ChatMessage';
 import ChatInput from './ChatInput';
 import OrderDraftPreview from './OrderDraftPreview';
 import type { ChatMessage as ChatMessageType, ChatRequest, ChatResponse, OrderDraft } from '../../types/chat';
+import { httpClient } from '@/services/api/httpClient';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 import './ChatWidget.css';
 
 // Generate unique session ID
@@ -35,7 +37,11 @@ const generateSessionId = (): string => {
 
 // Get or create session ID from localStorage
 const getSessionId = (): string => {
-    const key = 'commerce_ai_session_id';
+    const key = tryGetTenantScopedStorageKey('commerce_ai_session_id');
+    if (!key) {
+        return generateSessionId();
+    }
+
     let sessionId = localStorage.getItem(key);
     if (!sessionId) {
         sessionId = generateSessionId();
@@ -43,6 +49,18 @@ const getSessionId = (): string => {
     }
     return sessionId;
 };
+
+function hasSessionFlag(key: string): boolean {
+    const storageKey = tryGetTenantScopedStorageKey(key);
+    return storageKey ? sessionStorage.getItem(storageKey) === 'true' || sessionStorage.getItem(storageKey) === '1' : false;
+}
+
+function setSessionFlag(key: string, value: string): void {
+    const storageKey = tryGetTenantScopedStorageKey(key);
+    if (storageKey) {
+        sessionStorage.setItem(storageKey, value);
+    }
+}
 
 /**
  * Suggestion item for quick actions
@@ -92,7 +110,7 @@ const ChatWidget: React.FC = () => {
         if (!autoGreetingEnabled || !autoGreetingMessage || !commerceAiEnabled) return;
 
         // Check session storage
-        if (sessionStorage.getItem(GREETING_KEY)) return;
+        if (hasSessionFlag(GREETING_KEY)) return;
 
         // Check if we already have messages
         if (messages.length > 0) return;
@@ -108,7 +126,7 @@ const ChatWidget: React.FC = () => {
         // Small delay for natural feel
         const timer = setTimeout(() => {
             setMessages([greeting]);
-            sessionStorage.setItem(GREETING_KEY, 'true');
+            setSessionFlag(GREETING_KEY, 'true');
         }, 1000);
 
         return () => clearTimeout(timer);
@@ -128,13 +146,7 @@ const ChatWidget: React.FC = () => {
     const trackEvent = useCallback(async (eventType: 'ChatOpened' | 'OrderDraftCreated') => {
         console.log(`[ChatWidget] trackEvent called for: ${eventType}`);
         try {
-            const response = await fetch('/api/storefront/commerce-ai/event', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ type: eventType }),
-            });
+            const response = await httpClient.post('/api/storefront/commerce-ai/event', { type: eventType });
             console.log(`[ChatWidget] Event response status: ${response.status}`);
         } catch (err) {
             // Fire-and-forget, ignore errors
@@ -179,19 +191,8 @@ const ChatWidget: React.FC = () => {
                 language: i18n.language,
             };
 
-            const response = await fetch('/api/storefront/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(request),
-            });
-
-            if (!response.ok) {
-                throw new Error(`Chat error: ${response.status}`);
-            }
-
-            const data: ChatResponse = await response.json();
+            const response = await httpClient.post<ChatResponse>('/api/storefront/chat', request);
+            const data = response.data;
 
             // Add assistant message
             const assistantMessage: ChatMessageType = {
@@ -262,9 +263,9 @@ const ChatWidget: React.FC = () => {
             setIsOpen(newOpenState);
 
             // Track ChatOpened once per session
-            if (newOpenState && !sessionStorage.getItem('commerce_ai_chat_opened')) {
+            if (newOpenState && !hasSessionFlag('commerce_ai_chat_opened')) {
                 trackEvent('ChatOpened');
-                sessionStorage.setItem('commerce_ai_chat_opened', '1');
+                setSessionFlag('commerce_ai_chat_opened', '1');
             }
         }
     };

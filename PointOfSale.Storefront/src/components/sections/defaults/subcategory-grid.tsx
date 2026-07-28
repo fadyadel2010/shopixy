@@ -1,7 +1,6 @@
 import React from 'react';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { useCategories } from '@/hooks';
-import { useTranslation } from '@/i18n';
+import type { CategoryGridPresentationModel } from '@/storefront/presentation/models';
 
 const SUBCATEGORY_ICONS = [
     '\u{1F4E6}',
@@ -16,57 +15,57 @@ const SUBCATEGORY_ICONS = [
     '\u{1F3C3}',
 ];
 
-const SubcategoryGrid: React.FC<any> = ({ title, columns = 3 }) => {
-    const { t, language } = useTranslation();
-    const { categories, isLoading, error } = useCategories();
+const GRID_COLUMN_CLASSES: Record<number, string> = {
+    1: 'grid-cols-1',
+    2: 'grid-cols-2',
+    3: 'grid-cols-2 md:grid-cols-3',
+    4: 'grid-cols-2 lg:grid-cols-4',
+};
+
+interface SubcategoryGridProps {
+    categoryGridModel?: CategoryGridPresentationModel;
+    columns?: number;
+}
+
+const SubcategoryGrid: React.FC<SubcategoryGridProps> = ({ categoryGridModel: model, columns = 3 }) => {
+    if (!model) {
+        return null;
+    }
 
     const getCategoryIcon = (index: number): string => SUBCATEGORY_ICONS[index % SUBCATEGORY_ICONS.length];
+    const gridColumnClass = GRID_COLUMN_CLASSES[columns] || GRID_COLUMN_CLASSES[3];
 
-    const getCategoryName = (category: { name: string; nameAr?: string }) => {
-        if (language === 'ar' && category.nameAr) {
-            return category.nameAr;
-        }
-
-        return category.name;
-    };
-
-    const allSubcategories = categories.flatMap((category) => category.children || []);
-
-    const displayTitle = (!title || title === 'Subcategories')
-        ? t('category.subcategories')
-        : title;
-
-    if (!isLoading && allSubcategories.length === 0) {
+    if (!model.isLoading && model.categories.length === 0) {
         return null;
     }
 
     return (
         <section className="py-12 px-4 container mx-auto">
             <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold text-text">{displayTitle}</h2>
+                <h2 className="text-2xl font-bold text-text">{model.title}</h2>
             </div>
 
-            {isLoading ? (
-                <div className={`grid grid-cols-2 md:grid-cols-${columns} gap-6`}>
-                    {[...Array(6)].map((_, index) => (
-                        <div key={index} className="h-40 bg-muted/10 rounded-xl animate-pulse" />
+            {model.isLoading ? (
+                <div className={`grid ${gridColumnClass} gap-4 sm:gap-5`}>
+                    {[...Array(model.visibleCount)].map((_, index) => (
+                        <div key={index} className="h-36 rounded-lg bg-muted/10 animate-pulse sm:h-40" />
                     ))}
                 </div>
-            ) : error ? (
-                <div className="text-center py-8 text-muted">{t('home.failedToLoadCategories')}</div>
+            ) : model.error ? (
+                <div className="text-center py-8 text-muted">{model.labels.failedToLoadCategories}</div>
             ) : (
-                <div className={`grid grid-cols-2 md:grid-cols-${columns} gap-6`}>
-                    {allSubcategories.slice(0, 6).map((subcategory, index) => (
+                <div className={`grid ${gridColumnClass} gap-4 sm:gap-5`}>
+                    {model.categories.map((subcategory, index) => (
                         <AffiliateLink
                             key={subcategory.id}
-                            href={`/products?category=${subcategory.id}`}
-                            className="group relative rounded-xl overflow-hidden h-40 bg-gradient-to-br from-secondary/10 to-primary/10 flex flex-col items-center justify-center hover:shadow-lg transition-all border border-muted/10 hover:border-secondary/30"
+                            href={subcategory.href}
+                            className="group relative flex h-36 flex-col items-center justify-center overflow-hidden rounded-lg border border-muted/10 bg-gradient-to-br from-secondary/10 to-primary/10 px-3 text-center transition-all hover:-translate-y-1 hover:border-secondary/30 hover:shadow-lg sm:h-40"
                         >
-                            <div className="text-4xl mb-3 group-hover:scale-110 transition-transform">
+                            <div className="mb-3 text-3xl transition-transform group-hover:scale-110 sm:text-4xl">
                                 {getCategoryIcon(index + 3)}
                             </div>
-                            <span className="text-lg font-semibold text-text group-hover:text-secondary transition-colors">
-                                {getCategoryName(subcategory)}
+                            <span className="overflow-hidden text-sm font-semibold leading-5 text-text transition-colors [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] group-hover:text-secondary sm:text-base">
+                                {subcategory.title}
                             </span>
                         </AffiliateLink>
                     ))}

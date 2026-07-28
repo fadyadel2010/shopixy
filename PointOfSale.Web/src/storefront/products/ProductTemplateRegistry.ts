@@ -1,11 +1,30 @@
 import type { StorefrontProductTemplate, StorefrontSection } from '@/types/storeConfig'
+import sectionAuthority from '@theme-authority/shopixy-theme-authority.json'
+
+const getSectionDefaultSettings = (sectionType: string): Record<string, unknown> => {
+  const contract = sectionAuthority.sectionContracts.find((candidate) => candidate.type === sectionType)
+  if (!contract) {
+    throw new Error(`[ProductTemplateRegistry] Missing canonical section contract for "${sectionType}".`)
+  }
+
+  return JSON.parse(JSON.stringify(contract.defaultSettings))
+}
 
 const createSection = (
   id: string,
   type: string,
   order: number,
   settings: Record<string, unknown> = {},
-): StorefrontSection => ({ id, type, enabled: true, order, settings })
+): StorefrontSection => ({
+  id,
+  type,
+  enabled: true,
+  order,
+  settings: {
+    ...getSectionDefaultSettings(type),
+    ...settings,
+  },
+})
 
 const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
   default: {

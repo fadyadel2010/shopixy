@@ -89,7 +89,8 @@ public sealed class StorefrontThemePreviewService : IStorefrontThemePreviewServi
                 exception,
                 "Failed to map theme preview storefront configuration | TenantId: {TenantId} | Operation: {Operation}",
                 tenantId,
-                operation));
+                operation),
+            storefrontThemeOverride: themeId);
 
         config.StorefrontTheme = themeId;
 

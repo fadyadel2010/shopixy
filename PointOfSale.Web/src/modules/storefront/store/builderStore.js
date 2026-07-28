@@ -7,6 +7,7 @@
 
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
+import { materializeContractSettings } from '../builder/sectionContractRegistry'
 
 /**
  * Generate unique section ID
@@ -85,7 +86,7 @@ export const useBuilderStore = create(
                     type: sectionType,
                     order: insertAtIndex ?? state.sections.length,
                     enabled: true,
-                    settings: { ...definition.defaultSettings },
+                    settings: materializeContractSettings(sectionType),
                 }
 
                 let newSections
@@ -136,7 +137,7 @@ export const useBuilderStore = create(
                 const newSection = {
                     ...section,
                     id: generateSectionId(),
-                    settings: { ...section.settings },
+                    settings: materializeContractSettings(section.type, section.settings),
                 }
 
                 const newSections = [

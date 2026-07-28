@@ -2,6 +2,7 @@ import React from 'react';
 import { useLocalizedContent } from '@/i18n';
 import type { ProductReadDto } from '@/types';
 import { OptimizedImage } from '@/components/media';
+import { getPurchaseExperienceProfile } from '@/storefront/products/purchaseExperience';
 import { ProductGalleryModal } from './ProductGalleryModal';
 import { ProductMediaViewer } from './ProductMediaViewer';
 import {
@@ -17,6 +18,7 @@ interface ProductMediaGalleryProps {
     showThumbnails?: boolean;
     maxThumbnails?: number;
     aspectClassName?: string;
+    presentationVariant?: string;
 }
 
 export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
@@ -25,9 +27,11 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
     preferredImageUrl = null,
     showThumbnails = true,
     maxThumbnails = 8,
-    aspectClassName = 'aspect-square',
+    aspectClassName,
+    presentationVariant = 'modern',
 }) => {
     const { localize } = useLocalizedContent();
+    const profile = getPurchaseExperienceProfile(presentationVariant, presentationVariant);
     const productName = product ? localize(product, 'name') || 'Product' : 'Product';
     const mediaItems = React.useMemo(() => normalizeProductMedia(product), [product]);
     const [activeIndex, setActiveIndex] = React.useState(0);
@@ -85,7 +89,9 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
     }, [mediaItems, preferredImageUrl, preferredMediaId]);
 
     const activeMedia = mediaItems[activeIndex] ?? null;
-    const thumbnailItems = showThumbnails ? mediaItems.slice(0, Math.max(1, maxThumbnails)) : [];
+    const resolvedMaxThumbnails = maxThumbnails || profile.galleryMaxThumbnails;
+    const thumbnailItems = showThumbnails ? mediaItems.slice(0, Math.max(1, resolvedMaxThumbnails)) : [];
+    const resolvedAspectClassName = aspectClassName || profile.galleryAspectClassName;
 
     const selectIndex = React.useCallback(
         (index: number) => {
@@ -161,10 +167,10 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
 
     return (
         <>
-            <div className="space-y-4">
-                <div className="rounded-[2rem] border border-muted/20 bg-background/80 p-3 shadow-sm sm:p-4">
+            <div className="space-y-4" data-purchase-experience={profile.variant}>
+                <div className={profile.galleryShellClassName}>
                     <div
-                        className="group relative overflow-hidden rounded-[1.75rem] border border-muted/20 bg-muted/10"
+                        className="group relative overflow-hidden border border-muted/20 bg-muted/10"
                         onTouchStart={handleTouchStart}
                         onTouchMove={handleTouchMove}
                         onTouchEnd={handleTouchEnd}
@@ -173,7 +179,7 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
                             media={activeMedia}
                             productName={productName}
                             mediaIndex={activeIndex}
-                            aspectClassName={aspectClassName}
+                            aspectClassName={resolvedAspectClassName}
                             fallbackPoster={fallbackPoster}
                             loading="eager"
                             onOpenFullscreen={() => setIsModalOpen(true)}
@@ -208,7 +214,7 @@ export const ProductMediaGallery: React.FC<ProductMediaGalleryProps> = ({
                         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/70 to-transparent px-4 pb-4 pt-10 text-white">
                             <div>
                                 <div className="text-xs font-semibold uppercase tracking-[0.28em] text-white/70">
-                                    Product gallery
+                                    {profile.galleryEyebrow}
                                 </div>
                                 <div className="mt-1 text-sm font-medium">
                                     {activeMedia

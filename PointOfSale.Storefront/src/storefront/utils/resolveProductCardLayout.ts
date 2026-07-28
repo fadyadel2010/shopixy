@@ -6,6 +6,9 @@ export type ProductCardLayout =
     | 'compact'
     | 'detailed'
     | 'fashion'
+    | 'pearl'
+    | 'phoenix'
+    | 'hype'
     | 'electronics';
 
 function normalizeLayoutValue(value?: string | null): string {
@@ -32,6 +35,12 @@ export function resolveProductCardLayout(
     switch (productLevelLayout) {
         case 'fashion':
             return 'fashion';
+        case 'pearl':
+            return 'pearl';
+        case 'phoenix':
+            return 'phoenix';
+        case 'hype':
+            return 'hype';
         case 'electronics':
             return 'electronics';
         case 'default':

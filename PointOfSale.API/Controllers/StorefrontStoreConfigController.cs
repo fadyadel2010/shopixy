@@ -106,6 +106,18 @@ public class StorefrontStoreConfigController : ControllerBase
                     traceId));
             }
 
+            string? previewThemeId = null;
+            if (!string.IsNullOrWhiteSpace(themePreviewToken))
+            {
+                if (!_themePreviewTokenService.TryValidate(themePreviewToken, tenantId, out previewThemeId))
+                {
+                    return Unauthorized(new ApiErrorResponse(
+                        "THEME_PREVIEW_INVALID",
+                        "Theme preview capability is invalid or expired.",
+                        traceId));
+                }
+            }
+
             var preset = await _dbContext.ThemePresets
                 .AsNoTracking()
                 .Where(item => item.Key == authority.Config.ThemeLivePresetKey || item.Key == "default")
@@ -121,18 +133,11 @@ public class StorefrontStoreConfigController : ControllerBase
                     exception,
                     "Failed to map SQL storefront configuration | TenantId: {TenantId} | Operation: {Operation}",
                     tenantId,
-                    operation));
+                    operation),
+                storefrontThemeOverride: previewThemeId);
 
-            if (!string.IsNullOrWhiteSpace(themePreviewToken))
+            if (!string.IsNullOrWhiteSpace(previewThemeId))
             {
-                if (!_themePreviewTokenService.TryValidate(themePreviewToken, tenantId, out var previewThemeId))
-                {
-                    return Unauthorized(new ApiErrorResponse(
-                        "THEME_PREVIEW_INVALID",
-                        "Theme preview capability is invalid or expired.",
-                        traceId));
-                }
-
                 config.StorefrontTheme = previewThemeId;
             }
 

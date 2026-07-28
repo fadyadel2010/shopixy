@@ -25,6 +25,7 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@web': path.resolve(__dirname, './src'),
+      '@theme-authority': path.resolve(__dirname, '../theme-authority'),
     },
   },
   build: {
@@ -52,6 +53,9 @@ export default defineConfig({
     },
   },
   server: {
+    fs: {
+      allow: [path.resolve(__dirname), path.resolve(__dirname, '../theme-authority')],
+    },
     headers: {
       'Content-Security-Policy': adminCsp,
     },

@@ -33,9 +33,9 @@ export const resolveProductTemplate = (
         }
         : null;
     const builtinTemplate = getBuiltinProductTemplate(resolvedTemplateId);
-    const fallbackTemplate = builtinTemplate
-        || savedTemplate
+    const fallbackTemplate = savedTemplate
         || defaultProductPageTemplate
+        || builtinTemplate
         || getBuiltinProductTemplate('default')
         || { templateId: 'default', name: 'Default Template', sections: [] };
 
@@ -49,8 +49,9 @@ export const resolveProductTemplate = (
         console.info('[ProductTemplateResolver] Resolved template', {
             requestedTemplateId: templateId ?? null,
             resolvedTemplateId,
-            usedBuiltinTemplate: Boolean(builtinTemplate),
-            usedSavedTemplate: !builtinTemplate && Boolean(savedTemplate),
+            usedBuiltinTemplate: !savedTemplate && !defaultProductPageTemplate && Boolean(builtinTemplate),
+            usedSavedTemplate: Boolean(savedTemplate),
+            usedDefaultProductPage: !savedTemplate && Boolean(defaultProductPageTemplate),
             availableSavedTemplates: Object.keys(config?.productTemplates || {}),
             finalTemplateId: normalizedTemplate.templateId,
             finalSectionTypes: normalizedTemplate.sections.map((section) => section.type),

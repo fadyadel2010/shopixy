@@ -8,7 +8,7 @@
  * - Never throw in UI (errors are logged only)
  * - Never retry synchronously
  * - Respect backend rate limits
- * - Include required request-scoped headers (X-Session-Id, optional X-Customer-Id)
+ * - Include required request-scoped headers (X-Tenant-Id, X-Session-Id, optional X-Customer-Id)
  * 
  * Endpoints:
  * - POST /api/storefront/analytics/event - Single event
@@ -21,6 +21,16 @@ import { getRequestHeaders, isRequestContextReady } from '@/bootstrap';
 const ANALYTICS_BASE_URL = import.meta.env.VITE_API_URL || '';
 const ANALYTICS_ENDPOINT = '/api/storefront/analytics';
 const REQUEST_TIMEOUT_MS = 10000;
+
+function assertAnalyticsContext(event: AnalyticsEvent, headers: ReturnType<typeof getRequestHeaders>): void {
+    if (!event.context.tenantId || event.context.tenantId.toLowerCase() !== headers['X-Tenant-Id'].toLowerCase()) {
+        throw new Error('[AnalyticsClient] Event tenant context does not match request tenant.');
+    }
+
+    if (!event.actor.sessionId || event.actor.sessionId !== headers['X-Session-Id']) {
+        throw new Error('[AnalyticsClient] Event session context does not match request session.');
+    }
+}
 
 /**
  * Send a single analytics event
@@ -35,6 +45,7 @@ export async function sendAnalyticsEvent(event: AnalyticsEvent): Promise<Analyti
     }
 
     const headers = getRequestHeaders();
+    assertAnalyticsContext(event, headers);
     const url = `${ANALYTICS_BASE_URL}${ANALYTICS_ENDPOINT}/event`;
 
     const controller = new AbortController();
@@ -45,6 +56,7 @@ export async function sendAnalyticsEvent(event: AnalyticsEvent): Promise<Analyti
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-Tenant-Id': headers['X-Tenant-Id'],
                 'X-Session-Id': headers['X-Session-Id'],
                 ...(headers['X-Customer-Id'] ? { 'X-Customer-Id': headers['X-Customer-Id'] } : {}),
             },
@@ -104,6 +116,7 @@ export async function sendAnalyticsBatch(events: AnalyticsEvent[]): Promise<Anal
     }
 
     const headers = getRequestHeaders();
+    events.forEach((event) => assertAnalyticsContext(event, headers));
     const url = `${ANALYTICS_BASE_URL}${ANALYTICS_ENDPOINT}/events`;
 
     const controller = new AbortController();
@@ -114,6 +127,7 @@ export async function sendAnalyticsBatch(events: AnalyticsEvent[]): Promise<Anal
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'X-Tenant-Id': headers['X-Tenant-Id'],
                 'X-Session-Id': headers['X-Session-Id'],
                 ...(headers['X-Customer-Id'] ? { 'X-Customer-Id': headers['X-Customer-Id'] } : {}),
             },

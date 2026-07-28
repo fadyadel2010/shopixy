@@ -21,16 +21,16 @@ public class AffiliatePayoutTransferEvidenceConfiguration : IEntityTypeConfigura
                 "\"StoreTenantId\" <> '00000000-0000-0000-0000-000000000000'");
             table.HasCheckConstraint(
                 "CK_AffiliatePayoutTransferEvidence_RailNamespace_NotBlank",
-                "btrim(\"RailNamespace\", E' \\t\\n\\r') <> ''");
+                "btrim(\"RailNamespace\", ' \t\n\r') <> ''");
             table.HasCheckConstraint(
                 "CK_AffiliatePayoutTransferEvidence_PaymentReference_NotBlank",
-                "btrim(\"PaymentReference\", E' \\t\\n\\r') <> ''");
+                "btrim(\"PaymentReference\", ' \t\n\r') <> ''");
             table.HasCheckConstraint(
                 "CK_AffiliatePayoutTransferEvidence_NormalizedPaymentReference_NotBlank",
-                "btrim(\"NormalizedPaymentReference\", E' \\t\\n\\r') <> ''");
+                "btrim(\"NormalizedPaymentReference\", ' \t\n\r') <> ''");
             table.HasCheckConstraint(
                 "CK_AffiliatePayoutTransferEvidence_Currency_NotBlank",
-                "btrim(\"Currency\", E' \\t\\n\\r') <> ''");
+                "btrim(\"Currency\", ' \t\n\r') <> ''");
         });
 
         builder.HasKey(e => e.Id);

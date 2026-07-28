@@ -79,7 +79,7 @@ const PearlHeader: React.FC = () => {
                         : 'bg-transparent'
                 } text-white`}
             >
-                <div className={`${PEARL_CONTAINER} py-4`}>
+                <div className={`${PEARL_CONTAINER} py-3 sm:py-4`}>
                     {/* Centered brand row with side actions */}
                     <div className="flex items-center justify-between gap-4">
                         <div className="hidden flex-1 items-center gap-2 md:flex">
@@ -89,7 +89,7 @@ const PearlHeader: React.FC = () => {
 
                         <AffiliateLink
                             href="/"
-                            className={`flex-1 text-center text-3xl font-light uppercase tracking-[0.4em] text-white md:text-4xl ${PEARL_FONT_BODY}`}
+                            className={`min-w-0 flex-1 truncate text-center text-2xl font-light uppercase tracking-[0.18em] text-white md:text-3xl lg:tracking-[0.28em] ${PEARL_FONT_BODY}`}
                         >
                             {storeName}
                         </AffiliateLink>
@@ -116,7 +116,7 @@ const PearlHeader: React.FC = () => {
 
                     {/* Centered primary navigation */}
                     <nav
-                        className="mt-5 hidden items-center justify-center gap-8 border-t border-white/10 pt-4 md:flex"
+                        className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex"
                         aria-label={t('accessibility.mainNavigation')}
                     >
                         {links.map((link) => (

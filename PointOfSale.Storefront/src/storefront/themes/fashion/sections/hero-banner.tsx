@@ -1,6 +1,5 @@
 import React from 'react';
-import { Button } from '@/components/common';
-import { AffiliateLink } from '@/components/common/AffiliateLink';
+import { ThemeHeroCTA } from '@/components/theme-components';
 import { useTranslation } from '@/i18n';
 
 const heightClasses: Record<string, string> = {
@@ -21,7 +20,6 @@ const HeroBanner: React.FC<any> = ({
     ctaText,
     ctaLink,
     backgroundImage,
-    imageUrl,
     backgroundColor,
     overlayOpacity,
     textColor,
@@ -32,8 +30,6 @@ const HeroBanner: React.FC<any> = ({
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 35), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
     const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
-    const resolvedBackgroundImage = backgroundImage || imageUrl;
-
     return (
         <section
             className={`relative isolate overflow-hidden ${resolvedHeightClass}`}
@@ -43,9 +39,9 @@ const HeroBanner: React.FC<any> = ({
             }}
         >
             <div className="absolute inset-0">
-                {resolvedBackgroundImage ? (
+                {backgroundImage ? (
                     <img
-                        src={resolvedBackgroundImage}
+                        src={backgroundImage}
                         alt={title || 'Fashion hero background'}
                         className="h-full w-full object-cover"
                     />
@@ -56,13 +52,20 @@ const HeroBanner: React.FC<any> = ({
                 <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.1)_0%,rgba(0,0,0,0.72)_100%)]" />
             </div>
 
-            <div className={`relative mx-auto flex h-full max-w-7xl px-6 py-16 sm:px-8 lg:px-12 ${resolvedAlignmentClass}`}>
-                <div className="mt-auto max-w-3xl">
-                    <div className="mb-5 text-sm font-medium uppercase tracking-[0.38em] text-white/75">
+            <div className={`relative mx-auto grid h-full max-w-7xl grid-cols-1 px-6 py-14 sm:px-8 lg:grid-cols-[0.22fr_0.78fr] lg:px-12 ${resolvedAlignmentClass}`}>
+                <div className="hidden border-r border-white/20 pr-6 pt-4 lg:block">
+                    <p className="font-mono text-sm text-white/60">01</p>
+                    <p className="mt-6 [writing-mode:vertical-rl] text-xs font-black uppercase tracking-[0.38em] text-white/70">
+                        Campaign story
+                    </p>
+                </div>
+
+                <div className="mt-auto max-w-4xl lg:pl-12">
+                    <div className="mb-5 inline-flex border-b-2 border-white pb-2 text-sm font-black uppercase tracking-[0.38em] text-white/80">
                         {t('home.welcome', { storeName: '' })}
                     </div>
 
-                    <h1 className="text-5xl font-semibold leading-[0.95] tracking-tight text-white sm:text-6xl lg:text-8xl">
+                    <h1 className="text-balance text-5xl font-black uppercase leading-[0.88] text-white sm:text-7xl lg:text-9xl">
                         {title || t('home.welcome', { storeName: '' })}
                     </h1>
 
@@ -73,17 +76,21 @@ const HeroBanner: React.FC<any> = ({
                     )}
 
                     {ctaText && (
-                        <div className="mt-10">
-                            <AffiliateLink href={ctaLink || '/products'}>
-                                <Button
-                                    size="lg"
-                                    className="rounded-full border border-white/30 bg-white/15 px-8 py-4 backdrop-blur-sm"
-                                >
-                                    {ctaText}
-                                </Button>
-                            </AffiliateLink>
-                        </div>
+                        <ThemeHeroCTA
+                            themeId="fashion"
+                            href={ctaLink || '/products'}
+                            align={alignment || 'left'}
+                            className="mt-10"
+                        >
+                            {ctaText}
+                        </ThemeHeroCTA>
                     )}
+
+                    <div className="mt-12 grid max-w-2xl grid-cols-3 border-t border-white/25 pt-5 text-xs font-bold uppercase tracking-[0.22em] text-white/70">
+                        <span>drop</span>
+                        <span>editorial</span>
+                        <span>styled edit</span>
+                    </div>
                 </div>
             </div>
         </section>

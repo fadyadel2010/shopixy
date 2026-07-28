@@ -41,19 +41,19 @@ const MinimalHeader: React.FC = () => {
     return (
         <>
             <header className="sticky top-0 z-30 border-b border-black/10 bg-white/95 backdrop-blur">
-                <div className="mx-auto flex max-w-7xl items-center justify-between gap-6 px-4 py-4">
-                    <AffiliateLink href="/" className="text-xl font-semibold tracking-[0.12em] text-slate-900 uppercase">
+                <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:py-4">
+                    <AffiliateLink href="/" className="min-w-0 max-w-[44vw] truncate text-lg font-semibold uppercase tracking-[0.08em] text-slate-900 sm:text-xl md:max-w-xs">
                         {storeName}
                     </AffiliateLink>
 
-                    <nav className="hidden items-center gap-6 md:flex" aria-label="Minimal navigation">
+                    <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-x-5 gap-y-2 md:flex" aria-label="Minimal navigation">
                         {links.map((link) => (
                             <AffiliateLink
                                 key={link.key}
                                 href={link.url}
                                 target={link.openInNewTab ? '_blank' : undefined}
                                 rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={`text-sm uppercase tracking-[0.22em] transition-colors ${
+                                className={`text-xs uppercase tracking-[0.14em] transition-colors lg:text-sm lg:tracking-[0.18em] ${
                                     isActive(link.url) ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
                                 }`}
                             >
@@ -62,7 +62,7 @@ const MinimalHeader: React.FC = () => {
                         ))}
                     </nav>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
                         <LanguageSwitcher variant="text" size="sm" className="hidden text-slate-500 hover:text-slate-900 md:flex" />
                         <div className="hidden rounded-full bg-slate-900 px-1 md:flex">
                             <AuthNavItems variant="desktop" />

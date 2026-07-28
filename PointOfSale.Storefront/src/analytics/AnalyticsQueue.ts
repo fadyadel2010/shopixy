@@ -19,6 +19,7 @@
 
 import type { AnalyticsEvent, AnalyticsEventBatchResponse } from './eventTypes';
 import { sendAnalyticsBatch } from './AnalyticsClient';
+import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 
 const QUEUE_STORAGE_KEY = 'analytics_event_queue';
 const MAX_BATCH_SIZE = 20;
@@ -44,6 +45,7 @@ class AnalyticsQueue {
     private isFlushing = false;
     private flushTimer: ReturnType<typeof setTimeout> | null = null;
     private initialized = false;
+    private activeStorageKey: string | null = null;
 
     private constructor() {
         this.initialize();
@@ -81,6 +83,8 @@ class AnalyticsQueue {
      * Enqueue an event for delivery
      */
     enqueue(event: AnalyticsEvent): void {
+        this.ensureTenantStorageLoaded();
+
         // Check queue size limit
         if (this.queue.length >= MAX_QUEUE_SIZE) {
             // Remove oldest events to make room
@@ -113,6 +117,8 @@ class AnalyticsQueue {
      * Flush the queue - send all pending events
      */
     async flush(): Promise<void> {
+        this.ensureTenantStorageLoaded();
+
         // Prevent concurrent flushes
         if (this.isFlushing || this.queue.length === 0) {
             return;
@@ -242,8 +248,13 @@ class AnalyticsQueue {
      */
     private persistToStorage(): void {
         try {
+            const storageKey = this.getStorageKey();
+            if (!storageKey) {
+                return;
+            }
+
             const data = JSON.stringify(this.queue);
-            localStorage.setItem(QUEUE_STORAGE_KEY, data);
+            localStorage.setItem(storageKey, data);
         } catch {
             // localStorage might be full or unavailable
             if (import.meta.env.DEV) {
@@ -257,7 +268,14 @@ class AnalyticsQueue {
      */
     private restoreFromStorage(): void {
         try {
-            const data = localStorage.getItem(QUEUE_STORAGE_KEY);
+            const storageKey = this.getStorageKey();
+            this.activeStorageKey = storageKey;
+            if (!storageKey) {
+                this.queue = [];
+                return;
+            }
+
+            const data = localStorage.getItem(storageKey);
             if (data) {
                 const restored = JSON.parse(data) as QueuedEvent[];
                 // Filter out very old events (> 24 hours)
@@ -272,6 +290,20 @@ class AnalyticsQueue {
         } catch {
             this.queue = [];
         }
+    }
+
+    private getStorageKey(): string | null {
+        return tryGetTenantScopedStorageKey(QUEUE_STORAGE_KEY);
+    }
+
+    private ensureTenantStorageLoaded(): void {
+        const storageKey = this.getStorageKey();
+        if (storageKey === this.activeStorageKey) {
+            return;
+        }
+
+        this.queue = [];
+        this.restoreFromStorage();
     }
 
     /**

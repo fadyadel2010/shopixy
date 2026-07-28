@@ -3,10 +3,12 @@
  * 
  * Manages guest session ID for the storefront.
  * - Generates X-Session-Id once
- * - Persists in localStorage
+ * - Persists in tenant-scoped localStorage
  * - Reuses across reloads
  * - Never regenerates unless explicitly cleared
  */
+
+import { getTenantScopedStorageKey, tryGetTenantScopedStorageKey } from './tenantScopedStorage';
 
 const SESSION_STORAGE_KEY = 'storefront_session_id';
 
@@ -28,9 +30,9 @@ function generateUUID(): string {
 }
 
 /**
- * In-memory session ID (for when localStorage is unavailable)
+ * In-memory session IDs by tenant-scoped key (for when localStorage is unavailable)
  */
-let memorySessionId: string | null = null;
+const memorySessionIds = new Map<string, string>();
 
 /**
  * Check if localStorage is available
@@ -46,6 +48,14 @@ function isLocalStorageAvailable(): boolean {
     }
 }
 
+function getSessionStorageKey(): string {
+    return getTenantScopedStorageKey(SESSION_STORAGE_KEY);
+}
+
+function tryGetSessionStorageKey(): string | null {
+    return tryGetTenantScopedStorageKey(SESSION_STORAGE_KEY);
+}
+
 /**
  * Get or create session ID
  * 
@@ -55,9 +65,11 @@ function isLocalStorageAvailable(): boolean {
  * 3. Generate new session and persist
  */
 export function getSessionId(): string {
-    // Try localStorage first
+    const storageKey = getSessionStorageKey();
+
+    // Try tenant-scoped localStorage first
     if (isLocalStorageAvailable()) {
-        const stored = localStorage.getItem(SESSION_STORAGE_KEY);
+        const stored = localStorage.getItem(storageKey);
         if (stored) {
             const normalizedStored = stored.trim();
             
@@ -68,17 +80,16 @@ export function getSessionId(): string {
                     normalizedStored.substring(0, 8) + '...'
                 );
                 
-                // Clear invalid session from localStorage
+                // Clear invalid session from tenant-scoped localStorage
                 try {
-                    localStorage.removeItem(SESSION_STORAGE_KEY);
+                    localStorage.removeItem(storageKey);
                 } catch (error) {
                     console.warn('[SessionManager] Failed to clear invalid session from localStorage:', error);
                 }
                 
-                // Preserve valid in-memory session if it exists (don't orphan active session)
-                // Only clear memorySessionId if it's also invalid
+                const memorySessionId = memorySessionIds.get(storageKey);
                 if (memorySessionId && !isValidSessionId(memorySessionId)) {
-                    memorySessionId = null;
+                    memorySessionIds.delete(storageKey);
                 }
                 
                 // Fall through to regeneration logic below (or return valid memorySessionId)
@@ -92,6 +103,7 @@ export function getSessionId(): string {
     }
 
     // Try memory fallback
+    const memorySessionId = memorySessionIds.get(storageKey);
     if (memorySessionId) {
         return memorySessionId;
     }
@@ -103,17 +115,17 @@ export function getSessionId(): string {
         console.log('[SessionManager] Generated new session:', newSessionId.substring(0, 8) + '...');
     }
 
-    // Persist to localStorage
+    // Persist to tenant-scoped localStorage
     if (isLocalStorageAvailable()) {
         try {
-            localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+            localStorage.setItem(getSessionStorageKey(), newSessionId);
         } catch (error) {
             console.warn('[SessionManager] Failed to persist session to localStorage:', error);
         }
     }
 
     // Always keep in memory as backup
-    memorySessionId = newSessionId;
+    memorySessionIds.set(storageKey, newSessionId);
 
     return newSessionId;
 }
@@ -148,13 +160,13 @@ export function setSessionId(sessionId: string): void {
 
     if (isLocalStorageAvailable()) {
         try {
-            localStorage.setItem(SESSION_STORAGE_KEY, normalizedSessionId);
+            localStorage.setItem(getSessionStorageKey(), normalizedSessionId);
         } catch (error) {
             console.warn('[SessionManager] Failed to persist recovered session to localStorage:', error);
         }
     }
 
-    memorySessionId = normalizedSessionId;
+    memorySessionIds.set(getSessionStorageKey(), normalizedSessionId);
 
     if (import.meta.env.DEV) {
         console.log('[SessionManager] Session overridden from recovery link:', normalizedSessionId.substring(0, 8) + '...');
@@ -167,12 +179,18 @@ export function setSessionId(sessionId: string): void {
 export function clearSession(): void {
     if (isLocalStorageAvailable()) {
         try {
-            localStorage.removeItem(SESSION_STORAGE_KEY);
+            const storageKey = tryGetSessionStorageKey();
+            if (storageKey) {
+                localStorage.removeItem(storageKey);
+            }
         } catch (error) {
             console.warn('[SessionManager] Failed to clear session from localStorage:', error);
         }
     }
-    memorySessionId = null;
+    const storageKey = tryGetSessionStorageKey();
+    if (storageKey) {
+        memorySessionIds.delete(storageKey);
+    }
 
     if (import.meta.env.DEV) {
         console.log('[SessionManager] Session cleared');
@@ -184,9 +202,11 @@ export function clearSession(): void {
  */
 export function hasSession(): boolean {
     if (isLocalStorageAvailable()) {
-        return localStorage.getItem(SESSION_STORAGE_KEY) !== null;
+        const storageKey = tryGetSessionStorageKey();
+        return storageKey ? localStorage.getItem(storageKey) !== null : false;
     }
-    return memorySessionId !== null;
+    const storageKey = tryGetSessionStorageKey();
+    return storageKey ? memorySessionIds.has(storageKey) : false;
 }
 
 /**
