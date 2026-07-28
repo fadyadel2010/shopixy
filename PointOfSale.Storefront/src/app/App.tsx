@@ -32,6 +32,7 @@ import {
     StoreDisabledPage
 } from '@/components/system';
 import { initializeAuth } from '@/auth/bootstrap';
+import { startEditorModeIfRequested } from '@/editor-mode';
 import { AffiliateProvider } from '@/contexts/AffiliateContext';
 import { OfferProvider } from '@/storefront/providers/OfferProvider';
 import { ThemeProvider } from '@/storefront/themes/ThemeContext';
@@ -69,7 +70,11 @@ export const App: React.FC = () => {
                 console.warn('[App] Auth initialization failed (non-fatal):', error);
             }
 
-            // Step 3: Ready
+            // Step 3: Editor mode (ARCH-1.3) — no-op unless embedded by the
+            // builder host with explicit editorMode + editorHostOrigin params.
+            startEditorModeIfRequested();
+
+            // Step 4: Ready
             setBootstrapState({ status: 'success' });
         };
 

@@ -11,6 +11,8 @@ import { GripVertical, Eye, EyeOff, Copy, Trash2, Settings } from 'lucide-react'
 import { useBuilderStore, selectSections, selectSelectedSectionId, selectCurrentPage } from '../../store'
 import { sectionRegistry } from '../../builder'
 import { BuilderThemeProvider } from './BuilderThemeProvider'
+import { ThemeNativeCanvas } from './ThemeNativeCanvas'
+import { isThemeNativeCanvasEnabled } from './themeNativeCanvasFlag'
 import { SectionRenderer as StorefrontSectionRenderer } from '@/components/sections/SectionRenderer'
 import { StorefrontLayout } from '@/storefront/layout/StorefrontLayout'
 import { getProductTemplatePreviewProduct } from '@/storefront/products/ProductTemplateRegistry'
@@ -173,6 +175,7 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
     const toggleSection = useBuilderStore((s) => s.toggleSection)
     const duplicateSection = useBuilderStore((s) => s.duplicateSection)
     const removeSection = useBuilderStore((s) => s.removeSection)
+    const addSection = useBuilderStore((s) => s.addSection)
 
     const sectionIds = sections.map((s) => s.id)
     const activeSection = activeId ? sections.find((s) => s.id === activeId) : null
@@ -181,6 +184,29 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
     const sectionProps = currentPage === 'product-template'
         ? { product: getProductTemplatePreviewProduct() }
         : undefined
+
+    // ARCH-1.3: theme-native canvas (real storefront runtime via Editor
+    // Bridge). Flag OFF => legacy synthetic canvas below (instant rollback).
+    if (isThemeNativeCanvasEnabled()) {
+        if (!isConfigReady) {
+            return (
+                <div className="flex-1 h-full bg-gray-100 flex items-center justify-center">
+                    <div className="flex min-h-[320px] w-full max-w-4xl items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-500">
+                        {isRTL ? 'جارٍ تحميل معاينة المتجر...' : 'Loading storefront preview...'}
+                    </div>
+                </div>
+            )
+        }
+
+        return (
+            <ThemeNativeCanvas
+                storeConfig={storeConfig}
+                tenantId={tenantId}
+                onLoadDemo={onLoadDemo}
+                onInsertSection={(sectionType, insertionIndex) => addSection(sectionType, insertionIndex, sectionRegistry)}
+            />
+        )
+    }
 
     return (
         <div className="flex-1 h-full bg-gray-100 overflow-auto">

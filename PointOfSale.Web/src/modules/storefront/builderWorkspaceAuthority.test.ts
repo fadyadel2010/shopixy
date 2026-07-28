@@ -30,7 +30,7 @@ describe('storefront builder workspace authority', () => {
         expect(source).toContain('getAcceptedWorkspaceRowVersion')
         expect(source).toContain('buildIfMatchOptions(rowVersion')
         expect(source).toContain('storeConfigService.updatePageLayout(')
-        expect(source).toContain('admitWorkspaceConfig(response)')
+        expect(source).toContain('admitWorkspaceConfig(response, storeConfig)')
     })
 
     it('hydrates section composition from accepted backend DTOs after bootstrap and save', () => {
@@ -40,6 +40,18 @@ describe('storefront builder workspace authority', () => {
         expect(source).toContain('admitSections(acceptedSections)')
         expect(source).toContain('getAcceptedSectionsFromConfig(acceptedConfig, targetPage, templateIdFromUrl)')
         expect(source).toContain('resetHistory: false')
+    })
+
+    it('does not make the initial workspace loader depend on the storeConfig state it writes', () => {
+        const source = readSource(builderPagePath)
+        const loadPageDataDependencies = source.match(/const loadPageData = useCallback[\s\S]*?\n    }, \[([^\]]*)\]\)/)?.[1]
+
+        expect(source).toContain('const getAcceptedWorkspaceRowVersion = useCallback((config) =>')
+        expect(source).toContain('const admitWorkspaceConfig = useCallback((response, runtimeFallback = null) =>')
+        expect(loadPageDataDependencies).toBe('admitSections, admitWorkspaceConfig, currentUser, getAcceptedSectionsFromConfig, isRTL')
+        expect(loadPageDataDependencies).not.toContain('storeConfig')
+        expect(loadPageDataDependencies).not.toContain('templateIdFromUrl')
+        expect(source).not.toContain('runtimeFallback = storeConfig')
     })
 
     it('keeps draft autosave and preview backend-authoritative', () => {

@@ -1,40 +1,13 @@
 import { useLayoutEffect, useMemo, useState } from 'react'
 import { ThemeProvider } from '@/storefront/themes/ThemeContext'
 import { isTenantResolved, setResolvedTenant } from '@/bootstrap'
-import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig'
 import { useStoreConfigStore } from '@/store/storeConfigStore'
+// ARCH-1.4R: normalizeStoreConfig extracted to a standalone module so the
+// theme-native canvas no longer depends on this legacy provider. Re-exported
+// here for backward compatibility until decommission.
+import { normalizeStoreConfig } from './normalizeStoreConfig'
 
-export function normalizeStoreConfig(storeConfig) {
-    return {
-        ...DEFAULT_STORE_CONFIG,
-        ...storeConfig,
-        theme: {
-            ...DEFAULT_STORE_CONFIG.theme,
-            ...(storeConfig?.theme || {}),
-            colors: {
-                ...DEFAULT_STORE_CONFIG.theme.colors,
-                ...(storeConfig?.theme?.colors || {}),
-            },
-            font: {
-                ...DEFAULT_STORE_CONFIG.theme.font,
-                ...(storeConfig?.theme?.font || {}),
-            },
-            ui: {
-                ...DEFAULT_STORE_CONFIG.theme.ui,
-                ...(storeConfig?.theme?.ui || {}),
-            },
-            layout: {
-                ...DEFAULT_STORE_CONFIG.theme.layout,
-                ...(storeConfig?.theme?.layout || {}),
-            },
-        },
-        behavior: {
-            ...DEFAULT_STORE_CONFIG.behavior,
-            ...(storeConfig?.behavior || {}),
-        },
-        pages: storeConfig?.pages || DEFAULT_STORE_CONFIG.pages,
-    }
-}
+export { normalizeStoreConfig }
 
 export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
     const setConfig = useStoreConfigStore((state) => state.setConfig)

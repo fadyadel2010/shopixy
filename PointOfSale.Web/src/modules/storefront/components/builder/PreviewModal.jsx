@@ -14,7 +14,7 @@ import { getProductTemplatePreviewProduct } from '@/storefront/products/ProductT
 import { isTenantResolved, setResolvedTenant } from '@/bootstrap'
 import { useStoreConfigStore } from '@/store/storeConfigStore'
 
-import { normalizeStoreConfig } from './BuilderThemeProvider'
+import { normalizeStoreConfig } from './normalizeStoreConfig'
 
 const DEVICE_SIZES = [
     { key: 'desktop', icon: Monitor, width: '100%', label: { en: 'Desktop', ar: 'سطح المكتب' } },
