@@ -115,22 +115,24 @@ const PearlHeader: React.FC = () => {
                     </div>
 
                     {/* Centered primary navigation */}
-                    <nav
-                        className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex"
-                        aria-label={t('accessibility.mainNavigation')}
-                    >
-                        {links.map((link) => (
-                            <AffiliateLink
-                                key={link.key}
-                                href={link.url}
-                                target={link.openInNewTab ? '_blank' : undefined}
-                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={pearlNavLinkClass(isActive(link.url))}
-                            >
-                                {link.label}
-                            </AffiliateLink>
-                        ))}
-                    </nav>
+                    {links.length > 0 ? (
+                        <nav
+                            className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex"
+                            aria-label={t('accessibility.mainNavigation')}
+                        >
+                            {links.map((link) => (
+                                <AffiliateLink
+                                    key={link.key}
+                                    href={link.url}
+                                    target={link.openInNewTab ? '_blank' : undefined}
+                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                    className={pearlNavLinkClass(isActive(link.url))}
+                                >
+                                    {link.label}
+                                </AffiliateLink>
+                            ))}
+                        </nav>
+                    ) : null}
                 </div>
 
                 {/* Mobile drawer */}

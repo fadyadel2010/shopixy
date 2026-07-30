@@ -3,11 +3,12 @@
  * Phase 9.8: POS Integration
  */
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, GripVertical } from 'lucide-react'
 import { useDraggable } from '@dnd-kit/core'
 import { sectionRegistry } from '../../builder'
+import { filterSectionDefinitionsForPage } from '../../builder/pageSectionAvailability'
 import { categoryDisplayNames } from '../../types'
 
 /**
@@ -61,12 +62,27 @@ function DraggableSectionCard({ definition }) {
 /**
  * Section Palette
  */
-export function SectionPalette() {
+export function SectionPalette({ pageKey = 'home' }) {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
 
-    const categories = sectionRegistry.getCategories()
-    const [expandedCategories, setExpandedCategories] = useState(new Set(categories))
+    const categories = useMemo(() => sectionRegistry.getCategories(), [])
+    const sectionsByCategory = useMemo(() => {
+        return categories.reduce((acc, category) => {
+            acc[category] = filterSectionDefinitionsForPage(sectionRegistry.getByCategory(category), pageKey)
+            return acc
+        }, {})
+    }, [categories, pageKey])
+    const visibleCategories = useMemo(
+        () => categories.filter((category) => (sectionsByCategory[category] || []).length > 0),
+        [categories, sectionsByCategory]
+    )
+    const visibleCategoryKey = visibleCategories.join('|')
+    const [expandedCategories, setExpandedCategories] = useState(() => new Set(visibleCategories))
+
+    useEffect(() => {
+        setExpandedCategories(new Set(visibleCategories))
+    }, [visibleCategories, visibleCategoryKey])
 
     const toggleCategory = (category) => {
         const newExpanded = new Set(expandedCategories)
@@ -92,8 +108,8 @@ export function SectionPalette() {
 
             {/* Section List */}
             <div className="flex-1 overflow-y-auto p-3 space-y-4">
-                {categories.map((category) => {
-                    const sections = sectionRegistry.getByCategory(category)
+                {visibleCategories.map((category) => {
+                    const sections = sectionsByCategory[category] || []
                     const isExpanded = expandedCategories.has(category)
                     const categoryName = categoryDisplayNames[category]
 

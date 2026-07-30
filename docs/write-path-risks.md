@@ -1,0 +1,43 @@
+# Product Write Path Risks
+
+Date: 2026-07-30
+
+Final certification: `WRITE PATH CERTIFICATION FAILED`
+
+## Risk Register
+
+| ID | Severity | Risk | Source-code evidence | Impact | Recommendation |
+| --- | --- | --- | --- | --- | --- |
+| R-01 | Critical | Purchase receipt/update/delete/revert mutate canonical `ProductVariant.CostPrice` outside Product Authoring/Pricing command authority. | `ProductVariant.CostPrice` is canonical at `PointOfSale.Core/Entities/ProductVariant.cs:22-73`. Purchase create/update/delete write it at `PointOfSale.API/Controllers/PurchasesController.cs:219-223`, `:1133-1138`, and `:1461-1464`. | Product variant cost can change through purchase workflows without Product Authoring admission, rowversion expectations, or product authoring event semantics. | Move cost mutation behind an explicit pricing/cost authority command used by purchases, or formally define Purchase as the canonical cost authority and update the architecture contract/tests accordingly. |
+| R-02 | Critical | Purchase return mutates canonical `ProductVariant.CostPrice` outside Product Authoring/Pricing command authority. | `PurchaseReturnsController.cs:540-544` assigns `variantEntity.CostPrice = VariantCostAuthority.ApplyPurchaseReturn(...)`; simple mirror follows at `:550-553`. | Returns can change Product cost authority and downstream price/cost projection through a non-Product authoring path. | Same as R-01: centralize through cost authority command or make purchase-return cost authority explicit and enforce it. |
+| R-03 | High | Product-related stock writes are distributed across several entry points and services. | Product stock adjustment `ProductsController.cs:771-909`; variant stock update `ProductVariantsController.cs:1398-1558`; warehouse inventory `WarehousesController.cs:188-402`; purchases `PurchasesController.cs:219-226`; returns `PurchaseReturnsController.cs:540-557`; sales `SalesController.cs:242-310`; checkout repository `ProductVariantStockRepository.cs:112-227`; CommerceHub inventory `InventoryConsistencyService.cs:292-293`, `:392-393`, `:541-542`, `:673-674`, `:1072-1073`, `:1219-1220`. | Inventory appears intentionally separate from Product Authoring, but broad distribution increases the chance of a stock/outbox/idempotency regression. | Define a single inventory mutation boundary and require all stock writes to enter through it, or expand architecture tests to prove every allowed stock writer uses lock, idempotency where needed, transaction, and stock sync outbox. |
+| R-04 | High | Architecture tests do not certify the full Product-related write inventory. | Current Product mutation governance focuses on ProductsController/legacy variant/migration and selected bypass classifications at `PointOfSale.Tests/Architecture/ProductMutationAuthorityGovernanceTests.cs:6-118`. | New bypasses can appear in purchases, purchase returns, sales, warehouses, checkout, CommerceHub, affiliate, or media without being blocked by the Product mutation authority test. | Extend governance tests with the full matrix from `write-path-matrix.md`; fail any unclassified Product/ProductUnit/ProductVariant/ProductVariantStock/ProductMedia/AffiliateProductPolicy/CommerceHubListing mutation. |
+| R-05 | Medium | Product media service mutates Product projection freshness and variant media pointers outside Product Authoring. | `ProductMediaService.cs:90-109`, `:148-159`, `:198-225`, `:299-301`; controller transactions at `ProductMediaController.cs:66`, `:128`, `:179`, `:317-318`. | Media writes are probably a legitimate media authority, but they mutate Product rows/projection freshness outside Product Authoring. | Formalize Media Authority as an allowed Product-adjacent writer and test it for idempotency, transaction, event, and projection behavior. |
+| R-06 | Medium | Affiliate policy writes touch Product projection freshness outside Product Authoring. | `AffiliateService.cs:408-444`; event projection at `:626-665`; admin endpoints at `AdminProductAffiliateController.cs:171`, `:286`, `:326`, `:366`. | Affiliate policy changes can affect Product visibility/eligibility downstream without Product Authoring. | Formalize Affiliate Policy Authority and add an architecture test allowing only policy fields plus projection-version/touch behavior. |
+| R-07 | Medium | CommerceHub bulk listing path mutates listings directly in controller and no explicit idempotency/transaction boundary was found in the inspected path. | `AdminCommerceHubController.cs:365-494` mutates listings with `listing.Unpublish()` / `ApplySafeBulkPublish(...)` and saves. | Listing state may be less protected than handler-based publish/update/unpublish paths. | Route bulk listing through the same command handler/transaction/idempotency pattern as single listing operations. |
+| R-08 | Medium | Multiple `SaveChanges` calls occur inside Product-related transactions. | Product Authoring save/commit at `ProductAuthoringOrchestrator.cs:492-494`; stock support saves at `ProductVariantStockMutationSupport.cs:230-250`; purchases save/events/idempotency/commit at `PurchasesController.cs:369-385`, `:516-517`; sales return saves/commit at `SalesReturnsController.cs:942-977`. | Multiple saves are acceptable inside one transaction, but if an ambient transaction is missing or future refactoring moves calls, outbox/idempotency ordering can leak. | Add transaction assertion tests for every product-related mutation family, not only Product Authoring. |
+| R-09 | Medium | Legacy direct EF variant mutation code remains in source after fail-closed returns. | Deprecated returns precede direct write blocks at `ProductVariantsController.cs:118-140`, `:463-469`, `:1056-1170`, `:1224-1304`. | Future edits could accidentally remove the guard and revive old controller writes. | Remove unreachable legacy mutation bodies or isolate them behind deleted/test-only code. |
+| R-10 | Low | Development seed service creates Product/ProductUnit directly. | `DevelopmentCommerceHubSeedService.cs:241-288`. | Acceptable only when guaranteed development-only; dangerous if enabled in production. | Add environment guard tests and registration checks proving this service cannot run outside Development. |
+| R-11 | Low | Projection repair endpoints can force downstream Product read-model updates. | Stock repair endpoint `ProductsController.cs:1997-2079`; search/Mongo repair paths at `DiscountReadModelRepairService.cs:217`, `:295`, `:321-333`. | Repair paths are useful but privileged. Incorrect authorization or SQL overlay bugs could overwrite projections. | Keep repair endpoints Owner/Admin only, idempotent, tenant scoped, and SQL-authority-derived. |
+| R-12 | Informational | Projection boundary is comparatively strong. | `ProductProjectionGovernanceTests.cs:5-147`; `ProductReadRepository.cs:194`, `:551`, `:572`, `:607`; `ProductSearchSqlAuthorityOverlay.cs:321-329`. | Supports no reverse Mongo/search authority conclusion. | Keep expanding projection allowlists only with documented classifications. |
+| R-13 | Informational | Product Authoring path itself is well structured. | `ProductsController.cs:286-454`, `:1353-1643`; `ProductAuthoringOrchestrator.cs:66-96`, `:467-495`, `:587-687`; `ProductAuthoringInfrastructurePolicies.cs:85-299`; `ProductAuthoringReconstructionService.cs:23-105`. | Canonical Product create/update/delete/unit paths have strong runtime evidence. | Preserve this path as the baseline and move other catalog field mutations behind comparable authority boundaries. |
+
+## Failure Drivers
+
+The certification fails because R-01 and R-02 are authority violations against canonical variant cost data. These are not theoretical or test-only paths; they are live controller flows with transaction, save, outbox, and commit behavior.
+
+The important distinction is:
+
+- Transactional SQL success proves durability.
+- It does not prove the correct authority admitted the mutation.
+
+## Required Remediation For Pass
+
+To reach a clean pass, the codebase needs one of these architecture changes:
+
+1. Move all `ProductVariant.CostPrice` mutations into Product Authoring or a named Pricing/Cost Authority command boundary.
+2. Or explicitly declare Purchase Receipt and Purchase Return as canonical cost authorities, document the contract, and add tests that prove every cost mutation uses only those paths.
+3. Expand mutation governance tests to cover every row in `write-path-matrix.md`.
+4. Remove or permanently isolate deprecated direct variant write bodies.
+5. Normalize CommerceHub bulk listing, media, affiliate, inventory, and repair paths under named authority boundaries with transaction/idempotency/outbox assertions.
+

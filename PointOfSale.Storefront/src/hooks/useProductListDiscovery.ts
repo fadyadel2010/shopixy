@@ -27,13 +27,10 @@ import type {
  * Maps ProductDiscoveryItemDto to ProductListItemDto for backward compatibility.
  * This ensures existing ProductCard components continue to work.
  * 
- * CRITICAL: Preserves hasVariants and displayPriceText for variant-aware pricing.
+ * CRITICAL: Preserves backend-composed pricing and availability.
  */
 function mapDiscoveryItemToListItem(item: ProductDiscoveryItemDto): ProductListItemDto {
-    // CRITICAL: Variant products should NOT show "Out of Stock" at the product level
-    // because stock is tracked at the variant level. The user must select a variant
-    // to see actual availability. So for hasVariants=true, we treat as available.
-    const isProductAvailable = item.hasVariants ? true : item.inStock;
+    const availability = item.availability;
 
     return {
         id: item.id,
@@ -51,10 +48,10 @@ function mapDiscoveryItemToListItem(item: ProductDiscoveryItemDto): ProductListI
         productTemplate: item.storefrontLayout,
         isFeatured: item.isFeatured,
         thumbnailImage: item.imageUrl,
-        // Use computed availability for variant products
-        isAvailable: isProductAvailable,
-        inStock: isProductAvailable,
-        stockQuantity: 0, // Not returned in discovery, but not used in cards
+        availability,
+        isAvailable: availability?.isAvailable ?? false,
+        inStock: item.inStock,
+        stockQuantity: availability?.maximumQuantity ?? 0,
         // PHASE: Variant-Aware Pricing - Pass through for ProductCard
         hasVariants: item.hasVariants,
         displayPriceText: item.displayPriceText,

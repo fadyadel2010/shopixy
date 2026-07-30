@@ -12,6 +12,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Inventory;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Services;
@@ -468,6 +469,7 @@ public class PurchaseReturnsController : ControllerBase
                 .Distinct()
                 .ToList();
             var productsById = await _context.Products
+                .Include(product => product.ProductUnits)
                 .Where(product => productIds.Contains(product.Id))
                 .ToDictionaryAsync(product => product.Id);
 
@@ -542,7 +544,13 @@ public class PurchaseReturnsController : ControllerBase
                     line.BaseCost);
                 if (productsById.TryGetValue(line.ProductId, out var productEntity) && !productEntity.HasVariants)
                 {
-                    productEntity.PurchasePrice = variantEntity.CostPrice;
+                    var defaultUnit = ResolveDefaultProductUnit(productEntity);
+                    if (defaultUnit is not null)
+                    {
+                        defaultUnit.PurchasePrice = variantEntity.CostPrice;
+                    }
+
+                    ProductPricingCompatibilityMirror.MirrorSimpleProductFromDefaultUnit(productEntity, defaultUnit);
                 }
 
                 variantStock.Quantity -= line.BaseQuantity;
@@ -1067,6 +1075,10 @@ public class PurchaseReturnsController : ControllerBase
     private bool IsSqlServerProvider() =>
         _context.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;
 
+    private static ProductUnit? ResolveDefaultProductUnit(Product product) =>
+        product.ProductUnits
+            .Where(unit => !unit.IsDeleted)
+            .FirstOrDefault(unit => unit.IsDefault);
 }
 
 file sealed record PendingPurchaseReturnLine(

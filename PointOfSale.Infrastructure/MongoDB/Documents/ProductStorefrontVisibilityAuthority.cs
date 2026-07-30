@@ -5,6 +5,68 @@ public static class ProductStorefrontVisibilityAuthority
     public static decimal ResolveSimpleProductPrice(ProductDocument product) =>
         product.DefaultUnit?.SalePrice ?? 0m;
 
+    public static StorefrontPurchasabilityResult Evaluate(ProductDocument product)
+    {
+        var activePricedVariants = ResolvePricedActiveVariants(product).ToList();
+        if (product.HasVariants)
+        {
+            var selectedVariant = activePricedVariants
+                .OrderBy(variant => variant.IsDefault ? 0 : 1)
+                .ThenBy(variant => variant.SortOrder)
+                .FirstOrDefault();
+            var stockQuantity = Math.Max(
+                0,
+                decimal.ToInt32(decimal.Truncate(activePricedVariants.Sum(variant => variant.TotalStock))));
+            var inStock = activePricedVariants.Any(variant => variant.TotalStock > 0);
+
+            return new StorefrontPurchasabilityResult(
+                IsAvailable: product.IsActive && product.IsOnlineVisible && selectedVariant != null,
+                CanPurchase: false,
+                Price: selectedVariant?.EffectivePrice ?? 0m,
+                InStock: inStock,
+                StockQuantity: stockQuantity,
+                RequiresVariantSelection: true,
+                UnavailableReason: selectedVariant == null
+                    ? StorefrontPurchasabilityUnavailableReason.NoPricedVariant
+                    : StorefrontPurchasabilityUnavailableReason.VariantSelectionRequired);
+        }
+
+        var price = ResolveSimpleProductPrice(product);
+        var isAvailable = product.IsActive && product.IsOnlineVisible && price > 0m;
+        var inStockSimpleProduct = product.InStock;
+        return new StorefrontPurchasabilityResult(
+            IsAvailable: isAvailable,
+            CanPurchase: isAvailable && inStockSimpleProduct,
+            Price: price,
+            InStock: inStockSimpleProduct,
+            StockQuantity: Math.Max(0, product.StockQuantity),
+            RequiresVariantSelection: false,
+            UnavailableReason: ResolveSimpleProductUnavailableReason(product, price, inStockSimpleProduct));
+    }
+
+    public static StorefrontPurchasabilityResult EvaluateVariant(
+        ProductDocument product,
+        ProductVariantDocument variant)
+    {
+        var price = variant.EffectivePrice;
+        var stockQuantity = Math.Max(0, decimal.ToInt32(decimal.Truncate(variant.TotalStock)));
+        var isAvailable = product.IsActive &&
+                          product.IsOnlineVisible &&
+                          product.HasVariants &&
+                          variant.IsActive &&
+                          price > 0m;
+        var inStock = stockQuantity > 0;
+
+        return new StorefrontPurchasabilityResult(
+            IsAvailable: isAvailable,
+            CanPurchase: isAvailable && inStock,
+            Price: price,
+            InStock: inStock,
+            StockQuantity: stockQuantity,
+            RequiresVariantSelection: false,
+            UnavailableReason: ResolveVariantUnavailableReason(product, variant, price, inStock));
+    }
+
     public static decimal ResolveVisiblePrice(ProductDocument product)
     {
         var visibleVariant = ResolveVisibleVariant(product);
@@ -17,11 +79,61 @@ public static class ProductStorefrontVisibilityAuthority
     }
 
     private static ProductVariantDocument? ResolveVisibleVariant(ProductDocument product) =>
-        (product.Variants ?? new List<ProductVariantDocument>())
-        .Where(variant => variant.IsActive && variant.EffectivePrice > 0m)
+        ResolvePricedActiveVariants(product)
         .OrderBy(variant => variant.IsDefault ? 0 : 1)
         .ThenBy(variant => variant.SortOrder)
         .FirstOrDefault();
+
+    private static IEnumerable<ProductVariantDocument> ResolvePricedActiveVariants(ProductDocument product) =>
+        (product.Variants ?? new List<ProductVariantDocument>())
+        .Where(variant => variant.IsActive && variant.EffectivePrice > 0m);
+
+    private static string? ResolveSimpleProductUnavailableReason(
+        ProductDocument product,
+        decimal price,
+        bool inStock)
+    {
+        if (!product.IsActive || !product.IsOnlineVisible)
+        {
+            return StorefrontPurchasabilityUnavailableReason.NotVisible;
+        }
+
+        if (product.DefaultUnit == null)
+        {
+            return StorefrontPurchasabilityUnavailableReason.MissingDefaultUnit;
+        }
+
+        if (price <= 0m)
+        {
+            return StorefrontPurchasabilityUnavailableReason.InvalidDefaultUnitPrice;
+        }
+
+        return inStock ? null : StorefrontPurchasabilityUnavailableReason.OutOfStock;
+    }
+
+    private static string? ResolveVariantUnavailableReason(
+        ProductDocument product,
+        ProductVariantDocument variant,
+        decimal price,
+        bool inStock)
+    {
+        if (!product.IsActive || !product.IsOnlineVisible || !product.HasVariants)
+        {
+            return StorefrontPurchasabilityUnavailableReason.NotVisible;
+        }
+
+        if (!variant.IsActive)
+        {
+            return StorefrontPurchasabilityUnavailableReason.VariantInactive;
+        }
+
+        if (price <= 0m)
+        {
+            return StorefrontPurchasabilityUnavailableReason.NoPricedVariant;
+        }
+
+        return inStock ? null : StorefrontPurchasabilityUnavailableReason.OutOfStock;
+    }
 
     public static bool TryResolveAffiliatePublicPricing(
         ProductDocument product,
@@ -114,4 +226,24 @@ public static class ProductStorefrontVisibilityAuthority
         basePrice = ResolveVisiblePrice(product);
         return basePrice > 0m;
     }
+}
+
+public sealed record StorefrontPurchasabilityResult(
+    bool IsAvailable,
+    bool CanPurchase,
+    decimal Price,
+    bool InStock,
+    int StockQuantity,
+    bool RequiresVariantSelection,
+    string? UnavailableReason);
+
+public static class StorefrontPurchasabilityUnavailableReason
+{
+    public const string NotVisible = "NOT_VISIBLE";
+    public const string MissingDefaultUnit = "MISSING_DEFAULT_UNIT";
+    public const string InvalidDefaultUnitPrice = "INVALID_DEFAULT_UNIT_PRICE";
+    public const string VariantSelectionRequired = "VARIANT_SELECTION_REQUIRED";
+    public const string NoPricedVariant = "NO_PRICED_VARIANT";
+    public const string VariantInactive = "VARIANT_INACTIVE";
+    public const string OutOfStock = "OUT_OF_STOCK";
 }

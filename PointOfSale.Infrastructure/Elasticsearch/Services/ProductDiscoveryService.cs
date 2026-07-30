@@ -557,11 +557,9 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 continue;
             }
 
-            var activeVariants = (product.Variants ?? new List<ProductVariantDocument>())
-                .Where(variant => variant.IsActive)
-                .ToList();
-            var hasVariants = activeVariants.Count > 0;
-            var price = product.StorefrontVisiblePrice;
+            var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+            var hasVariants = purchasability.RequiresVariantSelection;
+            var price = purchasability.Price;
             var promotionBadge = product.HasActivePromotion
                 ? BuildPromotionBadge((double)(product.PromotionDiscountValue ?? 0m), product.PromotionDiscountType)
                 : null;
@@ -584,9 +582,7 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 CategoryId = product.CategoryId,
                 ImageUrl = imageUrl,
                 HasVariants = hasVariants,
-                InStock = hasVariants
-                    ? activeVariants.Any(variant => variant.TotalStock > 0)
-                    : product.InStock,
+                InStock = purchasability.InStock,
                 HasActivePromotion = product.HasActivePromotion,
                 PromotionBadge = promotionBadge,
                 PromotionDiscountType = product.PromotionDiscountType,
@@ -599,6 +595,7 @@ public class ProductDiscoveryService : IProductDiscoveryService
                     promotionBadge,
                     product.PromotionDiscountType,
                     product.PromotionDiscountValue),
+                Availability = BuildAvailabilityPresentation(purchasability),
                 DisplayPriceText = hasVariants
                     ? (isRtl ? "متعدد الاختيارات" : "Multiple options")
                     : null
@@ -637,7 +634,8 @@ public class ProductDiscoveryService : IProductDiscoveryService
             return false;
         }
 
-        var visiblePrice = product.StorefrontVisiblePrice;
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+        var visiblePrice = purchasability.Price;
         if ((query.PriceFrom.HasValue && visiblePrice < query.PriceFrom.Value) ||
             (query.PriceTo.HasValue && visiblePrice > query.PriceTo.Value))
         {
@@ -649,20 +647,12 @@ public class ProductDiscoveryService : IProductDiscoveryService
             return false;
         }
 
-        var activeVariants = (product.Variants ?? new List<ProductVariantDocument>())
-            .Where(variant => variant.IsActive)
-            .ToList();
-        var hasVariants = activeVariants.Count > 0;
-        var inStock = hasVariants
-            ? activeVariants.Any(variant => variant.TotalStock > 0)
-            : product.InStock;
-
-        if (query.InStock.HasValue && inStock != query.InStock.Value)
+        if (query.InStock.HasValue && purchasability.InStock != query.InStock.Value)
         {
             return false;
         }
 
-        if (query.HasVariants.HasValue && hasVariants != query.HasVariants.Value)
+        if (query.HasVariants.HasValue && purchasability.RequiresVariantSelection != query.HasVariants.Value)
         {
             return false;
         }
@@ -728,6 +718,46 @@ public class ProductDiscoveryService : IProductDiscoveryService
 
     private static decimal RoundCurrency(decimal amount) =>
         Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+
+    private static ProductDiscoveryAvailabilityDto BuildAvailabilityPresentation(
+        StorefrontPurchasabilityResult purchasability)
+    {
+        var canPurchase = purchasability.CanPurchase;
+        return new ProductDiscoveryAvailabilityDto
+        {
+            IsAvailable = purchasability.IsAvailable,
+            CanPurchase = canPurchase,
+            CanAddToCart = canPurchase,
+            CanBuyNow = canPurchase,
+            StockLabel = BuildStockLabel(purchasability),
+            MaximumQuantity = canPurchase && purchasability.StockQuantity > 0
+                ? purchasability.StockQuantity
+                : null,
+            UnavailableReason = purchasability.UnavailableReason
+        };
+    }
+
+    private static string BuildStockLabel(StorefrontPurchasabilityResult purchasability)
+    {
+        if (purchasability.RequiresVariantSelection)
+        {
+            return "Select options";
+        }
+
+        if (!purchasability.IsAvailable)
+        {
+            return "Unavailable";
+        }
+
+        if (!purchasability.InStock)
+        {
+            return "Out of stock";
+        }
+
+        return purchasability.StockQuantity > 0
+            ? $"In Stock ({purchasability.StockQuantity})"
+            : "In Stock";
+    }
 
     /// <summary>
     /// Builds facets from SQL-authority-recomposed visible items.

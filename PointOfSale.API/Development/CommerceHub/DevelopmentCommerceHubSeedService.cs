@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -231,7 +232,9 @@ public sealed class DevelopmentCommerceHubSeedService : IDevelopmentCommerceHubS
 
     private async Task UpsertProductAsync(ProductSeedSpec spec, DateTime now, CancellationToken cancellationToken)
     {
-        var product = await _dbContext.Set<Product>().FirstOrDefaultAsync(x => x.Id == spec.ProductId, cancellationToken);
+        var product = await _dbContext.Set<Product>()
+            .Include(x => x.ProductUnits)
+            .FirstOrDefaultAsync(x => x.Id == spec.ProductId, cancellationToken);
 
         if (product == null)
         {
@@ -248,9 +251,9 @@ public sealed class DevelopmentCommerceHubSeedService : IDevelopmentCommerceHubS
         product.Name = spec.ProductName;
         product.Description = spec.Description;
         product.CategoryId = spec.PosCategoryId;
-        product.PurchasePrice = spec.Price * 0.65m;
-        product.SalePrice = spec.Price;
-        product.OnlinePrice = spec.Price;
+        product.PurchasePrice = 0m;
+        product.SalePrice = 0m;
+        product.OnlinePrice = null;
         product.PriceIncludesTax = true;
         product.TaxRate = 14m;
         product.Unit = "Piece";
@@ -268,6 +271,57 @@ public sealed class DevelopmentCommerceHubSeedService : IDevelopmentCommerceHubS
         product.Slug = spec.Slug;
         product.UpdatedAt = now;
         product.IsDeleted = false;
+
+        var unit = await EnsurePieceUnitAsync(spec.TenantId, cancellationToken);
+        var defaultUnit = product.ProductUnits.FirstOrDefault(x => !x.IsDeleted && x.IsDefault)
+            ?? product.ProductUnits.FirstOrDefault(x => !x.IsDeleted);
+
+        if (defaultUnit == null)
+        {
+            defaultUnit = new ProductUnit
+            {
+                Id = Guid.NewGuid(),
+                ProductId = product.Id,
+                Product = product
+            };
+
+            product.ProductUnits.Add(defaultUnit);
+        }
+
+        defaultUnit.UnitId = unit.Id;
+        defaultUnit.Unit = unit;
+        defaultUnit.ConversionFactor = 1m;
+        defaultUnit.PurchasePrice = spec.Price * 0.65m;
+        defaultUnit.SellingPrice = spec.Price;
+        defaultUnit.IsDefault = true;
+        defaultUnit.IsBaseUnit = true;
+        defaultUnit.IsDeleted = false;
+
+        ProductPricingCompatibilityMirror.MirrorSimpleProductFromDefaultUnit(product, defaultUnit);
+    }
+
+    private async Task<Unit> EnsurePieceUnitAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var unit = await _dbContext.Set<Unit>()
+            .FirstOrDefaultAsync(x => x.TenantId == tenantId && x.Name == "Piece", cancellationToken);
+
+        if (unit != null)
+        {
+            return unit;
+        }
+
+        unit = new Unit
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Piece",
+            Symbol = "pc",
+            Description = "Piece",
+            IsActive = true
+        };
+
+        _dbContext.Set<Unit>().Add(unit);
+        return unit;
     }
 
     private static TenantSeedSpec[] BuildTenantSpecs() =>

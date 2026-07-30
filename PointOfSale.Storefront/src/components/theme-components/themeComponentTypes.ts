@@ -9,6 +9,9 @@ export type ThemeComponentTheme =
     | 'phoenix'
     | 'hype'
     | 'electronics'
+    | 'alizon'
+    | 'sharp'
+    | 'seven'
     | 'default';
 
 export type ThemePricePresentation =

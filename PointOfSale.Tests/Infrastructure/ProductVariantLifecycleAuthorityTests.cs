@@ -171,6 +171,108 @@ public class ProductVariantLifecycleAuthorityTests
     }
 
     [Fact]
+    public void Evaluate_SimpleProductUsesDefaultUnitAndIgnoresProjectedDefaultVariant()
+    {
+        var product = new ProductDocument
+        {
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = false,
+            TrackStock = true,
+            StockQuantity = 4,
+            DefaultUnit = new ProductUnitDocument
+            {
+                UnitId = Guid.NewGuid(),
+                Name = "Piece",
+                SalePrice = 25m,
+                ConversionFactor = 1m,
+                IsBaseUnit = true
+            },
+            Variants =
+            [
+                new ProductVariantDocument
+                {
+                    VariantId = Guid.NewGuid(),
+                    IsDefault = true,
+                    IsActive = true,
+                    Price = 100m,
+                    OnlinePrice = 110m,
+                    TotalStock = 0m
+                }
+            ]
+        };
+
+        var result = ProductStorefrontVisibilityAuthority.Evaluate(product);
+
+        Assert.True(result.IsAvailable);
+        Assert.True(result.CanPurchase);
+        Assert.Equal(25m, result.Price);
+        Assert.True(result.InStock);
+        Assert.Equal(4, result.StockQuantity);
+        Assert.Null(result.UnavailableReason);
+    }
+
+    [Fact]
+    public void Evaluate_SimpleProductWithoutPositiveDefaultUnitFailsClosedDespiteLegacyPrices()
+    {
+        var product = new ProductDocument
+        {
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = false,
+            Price = 99m,
+            OnlinePrice = 89m,
+            StockQuantity = 10,
+            DefaultUnit = new ProductUnitDocument
+            {
+                UnitId = Guid.NewGuid(),
+                Name = "Piece",
+                SalePrice = 0m,
+                ConversionFactor = 1m,
+                IsBaseUnit = true
+            }
+        };
+
+        var result = ProductStorefrontVisibilityAuthority.Evaluate(product);
+
+        Assert.False(result.IsAvailable);
+        Assert.False(result.CanPurchase);
+        Assert.Equal(0m, result.Price);
+        Assert.Equal(StorefrontPurchasabilityUnavailableReason.InvalidDefaultUnitPrice, result.UnavailableReason);
+    }
+
+    [Fact]
+    public void Evaluate_VariantProductRequiresVariantSelectionButSelectedVariantCanPurchase()
+    {
+        var variant = new ProductVariantDocument
+        {
+            VariantId = Guid.NewGuid(),
+            IsDefault = true,
+            IsActive = true,
+            Price = 30m,
+            OnlinePrice = 20m,
+            TotalStock = 5m
+        };
+        var product = new ProductDocument
+        {
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = true,
+            Variants = [variant]
+        };
+
+        var productResult = ProductStorefrontVisibilityAuthority.Evaluate(product);
+        var variantResult = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
+
+        Assert.True(productResult.IsAvailable);
+        Assert.False(productResult.CanPurchase);
+        Assert.True(productResult.RequiresVariantSelection);
+        Assert.Equal(StorefrontPurchasabilityUnavailableReason.VariantSelectionRequired, productResult.UnavailableReason);
+        Assert.True(variantResult.CanPurchase);
+        Assert.Equal(20m, variantResult.Price);
+    }
+
+    [Fact]
     public async Task CommerceHubOverlay_ReturnsMissing_WhenReplayTargetsSupersededListingVariant()
     {
         var tenantId = Guid.NewGuid();

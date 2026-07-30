@@ -36,6 +36,7 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var storefrontProductService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontProductService.cs");
         var storefrontProductPage = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/pages/ProductDetailsPage.tsx");
         var sectionRenderer = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/SectionRenderer.tsx");
+        var runtimeSectionContainer = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/storefront/runtime/containers/RuntimeSectionContainer.tsx");
         var productHero = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-hero.tsx");
         var productSpecs = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-specs.tsx");
         var productVideo = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-video.tsx");
@@ -50,9 +51,12 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
 
         Assert.Contains("fetchProductBySlug(slug)", storefrontProductPage, StringComparison.Ordinal);
         Assert.Contains("sectionProps={{ product }}", storefrontProductPage, StringComparison.Ordinal);
-        Assert.Contains("<Component {...section.data} sectionId={section.id} {...sectionProps} />", sectionRenderer, StringComparison.Ordinal);
+        Assert.Contains("<RuntimeSectionContainer", sectionRenderer, StringComparison.Ordinal);
+        Assert.Contains("sectionProps={{ ...section.data, sectionId: section.id, ...sectionProps }}", sectionRenderer, StringComparison.Ordinal);
 
-        Assert.Contains("parseProductNarrative(localizedDescription || product?.description)", productHero, StringComparison.Ordinal);
+        Assert.Contains("parseProductNarrative(localizedDescription || product?.description)", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("productHeroModel?: ProductHeroPresentationModel", productHero, StringComparison.Ordinal);
+        Assert.Contains("model.summaryParagraphs", productHero, StringComparison.Ordinal);
         Assert.DoesNotContain("Discover something extraordinary", productHero, StringComparison.Ordinal);
         Assert.DoesNotContain("No description available", productHero, StringComparison.Ordinal);
 
@@ -100,11 +104,13 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var productDiscoveryDtos = CertificationSource.ReadRepoFile("PointOfSale.Core/DTOs/ProductDiscoveryDtos.cs");
         var productDiscoveryService = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/ProductDiscoveryService.cs");
         var useVariantSelector = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/hooks/useVariantSelector.ts");
+        var runtimeSectionContainer = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/storefront/runtime/containers/RuntimeSectionContainer.tsx");
         var productHero = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-hero.tsx");
         var productBadges = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductBadges.tsx");
         var productCardDefault = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductCardDefault.tsx");
         var productCardCompact = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductCardCompact.tsx");
         var productCardDetailed = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductCardDetailed.tsx");
+        var productCardRuntime = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductCardRuntime.tsx");
 
         Assert.Contains("ProductPricingPresentationDto", storefrontDtos, StringComparison.Ordinal);
         Assert.Contains("StorefrontPricingPresentationMapper.Build", storefrontProductService, StringComparison.Ordinal);
@@ -118,25 +124,30 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productDiscoveryService, StringComparison.Ordinal);
 
         Assert.Contains("const pricing = selectedVariant?.pricing ?? product?.pricing", useVariantSelector, StringComparison.Ordinal);
-        Assert.Contains("pricing.currentPrice", productHero, StringComparison.Ordinal);
-        Assert.Contains("pricing.compareAtPrice", productHero, StringComparison.Ordinal);
-        Assert.Contains("product.pricing.currentPrice", productCardDefault, StringComparison.Ordinal);
-        Assert.Contains("product.pricing.currentPrice", productCardCompact, StringComparison.Ordinal);
-        Assert.Contains("product.pricing.currentPrice", productCardDetailed, StringComparison.Ordinal);
+        Assert.Contains("pricing.currentPrice", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("pricing.compareAtPrice", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("model.pricing.current", productHero, StringComparison.Ordinal);
+        Assert.Contains("useProductCardRuntime", productCardDefault, StringComparison.Ordinal);
+        Assert.Contains("useProductCardRuntime", productCardCompact, StringComparison.Ordinal);
+        Assert.Contains("useProductCardRuntime", productCardDetailed, StringComparison.Ordinal);
+        Assert.Contains("product.pricing.currentPrice", productCardRuntime, StringComparison.Ordinal);
         Assert.Contains("product.pricing?.discountBadge ?? product.promotionBadge", productBadges, StringComparison.Ordinal);
 
         Assert.DoesNotContain("calculateDiscountedPrice", useVariantSelector, StringComparison.Ordinal);
-        Assert.DoesNotContain("calculateDiscountedPrice", productHero, StringComparison.Ordinal);
+        Assert.DoesNotContain("calculateDiscountedPrice", runtimeSectionContainer, StringComparison.Ordinal);
         Assert.DoesNotContain("calculateDiscountedPrice", productCardDefault, StringComparison.Ordinal);
         Assert.DoesNotContain("calculateDiscountedPrice", productCardCompact, StringComparison.Ordinal);
         Assert.DoesNotContain("calculateDiscountedPrice", productCardDetailed, StringComparison.Ordinal);
+        Assert.DoesNotContain("calculateDiscountedPrice", productCardRuntime, StringComparison.Ordinal);
         Assert.DoesNotContain("promotionDiscountValue / 100", useVariantSelector, StringComparison.Ordinal);
         Assert.DoesNotContain("promotionDiscountValue / 100", productCardDefault, StringComparison.Ordinal);
         Assert.DoesNotContain("promotionDiscountValue / 100", productCardCompact, StringComparison.Ordinal);
         Assert.DoesNotContain("promotionDiscountValue / 100", productCardDetailed, StringComparison.Ordinal);
+        Assert.DoesNotContain("promotionDiscountValue / 100", productCardRuntime, StringComparison.Ordinal);
         Assert.DoesNotContain("Math.max(0, basePrice", productCardDefault, StringComparison.Ordinal);
         Assert.DoesNotContain("Math.max(0, basePrice", productCardCompact, StringComparison.Ordinal);
         Assert.DoesNotContain("Math.max(0, basePrice", productCardDetailed, StringComparison.Ordinal);
+        Assert.DoesNotContain("Math.max(0, basePrice", productCardRuntime, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -146,6 +157,8 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var storefrontProductService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontProductService.cs");
         var productTypes = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/types/product.ts");
         var productHero = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-hero.tsx");
+        var runtimeSectionContainer = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/storefront/runtime/containers/RuntimeSectionContainer.tsx");
+        var productCardRuntime = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/products/ProductCardRuntime.tsx");
         var useVariantSelector = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/hooks/useVariantSelector.ts");
 
         Assert.Contains("ProductAvailabilityPresentationDto", storefrontDtos, StringComparison.Ordinal);
@@ -157,12 +170,15 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
 
         Assert.Contains("ProductAvailabilityPresentationDto", productTypes, StringComparison.Ordinal);
         Assert.Contains("availability?: ProductAvailabilityPresentationDto", productTypes, StringComparison.Ordinal);
-        Assert.Contains("const availability = hasVariants ? selectedVariant?.availability : product.availability", productHero, StringComparison.Ordinal);
-        Assert.Contains("availability?.canAddToCart === true", productHero, StringComparison.Ordinal);
-        Assert.Contains("stockLabel", productHero, StringComparison.Ordinal);
+        Assert.Contains("const availability = hasVariants ? selectedVariant?.availability : product.availability", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("availability?.canAddToCart === true", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("stockLabel", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.Contains("model.canAddToCart", productHero, StringComparison.Ordinal);
+        Assert.Contains("product.availability?.canAddToCart === true", productCardRuntime, StringComparison.Ordinal);
         Assert.Contains("setSelectedVariant(response.variant)", useVariantSelector, StringComparison.Ordinal);
         Assert.DoesNotContain("product.isAvailable && isInStock", productHero, StringComparison.Ordinal);
-        Assert.DoesNotContain("selectedVariant.totalStock", productHero, StringComparison.Ordinal);
+        Assert.DoesNotContain("product.isAvailable && isInStock", runtimeSectionContainer, StringComparison.Ordinal);
+        Assert.DoesNotContain("selectedVariant.totalStock", runtimeSectionContainer, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -174,6 +190,7 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var cartStore = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/store/cartStore.ts");
         var cartStateResolver = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/store/cartStateResolver.ts");
         var productHero = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/sections/defaults/product-hero.tsx");
+        var runtimeSectionContainer = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/storefront/runtime/containers/RuntimeSectionContainer.tsx");
 
         Assert.Contains("[HttpPost(\"items\")]", cartController, StringComparison.Ordinal);
         Assert.Contains("ValidateHeadersAsync(traceId)", cartController, StringComparison.Ordinal);
@@ -185,8 +202,8 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         Assert.Contains("ExecuteWithCartMutationLockAsync", cartService, StringComparison.Ordinal);
         Assert.Contains("ValidateAndFixCartAsync", cartService, StringComparison.Ordinal);
         Assert.Contains("RevalidateCartProductsAsync", cartService, StringComparison.Ordinal);
-        Assert.Contains("GetAuthoritativeVariantStockSnapshotsAsync", cartService, StringComparison.Ordinal);
-        Assert.Contains("ResolveAuthoritativeAvailableStock", cartService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(product)", cartService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant)", cartService, StringComparison.Ordinal);
         Assert.Contains("SaveCartToRedisAsync", cartService, StringComparison.Ordinal);
 
         Assert.Contains("_liveCartService.GetCartAsync", cartRecoveryController, StringComparison.Ordinal);
@@ -204,8 +221,9 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         Assert.Contains("preserveLastValidCart: false", cartStateResolver, StringComparison.Ordinal);
         Assert.DoesNotContain("Showing your last saved cart", cartStateResolver, StringComparison.Ordinal);
 
-        Assert.Contains("const success = await addItem(product.id, 1, variantId);", productHero, StringComparison.Ordinal);
+        Assert.Contains("const success = await addItem(product.id, 1, variantId);", runtimeSectionContainer, StringComparison.Ordinal);
         Assert.DoesNotContain("set({", productHero, StringComparison.Ordinal);
+        Assert.DoesNotContain("set({", runtimeSectionContainer, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -274,7 +292,8 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
 
         Assert.Contains("RecomposeProductCardsFromSqlAuthorityAsync", homeService, StringComparison.Ordinal);
         Assert.Contains("RecomposeHomepageCategoriesFromSqlAuthorityAsync", homeService, StringComparison.Ordinal);
-        Assert.Contains("IsProductHomepageVisible", homeService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(document)", homeService, StringComparison.Ordinal);
+        Assert.Contains("purchasability.IsAvailable", homeService, StringComparison.Ordinal);
 
         Assert.Contains("BuildSqlCategoryTreeAsync", categoryService, StringComparison.Ordinal);
         Assert.Contains("LoadSqlCategoryBySlugAsync", categoryService, StringComparison.Ordinal);

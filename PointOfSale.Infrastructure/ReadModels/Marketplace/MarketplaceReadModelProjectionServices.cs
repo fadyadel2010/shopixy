@@ -356,9 +356,7 @@ public sealed class MarketplaceProductReadModelProjectionService : IMarketplaceP
             return defaultVariant.EffectiveOnlinePrice;
         }
 
-        return product.OnlinePrice.GetValueOrDefault() > 0
-            ? product.OnlinePrice!.Value
-            : product.SalePrice;
+        return 0m;
     }
 
     private static decimal ResolveAvailableStock(IReadOnlyCollection<ProductVariantStock> currentStocks)

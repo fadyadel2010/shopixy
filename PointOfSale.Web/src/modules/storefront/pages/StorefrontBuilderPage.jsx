@@ -33,6 +33,7 @@ import { useBuilderStore, selectSections, selectCurrentPage } from '../store'
 import { storeConfigService } from '../services'
 import { isRequestCanceled } from '../../../services/api'
 import { sectionRegistry } from '../builder'
+import { filterSectionsForPage, isSectionAvailableForPage } from '../builder/pageSectionAvailability'
 import { validateSectionsAgainstContract } from '../builder/sectionContractRegistry'
 import { useAuthStore } from '../../../store/authStore'
 import {
@@ -250,7 +251,10 @@ export function StorefrontBuilderPage() {
             setSaveError(null)
             setSaveStatus('idle')
 
-            const acceptedSections = getAcceptedSectionsFromConfig(config, page, templateId)
+            const acceptedSections = filterSectionsForPage(
+                getAcceptedSectionsFromConfig(config, page, templateId),
+                page,
+            )
             console.log('[Builder] Setting backend-admitted sections for', page, ':', acceptedSections.length, 'sections')
             admitSections(acceptedSections)
         } catch (error) {
@@ -319,7 +323,8 @@ export function StorefrontBuilderPage() {
         setSaveError(null)
 
         try {
-            validateSectionsAgainstContract(sectionsToSave)
+            const pageSectionsToSave = filterSectionsForPage(sectionsToSave, targetPage)
+            validateSectionsAgainstContract(pageSectionsToSave)
 
             const storageKey = getActiveStorageKey()
             const payload = isProductTemplatePage
@@ -328,9 +333,9 @@ export function StorefrontBuilderPage() {
                     name: storeConfig?.productTemplates?.[templateIdFromUrl]?.name
                         || getBuiltinProductTemplate(templateIdFromUrl)?.name
                         || templateIdFromUrl,
-                    sections: sectionsToSave,
+                    sections: pageSectionsToSave,
                 }
-                : { sections: sectionsToSave }
+                : { sections: pageSectionsToSave }
 
             const response = await storeConfigService.updatePageLayout(
                 storageKey,
@@ -349,7 +354,10 @@ export function StorefrontBuilderPage() {
 
             setStoreConfig(acceptedConfig)
             admitSections(
-                getAcceptedSectionsFromConfig(acceptedConfig, targetPage, templateIdFromUrl),
+                filterSectionsForPage(
+                    getAcceptedSectionsFromConfig(acceptedConfig, targetPage, templateIdFromUrl),
+                    targetPage,
+                ),
                 { preserveSelection: true, resetHistory: false },
             )
             markClean()
@@ -449,6 +457,7 @@ export function StorefrontBuilderPage() {
             // useDndMonitor → onInsertSection). Skip here to avoid double-adds.
             if (String(over.id) === 'theme-native-canvas-dropzone') return
             const sectionType = String(active.id).replace('palette-', '')
+            if (!isSectionAvailableForPage(sectionType, targetPage)) return
             const overIndex = sections.findIndex((s) => s.id === over.id)
             addSection(sectionType, overIndex >= 0 ? overIndex : undefined, sectionRegistry)
             return
@@ -620,7 +629,10 @@ export function StorefrontBuilderPage() {
 
     const handleLoadDemo = () => {
         const builtInTemplate = isProductTemplatePage ? getBuiltinProductTemplate(templateIdFromUrl) : null
-        const demoSections = builtInTemplate?.sections || getDefaultSections(currentPage)
+        const demoSections = filterSectionsForPage(
+            builtInTemplate?.sections || getDefaultSections(targetPage),
+            targetPage,
+        )
         useBuilderStore.getState().setSections(demoSections)
     }
 
@@ -827,7 +839,7 @@ export function StorefrontBuilderPage() {
                 {/* Main Content */}
                 <div className="flex-1 flex overflow-hidden">
                     {/* Left: Section Palette */}
-                    <SectionPalette />
+                    <SectionPalette pageKey={targetPage} />
 
                     {/* Center: Canvas */}
                     <BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} />

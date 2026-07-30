@@ -22,6 +22,7 @@ using PointOfSale.Core.Inventory;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Mappers;
@@ -641,6 +642,14 @@ public class PurchasesController : ControllerBase
             decimal conversionFactor = 1;
             Guid? unitId = itemRequest.UnitId;
 
+            if (!product.HasVariants)
+            {
+                await _context.ProductUnits
+                    .FirstOrDefaultAsync(
+                        pu => pu.ProductId == itemRequest.ProductId && pu.IsDefault && !pu.IsDeleted,
+                        cancellationToken);
+            }
+
             if (itemRequest.UnitId.HasValue)
             {
                 var productUnit = await _context.ProductUnits
@@ -772,13 +781,28 @@ public class PurchasesController : ControllerBase
         }
     }
 
-    private static void MirrorSimpleProductPurchasePrice(Product product, ProductVariant variant)
+    private void MirrorSimpleProductPurchasePrice(Product product, ProductVariant variant)
     {
-        if (!product.HasVariants)
+        if (product.HasVariants)
         {
-            product.PurchasePrice = variant.CostPrice;
+            return;
         }
+
+        var defaultUnit = ResolveTrackedDefaultProductUnit(product);
+        if (defaultUnit is not null)
+        {
+            defaultUnit.PurchasePrice = variant.CostPrice;
+        }
+
+        ProductPricingCompatibilityMirror.MirrorSimpleProductFromDefaultUnit(product, defaultUnit);
     }
+
+    private ProductUnit? ResolveTrackedDefaultProductUnit(Product product) =>
+        _context.ChangeTracker
+            .Entries<ProductUnit>()
+            .Select(entry => entry.Entity)
+            .Where(unit => unit.ProductId == product.Id && !unit.IsDeleted)
+            .FirstOrDefault(unit => unit.IsDefault);
 
     private static PurchaseFinancialSummary CalculatePurchaseFinancialSummary(
         IEnumerable<PreparedPurchaseItem> preparedItems)

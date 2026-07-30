@@ -117,22 +117,24 @@ const HypeHeader: React.FC = () => {
                     </div>
 
                     {/* Primary navigation */}
-                    <nav
-                        className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-[#F06736]/10 pt-3 md:flex"
-                        aria-label={t('accessibility.mainNavigation')}
-                    >
-                        {links.map((link) => (
-                            <AffiliateLink
-                                key={link.key}
-                                href={link.url}
-                                target={link.openInNewTab ? '_blank' : undefined}
-                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={hypeNavLinkClass(isActive(link.url))}
-                            >
-                                {link.label}
-                            </AffiliateLink>
-                        ))}
-                    </nav>
+                    {links.length > 0 ? (
+                        <nav
+                            className="mt-4 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-[#F06736]/10 pt-3 md:flex"
+                            aria-label={t('accessibility.mainNavigation')}
+                        >
+                            {links.map((link) => (
+                                <AffiliateLink
+                                    key={link.key}
+                                    href={link.url}
+                                    target={link.openInNewTab ? '_blank' : undefined}
+                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                    className={hypeNavLinkClass(isActive(link.url))}
+                                >
+                                    {link.label}
+                                </AffiliateLink>
+                            ))}
+                        </nav>
+                    ) : null}
                 </div>
 
                 {/* Mobile drawer */}

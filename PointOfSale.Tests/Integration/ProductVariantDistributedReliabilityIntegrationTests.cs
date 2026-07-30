@@ -2867,6 +2867,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             }
         };
 
+        controller.Request.Headers["Idempotency-Key"] = actor.RequestId;
+        controller.Request.Headers["X-Request-Id"] = actor.RequestId;
         controller.Request.Headers["X-Confirm-Delete"] = "true";
         controller.Request.Headers["User-Agent"] = "VAR-CON-05";
 
@@ -8496,6 +8498,10 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             : "CreatedAt";
         var hasAttributesJson = await ColumnExistsAsync(connection, "CommerceHubListings", "AttributesJson");
         var hasAttributeSchemaSnapshotJson = await ColumnExistsAsync(connection, "CommerceHubListings", "AttributeSchemaSnapshotJson");
+        var hasCommerceHubPriceOverrideMutationVersion = await ColumnExistsAsync(
+            connection,
+            "CommerceHubListings",
+            "CommerceHubPriceOverrideMutationVersion");
 
         var columns = new List<string>
         {
@@ -8532,6 +8538,11 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             columns.Add("AttributeSchemaSnapshotJson");
             values.Add("@attributeSchemaSnapshotJson");
         }
+        if (hasCommerceHubPriceOverrideMutationVersion)
+        {
+            columns.Add("CommerceHubPriceOverrideMutationVersion");
+            values.Add("@commerceHubPriceOverrideMutationVersion");
+        }
 
         columns.Add(createdAtColumn);
         values.Add("@createdAt");
@@ -8559,6 +8570,10 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
         if (hasAttributeSchemaSnapshotJson)
         {
             insertCommand.Parameters.AddWithValue("attributeSchemaSnapshotJson", "{\"source\":\"prod-con-03\"}");
+        }
+        if (hasCommerceHubPriceOverrideMutationVersion)
+        {
+            insertCommand.Parameters.AddWithValue("commerceHubPriceOverrideMutationVersion", 0);
         }
         insertCommand.Parameters.AddWithValue("createdAt", SeededUtc);
 

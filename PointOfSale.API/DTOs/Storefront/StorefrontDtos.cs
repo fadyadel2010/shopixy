@@ -220,9 +220,11 @@ public static class StorefrontAvailabilityPresentationMapper
         bool isAvailable,
         bool inStock,
         int stockQuantity,
-        bool requiresVariantSelection = false)
+        bool requiresVariantSelection = false,
+        bool? canPurchaseOverride = null,
+        string? unavailableReason = null)
     {
-        var canPurchase = isAvailable && inStock && !requiresVariantSelection;
+        var canPurchase = canPurchaseOverride ?? (isAvailable && inStock && !requiresVariantSelection);
         return new ProductAvailabilityPresentationDto
         {
             IsAvailable = isAvailable,
@@ -231,7 +233,7 @@ public static class StorefrontAvailabilityPresentationMapper
             CanBuyNow = canPurchase,
             StockLabel = BuildStockLabel(isAvailable, inStock, stockQuantity, requiresVariantSelection),
             MaximumQuantity = canPurchase && stockQuantity > 0 ? stockQuantity : null,
-            UnavailableReason = BuildUnavailableReason(isAvailable, inStock, requiresVariantSelection)
+            UnavailableReason = unavailableReason ?? BuildUnavailableReason(isAvailable, inStock, requiresVariantSelection)
         };
     }
 

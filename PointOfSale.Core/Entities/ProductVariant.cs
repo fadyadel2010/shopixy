@@ -18,8 +18,9 @@ namespace PointOfSale.Core.Entities;
 /// For simple products, this is the only variant.
 /// For variable products (e.g., T-Shirt with sizes), multiple variants exist.
 /// 
-/// BACKWARD COMPATIBILITY:
-/// - Product.SalePrice, OnlinePrice, PurchasePrice remain for legacy
+/// PRICING AUTHORITY:
+/// - ProductVariant.Price, OnlinePrice, CostPrice are canonical for variant products
+/// - Product.SalePrice, OnlinePrice, PurchasePrice are legacy compatibility mirrors
 /// - Orders and carts continue using ProductId for now
 /// - Will migrate to VariantId in Phase 11.2+
 /// </summary>

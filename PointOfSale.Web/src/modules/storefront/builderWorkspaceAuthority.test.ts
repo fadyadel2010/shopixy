@@ -21,6 +21,7 @@ describe('storefront builder workspace authority', () => {
         expect(source).toContain('Workspace admission failed')
         expect(source).toContain('Checking the current store and draft with backend authority.')
         expect(source).toContain('<BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} />')
+        expect(source).toContain('<SectionPalette pageKey={targetPage} />')
     })
 
     it('requires backend row-version evidence before workspace mutations', () => {
@@ -37,6 +38,7 @@ describe('storefront builder workspace authority', () => {
         const source = readSource(builderPagePath)
 
         expect(source).toContain('getAcceptedSectionsFromConfig')
+        expect(source).toContain('filterSectionsForPage(')
         expect(source).toContain('admitSections(acceptedSections)')
         expect(source).toContain('getAcceptedSectionsFromConfig(acceptedConfig, targetPage, templateIdFromUrl)')
         expect(source).toContain('resetHistory: false')

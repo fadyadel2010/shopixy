@@ -46,6 +46,7 @@ using PointOfSale.API.Services.Payments.Fawry;
 using PointOfSale.API.Services.Payments.ManualPayment;
 using PointOfSale.API.Services.Payments.Cod;
 using PointOfSale.API.Services.Payments.Intents;
+using PointOfSale.API.Services.ProductAuthoring;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using OpenTelemetry.Metrics;
@@ -376,6 +377,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.IFileValidationService, Poin
 // NOTE: FinancialAccountService was removed - Visa accounts are now created per-tenant in TenantRegistrationService
 builder.Services.AddScoped<PointOfSale.API.Services.IValidationService, PointOfSale.API.Services.ValidationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IGeographicAdministrationService, PointOfSale.API.Services.Admin.GeographicAdministrationService>();
+builder.Services.AddProductAuthoringInfrastructure();
 
 // =============================================================================
 // SERVICES MARKETPLACE (Phase P2 - Marketplace Module)

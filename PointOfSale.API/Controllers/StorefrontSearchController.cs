@@ -485,7 +485,8 @@ public class StorefrontSearchController : ControllerBase
                 item.NameAr = product.NameAr;
                 item.Slug = product.Slug;
                 item.Description = product.Description;
-                item.Price = product.HasVariants ? null : (double?)product.StorefrontEffectivePrice;
+                var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+                item.Price = product.HasVariants ? null : (double?)purchasability.Price;
                 item.CategoryName = product.CategoryName;
                 visibleItems.Add(item);
                 continue;
@@ -539,10 +540,8 @@ public class StorefrontSearchController : ControllerBase
                 continue;
             }
 
-            var activeVariants = product.Variants
-                .Where(variant => variant.IsActive)
-                .ToList();
-            var hasVariants = activeVariants.Count > 0;
+            var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+            var hasVariants = product.HasVariants;
             var primaryImage = product.Media
                 .Where(media => string.Equals(media.Type, "image", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(media => media.Position)
@@ -556,7 +555,7 @@ public class StorefrontSearchController : ControllerBase
                 NameAr = product.NameAr,
                 Slug = product.Slug,
                 HasVariants = hasVariants,
-                Price = hasVariants ? 0 : (double)product.StorefrontEffectivePrice,
+                Price = hasVariants ? 0 : (double)purchasability.Price,
                 HasActivePromotion = product.HasActivePromotion,
                 PromotionBadge = product.PromotionBadge,
                 PromotionDiscountValue = (double)(product.PromotionDiscountValue ?? 0m),

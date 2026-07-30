@@ -30,10 +30,14 @@ public readonly record struct StorefrontProductProjectionMutationResult(bool App
 public sealed class StorefrontProductProjectionMutationBoundary : IStorefrontProductProjectionMutationBoundary
 {
     private readonly IProductReadRepository _repository;
+    private readonly IStorefrontProductProjectionAdmissionPolicy _admissionPolicy;
 
-    public StorefrontProductProjectionMutationBoundary(IProductReadRepository repository)
+    public StorefrontProductProjectionMutationBoundary(
+        IProductReadRepository repository,
+        IStorefrontProductProjectionAdmissionPolicy? admissionPolicy = null)
     {
         _repository = repository;
+        _admissionPolicy = admissionPolicy ?? new StorefrontProductProjectionAdmissionPolicy();
     }
 
     public async Task<StorefrontProductProjectionMutationResult> ApplyAsync(
@@ -77,6 +81,8 @@ public sealed class StorefrontProductProjectionMutationBoundary : IStorefrontPro
         {
             throw new InvalidOperationException("STOREFRONT_PRODUCT_UPSERT_REQUIRES_VISIBLE_SQL_PROJECTION");
         }
+
+        _admissionPolicy.Validate(mutation);
 
         return await _repository.UpsertAsync(projection, cancellationToken);
     }

@@ -46,6 +46,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
             evt,
             payloadJson: CreatePayloadJson(evt));
 
+        SeedCurrentStockLineage(evt);
         _dbContext.StockSyncOutboxMessages.Add(message);
         await _dbContext.SaveChangesAsync();
 
@@ -71,6 +72,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
             evt,
             payloadJson: CreatePayloadJson(evt));
 
+        SeedCurrentStockLineage(evt);
         SetMessageProperty(message, nameof(StockSyncOutboxMessage.ClrType), "Missing.Namespace.MissingType, MissingAssembly");
 
         _dbContext.StockSyncOutboxMessages.Add(message);
@@ -127,6 +129,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
         var newerMessage = StockSyncOutboxMessage.Create(newerEvent, CreatePayloadJson(newerEvent));
         earlierMessage.RecordFailure("terminal stock sync failure", maxRetries: 1);
 
+        SeedCurrentStockLineage(newerEvent);
         _dbContext.StockSyncOutboxMessages.AddRange(earlierMessage, newerMessage);
         await _dbContext.SaveChangesAsync();
 
@@ -193,6 +196,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
             evt,
             payloadJson: CreatePayloadJson(evt));
 
+        SeedCurrentStockLineage(evt);
         // Force a type resolution failure to trigger retries
         SetMessageProperty(message, nameof(StockSyncOutboxMessage.ClrType), "Missing.Namespace.MissingType, MissingAssembly");
 
@@ -259,7 +263,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
         Assert.True(message.IsFailed);
         Assert.NotNull(message.PublishedAtUtc);
         Assert.Contains("without replay", message.LastError, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(1, await _dbContext.StockSyncOutboxMessages.CountAsync());
+        Assert.Equal(1, await _dbContext.StockSyncOutboxMessages.IgnoreQueryFilters().CountAsync());
     }
 
     [Fact]
@@ -309,6 +313,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
 
         await _dbContext.Entry(message).ReloadAsync();
         var replayMessage = await _dbContext.StockSyncOutboxMessages
+            .IgnoreQueryFilters()
             .Where(item => item.Id != message.Id)
             .SingleAsync();
 
@@ -390,6 +395,7 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
 
         await _dbContext.Entry(message).ReloadAsync();
         var replayMessage = await _dbContext.StockSyncOutboxMessages
+            .IgnoreQueryFilters()
             .Where(item => item.Id != message.Id)
             .SingleAsync();
 
@@ -454,6 +460,66 @@ public sealed class StockSyncOutboxProcessorTests : IDisposable
     private static string CreatePayloadJson(ProductVariantStockChangedEvent evt)
     {
         return System.Text.Json.JsonSerializer.Serialize(evt, typeof(ProductVariantStockChangedEvent));
+    }
+
+    private void SeedCurrentStockLineage(ProductVariantStockChangedEvent evt)
+    {
+        var productId = evt.ProductId == Guid.Empty ? Guid.NewGuid() : evt.ProductId;
+        var utcNow = DateTime.UtcNow;
+
+        _dbContext.Tenants.Add(new Tenant
+        {
+            Id = evt.TenantId!.Value,
+            Name = "Stock Sync Outbox Test Tenant",
+            Currency = "EGP",
+            IsActive = true,
+            Status = PointOfSale.Core.Enums.TenantStatus.Active
+        });
+        _dbContext.Products.Add(new Product
+        {
+            Id = productId,
+            TenantId = evt.TenantId!.Value,
+            Name = "Stock Sync Product",
+            CategoryId = Guid.NewGuid(),
+            SalePrice = 25m,
+            OnlinePrice = 25m,
+            PurchasePrice = 10m,
+            IsActive = true,
+            CreatedAt = utcNow
+        });
+        _dbContext.ProductVariants.Add(new ProductVariant
+        {
+            Id = evt.VariantId,
+            TenantId = evt.TenantId!.Value,
+            ProductId = productId,
+            SKU = evt.SKU,
+            Price = 25m,
+            OnlinePrice = 25m,
+            CostPrice = 10m,
+            IsDefault = true,
+            IsActive = true,
+            StockUpdatedAtUtc = evt.StockUpdatedAtUtc,
+            CreatedAt = utcNow
+        });
+        _dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = evt.WarehouseId,
+            TenantId = evt.TenantId!.Value,
+            Name = evt.WarehouseName ?? "Main Warehouse",
+            IsActive = true,
+            CreatedAt = utcNow
+        });
+        _dbContext.ProductVariantStocks.Add(new ProductVariantStock
+        {
+            Id = Guid.NewGuid(),
+            TenantId = evt.TenantId!.Value,
+            VariantId = evt.VariantId,
+            WarehouseId = evt.WarehouseId,
+            Quantity = evt.NewQuantity,
+            ReservedQuantity = 0m,
+            DamagedQuantity = 0m,
+            CreatedAt = utcNow
+        });
     }
 
     private static void SetMessageProperty(StockSyncOutboxMessage message, string propertyName, object? value)

@@ -1220,6 +1220,16 @@ public class ApplicationDbContext : DbContext
                 e.Product.TenantId == CurrentTenantId &&
                 e.Unit.TenantId == CurrentTenantId);
 
+            entity.ToTable("ProductUnits", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_ProductUnits_ConversionFactor_Positive",
+                    "\"ConversionFactor\" > 0");
+                table.HasCheckConstraint(
+                    "CK_ProductUnits_BaseUnit_ConversionFactor_One",
+                    "NOT \"IsBaseUnit\" OR \"ConversionFactor\" = 1");
+            });
+
             entity.HasIndex(e => new { e.ProductId, e.UnitId })
                 .IsUnique()
                 .HasDatabaseName("UX_ProductUnits_ProductId_UnitId_Active")
@@ -1703,6 +1713,9 @@ public class ApplicationDbContext : DbContext
                 .HasFilter("\"IsDeleted\" = false AND \"Slug\" IS NOT NULL");
             entity.HasIndex(p => p.PublishStatus);
             entity.HasIndex(p => p.IsOnlineVisible);
+            entity.Property(p => p.RowVersion)
+                .HasColumnName("xmin")
+                .IsRowVersion();
         });
 
         modelBuilder.Entity<Return>(entity =>
@@ -4546,6 +4559,14 @@ public class ApplicationDbContext : DbContext
         }
 
         foreach (var entry in ChangeTracker.Entries<Promotion>())
+        {
+            if (entry.State is EntityState.Added or EntityState.Modified)
+            {
+                entry.Entity.RowVersion++;
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<Product>())
         {
             if (entry.State is EntityState.Added or EntityState.Modified)
             {

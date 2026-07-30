@@ -147,6 +147,57 @@ export const commercePageStyles: Record<ThemeComponentTheme, {
         activeFilters: 'mb-5 rounded-md border border-primary/20 bg-primary/5 p-3',
         pagination: 'mt-8 border-t border-muted/25 pt-6',
     },
+    alizon: {
+        page: 'bg-[linear-gradient(180deg,rgba(255,0,0,0.04)_0%,transparent_18rem)]',
+        container: 'container mx-auto px-4 py-6 md:py-10',
+        breadcrumb: 'mb-5 text-sm',
+        header: 'mb-7 rounded border border-muted/20 bg-background p-5 shadow-sm md:p-6',
+        eyebrow: 'text-xs font-bold uppercase tracking-[0.14em] text-primary',
+        title: 'text-2xl font-bold leading-tight text-text md:text-4xl',
+        subtitle: 'mt-3 max-w-2xl text-sm leading-6 text-muted',
+        controls: 'rounded border border-muted/20 bg-background p-3 shadow-sm',
+        controlPanel: 'flex items-center gap-2 flex-wrap',
+        categoryNav: 'mb-5 rounded border border-muted/20 bg-background p-2',
+        main: 'flex gap-4',
+        sidebar: 'hidden lg:block',
+        resultPanel: 'min-w-0 flex-1',
+        activeFilters: 'mb-5 rounded border border-primary/20 bg-primary/5 p-3',
+        pagination: 'mt-8 border-t border-muted/25 pt-6',
+    },
+    sharp: {
+        page: 'bg-[linear-gradient(180deg,rgba(1,52,35,0.04)_0%,transparent_22rem)]',
+        container: 'container mx-auto px-4 py-8 md:py-14',
+        breadcrumb: 'mx-auto mb-7 max-w-5xl text-center text-sm',
+        header: 'mx-auto mb-10 max-w-5xl border border-muted/20 bg-background/95 px-6 py-8 text-center shadow-[0_4px_16px_rgba(1,52,35,0.04)] md:px-10',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        title: 'mx-auto max-w-3xl text-2xl font-semibold leading-tight text-text md:text-4xl',
+        subtitle: 'mx-auto mt-4 max-w-2xl text-sm leading-6 text-muted',
+        controls: 'mx-auto max-w-5xl border border-muted/20 bg-background/95 p-4 shadow-[0_4px_16px_rgba(1,52,35,0.04)]',
+        controlPanel: 'flex items-center gap-3 flex-wrap justify-center',
+        categoryNav: 'mx-auto mb-9 max-w-5xl border-y border-muted/20 py-5',
+        main: 'mx-auto flex max-w-7xl gap-7',
+        sidebar: 'hidden lg:block',
+        resultPanel: 'min-w-0 flex-1',
+        activeFilters: 'mx-auto mb-7 max-w-5xl border border-muted/20 bg-background/95 p-4',
+        pagination: 'mt-14 border-t border-muted/25 pt-8',
+    },
+    seven: {
+        page: 'bg-[linear-gradient(180deg,rgba(157,120,119,0.04)_0%,transparent_22rem)]',
+        container: 'container mx-auto px-4 py-6 md:py-12',
+        breadcrumb: 'mb-5 text-sm',
+        header: 'mb-8 border-l-4 border-text pl-5',
+        eyebrow: 'text-xs font-black uppercase tracking-[0.34em] text-primary',
+        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-text md:text-5xl',
+        subtitle: 'mt-4 max-w-2xl text-sm font-medium leading-7 text-muted',
+        controls: 'border-y-2 border-text bg-background py-4',
+        controlPanel: 'flex items-center gap-3 flex-wrap',
+        categoryNav: 'mb-8 border-b-2 border-text pb-5',
+        main: 'flex gap-7',
+        sidebar: 'hidden lg:block',
+        resultPanel: 'min-w-0 flex-1',
+        activeFilters: 'mb-7 border-l-4 border-primary bg-muted/5 p-4',
+        pagination: 'mt-12 border-t-2 border-text pt-8',
+    },
     default: {
         page: 'bg-background',
         container: 'container mx-auto px-4 py-6 md:py-10',
@@ -174,6 +225,9 @@ export const commerceGridStyles: Record<ThemeComponentTheme, string> = {
     phoenix: 'grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4',
     hype: 'grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4',
     electronics: 'grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4',
+    alizon: 'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4',
+    sharp: 'grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4',
+    seven: 'grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 xl:grid-cols-3',
     default: 'grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 md:gap-6',
 };
 
@@ -220,6 +274,9 @@ export function CommercePageHeader({
         phoenix: 'Performance edit',
         hype: 'Tech drop',
         electronics: 'Product matrix',
+        alizon: 'Superstore browse',
+        sharp: 'Jewelry browse',
+        seven: 'Collection edit',
         default: 'Browse',
     }[theme];
     const subtitle = {
@@ -230,6 +287,9 @@ export function CommercePageHeader({
         phoenix: 'Activewear browsing keeps launches, stock, and movement-ready products prominent.',
         hype: 'A fast electronics browsing path for comparing drops, offers, and availability.',
         electronics: 'Availability, sorting, and facets are kept prominent for comparison-led decisions.',
+        alizon: 'A general-merchandise browsing path with product shelves organized by category.',
+        sharp: 'A jewelry browsing path with product carousels organized by collection.',
+        seven: 'An editorial path through the current collection.',
         default: 'Browse available products.',
     }[theme];
 
@@ -328,7 +388,20 @@ export function CommerceMerchandisingBlock({
         );
     }
 
-    if (theme === 'electronics' || theme === 'hype') {
+    if (theme === 'sharp') {
+        return (
+            <section className="mx-auto mb-10 max-w-5xl border border-muted/20 bg-background/95 px-6 py-6 text-center shadow-[0_4px_16px_rgba(1,52,35,0.04)]" aria-label="Jewelry curation">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary">Jewelry curation</p>
+                <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-muted">
+                    {topCategories.length > 0
+                        ? `Explore ${topCategories.join(', ')} with ${inStockCount} available pieces.`
+                        : `Explore ${inStockCount} available pieces selected from the current catalog.`}
+                </p>
+            </section>
+        );
+    }
+
+    if (theme === 'electronics' || theme === 'hype' || theme === 'alizon') {
         return (
             <section className="mb-5 grid gap-3 rounded-md border border-muted/25 bg-background p-3 sm:grid-cols-3" aria-label="Decision support summary">
                 <Metric label="Available" value={String(inStockCount)} />
@@ -492,6 +565,48 @@ export const searchPageStyles: Record<ThemeComponentTheme, {
         list: 'overflow-hidden rounded-md border border-muted/25 bg-background divide-y divide-muted/10',
         pagerButton: 'border border-muted/25 text-text hover:border-primary/50',
         disabledPagerButton: 'cursor-not-allowed border border-muted/10 text-muted',
+    },
+    alizon: {
+        page: 'flex-1 container mx-auto px-4 py-6',
+        header: 'mx-auto mb-6 max-w-4xl rounded-md border border-muted/25 bg-background p-4 shadow-sm',
+        eyebrow: 'mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-primary',
+        title: 'mb-4 text-2xl font-black text-text md:text-3xl',
+        resultWrap: 'mx-auto max-w-5xl',
+        tabs: 'mb-5 flex gap-1 overflow-x-auto pb-2',
+        activeTab: 'bg-primary text-white',
+        inactiveTab: 'border border-muted/25 text-muted hover:border-primary/40 hover:text-text',
+        meta: 'mb-3 text-xs font-semibold text-muted',
+        list: 'overflow-hidden rounded-md border border-muted/25 bg-background divide-y divide-muted/10',
+        pagerButton: 'border border-muted/25 text-text hover:border-primary/50',
+        disabledPagerButton: 'cursor-not-allowed border border-muted/10 text-muted',
+    },
+    sharp: {
+        page: 'flex-1 container mx-auto px-4 py-10',
+        header: 'mx-auto mb-10 max-w-3xl border border-muted/20 bg-background px-6 py-8 text-center shadow-[0_4px_16px_rgba(1,52,35,0.04)]',
+        eyebrow: 'mb-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        title: 'mb-5 text-2xl font-semibold text-text md:text-4xl',
+        resultWrap: 'mx-auto max-w-4xl',
+        tabs: 'mb-7 flex justify-center gap-2 overflow-x-auto border-y border-muted/20 py-3',
+        activeTab: 'border border-secondary bg-secondary text-white',
+        inactiveTab: 'border border-muted/20 text-muted hover:text-text',
+        meta: 'mb-5 text-center text-sm text-muted',
+        list: 'border border-muted/25 bg-background shadow-[0_4px_16px_rgba(1,52,35,0.04)] divide-y divide-muted/10',
+        pagerButton: 'border border-muted/25 text-text hover:border-secondary',
+        disabledPagerButton: 'cursor-not-allowed border border-muted/10 text-muted',
+    },
+    seven: {
+        page: 'flex-1 container mx-auto px-4 py-8',
+        header: 'mx-auto mb-8 max-w-4xl border-l-4 border-text pl-5',
+        eyebrow: 'mb-3 text-xs font-black uppercase tracking-[0.34em] text-primary',
+        title: 'mb-5 text-4xl font-black uppercase leading-none text-text md:text-5xl',
+        resultWrap: 'mx-auto max-w-5xl',
+        tabs: 'mb-7 flex gap-2 overflow-x-auto border-y-2 border-text py-3',
+        activeTab: 'bg-text text-background',
+        inactiveTab: 'text-text hover:bg-muted/10',
+        meta: 'mb-5 text-sm font-medium uppercase tracking-[0.08em] text-muted',
+        list: 'border-y-2 border-text bg-background divide-y divide-muted/15',
+        pagerButton: 'border-2 border-text text-text hover:bg-text hover:text-background',
+        disabledPagerButton: 'cursor-not-allowed border-2 border-muted/20 text-muted',
     },
     default: {
         page: 'flex-1 container mx-auto px-4 py-8',

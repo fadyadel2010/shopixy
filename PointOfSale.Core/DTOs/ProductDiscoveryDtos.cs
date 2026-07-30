@@ -278,6 +278,12 @@ public class ProductDiscoveryItemDto
     public ProductDiscoveryPricingDto Pricing { get; set; } = new();
 
     /// <summary>
+    /// Backend-composed availability and purchasability presentation.
+    /// Frontend may render these values, but must not calculate purchase authority.
+    /// </summary>
+    public ProductDiscoveryAvailabilityDto Availability { get; set; } = new();
+
+    /// <summary>
     /// Display text for price.
     /// For variants: "Multiple options" (EN) / "متعدد الاختيارات" (AR)
     /// For simple: null (frontend formats Price)
@@ -346,6 +352,17 @@ public class ProductDiscoveryPricingDto
     public decimal? CompareAtPrice { get; set; }
     public decimal? DiscountedPrice { get; set; }
     public string? DiscountBadge { get; set; }
+}
+
+public class ProductDiscoveryAvailabilityDto
+{
+    public bool IsAvailable { get; set; }
+    public bool CanPurchase { get; set; }
+    public bool CanAddToCart { get; set; }
+    public bool CanBuyNow { get; set; }
+    public string StockLabel { get; set; } = "Unavailable";
+    public int? MaximumQuantity { get; set; }
+    public string? UnavailableReason { get; set; }
 }
 
 /// <summary>

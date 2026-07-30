@@ -169,7 +169,6 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         product.ProductTemplate = sqlProduct.ProductTemplate;
         product.IsFeatured = sqlProduct.IsFeatured;
         product.Weight = sqlProduct.Weight;
-        product.PurchasePrice = sqlProduct.PurchasePrice;
         product.CreatedAtUtc = sqlProduct.CreatedAt;
         product.SyncedAtUtc = DateTime.UtcNow;
 
@@ -209,6 +208,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
             .ToList();
 
         var defaultUnit = sqlUnits.FirstOrDefault(productUnit => productUnit.IsDefault);
+        product.PurchasePrice = defaultUnit?.PurchasePrice ?? 0m;
         product.DefaultUnit = defaultUnit == null
             ? null
             : new ProductUnitDocument
@@ -325,8 +325,8 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         }
         else
         {
-            product.Price = sqlProduct.SalePrice;
-            product.OnlinePrice = sqlProduct.OnlinePrice;
+            product.Price = defaultUnit?.SellingPrice ?? 0m;
+            product.OnlinePrice = null;
             product.SKU = sqlProduct.SKU;
             product.Barcode = sqlProduct.Barcode;
         }

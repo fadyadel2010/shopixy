@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using StackExchange.Redis;
 using System.Text.Json;
@@ -215,16 +216,20 @@ public class StorefrontWishlistService : IStorefrontWishlistService
             "[Wishlist] Adding to wishlist | TenantId: {TenantId} | CustomerId: {CustomerId} | ProductId: {ProductId}",
             tenantId, customerId, productId);
 
-        // Validate product exists in catalog (MongoDB)
-        var productExists = await _productCollection
-            .Find(p => p.TenantId == tenantId && p.ProductId == productId && p.IsActive && p.IsOnlineVisible)
-            .AnyAsync(cancellationToken);
+        // Validate product through the same storefront purchasability authority used by catalog/PDP/cart.
+        var product = await LoadCurrentStorefrontProductAuthorityAsync(
+            tenantId,
+            productId,
+            cancellationToken);
+        var productPurchasability = product == null
+            ? null
+            : ProductStorefrontVisibilityAuthority.Evaluate(product);
 
-        if (!productExists)
+        if (productPurchasability is not { IsAvailable: true })
         {
             _logger.LogWarning(
-                "[Wishlist] Product not found | TenantId: {TenantId} | ProductId: {ProductId}",
-                tenantId, productId);
+                "[Wishlist] Product not admitted by storefront authority | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, productPurchasability?.UnavailableReason ?? "PRODUCT_NOT_FOUND");
             return new WishlistResult
             {
                 Success = false,
@@ -670,8 +675,8 @@ public class StorefrontWishlistService : IStorefrontWishlistService
                 ProductName = product?.Name ?? "Unknown Product",
                 ProductImage = ExtractThumbnailImage(product),
                 ProductSku = product?.SKU,
-                ProductPrice = product?.Price,
-                ProductDeleted = product == null || !product.IsActive
+                ProductPrice = ResolveWishlistProductPrice(product),
+                ProductDeleted = IsWishlistProductUnavailable(product)
             };
         }).ToList();
 
@@ -735,8 +740,8 @@ public class StorefrontWishlistService : IStorefrontWishlistService
                 ProductName = product?.Name ?? "Unknown Product",
                 ProductImage = ExtractThumbnailImage(product),
                 ProductSku = product?.SKU,
-                ProductPrice = product?.Price,
-                ProductDeleted = product == null || !product.IsActive
+                ProductPrice = ResolveWishlistProductPrice(product),
+                ProductDeleted = IsWishlistProductUnavailable(product)
             };
         }).ToList();
 
@@ -829,7 +834,7 @@ public class StorefrontWishlistService : IStorefrontWishlistService
                 ProductId = p.ProductId,
                 ProductName = product?.Name ?? "Unknown Product",
                 ProductNameAr = product?.NameAr,
-                Price = product?.Price ?? 0,
+                Price = ResolveWishlistProductPrice(product) ?? 0,
                 Currency = tenantCurrency,
                 ThumbnailImage = thumbnailImage,
                 WishlistCount = p.Count,
@@ -913,6 +918,39 @@ public class StorefrontWishlistService : IStorefrontWishlistService
             .OrderBy(media => media.Position)
             .Select(media => media.Url)
             .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
+    }
+
+    private static decimal? ResolveWishlistProductPrice(ProductDocument? product)
+    {
+        return product == null
+            ? null
+            : ProductStorefrontVisibilityAuthority.Evaluate(product).Price;
+    }
+
+    private static bool IsWishlistProductUnavailable(ProductDocument? product)
+    {
+        return product == null ||
+               !ProductStorefrontVisibilityAuthority.Evaluate(product).IsAvailable;
+    }
+
+    private async Task<ProductDocument?> LoadCurrentStorefrontProductAuthorityAsync(
+        Guid tenantId,
+        Guid productId,
+        CancellationToken cancellationToken)
+    {
+        var projectedProduct = await _productCollection
+            .Find(p => p.TenantId == tenantId && p.ProductId == productId)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+            _dbContext,
+            projectedProduct ?? new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId
+            },
+            tenantId,
+            cancellationToken);
     }
 
     #region Cache Helpers

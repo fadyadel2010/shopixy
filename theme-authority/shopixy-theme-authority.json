@@ -1,0 +1,782 @@
+{
+  "schemaVersion": "1.0.0",
+  "defaultThemeId": "modern",
+  "canonicalCapabilities": [
+    "layout.header",
+    "layout.footer",
+    "section.hero-banner",
+    "section.product-grid",
+    "section.category-grid"
+  ],
+  "themes": [
+    {
+      "id": "modern",
+      "displayName": "Modern",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "modern",
+      "commerceBrowsingTheme": "modern",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["modern"],
+      "supportedProductTemplates": ["modern"],
+      "supportedPurchaseProfiles": ["modern"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/modern.png",
+        "description": "A clean, balanced storefront theme for broad retail catalogs.",
+        "accent": "#2563EB"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#2563eb",
+          "secondary": "#0f172a",
+          "background": "#ffffff",
+          "text": "#020617",
+          "muted": "#64748b"
+        },
+        "font": {
+          "family": "Inter",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "8px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "default",
+          "headerVariant": "standard"
+        }
+      }
+    },
+    {
+      "id": "minimal",
+      "displayName": "Minimal",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "minimal",
+      "commerceBrowsingTheme": "minimal",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["minimal"],
+      "supportedProductTemplates": ["minimal"],
+      "supportedPurchaseProfiles": ["minimal"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/minimal.png",
+        "description": "A quiet editorial theme with restrained spacing and typography.",
+        "accent": "#0F172A"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#0f172a",
+          "secondary": "#334155",
+          "background": "#ffffff",
+          "text": "#111827",
+          "muted": "#6b7280"
+        },
+        "font": {
+          "family": "Inter",
+          "baseSize": "15px"
+        },
+        "ui": {
+          "borderRadius": "6px",
+          "buttonStyle": "outline"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "minimal"
+        }
+      }
+    },
+    {
+      "id": "fashion",
+      "displayName": "Fashion",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "fashion",
+      "commerceBrowsingTheme": "fashion",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["fashion"],
+      "supportedProductTemplates": ["fashion"],
+      "supportedPurchaseProfiles": ["fashion"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/fashion.png",
+        "description": "A campaign-led theme for apparel, drops, and styled collections.",
+        "accent": "#9D174D"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#9D174D",
+          "secondary": "#161311",
+          "background": "#ffffff",
+          "text": "#0f172a",
+          "muted": "#64748b"
+        },
+        "font": {
+          "family": "Inter",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "detailed",
+          "headerVariant": "centered"
+        }
+      }
+    },
+    {
+      "id": "pearl",
+      "displayName": "Pearl",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "pearl",
+      "commerceBrowsingTheme": "pearl",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["pearl"],
+      "supportedProductTemplates": ["pearl"],
+      "supportedPurchaseProfiles": ["pearl"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/pearl.png",
+        "description": "A warm luxury storefront theme for boutique collections.",
+        "accent": "#C9A863"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#DC2626",
+          "secondary": "#C9A863",
+          "background": "#FBFAF7",
+          "text": "#131316",
+          "muted": "#313E61"
+        },
+        "font": {
+          "family": "'Jost', sans-serif",
+          "baseSize": "15px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "centered"
+        }
+      }
+    },
+    {
+      "id": "phoenix",
+      "displayName": "Phoenix Sports",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "phoenix",
+      "commerceBrowsingTheme": "phoenix",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["phoenix"],
+      "supportedProductTemplates": ["phoenix"],
+      "supportedPurchaseProfiles": ["phoenix"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/phoenix.png",
+        "description": "A sharp sports retail theme for performance catalogs.",
+        "accent": "#CD1515"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#cd1515",
+          "secondary": "#202021",
+          "background": "#ece9e2",
+          "text": "#131316",
+          "muted": "#202021"
+        },
+        "font": {
+          "family": "'Jost', sans-serif",
+          "baseSize": "15px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "outline"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "centered"
+        }
+      }
+    },
+    {
+      "id": "hype",
+      "displayName": "Hype Electronics",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "hype",
+      "commerceBrowsingTheme": "hype",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["hype"],
+      "supportedProductTemplates": ["hype"],
+      "supportedPurchaseProfiles": ["hype"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/hype.png",
+        "description": "A launch-style electronics theme with bold product emphasis.",
+        "accent": "#F06736"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#F06736",
+          "secondary": "#212A2F",
+          "background": "#FFFFFF",
+          "text": "#131316",
+          "muted": "#6D6D74"
+        },
+        "font": {
+          "family": "'Jost', sans-serif",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "8px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "standard"
+        }
+      }
+    },
+    {
+      "id": "alizon",
+      "displayName": "Alizon",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "alizon",
+      "commerceBrowsingTheme": "alizon",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["alizon"],
+      "supportedProductTemplates": ["alizon"],
+      "supportedPurchaseProfiles": ["alizon"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/alizon.png",
+        "description": "A general-merchandise superstore theme with dark header, red accents, and product shelves.",
+        "accent": "#FF0000"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#FF0000",
+          "secondary": "#121212",
+          "background": "#FFFFFF",
+          "text": "#131316",
+          "muted": "#6D6D74"
+        },
+        "font": {
+          "family": "'Jost', sans-serif",
+          "familyAr": "'Cairo', 'Tajawal', 'Noto Sans Arabic'",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "standard"
+        }
+      }
+    },
+    {
+      "id": "sharp",
+      "displayName": "Sharp Jewelry",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "sharp",
+      "commerceBrowsingTheme": "sharp",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["sharp"],
+      "supportedProductTemplates": ["sharp"],
+      "supportedPurchaseProfiles": ["sharp"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/sharp.png",
+        "description": "A luxury jewelry storefront theme with emerald green header, white canvas, and carousel product browsing.",
+        "accent": "#FF5A5A"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#FF5A5A",
+          "secondary": "#013423",
+          "background": "#FFFFFF",
+          "text": "#131316",
+          "muted": "#013423"
+        },
+        "font": {
+          "family": "'Instrument Sans', sans-serif",
+          "familyAr": "'Almarai', 'Tajawal', 'Noto Sans Arabic'",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "standard"
+        }
+      }
+    },
+    {
+      "id": "electronics",
+      "displayName": "Electronics",
+      "version": "1.0.0",
+      "officialStatus": "experimental",
+      "activationStatus": "disabled",
+      "backendAvailability": false,
+      "marketplaceVisibility": "hidden",
+      "runtimeAvailability": false,
+      "homepageAvailability": false,
+      "componentTheme": "electronics",
+      "commerceBrowsingTheme": "electronics",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": [],
+      "supportedProductCards": ["electronics"],
+      "supportedProductTemplates": ["electronics"],
+      "supportedPurchaseProfiles": ["electronics"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/electronics.png",
+        "description": "Experimental technical catalog theme.",
+        "accent": "#38BDF8"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#2563eb",
+          "secondary": "#0f172a",
+          "background": "#ffffff",
+          "text": "#020617",
+          "muted": "#64748b"
+        },
+        "font": {
+          "family": "Inter",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "8px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "default",
+          "headerVariant": "standard"
+        }
+      }
+    },
+    {
+      "id": "seven",
+      "displayName": "Seven Womenwear",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "seven",
+      "commerceBrowsingTheme": "seven",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["seven"],
+      "supportedProductTemplates": ["seven"],
+      "supportedPurchaseProfiles": ["seven"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/seven.png",
+        "description": "A women's fashion theme with mauve-terracotta header, white canvas, sharp sale badges, and serif display typography.",
+        "accent": "#CD1515"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#9D7877",
+          "secondary": "#CD1515",
+          "background": "#FFFFFF",
+          "text": "#131316",
+          "muted": "#242424"
+        },
+        "font": {
+          "family": "'Jost', sans-serif",
+          "familyAr": "'Cairo', 'Tajawal', 'Noto Sans Arabic'",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "standard"
+        }
+      }
+    }
+  ],
+  "sectionContracts": [
+    {
+      "type": "hero-banner",
+      "defaultSettings": {
+        "title": "Welcome to Your Store",
+        "subtitle": "Discover amazing products at great prices.",
+        "ctaText": "Shop Now",
+        "ctaLink": "/products",
+        "backgroundImage": "",
+        "backgroundColor": "#111827",
+        "overlayOpacity": 40,
+        "textColor": "#ffffff",
+        "alignment": "left",
+        "height": "medium"
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Welcome to Your Store", "rendererConsumer": "hero title", "visualEffect": "Primary headline" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "Discover amazing products at great prices.", "rendererConsumer": "hero subtitle", "visualEffect": "Supporting copy" },
+        { "key": "ctaText", "type": "text", "defaultValue": "Shop Now", "rendererConsumer": "hero CTA", "visualEffect": "Button label" },
+        { "key": "ctaLink", "type": "url", "defaultValue": "/products", "rendererConsumer": "hero CTA", "visualEffect": "Button destination" },
+        { "key": "backgroundImage", "type": "image", "defaultValue": "", "rendererConsumer": "hero media", "visualEffect": "Background image" },
+        { "key": "backgroundColor", "type": "color", "defaultValue": "#111827", "rendererConsumer": "hero shell", "visualEffect": "Fallback background" },
+        { "key": "overlayOpacity", "type": "number", "defaultValue": 40, "min": 0, "max": 100, "rendererConsumer": "hero overlay", "visualEffect": "Image contrast overlay" },
+        { "key": "textColor", "type": "color", "defaultValue": "#ffffff", "rendererConsumer": "hero typography", "visualEffect": "Text color" },
+        { "key": "alignment", "type": "select", "defaultValue": "left", "options": ["left", "center", "right"], "rendererConsumer": "hero layout", "visualEffect": "Content alignment" },
+        { "key": "height", "type": "select", "defaultValue": "medium", "options": ["small", "medium", "large"], "rendererConsumer": "hero shell", "visualEffect": "Vertical scale" }
+      ]
+    },
+    {
+      "type": "product-grid",
+      "defaultSettings": {
+        "title": "Products",
+        "subtitle": "",
+        "layout": "grid",
+        "source": "all",
+        "maxItems": 8,
+        "productIds": [],
+        "columns": 4,
+        "rows": 2,
+        "showPrice": true,
+        "showRating": true,
+        "showAddToCart": true
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Products", "rendererConsumer": "product grid header", "visualEffect": "Section heading" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "product grid header", "visualEffect": "Section copy" },
+        { "key": "layout", "type": "select", "defaultValue": "grid", "options": ["grid", "carousel"], "rendererConsumer": "product grid layout", "visualEffect": "Grid or carousel" },
+        { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "product data source", "visualEffect": "Product selection mode" },
+        { "key": "maxItems", "type": "number", "defaultValue": 8, "min": 1, "max": 24, "rendererConsumer": "product query", "visualEffect": "Number of products" },
+        { "key": "productIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated products", "visualEffect": "Selected product list" },
+        { "key": "columns", "type": "number", "defaultValue": 4, "min": 1, "max": 6, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
+        { "key": "rows", "type": "number", "defaultValue": 2, "min": 1, "max": 6, "rendererConsumer": "grid layout", "visualEffect": "Row count" },
+        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
+        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" },
+        { "key": "showAddToCart", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Cart action visibility" }
+      ]
+    },
+    {
+      "type": "featured-products",
+      "defaultSettings": {
+        "title": "Featured Products",
+        "subtitle": "",
+        "displayStyle": "carousel",
+        "source": "all",
+        "maxItems": 8,
+        "productIds": [],
+        "showBadge": true,
+        "badgeText": "Featured",
+        "showPrice": true,
+        "showRating": true
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Featured Products", "rendererConsumer": "featured products header", "visualEffect": "Section heading" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "featured products header", "visualEffect": "Section copy" },
+        { "key": "displayStyle", "type": "select", "defaultValue": "carousel", "options": ["carousel", "grid"], "rendererConsumer": "featured products layout", "visualEffect": "Carousel or grid" },
+        { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "product data source", "visualEffect": "Product selection mode" },
+        { "key": "maxItems", "type": "number", "defaultValue": 8, "min": 1, "max": 24, "rendererConsumer": "product query", "visualEffect": "Number of products" },
+        { "key": "productIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated products", "visualEffect": "Selected product list" },
+        { "key": "showBadge", "type": "toggle", "defaultValue": true, "rendererConsumer": "featured badge", "visualEffect": "Badge visibility" },
+        { "key": "badgeText", "type": "text", "defaultValue": "Featured", "rendererConsumer": "featured badge", "visualEffect": "Badge label" },
+        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
+        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" }
+      ]
+    },
+    {
+      "type": "category-grid",
+      "defaultSettings": {
+        "title": "Shop by Category",
+        "subtitle": "",
+        "source": "all",
+        "maxItems": 6,
+        "categoryIds": [],
+        "columns": 3,
+        "showProductCount": false,
+        "cardStyle": "card"
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Shop by Category", "rendererConsumer": "category grid header", "visualEffect": "Section heading" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "category grid header", "visualEffect": "Section copy" },
+        { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "category data source", "visualEffect": "Category selection mode" },
+        { "key": "maxItems", "type": "number", "defaultValue": 6, "min": 1, "max": 18, "rendererConsumer": "category query", "visualEffect": "Number of categories" },
+        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated categories", "visualEffect": "Selected category list" },
+        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
+        { "key": "showProductCount", "type": "toggle", "defaultValue": false, "rendererConsumer": "category card", "visualEffect": "Product count visibility" },
+        { "key": "cardStyle", "type": "select", "defaultValue": "card", "options": ["card", "tile"], "rendererConsumer": "category card", "visualEffect": "Card treatment" }
+      ]
+    },
+    {
+      "type": "subcategory-grid",
+      "defaultSettings": {
+        "title": "Subcategories",
+        "subtitle": "",
+        "source": "all",
+        "maxItems": 6,
+        "categoryIds": [],
+        "columns": 3,
+        "showProductCount": false,
+        "cardStyle": "card"
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Subcategories", "rendererConsumer": "subcategory grid header", "visualEffect": "Section heading" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "subcategory grid header", "visualEffect": "Section copy" },
+        { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "subcategory data source", "visualEffect": "Subcategory selection mode" },
+        { "key": "maxItems", "type": "number", "defaultValue": 6, "min": 1, "max": 18, "rendererConsumer": "subcategory query", "visualEffect": "Number of subcategories" },
+        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated subcategories", "visualEffect": "Selected category list" },
+        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
+        { "key": "showProductCount", "type": "toggle", "defaultValue": false, "rendererConsumer": "subcategory card", "visualEffect": "Product count visibility" },
+        { "key": "cardStyle", "type": "select", "defaultValue": "card", "options": ["card", "tile"], "rendererConsumer": "subcategory card", "visualEffect": "Card treatment" }
+      ]
+    },
+    {
+      "type": "newsletter-signup",
+      "defaultSettings": {
+        "heading": "Stay in the loop",
+        "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+        "buttonText": "Subscribe",
+        "backgroundColor": "#111827",
+        "textColor": "#ffffff"
+      },
+      "fields": [
+        { "key": "heading", "type": "text", "defaultValue": "Stay in the loop", "rendererConsumer": "newsletter heading", "visualEffect": "Section heading" },
+        { "key": "subheading", "type": "textarea", "defaultValue": "Subscribe to our newsletter for exclusive offers and updates", "rendererConsumer": "newsletter copy", "visualEffect": "Supporting copy" },
+        { "key": "buttonText", "type": "text", "defaultValue": "Subscribe", "rendererConsumer": "newsletter button", "visualEffect": "Button label" },
+        { "key": "backgroundColor", "type": "color", "defaultValue": "#111827", "rendererConsumer": "newsletter shell", "visualEffect": "Background color" },
+        { "key": "textColor", "type": "color", "defaultValue": "#ffffff", "rendererConsumer": "newsletter typography", "visualEffect": "Text color" }
+      ]
+    },
+    {
+      "type": "text-block",
+      "defaultSettings": {
+        "heading": "Text Block",
+        "body": "",
+        "alignment": "left",
+        "maxWidth": "default"
+      },
+      "fields": [
+        { "key": "heading", "type": "text", "defaultValue": "Text Block", "rendererConsumer": "text heading", "visualEffect": "Section heading" },
+        { "key": "body", "type": "textarea", "defaultValue": "", "rendererConsumer": "text body", "visualEffect": "Body copy" },
+        { "key": "alignment", "type": "select", "defaultValue": "left", "options": ["left", "center", "right"], "rendererConsumer": "text layout", "visualEffect": "Text alignment" },
+        { "key": "maxWidth", "type": "select", "defaultValue": "default", "options": ["narrow", "default", "wide"], "rendererConsumer": "text layout", "visualEffect": "Content width" }
+      ]
+    },
+    {
+      "type": "image-block",
+      "defaultSettings": {
+        "imageUrl": "",
+        "altText": "",
+        "caption": "",
+        "aspectRatio": "16:9",
+        "maxWidth": "default"
+      },
+      "fields": [
+        { "key": "imageUrl", "type": "image", "defaultValue": "", "rendererConsumer": "image", "visualEffect": "Image source" },
+        { "key": "altText", "type": "text", "defaultValue": "", "rendererConsumer": "image alt", "visualEffect": "Accessibility text" },
+        { "key": "caption", "type": "text", "defaultValue": "", "rendererConsumer": "image caption", "visualEffect": "Caption text" },
+        { "key": "aspectRatio", "type": "select", "defaultValue": "16:9", "options": ["1:1", "4:3", "16:9", "21:9"], "rendererConsumer": "image frame", "visualEffect": "Image shape" },
+        { "key": "maxWidth", "type": "select", "defaultValue": "default", "options": ["narrow", "default", "wide", "full"], "rendererConsumer": "image layout", "visualEffect": "Content width" }
+      ]
+    },
+    {
+      "type": "video-block",
+      "defaultSettings": {
+        "title": "Video",
+        "videoUrl": "",
+        "autoplay": false,
+        "showControls": true,
+        "aspectRatio": "16:9"
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Video", "rendererConsumer": "video title", "visualEffect": "Section heading" },
+        { "key": "videoUrl", "type": "video", "defaultValue": "", "rendererConsumer": "video player", "visualEffect": "Video source" },
+        { "key": "autoplay", "type": "toggle", "defaultValue": false, "rendererConsumer": "video player", "visualEffect": "Autoplay behavior" },
+        { "key": "showControls", "type": "toggle", "defaultValue": true, "rendererConsumer": "video player", "visualEffect": "Control visibility" },
+        { "key": "aspectRatio", "type": "select", "defaultValue": "16:9", "options": ["4:3", "16:9", "21:9"], "rendererConsumer": "video frame", "visualEffect": "Video shape" }
+      ]
+    },
+    {
+      "type": "testimonials",
+      "defaultSettings": {
+        "title": "What customers say",
+        "subtitle": "",
+        "testimonials": []
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "What customers say", "rendererConsumer": "testimonials heading", "visualEffect": "Section heading" },
+        { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "testimonials copy", "visualEffect": "Supporting copy" },
+        { "key": "testimonials", "type": "list", "defaultValue": [], "rendererConsumer": "testimonial cards", "visualEffect": "Customer quotes" }
+      ]
+    },
+    {
+      "type": "product-hero",
+      "defaultSettings": {
+        "layoutVariant": "default",
+        "showDescription": true,
+        "showMediaGallery": true,
+        "showVariantSelector": true,
+        "showAddToCart": true,
+        "showSku": true,
+        "showStockStatus": true
+      },
+      "fields": [
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product hero layout", "visualEffect": "Purchase experience skin" },
+        { "key": "showDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "product hero", "visualEffect": "Description visibility" },
+        { "key": "showMediaGallery", "type": "toggle", "defaultValue": true, "rendererConsumer": "product media", "visualEffect": "Gallery visibility" },
+        { "key": "showVariantSelector", "type": "toggle", "defaultValue": true, "rendererConsumer": "product variants", "visualEffect": "Variant selector visibility" },
+        { "key": "showAddToCart", "type": "toggle", "defaultValue": true, "rendererConsumer": "purchase CTA", "visualEffect": "Cart action visibility" },
+        { "key": "showSku", "type": "toggle", "defaultValue": true, "rendererConsumer": "product metadata", "visualEffect": "SKU visibility" },
+        { "key": "showStockStatus", "type": "toggle", "defaultValue": true, "rendererConsumer": "stock badge", "visualEffect": "Stock visibility" }
+      ]
+    },
+    {
+      "type": "product-gallery",
+      "defaultSettings": {
+        "layoutVariant": "default",
+        "title": "Gallery",
+        "showThumbnails": true,
+        "maxImages": 6
+      },
+      "fields": [
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product gallery layout", "visualEffect": "Gallery skin" },
+        { "key": "title", "type": "text", "defaultValue": "Gallery", "rendererConsumer": "gallery heading", "visualEffect": "Section heading" },
+        { "key": "showThumbnails", "type": "toggle", "defaultValue": true, "rendererConsumer": "gallery thumbnails", "visualEffect": "Thumbnail visibility" },
+        { "key": "maxImages", "type": "number", "defaultValue": 6, "min": 1, "max": 12, "rendererConsumer": "gallery media", "visualEffect": "Maximum image count" }
+      ]
+    },
+    {
+      "type": "product-specs",
+      "defaultSettings": {
+        "layoutVariant": "default",
+        "title": "Product Details",
+        "useDescription": true,
+        "items": []
+      },
+      "fields": [
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product specs layout", "visualEffect": "Specs skin" },
+        { "key": "title", "type": "text", "defaultValue": "Product Details", "rendererConsumer": "specs heading", "visualEffect": "Section heading" },
+        { "key": "useDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "specs body", "visualEffect": "Use product description" },
+        { "key": "items", "type": "list", "defaultValue": [], "rendererConsumer": "spec rows", "visualEffect": "Structured details" }
+      ]
+    },
+    {
+      "type": "product-video",
+      "defaultSettings": {
+        "title": "Watch It In Action",
+        "videoUrl": "",
+        "autoplay": false,
+        "showControls": true
+      },
+      "fields": [
+        { "key": "title", "type": "text", "defaultValue": "Watch It In Action", "rendererConsumer": "product video heading", "visualEffect": "Section heading" },
+        { "key": "videoUrl", "type": "video", "defaultValue": "", "rendererConsumer": "product video player", "visualEffect": "Video source" },
+        { "key": "autoplay", "type": "toggle", "defaultValue": false, "rendererConsumer": "product video player", "visualEffect": "Autoplay behavior" },
+        { "key": "showControls", "type": "toggle", "defaultValue": true, "rendererConsumer": "product video player", "visualEffect": "Control visibility" }
+      ]
+    },
+    {
+      "type": "customer-reviews",
+      "defaultSettings": {
+        "layoutVariant": "default",
+        "title": "Customer Reviews",
+        "reviews": []
+      },
+      "fields": [
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "reviews layout", "visualEffect": "Reviews skin" },
+        { "key": "title", "type": "text", "defaultValue": "Customer Reviews", "rendererConsumer": "reviews heading", "visualEffect": "Section heading" },
+        { "key": "reviews", "type": "list", "defaultValue": [], "rendererConsumer": "review cards", "visualEffect": "Review content" }
+      ]
+    },
+    {
+      "type": "related-products",
+      "defaultSettings": {
+        "layoutVariant": "default",
+        "title": "Recommended Products",
+        "limit": 4,
+        "showPrice": true,
+        "showRating": true
+      },
+      "fields": [
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "related products layout", "visualEffect": "Related section skin" },
+        { "key": "title", "type": "text", "defaultValue": "Recommended Products", "rendererConsumer": "related products heading", "visualEffect": "Section heading" },
+        { "key": "limit", "type": "number", "defaultValue": 4, "min": 1, "max": 12, "rendererConsumer": "related products query", "visualEffect": "Product count" },
+        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
+        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" }
+      ]
+    }
+  ]
+}

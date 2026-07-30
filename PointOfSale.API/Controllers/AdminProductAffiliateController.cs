@@ -424,9 +424,7 @@ public class AdminProductAffiliateController : ControllerBase
                 item.PublishStatus,
                 item.HasVariants,
                 item.TrackStock,
-                item.AllowBackorder,
-                item.OnlinePrice,
-                item.SalePrice
+                item.AllowBackorder
             })
             .FirstOrDefaultAsync(ct);
 
@@ -451,15 +449,13 @@ public class AdminProductAffiliateController : ControllerBase
                      (!variant.OnlinePrice.HasValue && variant.Price > 0m) ||
                      (variant.OnlinePrice.HasValue && variant.OnlinePrice.Value == 0m && variant.Price > 0m)),
                     ct)
-            : (product.OnlinePrice.HasValue && product.OnlinePrice.Value > 0m) ||
-              (!product.OnlinePrice.HasValue && product.SalePrice > 0m) ||
-              (product.OnlinePrice.HasValue && product.OnlinePrice.Value == 0m && product.SalePrice > 0m) ||
-              await _dbContext.ProductUnits
+            : await _dbContext.ProductUnits
                   .AsNoTracking()
                   .IgnoreQueryFilters()
                   .AnyAsync(unit =>
                       unit.ProductId == productId &&
                       !unit.IsDeleted &&
+                      unit.IsDefault &&
                       unit.SellingPrice.HasValue &&
                       unit.SellingPrice.Value > 0m,
                       ct);

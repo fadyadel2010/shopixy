@@ -97,7 +97,6 @@ internal static class TestDatabaseRegistry
 internal sealed class ManagedTestDatabase
 {
     private const string SupplementalSqlBaselineMigration = "20260723214642_Baseline_Recovery3";
-    private const string FinalTestSchemaMigration = "20260428160001_S47b_AccountingOutboxSourceTypeConstraints";
     // These SQL migrations exist in production but are not represented by EF migration Up() operations.
     // Apply them in a fixed order around the targeted EF migration chain used by reliability tests.
     private static readonly string[] EarlySupplementalSqlMigrations =
@@ -237,7 +236,7 @@ internal sealed class ManagedTestDatabase
         await using var context = new ApplicationDbContext(CreateOptions());
         await MigrateEfChainAsync(context, SupplementalSqlBaselineMigration);
         await ApplySupplementalSqlMigrationsAsync(EarlySupplementalSqlMigrations);
-        await MigrateEfChainAsync(context, FinalTestSchemaMigration);
+        await MigrateEfChainAsync(context);
         await ApplySupplementalSqlMigrationsAsync(LateSupplementalSqlMigrations);
         await NormalizeCriticalSchemaDriftAsync();
 
@@ -606,6 +605,11 @@ internal sealed class ManagedTestDatabase
 
         if (!string.IsNullOrWhiteSpace(targetMigration))
         {
+            if (applied.Contains(targetMigration))
+            {
+                return;
+            }
+
             var targetIndex = pending.FindIndex(migration => string.Equals(migration, targetMigration, StringComparison.OrdinalIgnoreCase));
             if (targetIndex < 0)
             {

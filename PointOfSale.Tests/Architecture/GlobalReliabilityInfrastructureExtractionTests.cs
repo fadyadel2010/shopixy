@@ -315,13 +315,17 @@ public class GlobalReliabilityInfrastructureExtractionTests
 
         Assert.Contains("Price = (double)product.StorefrontVisiblePrice", searchMapper, StringComparison.Ordinal);
 
-        Assert.Contains("effectivePrice = document.StorefrontEffectivePrice", storefrontProductService, StringComparison.Ordinal);
-        Assert.Contains("effectivePrice = document.StorefrontEffectivePrice", storefrontSearchService, StringComparison.Ordinal);
-        Assert.Contains("effectivePrice = document.StorefrontEffectivePrice", storefrontHomeService, StringComparison.Ordinal);
-        Assert.Contains("effectivePrice = doc.StorefrontEffectivePrice", storefrontProductsController, StringComparison.Ordinal);
-        Assert.Contains("effectivePrice = product.StorefrontEffectivePrice", cartService, StringComparison.Ordinal);
-        Assert.Contains("var effectivePrice = product.StorefrontEffectivePrice", cartService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(document)", storefrontProductService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(document)", storefrontSearchService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(document)", storefrontHomeService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(doc)", storefrontProductsController, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(product)", cartService, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant)", cartService, StringComparison.Ordinal);
         Assert.Contains("?? product.StorefrontEffectivePrice", commerceHubQueryService, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("product.OnlinePrice.GetValueOrDefault() > 0", storefrontHomeService, StringComparison.Ordinal);
+        Assert.DoesNotContain(": product.SalePrice", storefrontHomeService, StringComparison.Ordinal);
+        Assert.DoesNotContain("variant.OnlinePrice ?? variant.Price", cartService, StringComparison.Ordinal);
 
         Assert.Contains("PromotionVisibilityProjectionSupport.BuildApplyProductPromotionUpdate", promotion, StringComparison.Ordinal);
         Assert.Contains("PromotionVisibilityProjectionSupport.BuildClearProductPromotionUpdate", promotion, StringComparison.Ordinal);
@@ -453,12 +457,11 @@ public class GlobalReliabilityInfrastructureExtractionTests
         var redisInvalidation = File.ReadAllText(ApiPath("Consumers", "RedisInvalidationConsumer.cs"));
 
         Assert.Contains("RecomposeProductCardsFromSqlAuthorityAsync", storefrontHome, StringComparison.Ordinal);
-        Assert.Contains("CategoryLineageAuthority.LoadTenantSnapshotAsync", storefrontHome, StringComparison.Ordinal);
-        Assert.Contains("product.PublishStatus == PublishStatus.Published", storefrontHome, StringComparison.Ordinal);
-        Assert.Contains("_dbContext.Promotions", storefrontHome, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", storefrontHome, StringComparison.Ordinal);
+        Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(document)", storefrontHome, StringComparison.Ordinal);
         Assert.Contains("_dbContext.AffiliateProductPolicies", storefrontHome, StringComparison.Ordinal);
-        Assert.Contains("ProductVariantLifecycleAuthority.IsPubliclyVisibleLineage", storefrontHome, StringComparison.Ordinal);
-        Assert.Contains("ProductVariantInventoryLineageAuthority.FilterCurrentInventoryStockOwnersAsync", storefrontHome, StringComparison.Ordinal);
+        Assert.DoesNotContain("product.OnlinePrice.GetValueOrDefault() > 0", storefrontHome, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductVariantLifecycleAuthority.IsPubliclyVisibleLineage", storefrontHome, StringComparison.Ordinal);
 
         Assert.Contains("SanitizeDiscoveryReferencesAsync", homepageRead, StringComparison.Ordinal);
         Assert.Contains("LoadLiveCommerceHubListingIdsAsync", homepageRead, StringComparison.Ordinal);
@@ -507,16 +510,16 @@ public class GlobalReliabilityInfrastructureExtractionTests
         var affiliateReindexScript = File.ReadAllText(InfrastructurePath("Scripts", "AF16E_ReindexAffiliateProductsWithStorefrontUrl.cs"));
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productUpdatedSearch, StringComparison.Ordinal);
-        Assert.Contains("if (!product.IsActive || !product.IsOnlineVisible)", productUpdatedSearch, StringComparison.Ordinal);
+        Assert.Contains("if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)", productUpdatedSearch, StringComparison.Ordinal);
         Assert.DoesNotContain("if (@event.IsOnlineVisible.HasValue && !@event.IsOnlineVisible.Value)", productUpdatedSearch, StringComparison.Ordinal);
         Assert.DoesNotContain("ApplicationDbContext? dbContext = null", productStockPriceSearch, StringComparison.Ordinal);
         Assert.True(
             productStockPriceSearch.IndexOf("ProductSearchSqlAuthorityOverlay.ApplyAsync", StringComparison.Ordinal) <
-            productStockPriceSearch.IndexOf("if (!product.IsActive || !product.IsOnlineVisible)", StringComparison.Ordinal),
+            productStockPriceSearch.IndexOf("if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)", StringComparison.Ordinal),
             "Product stock/price search sync must apply SQL authority before deleting hidden search documents.");
         Assert.Contains("IConsumer<ProductPublishStatusChangedEvent>", productDeletedSearch, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productDeletedSearch, StringComparison.Ordinal);
-        Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true }", productDeletedSearch, StringComparison.Ordinal);
+        Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true }", productDeletedSearch, StringComparison.Ordinal);
 
         Assert.Contains("SyncProductSearchAffiliateVisibilityFromSqlAsync", affiliate, StringComparison.Ordinal);
         Assert.Contains("CountDocumentsAsync", affiliate, StringComparison.Ordinal);

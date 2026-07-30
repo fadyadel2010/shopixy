@@ -8,7 +8,10 @@ export type ProductCardRendererId =
     | 'pearl'
     | 'phoenix'
     | 'hype'
-    | 'electronics';
+    | 'electronics'
+    | 'alizon'
+    | 'sharp'
+    | 'seven';
 
 const THEME_RENDERERS = new Map(
     themeAuthority.themes
@@ -20,25 +23,27 @@ export function resolveProductCardRenderer(
     themeId: string | null | undefined,
     layout: ProductCardLayout
 ): ProductCardRendererId {
-    if (layout === 'electronics') {
+    const normalizedThemeId = `${themeId ?? ''}`.trim().toLowerCase();
+
+    if (layout === 'electronics' && normalizedThemeId === 'electronics') {
         return 'electronics';
     }
 
-    if (layout === 'hype') {
+    if (layout === 'hype' && normalizedThemeId === 'hype') {
         return 'hype';
     }
 
-    if (layout === 'phoenix') {
+    if (layout === 'phoenix' && normalizedThemeId === 'phoenix') {
         return 'phoenix';
     }
 
-    if (layout === 'pearl') {
+    if (layout === 'pearl' && normalizedThemeId === 'pearl') {
         return 'pearl';
     }
 
-    if (layout === 'fashion') {
+    if (layout === 'fashion' && normalizedThemeId === 'fashion') {
         return 'fashion';
     }
 
-    return (THEME_RENDERERS.get(`${themeId ?? ''}`.trim().toLowerCase()) as ProductCardRendererId | undefined) ?? 'modern';
+    return (THEME_RENDERERS.get(normalizedThemeId) as ProductCardRendererId | undefined) ?? 'modern';
 }

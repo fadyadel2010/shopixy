@@ -16,6 +16,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Core.Validation;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
@@ -364,6 +365,7 @@ public class CartService : ICartService
         {
             throw new ProductNotFoundException(request.ProductId);
         }
+        var productPurchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
 
         var lineAdmission = affiliateAccountId.HasValue
             ? await ResolveAffiliateCartLineAdmissionAsync(
@@ -379,9 +381,9 @@ public class CartService : ICartService
         // Step 2: Resolve and validate variant
         // PHASE 11.4: VariantId is REQUIRED for products with variants
         ProductVariantDocument? variant = null;
-        int? authoritativeVariantAvailableStock = null;
+        StorefrontPurchasabilityResult? variantPurchasability = null;
         
-        if (product.Variants != null && product.Variants.Count > 0)
+        if (product.HasVariants)
         {
             // =============================================================================
             // PHASE 11.6: VARIANT REQUIRED ENFORCEMENT
@@ -446,31 +448,18 @@ public class CartService : ICartService
                 }
             }
             
-            // Validate variant stock
-            // PHASE 11.4: Stock is per-Variant, not per-Product
-            var stockSnapshot = await GetAuthoritativeVariantStockSnapshotAsync(
-                tenantId,
-                variant.VariantId,
-                cancellationToken);
-            authoritativeVariantAvailableStock = ResolveAuthoritativeAvailableStock(
-                tenantId,
-                request.ProductId,
-                variant,
-                stockSnapshot,
-                "cart",
-                correlationId);
+            variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
 
-            if (authoritativeVariantAvailableStock <= 0)
+            if (!variantPurchasability.InStock)
             {
                 _logger.LogWarning(
-                    "AddItem rejected - variant out of stock | TenantId: {TenantId} | VariantId: {VariantId} | AvailableStock: {AvailableStock} | CorrelationId: {CorrelationId}",
-                    tenantId, variant.VariantId, authoritativeVariantAvailableStock, correlationId);
+                    "AddItem rejected - variant out of stock by canonical storefront contract | TenantId: {TenantId} | VariantId: {VariantId} | AvailableStock: {AvailableStock} | CorrelationId: {CorrelationId}",
+                    tenantId, variant.VariantId, variantPurchasability.StockQuantity, correlationId);
                 throw new VariantOutOfStockException(variant.VariantId, variant.SKU ?? "Unknown");
             }
             
             // PHASE 11.6: Validate variant has a valid price > 0
-            var variantEffectivePrice = variant.OnlinePrice ?? variant.Price;
-            if (variantEffectivePrice <= 0)
+            if (variantPurchasability.Price <= 0 || !variantPurchasability.IsAvailable)
             {
                 _logger.LogWarning(
                     "AddItem rejected - variant has no valid price | TenantId: {TenantId} | VariantId: {VariantId} | Price: {Price} | OnlinePrice: {OnlinePrice} | CorrelationId: {CorrelationId}",
@@ -480,13 +469,19 @@ public class CartService : ICartService
         }
         else
         {
-            // Legacy product without variants - use product-level data
-            // Step 1.5: Validate stock availability (legacy)
-            if (product.TrackStock && !product.AllowBackorder && !product.InStock)
+            if (!productPurchasability.IsAvailable || productPurchasability.Price <= 0m)
+            {
+                _logger.LogWarning(
+                    "AddItem rejected - simple product is not purchasable by canonical storefront contract | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                    tenantId, request.ProductId, productPurchasability.UnavailableReason, correlationId);
+                throw new ProductNotForSaleException(request.ProductId);
+            }
+
+            if (!productPurchasability.InStock)
             {
                 _logger.LogWarning(
                     "AddItem rejected - out of stock | TenantId: {TenantId} | ProductId: {ProductId} | StockQuantity: {StockQuantity} | CorrelationId: {CorrelationId}",
-                    tenantId, request.ProductId, product.StockQuantity, correlationId);
+                    tenantId, request.ProductId, productPurchasability.StockQuantity, correlationId);
                 throw new ProductOutOfStockException(request.ProductId, product.Name);
             }
         }
@@ -542,13 +537,13 @@ public class CartService : ICartService
             : cart.Items.FirstOrDefault(i => i.ProductId == request.ProductId && i.VariantId == null);
         
         int previousQuantity = existingItem?.Quantity ?? 0;
-        if (variant != null && authoritativeVariantAvailableStock.HasValue)
+        if (variant != null && variantPurchasability != null)
         {
             var requestedTotalQuantity = previousQuantity + request.Quantity;
             // Apply the same capping logic that will be used when persisting
             var finalQuantity = Math.Min(requestedTotalQuantity, MaxQuantityPerItem);
             
-            if (finalQuantity > authoritativeVariantAvailableStock.Value)
+            if (finalQuantity > variantPurchasability.StockQuantity)
             {
                 _logger.LogWarning(
                     "AddItem rejected - requested quantity exceeds authoritative SQL stock | TenantId: {TenantId} | ProductId: {ProductId} | VariantId: {VariantId} | PreviousQuantity: {PreviousQuantity} | RequestedQuantity: {RequestedQuantity} | FinalQuantity: {FinalQuantity} | AvailableStock: {AvailableStock} | CorrelationId: {CorrelationId}",
@@ -558,13 +553,13 @@ public class CartService : ICartService
                     previousQuantity,
                     request.Quantity,
                     finalQuantity,
-                    authoritativeVariantAvailableStock.Value,
+                    variantPurchasability.StockQuantity,
                     correlationId);
                 throw new VariantInsufficientStockException(
                     variant.VariantId,
                     variant.SKU ?? "Unknown",
                     finalQuantity,
-                    authoritativeVariantAvailableStock.Value);
+                    variantPurchasability.StockQuantity);
             }
         }
 
@@ -587,8 +582,7 @@ public class CartService : ICartService
             
             if (variant != null)
             {
-                // VARIANT PRICING: OnlinePrice ?? Price (Shopify model)
-                effectivePrice = variant.OnlinePrice ?? variant.Price;
+                effectivePrice = variantPurchasability?.Price ?? ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant).Price;
                 sku = variant.SKU ?? product.SKU ?? string.Empty;
                 imageUrl = ResolveVariantImageUrl(product, variant);
                 variantAttributes = variant.Attributes
@@ -597,8 +591,7 @@ public class CartService : ICartService
             }
             else
             {
-                // Legacy product-level pricing
-                effectivePrice = product.StorefrontEffectivePrice;
+                effectivePrice = productPurchasability.Price;
                 sku = product.SKU ?? string.Empty;
                 imageUrl = ResolvePrimaryProductImageUrl(product);
                 variantAttributes = new List<CartVariantAttribute>();
@@ -629,7 +622,7 @@ public class CartService : ICartService
                 AddedAtUtc = DateTime.UtcNow,
                 // Use variant weight if available, otherwise fall back to product weight
                 Weight = variant?.Weight ?? product.Weight,
-                AvailableStock = authoritativeVariantAvailableStock,
+                AvailableStock = variantPurchasability?.StockQuantity ?? productPurchasability.StockQuantity,
                 // PHASE: Promotions Engine - Cart item promotion fields
                 HasActivePromotion = hasValidPromotion,
                 PromotionBadge = hasValidPromotion ? product.PromotionBadge : null,
@@ -852,19 +845,22 @@ public class CartService : ICartService
         }
         else
         {
-            // Step 4: Validate stock availability from MongoDB
-            var stockSnapshot = await GetAuthoritativeVariantStockSnapshotAsync(
-                tenantId,
-                variantId,
-                ct);
-            var product = await _productRepository.FindByProductIdAsync(tenantId, existingItem.ProductId);
+            // Step 4: Validate purchasability from the canonical storefront authority.
+            var projectedProduct = await _productRepository.FindByProductIdAsync(tenantId, existingItem.ProductId, ct);
+            var product = projectedProduct == null
+                ? null
+                : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                    _dbContext,
+                    projectedProduct,
+                    tenantId,
+                    ct);
             var variant = product?.Variants?.FirstOrDefault(v => v.VariantId == variantId);
             
-            // CRITICAL: Fail closed if both sources are unavailable
-            if ((product == null || variant == null) && stockSnapshot == null)
+            // CRITICAL: Fail closed if current storefront authority is unavailable
+            if (product == null || variant == null)
             {
                 _logger.LogWarning(
-                    "UpdateItemByVariant rejected - both product/variant projection and SQL stock unavailable (fail closed) | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | RequestedQuantity: {RequestedQuantity} | ExistingQuantity: {ExistingQuantity} | ProductFound: {ProductFound} | VariantFound: {VariantFound} | CorrelationId: {CorrelationId}",
+                    "UpdateItemByVariant rejected - product/variant authority unavailable (fail closed) | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | RequestedQuantity: {RequestedQuantity} | ExistingQuantity: {ExistingQuantity} | ProductFound: {ProductFound} | VariantFound: {VariantFound} | CorrelationId: {CorrelationId}",
                     tenantId,
                     cart.CartId,
                     variantId,
@@ -887,13 +883,13 @@ public class CartService : ICartService
             }
             else
             {
-                var availableStock = ResolveAuthoritativeAvailableStock(
-                    tenantId,
-                    existingItem.ProductId,
-                    variant,
-                    stockSnapshot,
-                    "cart",
-                    correlationId);
+                var variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
+                if (!product.HasVariants || !variantPurchasability.IsAvailable)
+                {
+                    throw new VariantNotFoundException(existingItem.ProductId, variantId);
+                }
+
+                var availableStock = variantPurchasability.StockQuantity;
 
                 // Apply the same capping logic that will be used when persisting
                 var finalQuantity = Math.Min(request.Quantity, MaxQuantityPerItem);
@@ -905,7 +901,7 @@ public class CartService : ICartService
                         tenantId, variantId, request.Quantity, finalQuantity, availableStock, correlationId);
                     throw new VariantInsufficientStockException(
                         variantId,
-                        variant?.SKU ?? stockSnapshot?.SKU ?? existingItem.SKU,
+                        variant.SKU ?? existingItem.SKU,
                         finalQuantity,
                         availableStock);
                 }
@@ -1910,20 +1906,19 @@ public class CartService : ICartService
         var productIds = cart.Items.Select(i => i.ProductId).ToList();
         var itemsToRemove = new List<CartItemDto>();
         var cartWasUpdated = false;
-        var stockSnapshots = await GetAuthoritativeVariantStockSnapshotsAsync(
-            cart.TenantId,
-            cart.Items
-                .Where(i => i.VariantId.HasValue)
-                .Select(i => i.VariantId!.Value)
-                .ToList(),
-            cancellationToken);
-
         try
         {
             // Batch validate all products and populate AvailableStock
             foreach (var item in cart.Items)
             {
-                var product = await _productRepository.FindByProductIdAsync(cart.TenantId, item.ProductId, cancellationToken);
+                var projectedProduct = await _productRepository.FindByProductIdAsync(cart.TenantId, item.ProductId, cancellationToken);
+                var product = projectedProduct == null
+                    ? null
+                    : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                        _dbContext,
+                        projectedProduct,
+                        cart.TenantId,
+                        cancellationToken);
                 
                 if (product == null || !product.IsActive || !product.IsOnlineVisible)
                 {
@@ -1934,25 +1929,65 @@ public class CartService : ICartService
                 }
                 else
                 {
+                    var productPurchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+                    if (!product.HasVariants)
+                    {
+                        if (!productPurchasability.CanPurchase)
+                        {
+                            _logger.LogWarning(
+                                "Simple product no longer satisfies canonical purchasability - removing from cart | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                                cart.TenantId,
+                                cart.CartId,
+                                item.ProductId,
+                                productPurchasability.UnavailableReason,
+                                correlationId);
+                            itemsToRemove.Add(item);
+                            continue;
+                        }
+
+                        item.AvailableStock = productPurchasability.StockQuantity;
+                        if (item.UnitPrice != productPurchasability.Price)
+                        {
+                            item.UnitPrice = productPurchasability.Price;
+                            cartWasUpdated = true;
+                        }
+                    }
+
                     // PHASE 11.7.1: Populate AvailableStock for UX hardening
                     // Find the variant in the product
-                    var variant = item.VariantId.HasValue
+                    var variant = item.VariantId.HasValue && product.HasVariants
                         ? product.Variants?.FirstOrDefault(v => v.VariantId == item.VariantId.Value)
-                        : product.Variants?.FirstOrDefault(v => v.IsDefault) ?? product.Variants?.FirstOrDefault();
-
-                    var stockSnapshot = item.VariantId.HasValue
-                        ? stockSnapshots.GetValueOrDefault(item.VariantId.Value)
                         : null;
 
-                    if (variant != null || stockSnapshot != null)
+                    if (item.VariantId.HasValue && product.HasVariants && variant == null)
                     {
-                        var availableStock = ResolveAuthoritativeAvailableStock(
+                        _logger.LogWarning(
+                            "Variant no longer exists in canonical product shape - removing from cart | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
                             cart.TenantId,
-                            item.ProductId,
-                            variant,
-                            stockSnapshot,
-                            "cart",
+                            cart.CartId,
+                            item.VariantId,
                             correlationId);
+                        itemsToRemove.Add(item);
+                        continue;
+                    }
+
+                    if (variant != null)
+                    {
+                        var variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
+                        if (!variantPurchasability.CanPurchase)
+                        {
+                            _logger.LogWarning(
+                                "Variant no longer satisfies canonical purchasability - removing from cart | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                                cart.TenantId,
+                                cart.CartId,
+                                item.VariantId,
+                                variantPurchasability.UnavailableReason,
+                                correlationId);
+                            itemsToRemove.Add(item);
+                            continue;
+                        }
+
+                        var availableStock = variantPurchasability.StockQuantity;
                         item.AvailableStock = availableStock;
 
                         if (availableStock <= 0)
@@ -2178,19 +2213,13 @@ public class CartService : ICartService
                     cancellationToken);
         }
 
-        if ((product.OnlinePrice.HasValue && product.OnlinePrice.Value > 0m) ||
-            (!product.OnlinePrice.HasValue && product.SalePrice > 0m) ||
-            (product.OnlinePrice.HasValue && product.OnlinePrice.Value == 0m && product.SalePrice > 0m))
-        {
-            return true;
-        }
-
         return await _dbContext.ProductUnits
             .AsNoTracking()
             .IgnoreQueryFilters()
             .AnyAsync(unit =>
                 unit.ProductId == product.Id &&
                 !unit.IsDeleted &&
+                unit.IsDefault &&
                 unit.SellingPrice.HasValue &&
                 unit.SellingPrice.Value > 0m,
                 cancellationToken);
@@ -3044,7 +3073,14 @@ public class CartService : ICartService
     {
         try
         {
-            var product = await _productRepository.FindByProductIdAsync(tenantId, productId, cancellationToken);
+            var projectedProduct = await _productRepository.FindByProductIdAsync(tenantId, productId, cancellationToken);
+            var product = projectedProduct == null
+                ? null
+                : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                    _dbContext,
+                    projectedProduct,
+                    tenantId,
+                    cancellationToken);
             
             if (product == null)
             {
@@ -3084,13 +3120,14 @@ public class CartService : ICartService
             
             if (!product.HasVariants)
             {
-                var effectivePrice = product.StorefrontEffectivePrice;
+                var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+                var effectivePrice = purchasability.Price;
                 
-                if (effectivePrice <= 0)
+                if (!purchasability.IsAvailable || effectivePrice <= 0)
                 {
                     _logger.LogWarning(
-                        "Simple product has no valid price (PRODUCT_NOT_FOR_SALE) | TenantId: {TenantId} | ProductId: {ProductId} | EffectivePrice: {EffectivePrice} | OnlinePrice: {OnlinePrice} | CorrelationId: {CorrelationId}",
-                        tenantId, productId, effectivePrice, product.OnlinePrice, correlationId);
+                        "Simple product has no valid canonical storefront price (PRODUCT_NOT_FOR_SALE) | TenantId: {TenantId} | ProductId: {ProductId} | EffectivePrice: {EffectivePrice} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+                        tenantId, productId, effectivePrice, purchasability.UnavailableReason, correlationId);
                     throw new ProductNotForSaleException(productId);
                 }
             }

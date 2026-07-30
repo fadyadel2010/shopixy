@@ -289,8 +289,11 @@ public class StorefrontProductService : IStorefrontProductService
             };
         }
 
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(document);
+
         // PHASE 11.3: Map variants for storefront variant selection
         var variants = MapVariants(
+            document,
             document.Variants,
             document.Media,
             images,
@@ -300,33 +303,7 @@ public class StorefrontProductService : IStorefrontProductService
             document.PromotionDiscountValue);
         var defaultVariant = variants.FirstOrDefault(v => v.IsDefault) ?? variants.FirstOrDefault();
         
-        // PHASE 11.5 — VARIANT-CENTRIC PRICING:
-        // If product has variants, use default variant's price; otherwise use product-level price
-        decimal effectivePrice;
-        bool inStock;
-        int stockQuantity;
-        
-        if (variants.Count > 0 && defaultVariant != null)
-        {
-            // VARIANT SOURCE OF TRUTH: Use default variant's effective price
-            effectivePrice = defaultVariant.EffectivePrice;
-            
-            // InStock if ANY active variant has stock
-            inStock = variants.Any(v => v.TotalStock > 0);
-            
-            // Total stock across all variants
-            stockQuantity = variants.Sum(v => v.TotalStock);
-        }
-        else
-        {
-            // LEGACY FALLBACK: Use product-level price (for products without variants)
-            effectivePrice = document.StorefrontEffectivePrice;
-            inStock = document.InStock;
-            stockQuantity = document.StockQuantity;
-        }
-        
-        // Product is available only if active, visible, AND has a valid price > 0
-        var isAvailable = document.IsActive && document.IsOnlineVisible && effectivePrice > 0;
+        var effectivePrice = purchasability.Price;
 
         return new ProductReadDto
         {
@@ -345,10 +322,12 @@ public class StorefrontProductService : IStorefrontProductService
                 document.PromotionDiscountType,
                 document.PromotionDiscountValue),
             Availability = StorefrontAvailabilityPresentationMapper.Build(
-                isAvailable,
-                inStock,
-                stockQuantity,
-                requiresVariantSelection: false),
+                purchasability.IsAvailable,
+                purchasability.InStock,
+                purchasability.StockQuantity,
+                purchasability.RequiresVariantSelection,
+                purchasability.CanPurchase,
+                purchasability.UnavailableReason),
             CategoryName = document.CategoryName,
             CategoryId = document.CategoryId,
             Slug = document.Slug,
@@ -357,9 +336,9 @@ public class StorefrontProductService : IStorefrontProductService
             IsFeatured = document.IsFeatured,
             Media = media,
             Images = images,
-            IsAvailable = isAvailable,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
+            IsAvailable = purchasability.IsAvailable,
+            InStock = purchasability.InStock,
+            StockQuantity = purchasability.StockQuantity,
             CreatedAtUtc = document.CreatedAtUtc,
             // PHASE 11.3: Variant selection fields
             Variants = variants,
@@ -381,6 +360,7 @@ public class StorefrontProductService : IStorefrontProductService
     /// PHASE 11.3 — STOREFRONT VARIANT SELECTION
     /// </summary>
     private static List<ProductVariantDto> MapVariants(
+        ProductDocument product,
         List<ProductVariantDocument>? variantDocs,
         List<ProductMediaDocument>? productMedia,
         List<string> productImages,
@@ -398,36 +378,43 @@ public class StorefrontProductService : IStorefrontProductService
             .Where(v => v.IsActive)
             .OrderBy(v => v.SortOrder)
             .ThenBy(v => v.IsDefault ? 0 : 1) // Default first
-            .Select(v => new ProductVariantDto
+            .Select(v =>
             {
-                Id = v.VariantId,
-                SKU = v.SKU,
-                Price = v.Price,
-                OnlinePrice = v.OnlinePrice,
-                Pricing = StorefrontPricingPresentationMapper.Build(
-                    v.EffectivePrice,
-                    hasActivePromotion,
-                    promotionBadge,
-                    promotionDiscountType,
-                    promotionDiscountValue),
-                Availability = StorefrontAvailabilityPresentationMapper.Build(
-                    v.IsActive && v.EffectivePrice > 0,
-                    v.TotalStock > 0,
-                    (int)v.TotalStock),
-                MediaId = v.MediaId,
-                ImageUrl = ResolveVariantImageUrl(v, productMedia, productImages),
-                TotalStock = (int)v.TotalStock,
-                IsDefault = v.IsDefault,
-                IsActive = v.IsActive,
-                // PHASE 11.5 FIX: Null-check Attributes to prevent NullReferenceException
-                Attributes = (v.Attributes ?? new List<VariantAttributeDocument>())
-                    .OrderBy(a => a.SortOrder)
-                    .Select(a => new VariantAttributeDto
-                    {
-                        Name = a.Name,
-                        Value = a.Value
-                    })
-                    .ToList()
+                var variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, v);
+                return new ProductVariantDto
+                {
+                    Id = v.VariantId,
+                    SKU = v.SKU,
+                    Price = v.Price,
+                    OnlinePrice = v.OnlinePrice,
+                    Pricing = StorefrontPricingPresentationMapper.Build(
+                        variantPurchasability.Price,
+                        hasActivePromotion,
+                        promotionBadge,
+                        promotionDiscountType,
+                        promotionDiscountValue),
+                    Availability = StorefrontAvailabilityPresentationMapper.Build(
+                        variantPurchasability.IsAvailable,
+                        variantPurchasability.InStock,
+                        variantPurchasability.StockQuantity,
+                        variantPurchasability.RequiresVariantSelection,
+                        variantPurchasability.CanPurchase,
+                        variantPurchasability.UnavailableReason),
+                    MediaId = v.MediaId,
+                    ImageUrl = ResolveVariantImageUrl(v, productMedia, productImages),
+                    TotalStock = variantPurchasability.StockQuantity,
+                    IsDefault = v.IsDefault,
+                    IsActive = v.IsActive,
+                    // PHASE 11.5 FIX: Null-check Attributes to prevent NullReferenceException
+                    Attributes = (v.Attributes ?? new List<VariantAttributeDocument>())
+                        .OrderBy(a => a.SortOrder)
+                        .Select(a => new VariantAttributeDto
+                        {
+                            Name = a.Name,
+                            Value = a.Value
+                        })
+                        .ToList()
+                };
             })
             .ToList();
     }
@@ -884,38 +871,8 @@ public class StorefrontProductService : IStorefrontProductService
             };
         }
         
-        // PHASE 11.5 — VARIANT-CENTRIC PRICING:
-        // Check if product has active variants
-        var activeVariants = (document.Variants ?? new List<ProductVariantDocument>())
-            .Where(v => v.IsActive)
-            .ToList();
-        var defaultVariant = activeVariants.FirstOrDefault(v => v.IsDefault) ?? activeVariants.FirstOrDefault();
-        
-        decimal effectivePrice;
-        bool inStock;
-        int stockQuantity;
-        
-        if (activeVariants.Count > 0 && defaultVariant != null)
-        {
-            // VARIANT SOURCE OF TRUTH: Use default variant's effective price
-            effectivePrice = defaultVariant.EffectivePrice;
-            
-            // InStock if ANY active variant has stock
-            inStock = activeVariants.Any(v => v.TotalStock > 0);
-            
-            // Total stock across all variants
-            stockQuantity = (int)activeVariants.Sum(v => v.TotalStock);
-        }
-        else
-        {
-            // LEGACY FALLBACK: Use product-level price (for products without variants)
-            effectivePrice = document.StorefrontEffectivePrice;
-            inStock = document.InStock;
-            stockQuantity = document.StockQuantity;
-        }
-        
-        // Product is available only if active, visible, AND has a valid price > 0
-        var isAvailable = document.IsActive && document.IsOnlineVisible && effectivePrice > 0;
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(document);
+        var effectivePrice = purchasability.Price;
 
         return new ProductListItemDto
         {
@@ -931,19 +888,21 @@ public class StorefrontProductService : IStorefrontProductService
                 document.PromotionDiscountType,
                 document.PromotionDiscountValue),
             Availability = StorefrontAvailabilityPresentationMapper.Build(
-                isAvailable,
-                inStock,
-                stockQuantity,
-                requiresVariantSelection: false),
+                purchasability.IsAvailable,
+                purchasability.InStock,
+                purchasability.StockQuantity,
+                purchasability.RequiresVariantSelection,
+                purchasability.CanPurchase,
+                purchasability.UnavailableReason),
             CategoryName = document.CategoryName,
             Slug = document.Slug,
             ThumbnailImage = thumbnailImage,
             ProductTemplate = document.ProductTemplate,
             StorefrontLayout = document.ProductTemplate,
             IsFeatured = document.IsFeatured,
-            IsAvailable = isAvailable,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
+            IsAvailable = purchasability.IsAvailable,
+            InStock = purchasability.InStock,
+            StockQuantity = purchasability.StockQuantity,
             // PHASE: Promotions Engine - Badge Display Fields
             HasActivePromotion = document.HasActivePromotion,
             PromotionBadge = document.PromotionBadge,

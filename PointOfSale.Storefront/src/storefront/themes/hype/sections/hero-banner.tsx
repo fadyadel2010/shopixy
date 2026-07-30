@@ -8,52 +8,38 @@ const heightClasses: Record<string, string> = {
     large: 'min-h-[820px]',
 };
 
-const alignmentClasses: Record<string, string> = {
-    left: 'items-start text-left',
-    center: 'items-center text-center',
-    right: 'items-end text-right',
-};
-
 const HeroBanner: React.FC<any> = ({
     title,
     subtitle,
     ctaText,
     ctaLink,
     backgroundImage,
-    backgroundColor,
     overlayOpacity,
-    textColor,
     alignment,
     height,
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 12), 0), 100) / 100;
-    const resolvedHeightClass = heightClasses[height] || heightClasses.large;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.center;
-    // Hype hero: dark band (#141218) bracketing an otherwise white page.
-    const resolvedBackgroundColor = backgroundColor || '#141218';
-    const resolvedTextColor = textColor || '#FAF7F2';
+    const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
+    const ctaAlignment = alignment || 'left';
 
     return (
         <section
-            className={`relative isolate overflow-hidden ${resolvedHeightClass}`}
-            style={{
-                backgroundColor: resolvedBackgroundColor,
-                color: resolvedTextColor,
-            }}
+            className={`relative isolate overflow-hidden bg-[#141218] text-[#FAF7F2] ${resolvedHeightClass}`}
         >
             <div className="absolute inset-x-0 top-0 h-px bg-[#F06736]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(240,103,54,0.20),transparent_34%),linear-gradient(135deg,#141218_0%,#1c2026_58%,#0f1115_100%)]" />
 
             <div
-                className={`relative mx-auto grid max-w-7xl grid-cols-1 gap-12 px-6 py-20 sm:px-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-center lg:px-12 ${resolvedAlignmentClass}`}
+                className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[minmax(0,0.96fr)_minmax(0,1.04fr)] lg:px-12"
             >
-                <div className="order-1 mx-auto max-w-2xl text-center">
-                    <div className="mx-auto mb-6 h-px w-20 bg-[#F06736]" />
+                <div className="order-1 mx-auto max-w-2xl text-center lg:mx-0 lg:text-left">
+                    <div className="mx-auto mb-6 h-px w-20 bg-[#F06736] lg:mx-0" />
                     <div className="mb-5 text-[12px] font-semibold uppercase tracking-[4.2px] text-white/80">
                         {t('home.welcome', { storeName: '' })}
                     </div>
 
-                    <h1 className="font-['Newsreader',serif] text-4xl font-light leading-tight text-[#FAF7F2] sm:text-5xl lg:text-6xl">
+                    <h1 className="font-['Newsreader',serif] text-4xl font-light leading-tight text-[#FAF7F2] sm:text-5xl lg:text-7xl">
                         {title || t('home.welcome', { storeName: '' })}
                     </h1>
 
@@ -67,7 +53,7 @@ const HeroBanner: React.FC<any> = ({
                         <ThemeHeroCTA
                             themeId="hype"
                             href={ctaLink || '/products'}
-                            align={alignment || 'center'}
+                            align={ctaAlignment}
                             className="mt-10"
                         >
                             {ctaText}
@@ -76,13 +62,13 @@ const HeroBanner: React.FC<any> = ({
                 </div>
 
                 <div className="order-2">
-                    <div className="mx-auto max-w-md overflow-hidden border border-white/15 bg-white/5 shadow-[0_24px_70px_rgba(0,0,0,0.4)]">
-                        <div className="relative aspect-[4/5] overflow-hidden bg-[#1c1822]">
+                    <div className="mx-auto max-w-xl overflow-hidden border border-white/15 bg-white shadow-[0_28px_90px_rgba(0,0,0,0.42)] lg:mx-0">
+                        <div className="relative aspect-[4/3] overflow-hidden bg-white">
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
                                     alt={title || 'Hype hero image'}
-                                    className="h-full w-full object-cover"
+                                    className="h-full w-full object-contain p-4"
                                 />
                             ) : (
                                 <div className="grid h-full w-full place-items-center bg-[linear-gradient(135deg,#141218_0%,#21262b_55%,#F06736_100%)]">

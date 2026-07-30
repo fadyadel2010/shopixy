@@ -53,7 +53,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                         }
                     >
                         {model.products.map((product, index) => (
-                            <div key={product.id} className={index % 4 === 1 ? 'lg:mt-8' : undefined}>
+                            <div key={product.id} className={index % 4 === 1 ? 'lg:mt-6' : undefined}>
                                 {renderProductCard(product, index)}
                             </div>
                         ))}

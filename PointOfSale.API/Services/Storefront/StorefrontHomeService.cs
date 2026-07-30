@@ -486,39 +486,8 @@ public class StorefrontHomeService : IStorefrontHomeService
         // Get first image as thumbnail
         var thumbnailImage = GetPrimaryProductImage(document);
 
-        // PHASE 11.5 — VARIANT-CENTRIC PRICING:
-        // Check if product has active variants
-        var activeVariants = (document.Variants ?? new List<ProductVariantDocument>())
-            .Where(v => v.IsActive)
-            .ToList();
-        var defaultVariant = activeVariants.FirstOrDefault(v => v.IsDefault) ?? activeVariants.FirstOrDefault();
-        
-        decimal effectivePrice;
-        bool inStock;
-        int stockQuantity;
-        
-        if (activeVariants.Count > 0 && defaultVariant != null)
-        {
-            // VARIANT SOURCE OF TRUTH: Use default variant's effective price
-            effectivePrice = defaultVariant.EffectivePrice;
-            
-            // InStock if ANY active variant has stock
-            inStock = activeVariants.Any(v => v.TotalStock > 0);
-            
-            // Total stock across all variants
-            stockQuantity = (int)activeVariants.Sum(v => v.TotalStock);
-        }
-        else
-        {
-            // LEGACY FALLBACK: Use product-level price (for products without variants)
-            // Use EffectivePrice computed property which handles null OnlinePrice correctly
-            effectivePrice = document.StorefrontEffectivePrice;
-            inStock = document.InStock;
-            stockQuantity = document.StockQuantity;
-        }
-        
-        // Product is available only if active, visible, AND has a valid price > 0
-        var isAvailable = document.IsActive && document.IsOnlineVisible && effectivePrice > 0;
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(document);
+        var effectivePrice = purchasability.Price;
 
         return new ProductListItemDto
         {
@@ -538,9 +507,16 @@ public class StorefrontHomeService : IStorefrontHomeService
             ProductTemplate = document.ProductTemplate,
             StorefrontLayout = document.ProductTemplate,
             IsFeatured = document.IsFeatured,
-            IsAvailable = isAvailable,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
+            Availability = StorefrontAvailabilityPresentationMapper.Build(
+                purchasability.IsAvailable,
+                purchasability.InStock,
+                purchasability.StockQuantity,
+                purchasability.RequiresVariantSelection,
+                purchasability.CanPurchase,
+                purchasability.UnavailableReason),
+            IsAvailable = purchasability.IsAvailable,
+            InStock = purchasability.InStock,
+            StockQuantity = purchasability.StockQuantity,
             // PHASE: Promotions Engine - Badge Display Fields
             HasActivePromotion = document.HasActivePromotion,
             PromotionBadge = document.PromotionBadge,
@@ -602,25 +578,6 @@ public class StorefrontHomeService : IStorefrontHomeService
             return [];
         }
 
-        var products = await _dbContext.Products
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Include(product => product.Category)
-            .Include(product => product.Media)
-            .Include(product => product.WarehouseStocks)
-            .Include(product => product.Variants)
-                .ThenInclude(variant => variant.Media)
-            .Include(product => product.Variants)
-                .ThenInclude(variant => variant.Stocks)
-            .Where(product => product.TenantId == tenantId)
-            .Where(product => requestedIds.Contains(product.Id))
-            .ToListAsync(cancellationToken);
-
-        var lineage = await CategoryLineageAuthority.LoadTenantSnapshotAsync(
-            _dbContext,
-            tenantId,
-            cancellationToken);
-
         var affiliateEnabledProductIds = await _dbContext.AffiliateProductPolicies
             .AsNoTracking()
             .IgnoreQueryFilters()
@@ -630,69 +587,33 @@ public class StorefrontHomeService : IStorefrontHomeService
             .Select(policy => EF.Property<Guid>(policy, "ProductId"))
             .ToListAsync(cancellationToken);
         var affiliateEnabled = affiliateEnabledProductIds.ToHashSet();
-
-        var activePromotions = await _dbContext.Promotions
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(promotion => promotion.TenantId == tenantId)
-            .Where(promotion => !promotion.IsDeleted && promotion.IsActive)
-            .ToListAsync(cancellationToken);
-        activePromotions = activePromotions
-            .Where(promotion => promotion.IsValid())
-            .ToList();
-
-        var currentVariantStocks = await ProductVariantInventoryLineageAuthority.FilterCurrentInventoryStockOwnersAsync(
-            _dbContext,
-            tenantId,
-            products.SelectMany(product => product.Variants)
-                .SelectMany(variant => variant.Stocks)
-                .ToList(),
-            cancellationToken);
-        var currentStockIds = currentVariantStocks
-            .Select(stock => stock.Id)
-            .ToHashSet();
-
-        var byId = products.ToDictionary(product => product.Id);
         var recomposed = new List<ProductListItemDto>(projectedCards.Count);
 
-        foreach (var requestedId in projectedCards.Select(card => card.Id))
+        foreach (var projectedCard in projectedCards)
         {
-            if (!byId.TryGetValue(requestedId, out var product))
-            {
-                continue;
-            }
-
-            if (!IsProductHomepageVisible(product, lineage))
-            {
-                continue;
-            }
-
-            var isAffiliateEnabled = affiliateEnabled.Contains(product.Id);
+            var isAffiliateEnabled = affiliateEnabled.Contains(projectedCard.Id);
             if (affiliateModeOnly && !isAffiliateEnabled)
             {
                 continue;
             }
 
-            var publicVariants = product.Variants
-                .Where(variant => ProductVariantLifecycleAuthority.IsPubliclyVisibleLineage(
-                    product,
-                    variant,
-                    tenantId))
-                .OrderByDescending(variant => variant.IsDefault)
-                .ThenBy(variant => variant.SortOrder)
-                .ToList();
+            var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                _dbContext,
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = projectedCard.Id,
+                    IsAffiliateEnabled = isAffiliateEnabled
+                },
+                tenantId,
+                cancellationToken);
 
-            if (product.HasVariants && publicVariants.Count == 0)
+            if (product is not { IsActive: true, IsOnlineVisible: true })
             {
                 continue;
             }
 
-            recomposed.Add(MapSqlProductToListItemDto(
-                product,
-                publicVariants,
-                currentStockIds,
-                activePromotions,
-                isAffiliateEnabled));
+            recomposed.Add(MapToListItemDto(product));
         }
 
         if (recomposed.Count != projectedCards.Count)
@@ -776,120 +697,6 @@ public class StorefrontHomeService : IStorefrontHomeService
         }
 
         return recomposed;
-    }
-
-    private static bool IsProductHomepageVisible(Product product, CategoryLineageSnapshot lineage)
-    {
-        return !product.IsDeleted &&
-               product.IsActive &&
-               product.IsOnlineVisible &&
-               product.PublishStatus == PublishStatus.Published &&
-               product.CategoryId != Guid.Empty &&
-               lineage.IsLiveInLineage(product.CategoryId);
-    }
-
-    private static ProductListItemDto MapSqlProductToListItemDto(
-        Product product,
-        IReadOnlyList<ProductVariant> publicVariants,
-        ISet<Guid> currentStockIds,
-        IReadOnlyList<Promotion> activePromotions,
-        bool isAffiliateEnabled)
-    {
-        var defaultVariant = publicVariants.FirstOrDefault();
-        var price = defaultVariant?.EffectiveOnlinePrice
-                    ?? (product.HasVariants
-                        ? 0m
-                        : product.OnlinePrice.GetValueOrDefault() > 0
-                            ? product.OnlinePrice!.Value
-                            : product.SalePrice);
-        var stockQuantity = ResolveSqlStockQuantity(product, publicVariants, currentStockIds);
-        var inStock = !product.TrackStock || product.AllowBackorder || stockQuantity > 0;
-        var winningPromotion = activePromotions
-            .Where(promotion => promotion.AppliesToProduct(product.Id, product.CategoryId))
-            .OrderByDescending(promotion => promotion.Priority)
-            .ThenByDescending(promotion => promotion.DiscountValue)
-            .FirstOrDefault();
-
-        return new ProductListItemDto
-        {
-            Id = product.Id,
-            Name = product.Name,
-            NameAr = product.NameAr,
-            Price = price,
-            Pricing = StorefrontPricingPresentationMapper.Build(
-                price,
-                winningPromotion != null,
-                winningPromotion == null ? null : BuildSqlPromotionBadge(winningPromotion),
-                winningPromotion?.DiscountType.ToString(),
-                winningPromotion?.DiscountValue),
-            CategoryName = product.Category?.Name,
-            Slug = product.Slug,
-            ThumbnailImage = ResolveSqlPrimaryImage(product, defaultVariant),
-            ProductTemplate = product.ProductTemplate,
-            StorefrontLayout = product.ProductTemplate,
-            IsFeatured = product.IsFeatured,
-            IsAvailable = price > 0 && inStock,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
-            HasActivePromotion = winningPromotion != null,
-            PromotionBadge = winningPromotion == null ? null : BuildSqlPromotionBadge(winningPromotion),
-            PromotionDiscountType = winningPromotion?.DiscountType.ToString(),
-            PromotionDiscountValue = winningPromotion?.DiscountValue,
-            IsAffiliateEnabled = isAffiliateEnabled
-        };
-    }
-
-    private static int ResolveSqlStockQuantity(
-        Product product,
-        IReadOnlyList<ProductVariant> publicVariants,
-        ISet<Guid> currentStockIds)
-    {
-        var quantity = publicVariants.Count > 0
-            ? publicVariants.Sum(variant => variant.Stocks
-                .Where(stock => currentStockIds.Contains(stock.Id))
-                .Sum(stock => stock.AvailableQuantity))
-            : product.WarehouseStocks
-                .Where(stock => !stock.IsDeleted)
-                .Sum(stock => stock.AvailableQuantity);
-
-        return (int)Math.Max(0, Math.Floor(quantity));
-    }
-
-    private static string? ResolveSqlPrimaryImage(Product product, ProductVariant? defaultVariant)
-    {
-        if (!string.IsNullOrWhiteSpace(defaultVariant?.Media?.Url))
-        {
-            return defaultVariant.Media.Url;
-        }
-
-        if (!string.IsNullOrWhiteSpace(defaultVariant?.ImageUrl))
-        {
-            return defaultVariant.ImageUrl;
-        }
-
-        var mediaUrl = product.Media
-            .Where(media => string.Equals(media.MediaType, "image", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(media => media.Position)
-            .Select(media => media.Url)
-            .FirstOrDefault(url => !string.IsNullOrWhiteSpace(url));
-
-        if (!string.IsNullOrWhiteSpace(mediaUrl))
-        {
-            return mediaUrl;
-        }
-
-        return string.IsNullOrWhiteSpace(product.Images)
-            ? null
-            : product.Images
-                .Split([',', ';', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .FirstOrDefault();
-    }
-
-    private static string BuildSqlPromotionBadge(Promotion promotion)
-    {
-        return promotion.DiscountType == DiscountType.Percentage
-            ? $"{promotion.DiscountValue:0.##}% OFF"
-            : "SALE";
     }
 
     #endregion

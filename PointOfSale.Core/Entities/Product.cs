@@ -50,19 +50,20 @@ public class Product : BaseEntity, ITenantOwned, IProjectionVersioned
     public Guid CategoryId { get; set; }
     
     /// <summary>
-    /// Purchase/cost price
+    /// Legacy compatibility mirror only. Simple-product purchase authority is the
+    /// default ProductUnit.PurchasePrice; variant-product cost authority is ProductVariant.CostPrice.
     /// </summary>
     public decimal PurchasePrice { get; set; }
     
     /// <summary>
-    /// Sale price (can be tax-inclusive or exclusive based on PriceIncludesTax)
-    /// Used for POS system.
+    /// Legacy compatibility mirror only. Simple-product selling authority is the
+    /// default ProductUnit.SellingPrice; variant-product selling authority is ProductVariant.Price.
     /// </summary>
     public decimal SalePrice { get; set; }
     
     /// <summary>
-    /// Online/Storefront price for e-commerce display.
-    /// If null or 0, falls back to SalePrice.
+    /// Legacy compatibility mirror only. Variant storefront authority is ProductVariant.OnlinePrice,
+    /// falling back to ProductVariant.Price. Simple products use the default ProductUnit selling price.
     /// </summary>
     public decimal? OnlinePrice { get; set; }
     
@@ -208,6 +209,12 @@ public class Product : BaseEntity, ITenantOwned, IProjectionVersioned
     /// Incremented by the DbContext whenever this product aggregate changes.
     /// </summary>
     public long ProjectionMutationVersion { get; private set; }
+
+    /// <summary>
+    /// PostgreSQL xmin-backed optimistic concurrency token for Product authoring mutations.
+    /// This is the business write token; ProjectionMutationVersion remains projection sequencing.
+    /// </summary>
+    public uint RowVersion { get; set; }
     
     /// <summary>
     /// Advances the projection mutation version. Used by the persistence pipeline only.

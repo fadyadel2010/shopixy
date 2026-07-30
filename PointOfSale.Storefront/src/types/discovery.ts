@@ -11,6 +11,8 @@
  * - All facets are derived from Elasticsearch aggregations
  */
 
+import type { ProductAvailabilityPresentationDto, ProductPricingPresentationDto } from './product';
+
 /**
  * Sort mode options for product discovery.
  */
@@ -108,12 +110,12 @@ export interface ProductDiscoveryItemDto {
      * Backend-composed pricing presentation.
      * Storefront may format these values, but must not calculate discounts.
      */
-    pricing: {
-        currentPrice: number;
-        compareAtPrice?: number | null;
-        discountedPrice?: number | null;
-        discountBadge?: string | null;
-    };
+    pricing: ProductPricingPresentationDto;
+    /**
+     * Backend-composed availability and purchasability presentation.
+     * Storefront may render these values, but must not calculate purchase authority.
+     */
+    availability?: ProductAvailabilityPresentationDto;
     /**
      * Display text for price (e.g., "Multiple options" or "متعدد الاختيارات")
      * 

@@ -181,6 +181,7 @@ public class ProductResponseDto
     public IReadOnlyList<ProductWarehouseStockResponseDto> WarehouseStocks { get; set; } = Array.Empty<ProductWarehouseStockResponseDto>();
     public IReadOnlyList<ProductUnitResponseDto> Units { get; set; } = Array.Empty<ProductUnitResponseDto>();
     public IReadOnlyList<ProductVariantReferenceDto> Variants { get; set; } = Array.Empty<ProductVariantReferenceDto>();
+    public string RowVersion { get; set; } = "0";
 }
 
 public sealed class ProductBarcodeResponseDto : ProductResponseDto

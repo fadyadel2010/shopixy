@@ -1,7 +1,8 @@
 namespace PointOfSale.Core.Entities;
 
 /// <summary>
-/// Links a product to a unit with conversion factor and pricing
+/// Links a product to a unit with conversion factor and pricing.
+/// The default ProductUnit is the canonical price authority for simple products.
 /// </summary>
 public class ProductUnit : BaseEntity
 {

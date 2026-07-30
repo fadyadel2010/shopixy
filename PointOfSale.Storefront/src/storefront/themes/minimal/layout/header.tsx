@@ -46,21 +46,23 @@ const MinimalHeader: React.FC = () => {
                         {storeName}
                     </AffiliateLink>
 
-                    <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-x-5 gap-y-2 md:flex" aria-label="Minimal navigation">
-                        {links.map((link) => (
-                            <AffiliateLink
-                                key={link.key}
-                                href={link.url}
-                                target={link.openInNewTab ? '_blank' : undefined}
-                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={`text-xs uppercase tracking-[0.14em] transition-colors lg:text-sm lg:tracking-[0.18em] ${
-                                    isActive(link.url) ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
-                                }`}
-                            >
-                                {link.label}
-                            </AffiliateLink>
-                        ))}
-                    </nav>
+                    {links.length > 0 ? (
+                        <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-x-5 gap-y-2 md:flex" aria-label="Minimal navigation">
+                            {links.map((link) => (
+                                <AffiliateLink
+                                    key={link.key}
+                                    href={link.url}
+                                    target={link.openInNewTab ? '_blank' : undefined}
+                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                    className={`text-xs uppercase tracking-[0.14em] transition-colors lg:text-sm lg:tracking-[0.18em] ${
+                                        isActive(link.url) ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
+                                    }`}
+                                >
+                                    {link.label}
+                                </AffiliateLink>
+                            ))}
+                        </nav>
+                    ) : null}
 
                     <div className="flex shrink-0 items-center gap-1">
                         <LanguageSwitcher variant="text" size="sm" className="hidden text-slate-500 hover:text-slate-900 md:flex" />

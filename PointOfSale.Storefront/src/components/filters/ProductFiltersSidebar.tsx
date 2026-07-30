@@ -85,6 +85,30 @@ const filterPanelStyles = {
         content: 'px-3',
         count: 'rounded-sm bg-primary px-2 py-0.5 font-mono text-xs font-bold text-white',
     },
+    alizon: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-md border border-muted/25 bg-background shadow-sm ring-1 ring-muted/5',
+        header: 'border-b border-muted/20 px-3 py-3',
+        title: 'text-xs font-bold uppercase tracking-[0.14em] text-text',
+        content: 'px-3',
+        count: 'rounded-sm bg-primary px-2 py-0.5 text-xs font-bold text-white',
+    },
+    seven: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden border-b-2 border-text bg-background shadow-sm',
+        header: 'border-b-2 border-text px-3 py-3',
+        title: 'text-xs font-black uppercase tracking-[0.24em] text-text',
+        content: 'px-3',
+        count: 'bg-text px-2 py-0.5 text-xs font-black text-background',
+    },
+    sharp: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden rounded-md border border-muted/20 bg-background shadow-[0_4px_16px_rgba(1,52,35,0.04)]',
+        header: 'border-b border-muted/20 px-3 py-3',
+        title: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        content: 'px-3',
+        count: 'rounded-sm bg-primary px-2 py-0.5 text-[10px] font-semibold text-white',
+    },
     default: {
         aside: 'w-64 flex-shrink-0',
         panel: 'sticky top-6 overflow-hidden rounded-xl bg-surface shadow-sm',
@@ -471,6 +495,9 @@ export const MobileFilterButton: React.FC<FilterButtonProps> = ({
         phoenix: 'border border-black/10 font-black uppercase tracking-[0.16em] text-text hover:border-primary/50',
         hype: 'rounded-lg border border-muted/20 text-xs font-bold uppercase tracking-[0.1em] text-text hover:border-primary/50',
         electronics: 'rounded-md border border-muted/25 font-mono text-xs font-bold uppercase tracking-[0.08em] text-text hover:border-primary/50',
+        alizon: 'rounded-md border border-muted/25 text-xs font-bold uppercase tracking-[0.14em] text-text hover:border-primary/50',
+        seven: 'border-2 border-text bg-background font-black uppercase tracking-[0.08em] text-text hover:bg-text hover:text-background',
+        sharp: 'rounded-md border border-muted/25 text-xs font-bold uppercase tracking-[0.2em] text-text hover:border-primary/50',
         default: 'rounded-lg border border-muted/20 text-text hover:bg-muted/10',
     }[theme];
 

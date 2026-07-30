@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
+using PointOfSale.Core.Pricing;
 using MarketplaceEvents = PointOfSale.Core.Events.Marketplace;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
@@ -522,6 +523,7 @@ public sealed class ProjectionFailureCompensationService : IProjectionFailureCom
     {
         var product = await _db.Products
             .IgnoreQueryFilters()
+            .Include(candidate => candidate.ProductUnits)
             .FirstOrDefaultAsync(candidate => !candidate.IsDeleted && candidate.Id == aggregateId, cancellationToken);
 
         if (product == null)
@@ -530,6 +532,9 @@ public sealed class ProjectionFailureCompensationService : IProjectionFailureCom
         }
 
         var existingPayload = TryDeserializeExistingPayload<MarketplaceEvents.ProductUpdatedEvent>(message);
+        var defaultUnit = product.ProductUnits
+            .FirstOrDefault(unit => !unit.IsDeleted && unit.IsDefault)
+            ?? product.ProductUnits.FirstOrDefault(unit => !unit.IsDeleted);
         var @event = new MarketplaceEvents.ProductUpdatedEvent
         {
             EventId = message.EventId,
@@ -543,8 +548,8 @@ public sealed class ProjectionFailureCompensationService : IProjectionFailureCom
             Name = product.Name,
             Sku = product.SKU,
             Slug = product.Slug,
-            SalePrice = product.SalePrice,
-            OnlinePrice = product.OnlinePrice,
+            SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(defaultUnit),
+            OnlinePrice = null,
             CategoryId = product.CategoryId,
             IsOnlineVisible = product.IsOnlineVisible,
             HasVariants = product.HasVariants

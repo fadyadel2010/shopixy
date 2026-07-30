@@ -49,6 +49,7 @@ public static class MongoDbServiceCollectionExtensions
 
         // Register repositories as scoped (following EF patterns)
         services.AddScoped<IProductReadRepository, ProductReadRepository>();
+        services.AddScoped<IStorefrontProductProjectionAdmissionPolicy, StorefrontProductProjectionAdmissionPolicy>();
         services.AddScoped<IStorefrontProductProjectionMutationBoundary, StorefrontProductProjectionMutationBoundary>();
         services.AddScoped<IProductSqlAuthorityProjectionWriter, ProductSqlAuthorityProjectionWriter>();
         services.AddScoped<ICategoryReadRepository, CategoryReadRepository>();

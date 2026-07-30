@@ -169,8 +169,8 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
     /// Maps ProductCreatedEvent to ProductDocument for MongoDB storage.
     /// This is a simple mapping - no business logic here.
     /// 
-    /// CRITICAL: OnlinePrice is the source of truth for storefront pricing.
-    /// If OnlinePrice is null/0, falls back to SalePrice.
+    /// CRITICAL: DefaultUnit.SalePrice is the source of truth for simple storefront pricing.
+    /// Product price fields are event compatibility mirrors.
     /// </summary>
     private static ProductDocument MapToDocument(ProductCreatedEvent @event)
     {
@@ -208,8 +208,8 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
             NameAr = @event.NameAr,
             SKU = @event.SKU,
             Barcode = @event.Barcode,
-            Price = @event.SalePrice, // POS price (fallback)
-            OnlinePrice = @event.OnlinePrice, // Storefront price (source of truth)
+            Price = defaultUnit?.SalePrice ?? 0m,
+            OnlinePrice = null,
             PurchasePrice = @event.PurchasePrice,
             CategoryId = @event.CategoryId,
             CategoryName = @event.CategoryName,

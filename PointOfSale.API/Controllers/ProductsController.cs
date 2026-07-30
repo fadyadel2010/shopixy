@@ -1,8 +1,11 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using System.Text.Json;
+using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Catalog;
+using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.Inventory;
 using PointOfSale.Core.Entities;
@@ -11,7 +14,10 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Marketplace;
+using PointOfSale.Core.Interfaces.ProductAuthoring;
+using PointOfSale.Core.Application.ProductAuthoring;
 using PointOfSale.Core.Pagination;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.API.DTOs;
@@ -24,6 +30,12 @@ namespace PointOfSale.API.Controllers;
 [Authorize]
 public class ProductsController : ControllerBase
 {
+    private const string IdempotencyKeyHeader = "Idempotency-Key";
+    private const string RequestIdHeader = "X-Request-Id";
+    private const string ProductStockOperation = "PRODUCT_STOCK";
+    private const string ProductLegacyMultiUnitMigrationOperation = "PRODUCT_LEGACY_MULTI_UNIT";
+    private const string ProductLegacyStockSynchronizationOperation = "PRODUCT_LEGACY_STOCK_SYNC";
+
     private readonly ApplicationDbContext _context;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<ProductsController> _logger;
@@ -33,6 +45,10 @@ public class ProductsController : ControllerBase
     private readonly PointOfSale.API.Services.IProductVariantService _productVariantService;
     private readonly IEventPublisher _eventPublisher;
     private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
+    private readonly IProductAuthoringOrchestrator _productAuthoringOrchestrator;
+    private readonly IProductAuthoringCommandMapper _productAuthoringCommandMapper;
+    private readonly IProductAuthoringReconstructionService _productAuthoringReconstructionService;
+    private readonly IProductMutationIdempotencyService _productMutationIdempotency;
 
     public ProductsController(
         ApplicationDbContext context,
@@ -43,7 +59,11 @@ public class ProductsController : ControllerBase
         PointOfSale.API.Services.Audit.IAuditService auditService,
         PointOfSale.API.Services.IProductVariantService productVariantService,
         IEventPublisher eventPublisher,
-        IMarketplaceEventOutboxService marketplaceEventOutbox)
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
+        IProductAuthoringOrchestrator productAuthoringOrchestrator,
+        IProductAuthoringCommandMapper productAuthoringCommandMapper,
+        IProductAuthoringReconstructionService productAuthoringReconstructionService,
+        IProductMutationIdempotencyService productMutationIdempotency)
     {
         _context = context;
         _tenantContext = tenantContext;
@@ -54,6 +74,10 @@ public class ProductsController : ControllerBase
         _productVariantService = productVariantService;
         _eventPublisher = eventPublisher;
         _marketplaceEventOutbox = marketplaceEventOutbox;
+        _productAuthoringOrchestrator = productAuthoringOrchestrator;
+        _productAuthoringCommandMapper = productAuthoringCommandMapper;
+        _productAuthoringReconstructionService = productAuthoringReconstructionService;
+        _productMutationIdempotency = productMutationIdempotency;
     }
 
     /// <summary>
@@ -264,215 +288,25 @@ public class ProductsController : ControllerBase
     public async Task<ActionResult<ProductResponseDto>> CreateProduct(CreateProductRequest request)
     {
         var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
-        var productId = Guid.NewGuid();
-
-        // SECURITY: Prevent Guid.Empty CategoryId to avoid category-scoped coupon bypass
-        if (request.CategoryId == Guid.Empty)
+        var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+        if (idempotencyPrecondition is not null)
         {
-            return BadRequest(new { message = "CategoryId cannot be empty. A valid category must be assigned." });
+            return idempotencyPrecondition;
         }
 
-        if (await CategoryLineageAuthority.RequireLiveCategoryAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.CategoryId,
-                cancellationToken) == null)
+        var authoringCommand = _productAuthoringCommandMapper.FromCreateRequest(
+            ProductAuthoringOperation.Create,
+            productId: null,
+            request,
+            request.Variants);
+        var result = await _productAuthoringOrchestrator.AuthorAsync(authoringCommand, cancellationToken);
+        if (result.Status != ProductAuthoringStatus.Accepted || result.ProductId is null)
         {
-            return BadRequest(new { message = "CategoryId must reference a live category with a valid SQL parent lineage." });
+            return ToProductAuthoringActionResult(result);
         }
 
-        if (!request.HasVariants &&
-            await ProductVariantCloneImportAuthority.IsBarcodeOwnedByAnotherSemanticEntityAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.Barcode,
-                productId,
-                Guid.Empty,
-                cancellationToken))
-        {
-            return BadRequest(new
-            {
-                message = "Barcode already belongs to another live product or variant.",
-                field = "barcode",
-                error = "VariantSemanticBarcodeOwnershipConflict"
-            });
-        }
-
-        var resolvedSimpleSku = request.HasVariants
-            ? null
-            : await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.SKU,
-                request.Barcode,
-                productId,
-                Guid.Empty,
-                cancellationToken);
-
-        var normalizedFeatures = NormalizeStructuredList(request.Features);
-        var normalizedFaqs = NormalizeFaqs(request.Faqs);
-        var normalizedTags = NormalizeTags(request.Tags);
-        var aiMetadataJson = SerializeJsonElement(request.AiMetadata);
-
-        // =============================================================================
-        // PHASE 11.5: SHOPIFY-GRADE PRODUCT AUTHORING - ENFORCE VARIANT RULES
-        // If HasVariants=true: Product is just a container, commerce fields must be null
-        // If HasVariants=false: Simple product, commerce fields go to default variant
-        // =============================================================================
-        var product = new Product
-        {
-            Id = productId,
-            TenantId = _tenantContext.RequiredTenantId,  // Multi-tenant: Set TenantId
-            Name = request.Name,
-            NameAr = request.NameAr,
-            // PHASE 11.5: For variant products, barcode/SKU must be null at product level
-            Barcode = request.HasVariants ? null : request.Barcode,
-            SKU = resolvedSimpleSku,
-            Description = request.Description,
-            DescriptionAr = request.DescriptionAr,
-            CategoryId = request.CategoryId,
-            // PHASE 11.5: For variant products, prices must be 0/null at product level
-            PurchasePrice = request.HasVariants ? 0 : request.PurchasePrice,
-            SalePrice = request.HasVariants ? 0 : request.SalePrice,
-            OnlinePrice = request.HasVariants ? null : request.OnlinePrice,
-            PriceIncludesTax = request.PriceIncludesTax,
-            TaxRate = request.TaxRate,
-            Unit = request.Unit ?? "Piece",  // Default to "Piece" if not provided
-            MinimumStockLevel = request.MinimumStockLevel,
-            Images = null,
-            IsActive = request.IsActive,
-            TrackStock = request.HasVariants ? false : request.TrackStock, // Variants track their own stock
-            HasVariants = request.HasVariants, // PHASE 11.5
-            // E-commerce SEO fields
-            Slug = request.Slug,
-            MetaTitle = request.MetaTitle,
-            MetaDescription = request.MetaDescription,
-            MetaKeywords = request.MetaKeywords,
-            // E-commerce shipping fields
-            Weight = request.Weight ?? 0,
-            Length = request.Length ?? 0,
-            Width = request.Width ?? 0,
-            Height = request.Height ?? 0,
-            WeightUnit = request.WeightUnit ?? "kg",
-            DimensionUnit = request.DimensionUnit ?? "cm",
-            // E-commerce publication fields
-            PublishStatus = (PublishStatus)request.PublishStatus,
-            IsOnlineVisible = request.IsOnlineVisible,
-            IsSearchable = request.IsSearchable,
-            IsFeatured = request.IsFeatured,
-            LowStockThreshold = request.LowStockThreshold ?? 10,
-            AllowBackorder = request.AllowBackorder,
-            // E-commerce additional fields
-            Brand = request.Brand,
-            Manufacturer = request.Manufacturer,
-            Tags = request.Tags,
-            TagsJson = SerializeStringList(normalizedTags),
-            FeaturesJson = SerializeStringList(normalizedFeatures),
-            FaqJson = SerializeFaqs(normalizedFaqs),
-            AiGenerated = request.AiGenerated,
-            AiMetadataJson = aiMetadataJson,
-            VideoUrl = request.VideoUrl,
-            ProductTemplate = request.ProductTemplate,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        await using var transaction = await _context.Database.BeginTransactionAsync();
-
-        _context.Products.Add(product);
-
-        // =============================================================================
-        // PHASE 11.1 / SAFE AUTO-VARIANT:
-        // Ensure the product has a default variant before the first save so the
-        // marketplace and variant projections always have a SKU-level record.
-        // =============================================================================
-        var defaultVariantSync = await _productVariantService.EnsureDefaultVariantAlignedAsync(product);
-        var defaultVariant = defaultVariantSync.Variant;
-        ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(product, defaultVariant);
-
-        await _context.SaveChangesAsync();
-
-        // =============================================================================
-        // PHASE 11.4.X: Publish projection events after the source rows are saved
-        // but before the transaction commits. This keeps POS SQL and downstream
-        // product projections atomic through the MassTransit outbox.
-        // =============================================================================
-        
-        // PRODUCTION HARDENING: Wrap transactional event version conversion to catch overflow
-        // and return deterministic error instead of 500 for partial-success condition
-        try
-        {
-            // 1. Publish ProductCreatedEvent (Outbox Pattern: message saved in same transaction)
-            // OnlinePrice is the source of truth for storefront pricing
-            var productCreatedEvent = new ProductCreatedEvent
-            {
-                TenantId = _tenantContext.RequiredTenantId,
-                EventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion),
-                ProductId = product.Id,
-                Name = product.Name,
-                NameAr = product.NameAr,
-                SKU = product.SKU,
-                Barcode = product.Barcode,
-                SalePrice = product.SalePrice, // POS price (fallback)
-                OnlinePrice = product.OnlinePrice, // Storefront price (source of truth)
-                PurchasePrice = product.PurchasePrice,
-                CategoryId = product.CategoryId,
-                // CategoryName unfortunately is not loaded, but can be skipped or loaded if critical
-                Brand = product.Brand,
-                Description = product.Description,
-                DescriptionAr = product.DescriptionAr,
-                MetaTitle = product.MetaTitle,
-                MetaDescription = product.MetaDescription,
-                Tags = normalizedTags,
-                Features = normalizedFeatures,
-                Faqs = normalizedFaqs.Select(MapFaqEventData).ToList(),
-                AiGenerated = product.AiGenerated,
-                AiMetadataJson = product.AiMetadataJson,
-                Images = null,
-                IsOnlineVisible = product.IsOnlineVisible,
-                IsSearchable = product.IsSearchable,
-                IsFeatured = product.IsFeatured,
-                Slug = product.Slug,
-                ProductTemplate = product.ProductTemplate,
-                // Unit data is optional - for POS multi-unit support
-                DefaultUnit = null,
-                Units = new List<ProductUnitData>(),
-                // PHASE 11.6: HasVariants controls cart variant enforcement
-                HasVariants = product.HasVariants
-            };
-            await _eventPublisher.PublishAsync(productCreatedEvent);
-            
-            // 2. Publish ProductVariantCreatedEvent AFTER product event
-            // This ensures ProductCreatedEventConsumer creates ProductDocument first
-            await _productVariantService.PublishVariantCreatedEventAsync(defaultVariant, product);
-
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            // PRODUCTION HARDENING: Product and outbox are in the same transaction;
-            // returning here rolls everything back instead of creating partial truth.
-            _logger.LogError(
-                ex,
-                "Product creation rolled back because event version conversion failed | ProductId: {ProductId} | TenantId: {TenantId} | ProjectionMutationVersion: {ProjectionMutationVersion} | Error: {ErrorMessage}",
-                product.Id,
-                _tenantContext.RequiredTenantId,
-                product.ProjectionMutationVersion,
-                ex.Message);
-
-            return Conflict(new
-            {
-                message = "Product creation was rolled back because event publishing failed due to version overflow. Manual intervention required.",
-                productId = product.Id,
-                projectionMutationVersion = product.ProjectionMutationVersion,
-                error = "EventVersionOverflow"
-            });
-        }
-
-        await _auditService.LogCreate("Product", product.Id.ToString(), $"Created product {product.Name}", product, product.Id.ToString());
-
-        var createdProduct = await LoadProductForResponseAsync(product.Id);
-        return CreatedAtAction(nameof(GetProduct), new { id = product.Id }, createdProduct!.ToResponseDto());
+        var createdProduct = await LoadProductForResponseAsync(result.ProductId.Value);
+        return CreatedAtAction(nameof(GetProduct), new { id = result.ProductId.Value }, createdProduct!.ToResponseDto());
     }
 
 
@@ -484,20 +318,16 @@ public class ProductsController : ControllerBase
     public async Task<ActionResult<ProductResponseDto>> UpdateProduct(Guid id, UpdateProductRequest request)
     {
         var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
-
-        // SECURITY: Prevent Guid.Empty CategoryId to avoid category-scoped coupon bypass
-        if (request.CategoryId == Guid.Empty)
+        var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+        if (idempotencyPrecondition is not null)
         {
-            return BadRequest(new { message = "CategoryId cannot be empty. A valid category must be assigned." });
+            return idempotencyPrecondition;
         }
 
-        if (await CategoryLineageAuthority.RequireLiveCategoryAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.CategoryId,
-                cancellationToken) == null)
+        var precondition = RequireExpectedVersion();
+        if (precondition is not null)
         {
-            return BadRequest(new { message = "CategoryId must reference a live category with a valid SQL parent lineage." });
+            return precondition;
         }
 
         _logger.LogInformation(
@@ -507,305 +337,25 @@ public class ProductsController : ControllerBase
             request.ProductTemplate,
             request.IsOnlineVisible);
 
-        var product = await _context.Products.FindAsync(id);
-        if (product == null)
+        var authoringCommand = _productAuthoringCommandMapper.FromUpdateRequest(
+            ProductAuthoringOperation.Update,
+            id,
+            request,
+            request.Variants);
+        var result = await _productAuthoringOrchestrator.AuthorAsync(authoringCommand, cancellationToken);
+        if (result.Status != ProductAuthoringStatus.Accepted || result.ProductId is null)
         {
-            return NotFound();
+            return ToProductAuthoringActionResult(result);
         }
 
-        var currentDefaultVariantId = request.HasVariants
-            ? Guid.Empty
-            : await _context.ProductVariants
-                .WhereCurrentSemanticOwner()
-                .Where(variant =>
-                    variant.TenantId == _tenantContext.RequiredTenantId &&
-                    variant.ProductId == id &&
-                    variant.IsDefault)
-                .Select(variant => variant.Id)
-                .FirstOrDefaultAsync(cancellationToken);
+        var responseProduct = await LoadProductForResponseAsync(result.ProductId.Value);
 
-        if (!request.HasVariants &&
-            await ProductVariantCloneImportAuthority.IsBarcodeOwnedByAnotherSemanticEntityAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.Barcode,
-                id,
-                currentDefaultVariantId,
-                cancellationToken))
-        {
-            return BadRequest(new
-            {
-                message = "Barcode already belongs to another live product or variant.",
-                field = "barcode",
-                error = "VariantSemanticBarcodeOwnershipConflict"
-            });
-        }
-
-        var resolvedSimpleSku = request.HasVariants
-            ? null
-            : await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
-                _context,
-                _tenantContext.RequiredTenantId,
-                request.SKU,
-                request.Barcode,
-                id,
-                currentDefaultVariantId,
-                cancellationToken);
-
-        var normalizedFeatures = NormalizeStructuredList(request.Features);
-        var normalizedFaqs = NormalizeFaqs(request.Faqs);
-        var normalizedTags = NormalizeTags(request.Tags);
-        var aiMetadataJson = SerializeJsonElement(request.AiMetadata);
-
-        // Clone current state for audit
-        var beforeState = new { 
-             product.Name, product.SalePrice, product.PurchasePrice, product.Barcode, product.SKU, product.CategoryId 
-        };
-        var wasArchivedBeforeUpdate = !product.IsActive || product.PublishStatus == PublishStatus.Archived;
-        var previousPublishStatus = product.PublishStatus;
-        var previousIsOnlineVisible = product.IsOnlineVisible;
-        await using var transaction = await _context.Database.BeginTransactionAsync();
-
-        // =============================================================================
-        // PHASE 11.5: SHOPIFY-GRADE PRODUCT AUTHORING - ENFORCE VARIANT RULES
-        // If HasVariants=true: Product is just a container, commerce fields must be null
-        // If HasVariants=false: Simple product, commerce fields go to default variant
-        // =============================================================================
-        
-        // Update product properties
-        product.Name = request.Name;
-        product.NameAr = request.NameAr;
-        
-        // PHASE 11.5: For variant products, barcode/SKU must be null at product level
-        product.Barcode = request.HasVariants ? null : request.Barcode;
-        product.SKU = resolvedSimpleSku;
-        
-        product.Description = request.Description;
-        product.DescriptionAr = request.DescriptionAr;
-        product.CategoryId = request.CategoryId;
-        
-        // PHASE 11.5: For variant products, prices must be 0/null at product level
-        product.PurchasePrice = request.HasVariants ? 0 : request.PurchasePrice;
-        product.SalePrice = request.HasVariants ? 0 : request.SalePrice;
-        product.OnlinePrice = request.HasVariants ? null : request.OnlinePrice;
-        
-        product.PriceIncludesTax = request.PriceIncludesTax;
-        product.TaxRate = request.TaxRate;
-        product.Unit = request.Unit ?? "Piece";
-        product.MinimumStockLevel = request.MinimumStockLevel;
-        product.Images = null;
-        product.IsActive = request.IsActive;
-        product.TrackStock = request.HasVariants ? false : request.TrackStock; // Variants track their own stock
-        product.HasVariants = request.HasVariants; // PHASE 11.5
-        
-        // E-commerce SEO fields
-        product.Slug = request.Slug;
-        product.MetaTitle = request.MetaTitle;
-        product.MetaDescription = request.MetaDescription;
-        product.MetaKeywords = request.MetaKeywords;
-        // E-commerce shipping fields
-        product.Weight = request.Weight ?? 0;
-        product.Length = request.Length ?? 0;
-        product.Width = request.Width ?? 0;
-        product.Height = request.Height ?? 0;
-        product.WeightUnit = request.WeightUnit ?? "kg";
-        product.DimensionUnit = request.DimensionUnit ?? "cm";
-        // E-commerce publication fields
-        product.PublishStatus = (PublishStatus)request.PublishStatus;
-        product.IsOnlineVisible = request.IsOnlineVisible;
-        product.IsSearchable = request.IsSearchable;
-        product.IsFeatured = request.IsFeatured;
-        product.LowStockThreshold = request.LowStockThreshold ?? 10;
-        product.AllowBackorder = request.AllowBackorder;
-        // E-commerce additional fields
-        product.Brand = request.Brand;
-        product.Manufacturer = request.Manufacturer;
-        product.Tags = request.Tags;
-        product.TagsJson = SerializeStringList(normalizedTags);
-        product.FeaturesJson = SerializeStringList(normalizedFeatures);
-        product.FaqJson = SerializeFaqs(normalizedFaqs);
-        product.AiGenerated = request.AiGenerated;
-        product.AiMetadataJson = aiMetadataJson;
-        product.VideoUrl = request.VideoUrl;
-        product.ProductTemplate = request.ProductTemplate;
-        product.UpdatedAt = DateTime.UtcNow;
-
-        DefaultVariantSyncResult? defaultVariantSync = null;
-
-        try
-        {
-            defaultVariantSync = await _productVariantService.EnsureDefaultVariantAlignedAsync(product);
-            ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(
-                product,
-                defaultVariantSync.Variant);
-
-            // PRODUCTION HARDENING: Guard version conversion for marketplace event outbox
-            int marketplaceEventVersion;
-            try
-            {
-                marketplaceEventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion + 1);
-            }
-            catch (ArgumentOutOfRangeException ex)
-            {
-                // Version overflow before save - return error to prevent partial success
-                _logger.LogError(
-                    ex,
-                    "Event version conversion failed before product update | ProductId: {ProductId} | TenantId: {TenantId} | ProjectionMutationVersion: {ProjectionMutationVersion} | Error: {ErrorMessage}",
-                    product.Id,
-                    _tenantContext.RequiredTenantId,
-                    product.ProjectionMutationVersion,
-                    ex.Message);
-
-                return Conflict(new
-                {
-                    message = "Cannot update product due to version overflow. Manual intervention required.",
-                    productId = product.Id,
-                    projectionMutationVersion = product.ProjectionMutationVersion,
-                    error = "EventVersionOverflow"
-                });
-            }
-
-            await _marketplaceEventOutbox.EnqueueAsync(new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
-            {
-                CorrelationId = HttpContext.TraceIdentifier,
-                EntityId = product.Id,
-                AggregateRootId = product.Id,
-                TenantId = _tenantContext.RequiredTenantId,
-                Version = marketplaceEventVersion,
-                ChangedFields = ["Name", "NameAr", "Description", "DescriptionAr", "Brand", "SalePrice", "OnlinePrice", "PublishStatus", "IsOnlineVisible", "Slug", "HasVariants", "Images", "ProductTemplate", "MetaTitle", "MetaDescription", "Tags", "Features", "Faqs", "AiGenerated", "AiMetadata"],
-                Name = product.Name,
-                Sku = product.SKU,
-                Slug = product.Slug,
-                SalePrice = product.SalePrice,
-                OnlinePrice = product.OnlinePrice,
-                CategoryId = product.CategoryId,
-                IsOnlineVisible = product.IsOnlineVisible,
-                HasVariants = product.HasVariants
-            });
-
-            await _context.SaveChangesAsync();
-            
-            // Publish ProductUpdatedEvent for MongoDB sync (storefront pricing)
-            // PRODUCTION HARDENING: Wrap transactional event version conversion to catch overflow
-            // and return deterministic error instead of 500 for partial-success condition
-            try
-            {
-                var productUpdatedEvent = new ProductUpdatedEvent
-                {
-                    TenantId = _tenantContext.RequiredTenantId,
-                    EventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion),
-                    ProductId = product.Id,
-                    ChangedFields = new[] { "Name", "NameAr", "Description", "DescriptionAr", "Brand", "SalePrice", "OnlinePrice", "PublishStatus", "IsOnlineVisible", "IsSearchable", "IsFeatured", "Slug", "HasVariants", "Images", "ProductTemplate", "MetaTitle", "MetaDescription", "Tags", "Features", "Faqs", "AiGenerated", "AiMetadata" },
-                    Name = product.Name,
-                    NameAr = product.NameAr,
-                    SKU = product.SKU,
-                    Barcode = product.Barcode,
-                    SalePrice = product.SalePrice,
-                    OnlinePrice = product.OnlinePrice, // Storefront price
-                    Brand = product.Brand,
-                    IsOnlineVisible = product.IsOnlineVisible,
-                    IsSearchable = product.IsSearchable,
-                    IsFeatured = product.IsFeatured,
-                    PublishStatus = product.PublishStatus.ToString(),
-                    Slug = product.Slug,
-                    ProductTemplate = product.ProductTemplate,
-                    Description = product.Description,
-                    DescriptionAr = product.DescriptionAr,
-                    MetaTitle = product.MetaTitle,
-                    MetaDescription = product.MetaDescription,
-                    Tags = normalizedTags,
-                    Features = normalizedFeatures,
-                    Faqs = normalizedFaqs.Select(MapFaqEventData).ToList(),
-                    AiGenerated = product.AiGenerated,
-                    AiMetadataJson = product.AiMetadataJson,
-                    Images = null,
-                    // PHASE 11.6: HasVariants controls cart variant enforcement
-                    HasVariants = product.HasVariants
-                };
-                await _eventPublisher.PublishAsync(productUpdatedEvent);
-
-                if (previousPublishStatus != product.PublishStatus ||
-                    previousIsOnlineVisible != product.IsOnlineVisible)
-                {
-                    await _eventPublisher.PublishAsync(new ProductPublishStatusChangedEvent
-                    {
-                        TenantId = _tenantContext.RequiredTenantId,
-                        EventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion),
-                        ProductId = product.Id,
-                        SKU = product.SKU,
-                        OldStatus = previousPublishStatus.ToString(),
-                        NewStatus = product.PublishStatus.ToString(),
-                        IsOnlineVisible = product.IsOnlineVisible
-                    });
-                }
-
-                if (defaultVariantSync.WasCreated)
-                {
-                    await _productVariantService.PublishVariantCreatedEventAsync(defaultVariantSync.Variant, product);
-                }
-                else if (defaultVariantSync.ChangedFields.Count > 0)
-                {
-                    await PublishDefaultVariantUpdatedAsync(defaultVariantSync.Variant, defaultVariantSync.ChangedFields);
-                }
-
-                var isArchivedAfterUpdate = !product.IsActive || product.PublishStatus == PublishStatus.Archived;
-                if (!wasArchivedBeforeUpdate && isArchivedAfterUpdate)
-                {
-                    await _eventPublisher.PublishAsync(new ProductArchivedEvent
-                    {
-                        TenantId = _tenantContext.RequiredTenantId,
-                        ProductId = product.Id
-                    });
-                }
-
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
-            }
-            catch (ArgumentOutOfRangeException ex)
-            {
-                // PRODUCTION HARDENING: Product and outbox are in the same transaction;
-                // returning here rolls everything back instead of creating partial truth.
-                _logger.LogError(
-                    ex,
-                    "Product update rolled back because event version conversion failed | ProductId: {ProductId} | TenantId: {TenantId} | ProjectionMutationVersion: {ProjectionMutationVersion} | Error: {ErrorMessage}",
-                    product.Id,
-                    _tenantContext.RequiredTenantId,
-                    product.ProjectionMutationVersion,
-                    ex.Message);
-
-                return Conflict(new
-                {
-                    message = "Product update was rolled back because event publishing failed due to version overflow. Manual intervention required.",
-                    productId = product.Id,
-                    projectionMutationVersion = product.ProjectionMutationVersion,
-                    error = "EventVersionOverflow"
-                });
-            }
-
-            _logger.LogInformation(
-                "UpdateProduct saved | ProductId: {ProductId} | TenantId: {TenantId} | SavedProductTemplate: {SavedProductTemplate}",
-                product.Id,
-                _tenantContext.RequiredTenantId,
-                product.ProductTemplate);
-            
-            await _auditService.LogUpdate("Product", product.Id.ToString(), $"Updated product {product.Name}", beforeState, product, product.Id.ToString());
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            if (!await ProductExists(id))
-            {
-                return NotFound();
-            }
-            throw;
-        }
-        catch (InvalidOperationException ex)
-        {
-            _logger.LogWarning(ex, "Default variant sync failed for product {ProductId}", id);
-            return Conflict(new { message = ex.Message });
-        }
-
-        var responseProduct = await LoadProductForResponseAsync(product.Id);
-        return Ok(responseProduct!.ToResponseDto());
+        _logger.LogInformation(
+            "UpdateProduct saved | ProductId: {ProductId} | TenantId: {TenantId} | SavedProductTemplate: {SavedProductTemplate}",
+            result.ProductId.Value,
+            _tenantContext.RequiredTenantId,
+            responseProduct!.ProductTemplate);
+        return Ok(responseProduct.ToResponseDto());
     }
 
 
@@ -818,7 +368,22 @@ public class ProductsController : ControllerBase
     [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> DeleteProduct(Guid id)
     {
-        var product = await _context.Products.FindAsync(id);
+        var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+        var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+        if (idempotencyPrecondition is not null)
+        {
+            return idempotencyPrecondition;
+        }
+
+        var precondition = RequireExpectedVersion();
+        if (precondition is not null)
+        {
+            return precondition;
+        }
+
+        var product = await _context.Products
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (product == null)
         {
             return NotFound(new { 
@@ -840,66 +405,15 @@ public class ProductsController : ControllerBase
             });
         }
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
-
-        var liveVariants = await _context.ProductVariants
-            .Where(variant => variant.ProductId == product.Id)
-            .ToListAsync();
-
-        product.IsDeleted = true;
-        product.IsActive = false;
-        product.IsOnlineVisible = false;
-        product.PublishStatus = PublishStatus.Archived;
-        product.UpdatedAt = DateTime.UtcNow;
-
-        foreach (var variant in liveVariants)
+        var result = await _productAuthoringOrchestrator.AuthorAsync(
+            _productAuthoringCommandMapper.FromLifecycleProduct(ProductAuthoringOperation.Remove, product),
+            cancellationToken);
+        if (result.Status != ProductAuthoringStatus.Accepted)
         {
-            variant.IsDeleted = true;
-            variant.IsActive = false;
-            variant.UpdatedAt = product.UpdatedAt;
+            return ToProductAuthoringActionResult(result);
         }
-
-        await _context.SaveChangesAsync();
-
-        await _eventPublisher.PublishAsync(new ProductDeletedEvent
-        {
-            TenantId = _tenantContext.RequiredTenantId,
-            ProductId = product.Id,
-            SKU = product.SKU
-        });
-        await _eventPublisher.PublishAsync(new ProductArchivedEvent
-        {
-            TenantId = _tenantContext.RequiredTenantId,
-            ProductId = product.Id
-        });
-
-        foreach (var variant in liveVariants)
-        {
-            var eventVersion = ProductEventVersionHelper.ToProductEventVersion(
-                variant.ProjectionMutationVersion);
-
-            await _eventPublisher.PublishAsync(new ProductVariantDeletedEvent
-            {
-                TenantId = _tenantContext.RequiredTenantId,
-                VariantId = variant.Id,
-                ProductId = product.Id,
-                SKU = variant.SKU,
-                EventVersion = eventVersion
-            });
-            await _eventPublisher.PublishAsync(new VariantDeletedEvent
-            {
-                TenantId = _tenantContext.RequiredTenantId,
-                ProductId = product.Id,
-                VariantId = variant.Id,
-                EventVersion = eventVersion
-            });
-        }
-
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
 
         _logger.LogInformation("Product deleted: {ProductId} - {ProductName}", product.Id, product.Name);
-        await _auditService.LogDelete("Product", product.Id.ToString(), $"Deleted product {product.Name}", null, product.Id.ToString());
         
         return NoContent();
     }
@@ -912,7 +426,22 @@ public class ProductsController : ControllerBase
     [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> DeactivateProduct(Guid id)
     {
-        var product = await _context.Products.FindAsync(id);
+        var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+        var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+        if (idempotencyPrecondition is not null)
+        {
+            return idempotencyPrecondition;
+        }
+
+        var precondition = RequireExpectedVersion();
+        if (precondition is not null)
+        {
+            return precondition;
+        }
+
+        var product = await _context.Products
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (product == null)
         {
             return NotFound(new { 
@@ -922,20 +451,13 @@ public class ProductsController : ControllerBase
             });
         }
 
-        await using var transaction = await _context.Database.BeginTransactionAsync();
-
-        product.IsActive = false;
-        product.UpdatedAt = DateTime.UtcNow;
-        await _context.SaveChangesAsync();
-
-        await _eventPublisher.PublishAsync(new ProductArchivedEvent
+        var result = await _productAuthoringOrchestrator.AuthorAsync(
+            _productAuthoringCommandMapper.FromLifecycleProduct(ProductAuthoringOperation.Archive, product),
+            cancellationToken);
+        if (result.Status != ProductAuthoringStatus.Accepted)
         {
-            TenantId = _tenantContext.RequiredTenantId,
-            ProductId = product.Id
-        });
-
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
+            return ToProductAuthoringActionResult(result);
+        }
 
         _logger.LogInformation("Product deactivated: {ProductId} - {ProductName}", product.Id, product.Name);
         return Ok(new { 
@@ -980,6 +502,7 @@ public class ProductsController : ControllerBase
         // Also search variant barcodes and SKUs
         var products = await _context.Products
             .Include(p => p.Category)
+            .Include(p => p.ProductUnits)
             .Include(p => p.Variants)
                 .ThenInclude(v => v.Attributes)
             .Include(p => p.Variants)
@@ -1008,8 +531,8 @@ public class ProductsController : ControllerBase
             p.NameAr,
             p.Barcode,
             p.SKU,
-            p.SalePrice,
-            p.PurchasePrice, // Added for Purchase Invoice
+            SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(ResolveDefaultProductUnit(p)),
+            PurchasePrice = CatalogPricingAuthority.ResolveSimplePurchasePrice(ResolveDefaultProductUnit(p)),
             p.TaxRate,
             p.PriceIncludesTax,
             p.Unit,
@@ -1071,6 +594,7 @@ public class ProductsController : ControllerBase
         // Get active products with their variants and stock
         var products = await _context.Products
             .Include(p => p.Category)
+            .Include(p => p.ProductUnits)
             .Include(p => p.Variants)
                 .ThenInclude(v => v.Attributes)
             .Include(p => p.Variants)
@@ -1129,6 +653,7 @@ public class ProductsController : ControllerBase
             else
             {
                 // Simple product or single default variant - show as product
+                var defaultUnit = ResolveDefaultProductUnit(p);
                 var defaultVariant = activeVariants.FirstOrDefault() ??
                     p.Variants.FirstOrDefault(ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner);
                 var warehouseStock = defaultVariant != null && warehouseId.HasValue
@@ -1145,7 +670,7 @@ public class ProductsController : ControllerBase
                     VariantLabel = (string?)null,
                     SKU = defaultVariant?.SKU ?? p.SKU,
                     Barcode = defaultVariant?.Barcode ?? p.Barcode,
-                    Price = defaultVariant?.Price ?? p.SalePrice,
+                    Price = CatalogPricingAuthority.ResolveSimpleSellingPrice(defaultUnit),
                     StockQuantity = warehouseStock,
                     Images = p.Images,
                     Attributes = defaultVariant != null 
@@ -1247,6 +772,12 @@ public class ProductsController : ControllerBase
     [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> AdjustStock(Guid id, AdjustStockRequest request)
     {
+        var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+        if (idempotencyPrecondition is not null)
+        {
+            return idempotencyPrecondition;
+        }
+
         var product = await _context.Products.FindAsync(id);
         if (product == null)
             return NotFound();
@@ -1273,6 +804,24 @@ public class ProductsController : ControllerBase
         var pendingChanges = new List<PendingProductVariantStockChange>();
 
         await using var transaction = await _context.Database.BeginTransactionAsync();
+        var claim = await TryClaimProductMutationIdempotencyAsync(
+            ProductStockOperation,
+            id,
+            new
+            {
+                productId = id,
+                request
+            },
+            "Idempotency-Key was already used for a different product stock adjustment request.",
+            "A product stock adjustment request with the same idempotency key is already being processed.",
+            HttpContext?.RequestAborted ?? CancellationToken.None);
+        if (claim.ShortCircuitResult is not null)
+        {
+            await transaction.RollbackAsync();
+            return claim.ShortCircuitResult;
+        }
+
+        var idempotencyRecord = claim.Record;
 
         try
         {
@@ -1347,6 +896,15 @@ public class ProductsController : ControllerBase
                 await PublishDefaultVariantUpdatedAsync(defaultVariantSync.Variant, defaultVariantSync.ChangedFields);
             }
 
+            _productMutationIdempotency.Complete(
+                idempotencyRecord,
+                StatusCodes.Status200OK,
+                new
+                {
+                    message = "Stock adjusted successfully",
+                    newQuantity = variantNewQuantity
+                },
+                id);
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
         }
@@ -1368,81 +926,264 @@ public class ProductsController : ControllerBase
         return Ok(new { message = "Stock adjusted successfully", newQuantity = variantNewQuantity });
     }
 
-    private async Task PublishProductUnitsChangedAsync(Product product, string[] changedFields)
+    private async Task<PointOfSale.API.DTOs.ProductUnitDto?> LoadProductUnitResponseAsync(
+        Guid productUnitId,
+        CancellationToken cancellationToken)
     {
-        var productUnits = await _context.ProductUnits
-            .Include(pu => pu.Unit)
-            .Where(pu => pu.ProductId == product.Id && !pu.IsDeleted)
-            .OrderByDescending(pu => pu.IsDefault)
-            .ThenByDescending(pu => pu.IsBaseUnit)
-            .ThenBy(pu => pu.Unit.Name)
-            .ThenBy(pu => pu.Id)
-            .ToListAsync();
-
-        var unitData = productUnits.Select(MapProductUnitData).ToList();
-        var defaultUnit = productUnits.FirstOrDefault(pu => pu.IsDefault);
-        var defaultUnitData = defaultUnit == null ? null : MapProductUnitData(defaultUnit);
-        var eventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion);
-
-        await _marketplaceEventOutbox.EnqueueAsync(new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
-        {
-            CorrelationId = HttpContext.TraceIdentifier,
-            EntityId = product.Id,
-            AggregateRootId = product.Id,
-            TenantId = _tenantContext.RequiredTenantId,
-            Version = eventVersion,
-            ChangedFields = changedFields,
-            Name = product.Name,
-            Sku = product.SKU,
-            Slug = product.Slug,
-            SalePrice = defaultUnitData?.SalePrice ?? product.SalePrice,
-            OnlinePrice = product.OnlinePrice,
-            CategoryId = product.CategoryId,
-            IsOnlineVisible = product.IsOnlineVisible,
-            HasVariants = product.HasVariants
-        });
-
-        await _eventPublisher.PublishAsync(new ProductUpdatedEvent
-        {
-            TenantId = _tenantContext.RequiredTenantId,
-            EventVersion = eventVersion,
-            ProductId = product.Id,
-            ChangedFields = changedFields,
-            SalePrice = defaultUnitData?.SalePrice ?? product.SalePrice,
-            OnlinePrice = product.OnlinePrice,
-            Name = product.Name,
-            NameAr = product.NameAr,
-            SKU = product.SKU,
-            Barcode = product.Barcode,
-            IsOnlineVisible = product.IsOnlineVisible,
-            IsSearchable = product.IsSearchable,
-            IsFeatured = product.IsFeatured,
-            Slug = product.Slug,
-            DefaultUnit = defaultUnitData,
-            Units = unitData,
-            HasVariants = product.HasVariants
-        });
-
-        _logger.LogInformation(
-            "Queued product unit projection sync | ProductId: {ProductId} | TenantId: {TenantId} | UnitCount: {UnitCount} | EventVersion: {EventVersion}",
-            product.Id,
-            _tenantContext.RequiredTenantId,
-            unitData.Count,
-            eventVersion);
+        return await _context.ProductUnits
+            .AsNoTracking()
+            .Include(productUnit => productUnit.Unit)
+            .Where(productUnit => productUnit.Id == productUnitId)
+            .Select(productUnit => new PointOfSale.API.DTOs.ProductUnitDto
+            {
+                Id = productUnit.Id,
+                ProductId = productUnit.ProductId,
+                UnitId = productUnit.UnitId,
+                UnitName = productUnit.Unit.Name,
+                UnitSymbol = productUnit.Unit.Symbol,
+                ConversionFactor = productUnit.ConversionFactor,
+                PurchasePrice = productUnit.PurchasePrice,
+                SellingPrice = productUnit.SellingPrice,
+                Barcode = productUnit.Barcode,
+                IsDefault = productUnit.IsDefault,
+                IsBaseUnit = productUnit.IsBaseUnit
+            })
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private static ProductUnitData MapProductUnitData(ProductUnit productUnit)
+    private ActionResult ToProductAuthoringActionResult(ProductAuthoringResult result)
     {
-        return new ProductUnitData
+        if (result.ValidationErrors.Any(error => error.Code == "PRODUCT_CATEGORY_REQUIRED"))
         {
-            UnitId = productUnit.UnitId,
-            Name = productUnit.Unit.Name,
-            Symbol = productUnit.Unit.Symbol,
-            SalePrice = productUnit.SellingPrice ?? 0,
-            ConversionFactor = productUnit.ConversionFactor,
-            IsBaseUnit = productUnit.IsBaseUnit
+            return BadRequest(new { message = "CategoryId cannot be empty. A valid category must be assigned." });
+        }
+
+        if (result.ValidationErrors.Any(error => error.Code == "PRODUCT_CATEGORY_NOT_LIVE"))
+        {
+            return BadRequest(new { message = "CategoryId must reference a live category with a valid SQL parent lineage." });
+        }
+
+        if (result.Status == ProductAuthoringStatus.NotFound)
+        {
+            return NotFound();
+        }
+
+        if (result.Status == ProductAuthoringStatus.ConcurrencyConflict)
+        {
+            return Conflict(new
+            {
+                message = "Product authoring concurrency conflict.",
+                status = result.Status.ToString(),
+                errors = result.ValidationErrors,
+                productId = result.ProductId,
+                mutationVersion = result.MutationVersion
+            });
+        }
+
+        return BadRequest(new
+        {
+            message = "Product authoring validation failed.",
+            status = result.Status.ToString(),
+            errors = result.ValidationErrors
+        });
+    }
+
+    private ActionResult? RequireProductMutationIdempotencyKey()
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+        var requestId = Request.Headers[RequestIdHeader].FirstOrDefault()?.Trim();
+
+        if (!string.IsNullOrWhiteSpace(idempotencyKey) &&
+            !string.IsNullOrWhiteSpace(requestId) &&
+            !string.Equals(idempotencyKey, requestId, StringComparison.Ordinal))
+        {
+            return BadRequest(new
+            {
+                message = $"{IdempotencyKeyHeader} and {RequestIdHeader} must match when both are provided.",
+                errorCode = "PRODUCT_IDEMPOTENCY_HEADER_MISMATCH"
+            });
+        }
+
+        var normalizedKey = !string.IsNullOrWhiteSpace(idempotencyKey)
+            ? idempotencyKey
+            : requestId;
+
+        if (string.IsNullOrWhiteSpace(normalizedKey))
+        {
+            return BadRequest(new
+            {
+                message = $"{IdempotencyKeyHeader} header is required for product mutation requests.",
+                errorCode = "PRODUCT_IDEMPOTENCY_KEY_REQUIRED"
+            });
+        }
+
+        if (normalizedKey.Length > 200)
+        {
+            return BadRequest(new
+            {
+                message = $"{IdempotencyKeyHeader} must not exceed 200 characters.",
+                errorCode = "PRODUCT_IDEMPOTENCY_KEY_TOO_LONG"
+            });
+        }
+
+        return null;
+    }
+
+    private string ReadProductMutationIdempotencyKey() =>
+        Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim()
+        ?? Request.Headers[RequestIdHeader].FirstOrDefault()?.Trim()
+        ?? string.Empty;
+
+    private async Task<(ProductRequestIdempotency? Record, IActionResult? ShortCircuitResult)>
+        TryClaimProductMutationIdempotencyAsync(
+            string operation,
+            Guid productId,
+            object fingerprintPayload,
+            string conflictMessage,
+            string inProgressMessage,
+            CancellationToken cancellationToken)
+    {
+        var claim = await _productMutationIdempotency.TryClaimAsync(
+            new ProductMutationIdempotencyRequest(
+                _tenantContext.RequiredTenantId,
+                _productMutationIdempotency.ScopeKey("product", ReadProductMutationIdempotencyKey()),
+                operation,
+                productId,
+                null,
+                DeterministicRequestHasher.ComputeHash(fingerprintPayload)),
+            cancellationToken);
+
+        return claim.Replay is null
+            ? (claim.Record, null)
+            : (null, BuildProductMutationReplayResponse(claim.Replay, conflictMessage, inProgressMessage));
+    }
+
+    private async Task<IActionResult> CompleteProductMutationIdempotencyAsync(
+        IDbContextTransaction transaction,
+        ProductRequestIdempotency? record,
+        IActionResult result,
+        Guid productId,
+        CancellationToken cancellationToken)
+    {
+        var snapshot = SnapshotProductMutationActionResult(result);
+        _productMutationIdempotency.Complete(
+            record,
+            snapshot.StatusCode,
+            snapshot.ResponsePayload,
+            productId);
+
+        await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+
+        return result;
+    }
+
+    private static IActionResult BuildProductMutationReplayResponse(
+        ProductMutationIdempotencyReplay replay,
+        string conflictMessage,
+        string inProgressMessage) =>
+        replay.Kind switch
+        {
+            ProductMutationIdempotencyReplayKind.Completed when replay.Record is not null =>
+                BuildStoredProductMutationResponse(replay.Record),
+            ProductMutationIdempotencyReplayKind.Conflict => new ConflictObjectResult(new
+            {
+                message = conflictMessage
+            }),
+            _ => new ConflictObjectResult(new
+            {
+                message = inProgressMessage
+            })
+        };
+
+    private static IActionResult BuildStoredProductMutationResponse(ProductRequestIdempotency record)
+    {
+        var statusCode = record.ResponseStatusCode ?? StatusCodes.Status200OK;
+
+        if (string.IsNullOrWhiteSpace(record.ResponseJson))
+        {
+            return new StatusCodeResult(statusCode);
+        }
+
+        using var document = JsonDocument.Parse(record.ResponseJson);
+        return new ObjectResult(document.RootElement.Clone())
+        {
+            StatusCode = statusCode
         };
     }
+
+    private static ProductMutationActionSnapshot SnapshotProductMutationActionResult(IActionResult result)
+    {
+        if (result is ObjectResult objectResult)
+        {
+            return new ProductMutationActionSnapshot(
+                objectResult.StatusCode ?? StatusCodes.Status200OK,
+                objectResult.Value);
+        }
+
+        if (result is StatusCodeResult statusCodeResult)
+        {
+            return new ProductMutationActionSnapshot(statusCodeResult.StatusCode, null);
+        }
+
+        return result switch
+        {
+            NoContentResult => new ProductMutationActionSnapshot(StatusCodes.Status204NoContent, null),
+            OkResult => new ProductMutationActionSnapshot(StatusCodes.Status200OK, null),
+            _ => new ProductMutationActionSnapshot(StatusCodes.Status200OK, null)
+        };
+    }
+
+    private sealed record ProductMutationActionSnapshot(
+        int StatusCode,
+        object? ResponsePayload);
+
+    private ActionResult? RequireExpectedVersion()
+    {
+        var hasIfMatch = Request.Headers.TryGetValue("If-Match", out var ifMatch) &&
+            !string.IsNullOrWhiteSpace(ifMatch.FirstOrDefault());
+        var hasExpectedVersion = Request.Headers.TryGetValue("Expected-Version", out var expectedVersion) &&
+            !string.IsNullOrWhiteSpace(expectedVersion.FirstOrDefault());
+
+        if (!hasIfMatch && !hasExpectedVersion)
+        {
+            return StatusCode(StatusCodes.Status428PreconditionRequired, new
+            {
+                errorCode = "PRODUCT_EXPECTED_VERSION_REQUIRED",
+                message = "Product mutations require the current RowVersion in If-Match or Expected-Version."
+            });
+        }
+
+        var candidate = hasIfMatch ? ifMatch.FirstOrDefault() : expectedVersion.FirstOrDefault();
+        if (!TryParseExpectedVersion(candidate, out _))
+        {
+            return BadRequest(new
+            {
+                errorCode = "PRODUCT_EXPECTED_VERSION_INVALID",
+                message = "If-Match or Expected-Version must contain the current Product RowVersion."
+            });
+        }
+
+        return null;
+    }
+
+    private static bool TryParseExpectedVersion(string? value, out long version)
+    {
+        version = 0;
+        var normalized = value?.Trim().Trim('"');
+        return long.TryParse(normalized, out version) && version >= 0 && version <= uint.MaxValue;
+    }
+
+    private static ProductAuthoringUnitRequest ToProductAuthoringUnitRequest(ProductAuthoringUnit unit) =>
+        new(
+            unit.ProductUnitId,
+            unit.UnitId,
+            unit.ConversionFactor,
+            unit.PurchasePrice,
+            unit.SellingPrice,
+            unit.Barcode,
+            unit.IsDefault,
+            unit.IsBaseUnit);
 
     private async Task PublishDefaultVariantUpdatedAsync(ProductVariant variant, IReadOnlyList<string> changedFields)
     {
@@ -1615,8 +1356,23 @@ public class ProductsController : ControllerBase
     {
         try
         {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+            if (idempotencyPrecondition is not null)
+            {
+                return idempotencyPrecondition;
+            }
+
+            var precondition = RequireExpectedVersion();
+            if (precondition is not null)
+            {
+                return precondition;
+            }
+
             var tenantId = _tenantContext.RequiredTenantId;
-            var product = await _context.Products.FindAsync(id);
+            var product = await _context.Products
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item => item.Id == id && item.TenantId == tenantId, cancellationToken);
             if (product == null)
                 return NotFound($"Product with ID {id} not found");
 
@@ -1624,7 +1380,8 @@ public class ProductsController : ControllerBase
                 .FirstOrDefaultAsync(candidate =>
                     candidate.Id == dto.UnitId &&
                     candidate.TenantId == tenantId &&
-                    candidate.IsActive);
+                    candidate.IsActive,
+                    cancellationToken);
             if (unit == null)
                 return BadRequest($"Unit with ID {dto.UnitId} is not an active unit owned by this tenant");
 
@@ -1635,7 +1392,7 @@ public class ProductsController : ControllerBase
                         dto.Barcode,
                         id,
                         Guid.Empty,
-                        HttpContext?.RequestAborted ?? CancellationToken.None))
+                        cancellationToken))
             {
                 return BadRequest(new
                 {
@@ -1645,9 +1402,10 @@ public class ProductsController : ControllerBase
                 });
             }
 
-            // Check if this unit is already configured for this product
-            var existingProductUnit = await _context.ProductUnits
-                .FirstOrDefaultAsync(pu => pu.ProductId == id && pu.UnitId == dto.UnitId);
+            var currentUnits = (await _productAuthoringReconstructionService.LoadCurrentUnitsAsync(id, cancellationToken))
+                .Select(ToProductAuthoringUnitRequest)
+                .ToList();
+            var existingProductUnit = currentUnits.FirstOrDefault(pu => pu.UnitId == dto.UnitId);
 
             if (existingProductUnit != null)
                 return BadRequest("This unit is already configured for this product");
@@ -1657,75 +1415,49 @@ public class ProductsController : ControllerBase
                 return BadRequest("Conversion factor must be greater than 0");
 
             // If this is marked as base unit, ensure no other base unit exists
-            if (dto.IsBaseUnit)
+            if (dto.IsBaseUnit && currentUnits.Any(unitItem => unitItem.IsBaseUnit))
             {
-                var existingBaseUnit = await _context.ProductUnits
-                    .FirstOrDefaultAsync(pu => pu.ProductId == id && pu.IsBaseUnit);
-
-                if (existingBaseUnit != null)
-                    return BadRequest("Product already has a base unit. Only one base unit is allowed per product.");
-
-                // Base unit must have conversion factor of 1
-                if (dto.ConversionFactor != 1)
-                    return BadRequest("Base unit must have a conversion factor of 1");
+                return BadRequest("Product already has a base unit. Only one base unit is allowed per product.");
             }
 
-            // If this is marked as default, unset other defaults
-            var productUnit = new ProductUnit
+            if (dto.IsBaseUnit && dto.ConversionFactor != 1)
             {
-                Id = Guid.NewGuid(),
-                ProductId = id,
-                UnitId = dto.UnitId,
-                ConversionFactor = dto.ConversionFactor,
-                PurchasePrice = dto.PurchasePrice,
-                SellingPrice = dto.SellingPrice,
-                Barcode = dto.Barcode,
-                IsDefault = dto.IsDefault,
-                IsBaseUnit = dto.IsBaseUnit
-            };
-
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+                return BadRequest("Base unit must have a conversion factor of 1");
+            }
 
             if (dto.IsDefault)
             {
-                var otherDefaults = await _context.ProductUnits
-                    .Where(pu => pu.ProductId == id && pu.IsDefault)
-                    .ToListAsync();
-
-                foreach (var other in otherDefaults)
-                {
-                    other.IsDefault = false;
-                }
+                currentUnits = currentUnits
+                    .Select(unitItem => unitItem with { IsDefault = false })
+                    .ToList();
             }
 
-            _context.ProductUnits.Add(productUnit);
-            product.UpdatedAt = DateTime.UtcNow;
+            var productUnitId = Guid.NewGuid();
+            currentUnits.Add(new ProductAuthoringUnitRequest(
+                productUnitId,
+                dto.UnitId,
+                dto.ConversionFactor,
+                dto.PurchasePrice,
+                dto.SellingPrice,
+                dto.Barcode,
+                dto.IsDefault,
+                dto.IsBaseUnit));
 
-            await _context.SaveChangesAsync();
-
-            await PublishProductUnitsChangedAsync(product, ["DefaultUnit", "Units"]);
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            // Load the unit for the response
-            await _context.Entry(productUnit).Reference(pu => pu.Unit).LoadAsync();
-
-            var result = new PointOfSale.API.DTOs.ProductUnitDto
+            var result = await _productAuthoringOrchestrator.AuthorAsync(
+                _productAuthoringCommandMapper.FromProductUnitsUpdate(product, currentUnits),
+                cancellationToken);
+            if (result.Status != ProductAuthoringStatus.Accepted)
             {
-                Id = productUnit.Id,
-                ProductId = productUnit.ProductId,
-                UnitId = productUnit.UnitId,
-                UnitName = productUnit.Unit.Name,
-                UnitSymbol = productUnit.Unit.Symbol,
-                ConversionFactor = productUnit.ConversionFactor,
-                PurchasePrice = productUnit.PurchasePrice,
-                SellingPrice = productUnit.SellingPrice,
-                Barcode = productUnit.Barcode,
-                IsDefault = productUnit.IsDefault,
-                IsBaseUnit = productUnit.IsBaseUnit
-            };
+                return ToProductAuthoringActionResult(result);
+            }
 
-            return CreatedAtAction(nameof(GetProductUnits), new { id }, result);
+            var response = await LoadProductUnitResponseAsync(productUnitId, cancellationToken);
+            if (response is null)
+            {
+                return StatusCode(500, "Product unit was not available after authoring commit");
+            }
+
+            return CreatedAtAction(nameof(GetProductUnits), new { id }, response);
         }
         catch (Exception ex)
         {
@@ -1743,15 +1475,30 @@ public class ProductsController : ControllerBase
     {
         try
         {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+            if (idempotencyPrecondition is not null)
+            {
+                return idempotencyPrecondition;
+            }
+
+            var precondition = RequireExpectedVersion();
+            if (precondition is not null)
+            {
+                return precondition;
+            }
+
             var tenantId = _tenantContext.RequiredTenantId;
             var productUnit = await _context.ProductUnits
+                .AsNoTracking()
                 .Include(pu => pu.Unit)
                 .Include(pu => pu.Product)
                 .FirstOrDefaultAsync(pu =>
                     pu.ProductId == id &&
                     pu.UnitId == unitId &&
                     pu.Product.TenantId == tenantId &&
-                    pu.Unit.TenantId == tenantId);
+                    pu.Unit.TenantId == tenantId,
+                    cancellationToken);
 
             if (productUnit == null)
                 return NotFound("Product unit configuration not found");
@@ -1766,7 +1513,7 @@ public class ProductsController : ControllerBase
                         dto.Barcode,
                         id,
                         productUnit.Id,
-                        HttpContext?.RequestAborted ?? CancellationToken.None))
+                        cancellationToken))
             {
                 return BadRequest(new
                 {
@@ -1784,49 +1531,46 @@ public class ProductsController : ControllerBase
             if (productUnit.IsBaseUnit && dto.ConversionFactor != 1)
                 return BadRequest("Base unit must have a conversion factor of 1");
 
-            await using var transaction = await _context.Database.BeginTransactionAsync();
-
-            // If changing to default, unset other defaults
-            if (dto.IsDefault && !productUnit.IsDefault)
-            {
-                var otherDefaults = await _context.ProductUnits
-                    .Where(pu => pu.ProductId == id && pu.IsDefault && pu.Id != productUnit.Id)
-                    .ToListAsync();
-
-                foreach (var other in otherDefaults)
+            var currentUnits = (await _productAuthoringReconstructionService.LoadCurrentUnitsAsync(id, cancellationToken))
+                .Select(ToProductAuthoringUnitRequest)
+                .ToList();
+            currentUnits = currentUnits
+                .Select(unitItem =>
                 {
-                    other.IsDefault = false;
-                }
+                    if (dto.IsDefault && unitItem.ProductUnitId != productUnit.Id)
+                    {
+                        return unitItem with { IsDefault = false };
+                    }
+
+                    if (unitItem.ProductUnitId == productUnit.Id)
+                    {
+                        return unitItem with
+                        {
+                            ConversionFactor = dto.ConversionFactor,
+                            PurchasePrice = dto.PurchasePrice,
+                            SellingPrice = dto.SellingPrice,
+                            Barcode = dto.Barcode,
+                            IsDefault = dto.IsDefault,
+                            IsBaseUnit = productUnit.IsBaseUnit
+                        };
+                    }
+
+                    return unitItem;
+                })
+                .ToList();
+
+            var result = await _productAuthoringOrchestrator.AuthorAsync(
+                _productAuthoringCommandMapper.FromProductUnitsUpdate(productUnit.Product, currentUnits),
+                cancellationToken);
+            if (result.Status != ProductAuthoringStatus.Accepted)
+            {
+                return ToProductAuthoringActionResult(result);
             }
 
-            productUnit.ConversionFactor = dto.ConversionFactor;
-            productUnit.PurchasePrice = dto.PurchasePrice;
-            productUnit.SellingPrice = dto.SellingPrice;
-            productUnit.Barcode = dto.Barcode;
-            productUnit.IsDefault = dto.IsDefault;
-            productUnit.Product.UpdatedAt = DateTime.UtcNow;
-
-            await _context.SaveChangesAsync();
-            await PublishProductUnitsChangedAsync(productUnit.Product, ["DefaultUnit", "Units"]);
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            var result = new PointOfSale.API.DTOs.ProductUnitDto
-            {
-                Id = productUnit.Id,
-                ProductId = productUnit.ProductId,
-                UnitId = productUnit.UnitId,
-                UnitName = productUnit.Unit.Name,
-                UnitSymbol = productUnit.Unit.Symbol,
-                ConversionFactor = productUnit.ConversionFactor,
-                PurchasePrice = productUnit.PurchasePrice,
-                SellingPrice = productUnit.SellingPrice,
-                Barcode = productUnit.Barcode,
-                IsDefault = productUnit.IsDefault,
-                IsBaseUnit = productUnit.IsBaseUnit
-            };
-
-            return Ok(result);
+            var response = await LoadProductUnitResponseAsync(productUnit.Id, cancellationToken);
+            return response is null
+                ? NotFound("Product unit configuration not found after authoring commit")
+                : Ok(response);
         }
         catch (Exception ex)
         {
@@ -1844,15 +1588,30 @@ public class ProductsController : ControllerBase
     {
         try
         {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+            var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+            if (idempotencyPrecondition is not null)
+            {
+                return idempotencyPrecondition;
+            }
+
+            var precondition = RequireExpectedVersion();
+            if (precondition is not null)
+            {
+                return precondition;
+            }
+
             var tenantId = _tenantContext.RequiredTenantId;
             var productUnit = await _context.ProductUnits
-                .Include(pu => pu.Product)
+                .AsNoTracking()
                 .Include(pu => pu.Unit)
+                .Include(pu => pu.Product)
                 .FirstOrDefaultAsync(pu =>
                     pu.ProductId == id &&
                     pu.UnitId == unitId &&
                     pu.Product.TenantId == tenantId &&
-                    pu.Unit.TenantId == tenantId);
+                    pu.Unit.TenantId == tenantId,
+                    cancellationToken);
 
             if (productUnit == null)
                 return NotFound("Product unit configuration not found");
@@ -1863,23 +1622,29 @@ public class ProductsController : ControllerBase
 
             // Check if this unit is used in any transactions
             var isUsedInPurchases = await _context.PurchaseInvoiceItems
-                .AnyAsync(pii => pii.ProductId == id && pii.UnitId == unitId);
+                .AnyAsync(pii => pii.ProductId == id && pii.UnitId == unitId, cancellationToken);
             var isUsedInSales = await _context.SalesInvoiceItems
-                .AnyAsync(sii => sii.ProductId == id && sii.UnitId == unitId);
+                .AnyAsync(sii => sii.ProductId == id && sii.UnitId == unitId, cancellationToken);
             var isUsedInReturns = await _context.ReturnItems
-                .AnyAsync(ri => ri.ProductId == id && ri.UnitId == unitId);
+                .AnyAsync(ri => ri.ProductId == id && ri.UnitId == unitId, cancellationToken);
 
             if (isUsedInPurchases || isUsedInSales || isUsedInReturns)
                 return BadRequest("Cannot delete this unit because it has been used in transactions");
 
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+            var currentUnits = (await _productAuthoringReconstructionService.LoadCurrentUnitsAsync(id, cancellationToken))
+                .Select(ToProductAuthoringUnitRequest)
+                .ToList();
+            currentUnits = currentUnits
+                .Where(unitItem => unitItem.ProductUnitId != productUnit.Id)
+                .ToList();
 
-            productUnit.IsDeleted = true;
-            productUnit.Product.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
-            await PublishProductUnitsChangedAsync(productUnit.Product, ["DefaultUnit", "Units"]);
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
+            var result = await _productAuthoringOrchestrator.AuthorAsync(
+                _productAuthoringCommandMapper.FromProductUnitsUpdate(productUnit.Product, currentUnits),
+                cancellationToken);
+            if (result.Status != ProductAuthoringStatus.Accepted)
+            {
+                return ToProductAuthoringActionResult(result);
+            }
 
             return NoContent();
         }
@@ -1896,14 +1661,42 @@ public class ProductsController : ControllerBase
     /// </summary>
     [HttpPost("migrate-to-multi-unit")]
     [Authorize(Roles = "Owner,Admin")]
-    public async Task<ActionResult> MigrateToMultiUnit()
+    public async Task<IActionResult> MigrateToMultiUnit()
     {
+        await Task.CompletedTask;
+        return LegacyProductMigrationDeprecatedResult();
+
+#pragma warning disable CS0162
         try
         {
+            var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+            if (idempotencyPrecondition is not null)
+            {
+                return idempotencyPrecondition;
+            }
+
             var tenantId = _tenantContext.RequiredTenantId;
 
             // Use explicit transaction to ensure atomicity
             await using var transaction = await _context.Database.BeginTransactionAsync();
+            var claim = await TryClaimProductMutationIdempotencyAsync(
+                ProductLegacyMultiUnitMigrationOperation,
+                Guid.Empty,
+                new
+                {
+                    operation = ProductLegacyMultiUnitMigrationOperation,
+                    tenantId
+                },
+                "Idempotency-Key was already used for a different product multi-unit migration request.",
+                "A product multi-unit migration request with the same idempotency key is already being processed.",
+                HttpContext?.RequestAborted ?? CancellationToken.None);
+            if (claim.ShortCircuitResult is not null)
+            {
+                await transaction.RollbackAsync();
+                return claim.ShortCircuitResult;
+            }
+
+            var idempotencyRecord = claim.Record;
             try
             {
                 // Get or create "Piece" unit for this tenant (fallback)
@@ -1984,11 +1777,10 @@ public class ProductsController : ControllerBase
                         ProductId = product.Id,
                         UnitId = unitToUse.Id,
                         ConversionFactor = 1,
-                        PurchasePrice = product.PurchasePrice,
-                        SellingPrice = product.SalePrice,
                         IsDefault = true,
                         IsBaseUnit = true
                     };
+                    ProductPricingCompatibilityMirror.SeedDefaultUnitFromLegacyProductMirror(product, productUnit);
 
                     _context.ProductUnits.Add(productUnit);
                     product.UpdatedAt = DateTime.UtcNow;
@@ -2033,8 +1825,8 @@ public class ProductsController : ControllerBase
                             Name = product.Name,
                             Sku = product.SKU,
                             Slug = product.Slug,
-                            SalePrice = product.SalePrice,
-                            OnlinePrice = product.OnlinePrice,
+                            SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(productUnit),
+                            OnlinePrice = null,
                             CategoryId = product.CategoryId,
                             IsOnlineVisible = product.IsOnlineVisible,
                             HasVariants = product.HasVariants
@@ -2046,7 +1838,7 @@ public class ProductsController : ControllerBase
                             UnitId = productUnit.UnitId,
                             Name = productUnit.Unit.Name,
                             Symbol = productUnit.Unit.Symbol,
-                            SalePrice = product.SalePrice,
+                            SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(productUnit),
                             ConversionFactor = 1,
                             IsBaseUnit = true
                         };
@@ -2057,7 +1849,7 @@ public class ProductsController : ControllerBase
                             EventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion),
                             ProductId = product.Id,
                             ChangedFields = new[] { "DefaultUnit", "Units" },
-                            SalePrice = product.SalePrice,
+                            SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(productUnit),
                             Name = product.Name,
                             NameAr = product.NameAr,
                             SKU = product.SKU,
@@ -2157,10 +1949,7 @@ public class ProductsController : ControllerBase
                         "Tenant-scoped multi-unit migration safety check failed because the expected row counts did not match the updated rows.");
                 }
 
-                // Commit transaction only after all operations succeed and safety check passes
-                await transaction.CommitAsync();
-
-                return Ok(new
+                var response = new
                 {
                     message = "Migration completed successfully",
                     productsMigrated = migratedCount,
@@ -2171,7 +1960,19 @@ public class ProductsController : ControllerBase
                         sales = updatedSalesItems,
                         returns = updatedReturnItems
                     }
-                });
+                };
+
+                _productMutationIdempotency.Complete(
+                    idempotencyRecord,
+                    StatusCodes.Status200OK,
+                    response,
+                    Guid.Empty);
+                await _context.SaveChangesAsync();
+
+                // Commit transaction only after all operations succeed and safety check passes
+                await transaction.CommitAsync();
+
+                return Ok(response);
             }
             catch
             {
@@ -2185,6 +1986,7 @@ public class ProductsController : ControllerBase
             _logger.LogError(ex, "Error migrating products to multi-unit system");
             return StatusCode(500, "An error occurred during migration");
         }
+#pragma warning restore CS0162
     }
 
     /// <summary>
@@ -2198,8 +2000,33 @@ public class ProductsController : ControllerBase
     {
         try
         {
+            var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
+            if (idempotencyPrecondition is not null)
+            {
+                return idempotencyPrecondition;
+            }
+
             var tenantId = _tenantContext.RequiredTenantId;
             var syncStartedAtUtc = DateTime.UtcNow;
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+            var claim = await TryClaimProductMutationIdempotencyAsync(
+                ProductLegacyStockSynchronizationOperation,
+                Guid.Empty,
+                new
+                {
+                    operation = ProductLegacyStockSynchronizationOperation,
+                    tenantId
+                },
+                "Idempotency-Key was already used for a different product stock synchronization request.",
+                "A product stock synchronization request with the same idempotency key is already being processed.",
+                HttpContext?.RequestAborted ?? CancellationToken.None);
+            if (claim.ShortCircuitResult is not null)
+            {
+                await transaction.RollbackAsync();
+                return claim.ShortCircuitResult;
+            }
+
+            var idempotencyRecord = claim.Record;
             
             // Repair stock visibility from tenant-scoped SQL authority only.
             // Available stock must respect reservations, not raw on-hand quantity.
@@ -2253,13 +2080,21 @@ public class ProductsController : ControllerBase
                 synced++;
             }
 
-            await _context.SaveChangesAsync(); // Commit outbox
-
             _logger.LogInformation(
                 "Product stock synced to MongoDB | TenantId: {TenantId} | Total: {Total} | Synced: {Synced}",
                 tenantId, products.Count, synced);
 
-            return Ok(new { total = products.Count, synced });
+            var response = new { total = products.Count, synced };
+            _productMutationIdempotency.Complete(
+                idempotencyRecord,
+                StatusCodes.Status200OK,
+                response,
+                Guid.Empty);
+
+            await _context.SaveChangesAsync(); // Commit outbox and idempotency response
+            await transaction.CommitAsync();
+
+            return Ok(response);
         }
         catch (Exception ex)
         {
@@ -2268,77 +2103,18 @@ public class ProductsController : ControllerBase
         }
     }
 
-    private static List<string> NormalizeStructuredList(IEnumerable<string>? values)
-    {
-        return values?
-            .Select(value => value?.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => value!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList()
-            ?? new List<string>();
-    }
-
-    private static List<string> NormalizeTags(string? tags)
-    {
-        if (string.IsNullOrWhiteSpace(tags))
-        {
-            return new List<string>();
-        }
-
-        return tags
-            .Split(new[] { ',', ';', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(value => value.Trim())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static List<ProductFaqRequestItem> NormalizeFaqs(IEnumerable<ProductFaqRequestItem>? items)
-    {
-        return items?
-            .Select(item => new ProductFaqRequestItem(
-                item.Question.Trim(),
-                item.Answer.Trim()))
-            .Where(item => !string.IsNullOrWhiteSpace(item.Question) || !string.IsNullOrWhiteSpace(item.Answer))
-            .ToList()
-            ?? new List<ProductFaqRequestItem>();
-    }
-
-    private static string? SerializeStringList(IEnumerable<string>? values)
-    {
-        var normalized = NormalizeStructuredList(values);
-        return normalized.Count == 0 ? null : JsonSerializer.Serialize(normalized);
-    }
-
-    private static string? SerializeFaqs(IEnumerable<ProductFaqRequestItem>? items)
-    {
-        var normalized = NormalizeFaqs(items);
-        return normalized.Count == 0 ? null : JsonSerializer.Serialize(normalized);
-    }
-
-    private static string? SerializeJsonElement(JsonElement? value)
-    {
-        if (!value.HasValue)
-        {
-            return null;
-        }
-
-        return value.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
-            ? null
-            : value.Value.GetRawText();
-    }
-
-    private static ProductFaqData MapFaqEventData(ProductFaqRequestItem item) => new()
-    {
-        Question = item.Question,
-        Answer = item.Answer
-    };
-
     private async Task<bool> ProductExists(Guid id)
     {
         return await _context.Products.AnyAsync(e => e.Id == id);
     }
+
+    private ObjectResult LegacyProductMigrationDeprecatedResult() =>
+        StatusCode(StatusCodes.Status410Gone, new
+        {
+            message = "Legacy product migration endpoints are deprecated. Submit ProductUnit changes through the canonical Product Authoring product update API.",
+            errorCode = "LEGACY_PRODUCT_MIGRATION_DEPRECATED",
+            canonicalEndpoint = "PUT /api/products/{id}"
+        });
 
     private async Task<Product?> LoadProductForResponseAsync(Guid id)
     {
@@ -2354,6 +2130,11 @@ public class ProductsController : ControllerBase
                     .ThenInclude(stock => stock.Warehouse)
             .FirstOrDefaultAsync(p => p.Id == id);
     }
+
+    private static ProductUnit? ResolveDefaultProductUnit(Product product) =>
+        product.ProductUnits
+            .Where(unit => !unit.IsDeleted)
+            .FirstOrDefault(unit => unit.IsDefault);
 }
 
 // DTO for POS quick search
@@ -2410,7 +2191,7 @@ public record CreateProductRequest(
     Guid CategoryId,
     decimal PurchasePrice,
     decimal SalePrice,
-    decimal? OnlinePrice,  // Storefront price (optional - falls back to SalePrice if not set)
+    decimal? OnlinePrice,  // Legacy compatibility input; canonical simple price is ProductUnits.SellingPrice.
     bool PriceIncludesTax,
     decimal TaxRate,
     string? Unit,  // Optional - defaults to "Piece" if not provided
@@ -2419,7 +2200,7 @@ public record CreateProductRequest(
     bool IsActive,
     bool TrackStock,
     // PHASE 11.5: Variant Mode
-    // When false (Simple Product): Single default variant, product-level SKU/Price/Barcode
+    // When false (Simple Product): default ProductUnit owns pricing; product fields are compatibility mirrors.
     // When true (Variant Product): Multiple variants, product is just a container
     bool HasVariants = false,
     // E-commerce SEO fields
@@ -2450,7 +2231,9 @@ public record CreateProductRequest(
     bool AiGenerated = false,
     JsonElement? AiMetadata = null,
     string? VideoUrl = null,
-    string? ProductTemplate = null);
+    string? ProductTemplate = null,
+    List<ProductAuthoringUnitRequest>? ProductUnits = null,
+    List<ProductAuthoringVariantRequest>? Variants = null);
 
 public record UpdateProductRequest(
     string Name,
@@ -2462,7 +2245,7 @@ public record UpdateProductRequest(
     Guid CategoryId,
     decimal PurchasePrice,
     decimal SalePrice,
-    decimal? OnlinePrice,  // Storefront price (optional - falls back to SalePrice if not set)
+    decimal? OnlinePrice,  // Legacy compatibility input; canonical simple price is ProductUnits.SellingPrice.
     bool PriceIncludesTax,
     decimal TaxRate,
     string? Unit,  // Optional - defaults to "Piece" if not provided
@@ -2471,7 +2254,7 @@ public record UpdateProductRequest(
     bool IsActive,
     bool TrackStock,
     // PHASE 11.5: Variant Mode
-    // When false (Simple Product): Single default variant, product-level SKU/Price/Barcode
+    // When false (Simple Product): default ProductUnit owns pricing; product fields are compatibility mirrors.
     // When true (Variant Product): Multiple variants, product is just a container
     bool HasVariants = false,
     // E-commerce SEO fields
@@ -2502,5 +2285,27 @@ public record UpdateProductRequest(
     bool AiGenerated = false,
     JsonElement? AiMetadata = null,
     string? VideoUrl = null,
-    string? ProductTemplate = null);
+    string? ProductTemplate = null,
+    List<ProductAuthoringUnitRequest>? ProductUnits = null,
+    List<ProductAuthoringVariantRequest>? Variants = null);
 
+public record ProductAuthoringUnitRequest(
+    Guid? ProductUnitId,
+    Guid UnitId,
+    decimal ConversionFactor,
+    decimal? PurchasePrice,
+    decimal? SellingPrice,
+    string? Barcode,
+    bool IsDefault = false,
+    bool IsBaseUnit = false);
+
+public record ProductAuthoringVariantRequest(
+    Guid? VariantId,
+    string? Sku,
+    string? Barcode,
+    decimal Price,
+    decimal? OnlinePrice,
+    decimal CostPrice,
+    bool IsActive = true,
+    bool IsDefault = false,
+    Dictionary<string, string>? Attributes = null);

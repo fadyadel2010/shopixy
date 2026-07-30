@@ -59,6 +59,9 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         phoenix: 'border-b border-black/10 py-4 last:border-b-0',
         hype: 'border-b border-muted/20 py-3 last:border-b-0',
         electronics: 'border-b border-muted/20 py-3 last:border-b-0',
+        alizon: 'border-b border-muted/20 py-3 last:border-b-0',
+        seven: 'border-b-2 border-text py-4 last:border-b-0',
+        sharp: 'border-b border-muted/20 py-4 last:border-b-0',
         default: 'border-b border-muted/10 py-4 last:border-b-0',
     }[theme];
     const titleClass = {
@@ -69,6 +72,9 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         phoenix: 'text-xs font-black uppercase tracking-[0.2em] text-text',
         hype: 'text-[11px] font-bold uppercase tracking-[0.12em] text-text',
         electronics: 'font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-text',
+        alizon: 'text-[11px] font-bold uppercase tracking-[0.14em] text-text',
+        seven: 'text-xs font-black uppercase tracking-[0.24em] text-text',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
         default: 'text-sm font-semibold text-text',
     }[theme];
     const countClass = {
@@ -79,6 +85,9 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         phoenix: 'bg-primary px-1.5 py-0.5 text-xs font-black text-white',
         hype: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary',
         electronics: 'rounded-sm bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-primary',
+        alizon: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary',
+        seven: 'bg-text px-1.5 py-0.5 text-xs font-black text-background',
+        sharp: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary',
         default: 'rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary',
     }[theme];
 
@@ -488,6 +497,9 @@ export const ActiveFiltersBar: React.FC<ActiveFiltersBarProps> = ({
         phoenix: 'border border-primary/25 bg-primary/5 text-primary',
         hype: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
         electronics: 'rounded-sm border border-primary/25 bg-primary/5 font-mono text-primary',
+        alizon: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
+        seven: 'bg-text text-background',
+        sharp: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
         default: 'rounded-full bg-primary/10 text-primary',
     }[theme];
 
@@ -611,6 +623,9 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
         phoenix: 'border border-black/10 bg-background font-bold uppercase tracking-[0.08em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
         hype: 'rounded-lg border border-muted/20 bg-background text-xs font-bold uppercase tracking-[0.06em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
         electronics: 'rounded-md border border-muted/25 bg-background font-mono text-xs font-bold uppercase tracking-[0.04em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        alizon: 'rounded-md border border-muted/25 bg-background text-xs font-bold uppercase tracking-[0.14em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        seven: 'border-2 border-text bg-background font-bold uppercase tracking-[0.08em] text-text focus:ring-2 focus:ring-text/20',
+        sharp: 'rounded-md border border-muted/25 bg-background text-xs font-bold uppercase tracking-[0.2em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
         default: 'rounded-lg border border-muted/20 bg-background text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
     }[theme];
     const labelClass = {
@@ -621,6 +636,9 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
         phoenix: 'text-xs font-black uppercase tracking-[0.18em] text-text',
         hype: 'text-[11px] font-bold uppercase tracking-[0.12em] text-muted',
         electronics: 'font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-muted',
+        alizon: 'text-[11px] font-bold uppercase tracking-[0.14em] text-muted',
+        seven: 'text-xs font-black uppercase tracking-[0.24em] text-text',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
         default: 'text-sm text-muted',
     }[theme];
 

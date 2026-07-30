@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import sectionAuthority from '@theme-authority/shopixy-theme-authority.json'
 import { sectionRegistry } from './sectionRegistry'
+import { filterSectionsForPage, isSectionAvailableForPage } from './pageSectionAvailability'
 import { sectionContracts, validateSectionsAgainstContract } from './sectionContractRegistry'
 import { getDefaultSections } from '../config/demoSections'
 import { getBuiltinProductTemplates } from '@/storefront/products/ProductTemplateRegistry'
@@ -77,5 +78,26 @@ describe('builder/runtime section contract authority', () => {
         }
 
         expect(() => validateSectionsAgainstContract([section])).toThrow(/unsupported setting "productSource"/)
+    })
+
+    it('keeps product-context sections out of home and category compositions', () => {
+        const productContextTypes = ['product-hero', 'product-gallery', 'product-specs', 'product-video', 'related-products']
+
+        for (const sectionType of productContextTypes) {
+            expect(isSectionAvailableForPage(sectionType, 'home')).toBe(false)
+            expect(isSectionAvailableForPage(sectionType, 'category')).toBe(false)
+            expect(isSectionAvailableForPage(sectionType, 'product-template')).toBe(true)
+        }
+
+        const mixedHomeSections = [
+            { id: 'hero', type: 'hero-banner', order: 0 },
+            { id: 'video', type: 'product-video', order: 1 },
+            { id: 'products', type: 'product-grid', order: 2 },
+        ]
+
+        expect(filterSectionsForPage(mixedHomeSections, 'home')).toEqual([
+            { id: 'hero', type: 'hero-banner', order: 0 },
+            { id: 'products', type: 'product-grid', order: 1 },
+        ])
     })
 })

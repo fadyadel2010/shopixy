@@ -2,6 +2,7 @@ using System.Text.Json;
 using PointOfSale.API.DTOs;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Pricing;
 
 namespace PointOfSale.API.Mappers;
 
@@ -60,9 +61,9 @@ public static class SafeResponseMapper
         DescriptionAr = product.DescriptionAr,
         CategoryId = product.CategoryId,
         CategoryName = product.Category?.Name,
-        PurchasePrice = product.PurchasePrice,
-        SalePrice = product.SalePrice,
-        OnlinePrice = product.OnlinePrice,
+        PurchasePrice = CatalogPricingAuthority.ResolveSimplePurchasePrice(ResolveSimpleDefaultUnit(product)),
+        SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(ResolveSimpleDefaultUnit(product)),
+        OnlinePrice = null,
         PriceIncludesTax = product.PriceIncludesTax,
         TaxRate = product.TaxRate,
         Unit = product.Unit,
@@ -96,6 +97,7 @@ public static class SafeResponseMapper
         AiGenerated = product.AiGenerated,
         VideoUrl = product.VideoUrl,
         ProductTemplate = product.ProductTemplate,
+        RowVersion = product.RowVersion.ToString(),
         WarehouseStocks = ToDerivedProductWarehouseStockResponseDtos(product),
         Units = product.ProductUnits
             .Where(unit => !unit.IsDeleted)
@@ -119,9 +121,9 @@ public static class SafeResponseMapper
         DescriptionAr = product.DescriptionAr,
         CategoryId = product.CategoryId,
         CategoryName = product.Category?.Name,
-        PurchasePrice = product.PurchasePrice,
-        SalePrice = product.SalePrice,
-        OnlinePrice = product.OnlinePrice,
+        PurchasePrice = CatalogPricingAuthority.ResolveSimplePurchasePrice(ResolveSimpleDefaultUnit(product)),
+        SalePrice = CatalogPricingAuthority.ResolveSimpleSellingPrice(ResolveSimpleDefaultUnit(product)),
+        OnlinePrice = null,
         PriceIncludesTax = product.PriceIncludesTax,
         TaxRate = product.TaxRate,
         Unit = product.Unit,
@@ -155,6 +157,7 @@ public static class SafeResponseMapper
         AiGenerated = product.AiGenerated,
         VideoUrl = product.VideoUrl,
         ProductTemplate = product.ProductTemplate,
+        RowVersion = product.RowVersion.ToString(),
         WarehouseStocks = ToDerivedProductWarehouseStockResponseDtos(product),
         Units = product.ProductUnits
             .Where(unit => !unit.IsDeleted)
@@ -386,6 +389,13 @@ public static class SafeResponseMapper
         IsDefault = unit.IsDefault,
         IsBaseUnit = unit.IsBaseUnit
     };
+
+    private static ProductUnit? ResolveSimpleDefaultUnit(Product product) =>
+        product.HasVariants
+            ? null
+            : product.ProductUnits
+                .Where(unit => !unit.IsDeleted)
+                .FirstOrDefault(unit => unit.IsDefault);
 
     private static SalesInvoiceItemResponseDto ToSalesInvoiceItemResponseDto(SalesInvoiceItem item) => new()
     {

@@ -45,7 +45,8 @@ public class ProductCreatedEvent : IntegrationEvent
     /// <summary>
     /// Online/Storefront price for e-commerce display.
     /// THIS IS THE SOURCE OF TRUTH FOR STOREFRONT PRICING.
-    /// If null or 0, falls back to SalePrice.
+    /// Legacy product compatibility mirror. Storefront pricing is resolved from
+    /// ProductUnit/ProductVariant authorities.
     /// </summary>
     public decimal? OnlinePrice { get; set; }
     

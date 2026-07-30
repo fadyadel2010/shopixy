@@ -614,19 +614,13 @@ public class AffiliateReferralMiddleware
                     ct);
         }
 
-        if ((product.OnlinePrice.HasValue && product.OnlinePrice.Value > 0m) ||
-            (!product.OnlinePrice.HasValue && product.SalePrice > 0m) ||
-            (product.OnlinePrice.HasValue && product.OnlinePrice.Value == 0m && product.SalePrice > 0m))
-        {
-            return true;
-        }
-
         return await dbContext.ProductUnits
             .AsNoTracking()
             .IgnoreQueryFilters()
             .AnyAsync(unit =>
                 unit.ProductId == product.Id &&
                 !unit.IsDeleted &&
+                unit.IsDefault &&
                 unit.SellingPrice.HasValue &&
                 unit.SellingPrice.Value > 0m,
                 ct);

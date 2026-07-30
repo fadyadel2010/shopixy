@@ -232,29 +232,8 @@ public class ProductSearchService : IProductSearchService
         var images = GetOrderedProductImages(document);
         var thumbnailImage = images.FirstOrDefault();
 
-        var activeVariants = (document.Variants ?? new List<ProductVariantDocument>())
-            .Where(v => v.IsActive)
-            .ToList();
-        var defaultVariant = activeVariants.FirstOrDefault(v => v.IsDefault) ?? activeVariants.FirstOrDefault();
-
-        decimal effectivePrice;
-        bool inStock;
-        int stockQuantity;
-
-        if (activeVariants.Count > 0 && defaultVariant != null)
-        {
-            effectivePrice = defaultVariant.EffectivePrice;
-            inStock = activeVariants.Any(v => v.TotalStock > 0);
-            stockQuantity = (int)activeVariants.Sum(v => v.TotalStock);
-        }
-        else
-        {
-            effectivePrice = document.StorefrontEffectivePrice;
-            inStock = document.InStock;
-            stockQuantity = document.StockQuantity;
-        }
-
-        var isAvailable = document.IsActive && document.IsOnlineVisible && effectivePrice > 0;
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(document);
+        var effectivePrice = purchasability.Price;
 
         return new ProductListItemDto
         {
@@ -274,9 +253,16 @@ public class ProductSearchService : IProductSearchService
             ProductTemplate = document.ProductTemplate,
             StorefrontLayout = document.ProductTemplate,
             IsFeatured = document.IsFeatured,
-            IsAvailable = isAvailable,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
+            Availability = StorefrontAvailabilityPresentationMapper.Build(
+                purchasability.IsAvailable,
+                purchasability.InStock,
+                purchasability.StockQuantity,
+                purchasability.RequiresVariantSelection,
+                purchasability.CanPurchase,
+                purchasability.UnavailableReason),
+            IsAvailable = purchasability.IsAvailable,
+            InStock = purchasability.InStock,
+            StockQuantity = purchasability.StockQuantity,
             HasActivePromotion = document.HasActivePromotion,
             PromotionBadge = document.PromotionBadge,
             PromotionDiscountType = document.PromotionDiscountType,

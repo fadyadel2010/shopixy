@@ -8,47 +8,36 @@ const heightClasses: Record<string, string> = {
     large: 'min-h-[820px]',
 };
 
-const alignmentClasses: Record<string, string> = {
-    left: 'items-start text-left',
-    center: 'items-center text-center',
-    right: 'items-end text-right',
-};
-
 const HeroBanner: React.FC<any> = ({
     title,
     subtitle,
     ctaText,
     ctaLink,
     backgroundImage,
-    backgroundColor,
     overlayOpacity,
-    textColor,
     alignment,
     height,
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 12), 0), 100) / 100;
     const resolvedHeightClass = heightClasses[height] || heightClasses.medium;
-    const resolvedAlignmentClass = alignmentClasses[alignment] || alignmentClasses.left;
+    const ctaAlignment = alignment || 'left';
     return (
         <section
-            className={`relative isolate overflow-hidden border-b border-[#C9A863]/30 bg-[#FBFAF7] ${resolvedHeightClass}`}
-            style={{
-                backgroundColor: backgroundColor || '#FBFAF7',
-                color: textColor || '#131316',
-            }}
+            className={`relative isolate overflow-hidden border-b border-[#C9A863]/30 bg-[#FBFAF7] text-[#131316] ${resolvedHeightClass}`}
         >
-            <div className="absolute inset-x-0 top-0 h-px bg-[#C9A863]" />
+            <div className="absolute inset-x-0 top-0 h-px bg-[#C9A863]/70" />
+            <div className="absolute inset-0 bg-[linear-gradient(110deg,#fffefa_0%,#fbfaf7_46%,#f2ebdc_100%)]" />
 
-            <div className={`relative mx-auto grid max-w-7xl grid-cols-1 gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-center lg:px-12 ${resolvedAlignmentClass}`}>
+            <div className="relative mx-auto grid max-w-7xl grid-cols-1 items-center gap-12 px-6 py-16 sm:px-8 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:px-12">
                 <div className="order-2 lg:order-1">
-                    <div className="mx-auto max-w-md border border-[#C9A863]/35 bg-white p-3 shadow-[0_24px_70px_rgba(19,19,22,0.08)] lg:mx-0">
+                    <div className="mx-auto max-w-lg border border-[#C9A863]/35 bg-white p-4 shadow-[0_28px_80px_rgba(58,45,22,0.12)] lg:mx-0">
                         <div className="relative aspect-[4/5] overflow-hidden bg-[#f5f0e8]">
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
                                     alt={title || 'Pearl boutique hero image'}
-                                    className="h-full w-full object-cover"
+                                    className="h-full w-full object-contain p-4"
                                 />
                             ) : (
                                 <div className="grid h-full w-full place-items-center bg-[linear-gradient(135deg,#fffaf0_0%,#f8fafc_45%,#313E61_100%)]">
@@ -60,8 +49,8 @@ const HeroBanner: React.FC<any> = ({
                     </div>
                 </div>
 
-                <div className="order-1 mx-auto max-w-2xl text-center lg:order-2">
-                    <div className="mx-auto mb-7 h-px w-24 bg-[#C9A863]" />
+                <div className="order-1 mx-auto max-w-2xl text-center lg:order-2 lg:text-left">
+                    <div className="mx-auto mb-7 h-px w-24 bg-[#C9A863] lg:mx-0" />
                     <div className="mb-5 text-[11px] font-semibold uppercase tracking-[0.36em] text-[#C9A863]">
                         {t('home.welcome', { storeName: '' })}
                     </div>
@@ -80,14 +69,14 @@ const HeroBanner: React.FC<any> = ({
                         <ThemeHeroCTA
                             themeId="pearl"
                             href={ctaLink || '/products'}
-                            align={alignment || 'center'}
+                            align={ctaAlignment}
                             className="mt-10"
                         >
                             {ctaText}
                         </ThemeHeroCTA>
                     )}
 
-                    <div className="mx-auto mt-12 grid max-w-xl grid-cols-3 gap-4 border-y border-[#C9A863]/25 py-5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#313E61]">
+                    <div className="mx-auto mt-12 grid max-w-xl grid-cols-3 gap-4 border-y border-[#C9A863]/25 py-5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#313E61] lg:mx-0">
                         <span>crafted</span>
                         <span>gift-ready</span>
                         <span>private edit</span>

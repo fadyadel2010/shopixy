@@ -143,6 +143,64 @@ function parseStructuredAiMetadata(value) {
     return parseJsonValue(value, null)
 }
 
+function createProductUnitDraft(overrides = {}) {
+    return {
+        localId: overrides.localId || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        productUnitId: overrides.productUnitId || overrides.id || null,
+        unitId: overrides.unitId || '',
+        unitName: overrides.unitName || '',
+        unitSymbol: overrides.unitSymbol || '',
+        conversionFactor: overrides.conversionFactor?.toString?.() || '1',
+        purchasePrice: overrides.purchasePrice?.toString?.() || '',
+        sellingPrice: overrides.sellingPrice?.toString?.() || '',
+        barcode: overrides.barcode || '',
+        isDefault: Boolean(overrides.isDefault),
+        isBaseUnit: Boolean(overrides.isBaseUnit)
+    }
+}
+
+function normalizeProductUnitDrafts(value) {
+    if (!Array.isArray(value)) {
+        return []
+    }
+
+    return value.map((unit) => createProductUnitDraft({
+        localId: unit.id || unit.productUnitId,
+        productUnitId: unit.id || unit.productUnitId,
+        unitId: unit.unitId,
+        unitName: unit.unitName,
+        unitSymbol: unit.unitSymbol,
+        conversionFactor: unit.conversionFactor,
+        purchasePrice: unit.purchasePrice,
+        sellingPrice: unit.sellingPrice,
+        barcode: unit.barcode,
+        isDefault: unit.isDefault,
+        isBaseUnit: unit.isBaseUnit
+    }))
+}
+
+function toPositiveNumber(value) {
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+function createProductAuthoringIdempotencyKey(productId) {
+    const randomPart = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+    return `product-authoring:${productId || 'create'}:${randomPart}`
+}
+
+function buildProductAuthoringRequestOptions(productId, rowVersion, idempotencyKey) {
+    const headers = {
+        'Idempotency-Key': idempotencyKey
+    }
+
+    if (productId && rowVersion) {
+        headers['If-Match'] = `"${rowVersion}"`
+    }
+
+    return { headers }
+}
+
 function buildGeneratedDescription(generatedProduct) {
     const features = normalizeListValues(generatedProduct?.features)
     const faqItems = normalizeFaqItems(generatedProduct?.faq)
@@ -192,6 +250,7 @@ const ProductForm = forwardRef(function ProductForm({
     const [loading, setLoading] = useState(false)
     const variantsTabRef = useRef(null)
     const formDataRef = useRef(null)
+    const pendingSaveRef = useRef(null)
     const [categories, setCategories] = useState([])
     const [units, setUnits] = useState([])
     const [generatingBarcode, setGeneratingBarcode] = useState(false)
@@ -199,6 +258,9 @@ const ProductForm = forwardRef(function ProductForm({
     const [productTemplateOptions, setProductTemplateOptions] = useState(getProductTemplateOptions())
     const [hasVariants, setHasVariants] = useState(false)
     const [defaultVariant, setDefaultVariant] = useState(null)
+    const [productUnits, setProductUnits] = useState([])
+    const [productVariantsSnapshot, setProductVariantsSnapshot] = useState([])
+    const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
     const [simpleProductData, setSimpleProductData] = useState({
         sku: '',
         barcode: '',
@@ -376,7 +438,10 @@ const ProductForm = forwardRef(function ProductForm({
             const variantCount = Array.isArray(product.variants) ? product.variants.length : 0
             const derivedHasVariants = !!product.hasVariants || variantCount > 1
 
+            setAcceptedRowVersion(product.rowVersion || product.RowVersion || null)
             setHasVariants(derivedHasVariants)
+            setProductUnits(normalizeProductUnitDrafts(product.units))
+            setProductVariantsSnapshot(Array.isArray(product.variants) ? product.variants : [])
             setFormData({
                 name: product.name,
                 nameAr: product.nameAr || '',
@@ -483,6 +548,145 @@ const ProductForm = forwardRef(function ProductForm({
         setHasVariants(newHasVariants)
     }
 
+    const getCompleteProductUnitDrafts = () => (
+        productUnits.filter((unit) => unit.unitId)
+    )
+
+    const buildProductUnitsPayload = () => (
+        getCompleteProductUnitDrafts().map((unit) => ({
+            productUnitId: unit.productUnitId,
+            unitId: unit.unitId,
+            conversionFactor: Number.parseFloat(unit.conversionFactor) || 0,
+            purchasePrice: unit.purchasePrice === '' ? null : Number.parseFloat(unit.purchasePrice) || 0,
+            sellingPrice: unit.sellingPrice === '' ? null : Number.parseFloat(unit.sellingPrice) || 0,
+            barcode: unit.barcode || null,
+            isDefault: unit.isDefault,
+            isBaseUnit: unit.isBaseUnit
+        }))
+    )
+
+    const buildVariantAuthoringSnapshot = () => {
+        if (!hasVariants) {
+            return []
+        }
+
+        return productVariantsSnapshot.map((variant) => ({
+            variantId: variant.id,
+            sku: variant.sku || variant.SKU || null,
+            barcode: variant.barcode || null,
+            price: Number.parseFloat(variant.price) || 0,
+            onlinePrice: variant.onlinePrice == null ? null : Number.parseFloat(variant.onlinePrice) || 0,
+            costPrice: Number.parseFloat(variant.costPrice) || 0,
+            isActive: variant.isActive !== false,
+            isDefault: Boolean(variant.isDefault),
+            attributes: Array.isArray(variant.attributes)
+                ? variant.attributes.reduce((acc, attribute) => {
+                    if (attribute.name) acc[attribute.name] = attribute.value || ''
+                    return acc
+                }, {})
+                : {}
+        }))
+    }
+
+    const handleAddProductUnit = () => {
+        setProductUnits((prev) => [
+            ...prev,
+            createProductUnitDraft({
+                isBaseUnit: prev.every((unit) => !unit.isBaseUnit),
+                isDefault: prev.every((unit) => !unit.isDefault)
+            })
+        ])
+    }
+
+    const handleProductUnitChange = (localId, field, value) => {
+        setProductUnits((prev) => prev.map((unit) => {
+            if (unit.localId !== localId) return unit
+
+            if (field === 'unitId') {
+                return { ...unit, unitId: value }
+            }
+
+            if (field === 'conversionFactor' && unit.isBaseUnit) {
+                return { ...unit, conversionFactor: '1' }
+            }
+
+            return { ...unit, [field]: value }
+        }))
+    }
+
+    const handleSetBaseUnit = (unitId) => {
+        setProductUnits((prev) => prev.map((unit) => ({
+            ...unit,
+            isBaseUnit: unit.unitId === unitId,
+            conversionFactor: unit.unitId === unitId ? '1' : unit.conversionFactor
+        })))
+    }
+
+    const handleSetDefaultUnit = (unitId) => {
+        setProductUnits((prev) => prev.map((unit) => ({
+            ...unit,
+            isDefault: unit.unitId === unitId
+        })))
+    }
+
+    const handleRemoveProductUnit = (localId) => {
+        setProductUnits((prev) => prev.filter((unit) => unit.localId !== localId))
+    }
+
+    const getAuthoringValidationError = () => {
+        const publishStatus = normalizePublishStatus(formData.publishStatus)
+        const isDraft = publishStatus === 0
+        const isPublic = publishStatus === 1 && formData.isActive && formData.isOnlineVisible
+
+        if (isDraft) {
+            return null
+        }
+
+        if (!formData.name.trim()) {
+            return t('products.productNameRequired') || 'Product name is required'
+        }
+
+        if (!formData.categoryId) {
+            return t('products.categoryRequired')
+        }
+
+        if (!isPublic) {
+            return null
+        }
+
+        if (hasVariants) {
+            const hasActivePricedVariant = buildVariantAuthoringSnapshot().some((variant) => (
+                variant.isActive && (toPositiveNumber(variant.onlinePrice) > 0 || toPositiveNumber(variant.price) > 0)
+            ))
+
+            return hasActivePricedVariant
+                ? null
+                : (t('products.activePricedVariantRequired') || 'At least one active priced variant is required before publication.')
+        }
+
+        const completeUnits = getCompleteProductUnitDrafts()
+        const baseUnit = completeUnits.find((unit) => unit.isBaseUnit)
+        const defaultUnit = completeUnits.find((unit) => unit.isDefault)
+
+        if (!baseUnit) {
+            return t('products.baseUnitRequired') || 'Base unit is required before publication.'
+        }
+
+        if (!defaultUnit) {
+            return t('products.defaultUnitRequired') || 'Default unit is required before publication.'
+        }
+
+        if (toPositiveNumber(defaultUnit.sellingPrice) <= 0) {
+            return t('products.defaultUnitPriceRequired') || 'Default unit price must be greater than zero before publication.'
+        }
+
+        if (completeUnits.some((unit) => toPositiveNumber(unit.conversionFactor) <= 0 || (unit.isBaseUnit && Number.parseFloat(unit.conversionFactor) !== 1))) {
+            return t('products.productUnitsInvalid') || 'Product units must have valid conversion factors.'
+        }
+
+        return null
+    }
+
     const handleSubmit = async (e) => {
         e.preventDefault()
         setLoading(true)
@@ -494,23 +698,20 @@ const ProductForm = forwardRef(function ProductForm({
             return
         }
 
-        if (!hasVariants && !productId && (!simpleProductData.price || parseFloat(simpleProductData.price) <= 0)) {
+        const authoringValidationError = getAuthoringValidationError()
+        if (authoringValidationError) {
+            setError(authoringValidationError)
+            setLoading(false)
+            return
+        }
+
+        if (normalizePublishStatus(formData.publishStatus) !== 0 && !hasVariants && !productId && (!simpleProductData.price || parseFloat(simpleProductData.price) <= 0)) {
             setError(t('products.priceRequired') || 'Price is required for the product')
             setLoading(false)
             return
         }
 
         try {
-            if (productId && hasVariants) {
-                const variantsSaved = await variantsTabRef.current?.savePendingChanges?.()
-
-                if (variantsSaved === false) {
-                    setError(t('variants.failedToSave') || 'Failed to save variant changes')
-                    setLoading(false)
-                    return
-                }
-            }
-
             const productData = {
                 ...formData,
                 taxRate: parseFloat(formData.taxRate) || 0,
@@ -528,7 +729,9 @@ const ProductForm = forwardRef(function ProductForm({
                 height: formData.height ? parseFloat(formData.height) : null,
                 lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
                 publishStatus: normalizePublishStatus(formData.publishStatus),
-                productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null
+                productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null,
+                productUnits: buildProductUnitsPayload(),
+                variants: buildVariantAuthoringSnapshot()
             }
 
             if (import.meta.env.DEV) {
@@ -540,51 +743,32 @@ const ProductForm = forwardRef(function ProductForm({
                 })
             }
 
+            const saveFingerprint = JSON.stringify({
+                productId: productId || null,
+                rowVersion: productId ? acceptedRowVersion || null : null,
+                productData
+            })
+            const idempotencyKey = pendingSaveRef.current?.fingerprint === saveFingerprint
+                ? pendingSaveRef.current.key
+                : createProductAuthoringIdempotencyKey(productId)
+            pendingSaveRef.current = { fingerprint: saveFingerprint, key: idempotencyKey }
+
             let savedProduct
+            const requestOptions = buildProductAuthoringRequestOptions(productId, acceptedRowVersion, idempotencyKey)
 
             if (productId) {
-                await api.put(`/products/${productId}`, productData)
-                savedProduct = { id: productId }
-
-                if (!hasVariants && defaultVariant) {
-                    await api.put(`/products/${productId}/variants/${defaultVariant.id}`, {
-                        sku: simpleProductData.sku || null,
-                        barcode: simpleProductData.barcode || null,
-                        price: parseFloat(simpleProductData.price) || 0,
-                        onlinePrice: simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null,
-                        costPrice: parseFloat(simpleProductData.costPrice) || 0,
-                        isActive: formData.isActive
-                    })
-                }
+                const response = await api.put(`/products/${productId}`, productData, requestOptions)
+                savedProduct = response.data || { id: productId }
+                setAcceptedRowVersion(savedProduct.rowVersion || savedProduct.RowVersion || acceptedRowVersion)
             } else {
-                const response = await api.post('/products', productData)
+                const response = await api.post('/products', productData, requestOptions)
                 savedProduct = response.data
-
-                if (!hasVariants) {
-                    await new Promise(resolve => setTimeout(resolve, 500))
-
-                    try {
-                        const variantsResponse = await api.get(`/products/${savedProduct.id}/variants`)
-                        const defaultVar = variantsResponse.data.find(v => v.isDefault)
-
-                        if (defaultVar) {
-                            await api.put(`/products/${savedProduct.id}/variants/${defaultVar.id}`, {
-                                sku: simpleProductData.sku || null,
-                                barcode: simpleProductData.barcode || null,
-                                price: parseFloat(simpleProductData.price) || 0,
-                                onlinePrice: simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null,
-                                costPrice: parseFloat(simpleProductData.costPrice) || 0,
-                                isActive: formData.isActive
-                            })
-                        }
-                    } catch (variantErr) {
-                        console.error('Failed to update default variant', variantErr)
-                    }
-                }
+                setAcceptedRowVersion(savedProduct.rowVersion || savedProduct.RowVersion || null)
             }
 
             invalidatePosRuntimeCache({ reason: 'product-updated' })
             onSave(savedProduct)
+            pendingSaveRef.current = null
         } catch (err) {
             setError(err.response?.data?.message || t('products.failedToSave'))
         } finally {
@@ -607,6 +791,47 @@ const ProductForm = forwardRef(function ProductForm({
             </div>
         )
     }
+
+    const completeProductUnitDrafts = getCompleteProductUnitDrafts()
+    const baseUnitId = completeProductUnitDrafts.find((unit) => unit.isBaseUnit)?.unitId || ''
+    const defaultUnitId = completeProductUnitDrafts.find((unit) => unit.isDefault)?.unitId || ''
+    const defaultUnitDraft = completeProductUnitDrafts.find((unit) => unit.unitId === defaultUnitId)
+    const productUnitsValid = completeProductUnitDrafts.length > 0
+        && Boolean(baseUnitId)
+        && Boolean(defaultUnitId)
+        && completeProductUnitDrafts.every((unit) => toPositiveNumber(unit.conversionFactor) > 0)
+        && (!completeProductUnitDrafts.find((unit) => unit.isBaseUnit) || Number.parseFloat(completeProductUnitDrafts.find((unit) => unit.isBaseUnit)?.conversionFactor) === 1)
+    const simplePublicationReady = !hasVariants
+        && Boolean(baseUnitId)
+        && Boolean(defaultUnitId)
+        && toPositiveNumber(defaultUnitDraft?.sellingPrice) > 0
+        && productUnitsValid
+    const variantPublicationReady = hasVariants
+        && buildVariantAuthoringSnapshot().some((variant) => (
+            variant.isActive && (toPositiveNumber(variant.onlinePrice) > 0 || toPositiveNumber(variant.price) > 0)
+        ))
+    const publicationReady = normalizePublishStatus(formData.publishStatus) === 0
+        || !formData.isOnlineVisible
+        || (hasVariants ? variantPublicationReady : simplePublicationReady)
+    const readinessItems = [
+        {
+            label: t('products.baseUnitSelected') || 'Base Unit selected',
+            ready: Boolean(baseUnitId)
+        },
+        {
+            label: t('products.defaultUnitSelected') || 'Default Unit selected',
+            ready: Boolean(defaultUnitId)
+        },
+        {
+            label: t('products.productUnitsValid') || 'Product Units valid',
+            ready: productUnitsValid || normalizePublishStatus(formData.publishStatus) === 0
+        },
+        {
+            label: t('products.readyForPublication') || 'Ready for publication',
+            ready: publicationReady
+        }
+    ]
+    const selectedUnitIds = new Set(completeProductUnitDrafts.map((unit) => unit.unitId))
 
     const productTypeSection = (
         <WorkspaceSection
@@ -756,7 +981,7 @@ const ProductForm = forwardRef(function ProductForm({
                         onChange={(e) => handleSimpleChange('price', e.target.value)}
                         className="input"
                         placeholder="0.00"
-                        required={!hasVariants}
+                        required={!hasVariants && normalizePublishStatus(formData.publishStatus) !== 0}
                     />
                     <p className="mt-1 text-xs text-gray-500">
                         {t('products.posPriceHint') || 'Price used in the POS system.'}
@@ -799,6 +1024,159 @@ const ProductForm = forwardRef(function ProductForm({
             </div>
         </WorkspaceSection>
     ) : null
+
+    const productUnitsSection = (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('products.units') || 'Units') : null}
+            title={t('products.productUnits') || 'Product Units'}
+            description={t('products.productUnitsDescription') || 'Author base/default units, conversion factors, and unit prices with the product.'}
+            className="border-indigo-100 bg-gradient-to-r from-white to-indigo-50"
+        >
+            <div className="space-y-5">
+                <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                        <label className="label">{t('products.baseUnit') || 'Base Unit'}</label>
+                        <select
+                            value={baseUnitId}
+                            onChange={(e) => handleSetBaseUnit(e.target.value)}
+                            className="input"
+                        >
+                            <option value="">{t('products.selectBaseUnit') || 'Select base unit'}</option>
+                            {completeProductUnitDrafts.map((unit) => {
+                                const unitOption = units.find((candidate) => candidate.id === unit.unitId)
+                                return (
+                                    <option key={unit.localId} value={unit.unitId}>
+                                        {unitOption?.name || unit.unitName || unit.unitId}
+                                    </option>
+                                )
+                            })}
+                        </select>
+                    </div>
+
+                    <div>
+                        <label className="label">{t('products.defaultUnit') || 'Default Unit'}</label>
+                        <select
+                            value={defaultUnitId}
+                            onChange={(e) => handleSetDefaultUnit(e.target.value)}
+                            className="input"
+                        >
+                            <option value="">{t('products.selectDefaultUnit') || 'Select default unit'}</option>
+                            {completeProductUnitDrafts.map((unit) => {
+                                const unitOption = units.find((candidate) => candidate.id === unit.unitId)
+                                return (
+                                    <option key={unit.localId} value={unit.unitId}>
+                                        {unitOption?.name || unit.unitName || unit.unitId}
+                                    </option>
+                                )
+                            })}
+                        </select>
+                    </div>
+                </div>
+
+                <div className="space-y-3">
+                    {productUnits.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-gray-300 bg-white px-4 py-5 text-sm text-gray-500">
+                            {t('products.noProductUnits') || 'No units configured yet.'}
+                        </div>
+                    ) : productUnits.map((unit) => (
+                        <div key={unit.localId} className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 md:grid-cols-[minmax(0,1.2fr)_0.7fr_0.8fr_0.8fr_auto]">
+                            <div>
+                                <label className="label">{t('products.unit') || 'Unit'}</label>
+                                <select
+                                    value={unit.unitId}
+                                    onChange={(e) => handleProductUnitChange(unit.localId, 'unitId', e.target.value)}
+                                    className="input"
+                                >
+                                    <option value="">{t('products.selectUnit') || 'Select unit'}</option>
+                                    {units.map((unitOption) => (
+                                        <option
+                                            key={unitOption.id}
+                                            value={unitOption.id}
+                                            disabled={selectedUnitIds.has(unitOption.id) && unitOption.id !== unit.unitId}
+                                        >
+                                            {unitOption.name}{unitOption.symbol ? ` (${unitOption.symbol})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="label">{t('products.conversionFactor') || 'Conversion'}</label>
+                                <input
+                                    type="number"
+                                    min="0.0001"
+                                    step="0.0001"
+                                    value={unit.conversionFactor}
+                                    onChange={(e) => handleProductUnitChange(unit.localId, 'conversionFactor', e.target.value)}
+                                    className="input"
+                                    disabled={unit.isBaseUnit}
+                                />
+                            </div>
+
+                            <div>
+                                <label className="label">{t('products.purchasePrice') || 'Unit Cost'}</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={unit.purchasePrice}
+                                    onChange={(e) => handleProductUnitChange(unit.localId, 'purchasePrice', e.target.value)}
+                                    className="input"
+                                    placeholder="0.00"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="label">{t('products.sellingPrice') || 'Unit Price'}</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    value={unit.sellingPrice}
+                                    onChange={(e) => handleProductUnitChange(unit.localId, 'sellingPrice', e.target.value)}
+                                    className="input"
+                                    placeholder="0.00"
+                                />
+                            </div>
+
+                            <div className="flex items-end">
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemoveProductUnit(unit.localId)}
+                                    className="btn-secondary"
+                                >
+                                    {t('common.remove') || 'Remove'}
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        onClick={handleAddProductUnit}
+                        className="btn-secondary"
+                    >
+                        {t('products.addProductUnit') || 'Add Product Unit'}
+                    </button>
+
+                    <div className="flex flex-wrap gap-2">
+                        {readinessItems.map((item) => (
+                            <span
+                                key={item.label}
+                                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                                    item.ready
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-amber-100 text-amber-700'
+                                }`}
+                            >
+                                {item.ready ? 'Ready' : 'Needs'}: {item.label}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </WorkspaceSection>
+    )
 
     const mediaSection = (
         <WorkspaceSection
@@ -1115,6 +1493,7 @@ const ProductForm = forwardRef(function ProductForm({
             {productTypeSection}
             {basicInformationSection}
             {simplePricingSection}
+            {productUnitsSection}
             {mediaSection}
             {variantsSection}
             {inventorySection}
@@ -1142,6 +1521,7 @@ const ProductForm = forwardRef(function ProductForm({
                 {productTypeSection}
                 {basicInformationSection}
                 {simplePricingSection}
+                {productUnitsSection}
                 {mediaSection}
                 {variantsSection}
                 {inventorySection}

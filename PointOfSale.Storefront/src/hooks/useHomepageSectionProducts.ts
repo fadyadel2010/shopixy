@@ -32,7 +32,7 @@ export interface UseHomepageSectionProductsState {
 }
 
 function mapDiscoveryItemToListItem(item: ProductDiscoveryResult['items'][0]): ProductListItemDto {
-    const isProductAvailable = item.hasVariants ? true : item.inStock;
+    const availability = item.availability;
 
     return {
         id: item.id,
@@ -47,9 +47,10 @@ function mapDiscoveryItemToListItem(item: ProductDiscoveryResult['items'][0]): P
         productTemplate: item.storefrontLayout,
         isFeatured: item.isFeatured,
         thumbnailImage: item.imageUrl,
-        isAvailable: isProductAvailable,
-        inStock: isProductAvailable,
-        stockQuantity: 0,
+        availability,
+        isAvailable: availability?.isAvailable ?? false,
+        inStock: item.inStock,
+        stockQuantity: availability?.maximumQuantity ?? 0,
         hasVariants: item.hasVariants,
         displayPriceText: item.displayPriceText,
         hasActivePromotion: item.hasActivePromotion,

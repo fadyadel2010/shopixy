@@ -128,7 +128,9 @@ describe('architecture certification (source rules)', () => {
     it('BuilderCanvas swap is exclusively flag-gated and legacy path remains intact', () => {
         expect(builderCanvasSource).toContain('isThemeNativeCanvasEnabled()')
         expect(builderCanvasSource).toContain('<ThemeNativeCanvas')
-        expect(builderCanvasSource).toContain('onInsertSection={(sectionType, insertionIndex) => addSection(sectionType, insertionIndex, sectionRegistry)}')
+        expect(builderCanvasSource).toContain('onInsertSection={(sectionType, insertionIndex) => {')
+        expect(builderCanvasSource).toContain('isSectionAvailableForPage(sectionType, currentPage)')
+        expect(builderCanvasSource).toContain('addSection(sectionType, insertionIndex, sectionRegistry)')
         // Legacy synthetic canvas is preserved for flag-OFF rollback.
         expect(builderCanvasSource).toContain('SortableSectionCard')
         expect(builderCanvasSource).toContain('StorefrontSectionRenderer')

@@ -10,6 +10,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVertical, Eye, EyeOff, Copy, Trash2, Settings } from 'lucide-react'
 import { useBuilderStore, selectSections, selectSelectedSectionId, selectCurrentPage } from '../../store'
 import { sectionRegistry } from '../../builder'
+import { isSectionAvailableForPage } from '../../builder/pageSectionAvailability'
 import { BuilderThemeProvider } from './BuilderThemeProvider'
 import { ThemeNativeCanvas } from './ThemeNativeCanvas'
 import { isThemeNativeCanvasEnabled } from './themeNativeCanvasFlag'
@@ -203,7 +204,13 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
                 storeConfig={storeConfig}
                 tenantId={tenantId}
                 onLoadDemo={onLoadDemo}
-                onInsertSection={(sectionType, insertionIndex) => addSection(sectionType, insertionIndex, sectionRegistry)}
+                onInsertSection={(sectionType, insertionIndex) => {
+                    if (!isSectionAvailableForPage(sectionType, currentPage)) {
+                        return
+                    }
+
+                    addSection(sectionType, insertionIndex, sectionRegistry)
+                }}
             />
         )
     }

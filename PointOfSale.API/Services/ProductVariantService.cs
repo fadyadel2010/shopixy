@@ -1,6 +1,7 @@
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
 using Microsoft.EntityFrameworkCore;
@@ -244,12 +245,16 @@ public class ProductVariantService : IProductVariantService
         }
         else
         {
-            variant = await CreateDefaultVariantEntityAsync(product, cancellationToken);
+            var defaultUnit = product.HasVariants
+                ? null
+                : await LoadDefaultProductUnitAsync(product, cancellationToken);
+            variant = await CreateDefaultVariantEntityAsync(product, defaultUnit, cancellationToken);
             wasCreated = true;
         }
 
         if (!product.HasVariants)
         {
+            var defaultUnit = await LoadDefaultProductUnitAsync(product, cancellationToken);
             var desiredSku = await GenerateSafeSkuAsync(
                 product.TenantId,
                 product.SKU,
@@ -272,9 +277,10 @@ public class ProductVariantService : IProductVariantService
 
             SetIfChanged(variant, (entity, value) => entity.SKU = value, desiredSku, nameof(ProductVariant.SKU), changedFields);
             SetIfChanged(variant, (entity, value) => entity.Barcode = value, product.Barcode, nameof(ProductVariant.Barcode), changedFields);
-            SetIfChanged(variant, (entity, value) => entity.Price = value, product.SalePrice, nameof(ProductVariant.Price), changedFields);
-            SetIfChanged(variant, (entity, value) => entity.OnlinePrice = value, product.OnlinePrice, nameof(ProductVariant.OnlinePrice), changedFields);
-            SetIfChanged(variant, (entity, value) => entity.CostPrice = value, product.PurchasePrice, nameof(ProductVariant.CostPrice), changedFields);
+            foreach (var changedField in ProductPricingCompatibilityMirror.MirrorSimpleDefaultVariantFromDefaultUnit(product, variant, defaultUnit))
+            {
+                changedFields.Add(changedField);
+            }
             SetIfChanged(variant, (entity, value) => entity.IsActive = value, product.IsActive, nameof(ProductVariant.IsActive), changedFields);
         }
 
@@ -362,9 +368,11 @@ public class ProductVariantService : IProductVariantService
         }
 
         SetIfChanged(product, (entity, value) => entity.Barcode = value, variant.Barcode, nameof(Product.Barcode), changedFields);
-        SetIfChanged(product, (entity, value) => entity.SalePrice = value, variant.Price, nameof(Product.SalePrice), changedFields);
-        SetIfChanged(product, (entity, value) => entity.OnlinePrice = value, variant.OnlinePrice, nameof(Product.OnlinePrice), changedFields);
-        SetIfChanged(product, (entity, value) => entity.PurchasePrice = value, variant.CostPrice, nameof(Product.PurchasePrice), changedFields);
+        var defaultUnit = await LoadDefaultProductUnitAsync(product, cancellationToken);
+        foreach (var changedField in ProductPricingCompatibilityMirror.MirrorSimpleProductFromDefaultUnit(product, defaultUnit))
+        {
+            changedFields.Add(changedField);
+        }
         SetIfChanged(product, (entity, value) => entity.IsActive = value, variant.IsActive, nameof(Product.IsActive), changedFields);
 
         if (changedFields.Count > 0)
@@ -403,6 +411,7 @@ public class ProductVariantService : IProductVariantService
 
     private async Task<ProductVariant> CreateDefaultVariantEntityAsync(
         Product product,
+        ProductUnit? defaultUnit,
         CancellationToken cancellationToken)
     {
         var variant = new ProductVariant
@@ -411,9 +420,9 @@ public class ProductVariantService : IProductVariantService
             TenantId = product.TenantId,
             ProductId = product.Id,
             Barcode = product.Barcode,
-            Price = product.SalePrice,
-            OnlinePrice = product.OnlinePrice,
-            CostPrice = product.PurchasePrice,
+            Price = CatalogPricingAuthority.ResolveSimpleSellingPrice(defaultUnit),
+            OnlinePrice = null,
+            CostPrice = CatalogPricingAuthority.ResolveSimplePurchasePrice(defaultUnit),
             IsDefault = true,
             IsActive = product.IsActive,
             SortOrder = 0,
@@ -435,6 +444,36 @@ public class ProductVariantService : IProductVariantService
             variant.Id, product.Id, variant.SKU, variant.Price);
 
         return variant;
+    }
+
+    private async Task<ProductUnit?> LoadDefaultProductUnitAsync(
+        Product product,
+        CancellationToken cancellationToken)
+    {
+        var attachedDefaultUnit = product.ProductUnits
+            .Where(unit => !unit.IsDeleted)
+            .FirstOrDefault(unit => unit.IsDefault);
+        if (attachedDefaultUnit is not null)
+        {
+            return attachedDefaultUnit;
+        }
+
+        var trackedDefaultUnit = _context.ChangeTracker
+            .Entries<ProductUnit>()
+            .Select(entry => entry.Entity)
+            .Where(unit => unit.ProductId == product.Id && !unit.IsDeleted)
+            .FirstOrDefault(unit => unit.IsDefault);
+        if (trackedDefaultUnit is not null)
+        {
+            return trackedDefaultUnit;
+        }
+
+        return await _context.ProductUnits
+            .FirstOrDefaultAsync(unit =>
+                unit.ProductId == product.Id &&
+                !unit.IsDeleted &&
+                unit.IsDefault,
+                cancellationToken);
     }
 
     private async Task<string> GenerateSafeSkuAsync(

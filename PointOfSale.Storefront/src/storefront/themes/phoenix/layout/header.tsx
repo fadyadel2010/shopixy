@@ -117,22 +117,24 @@ const PhoenixHeader: React.FC = () => {
                         </div>
 
                         {/* Centered primary navigation */}
-                        <nav
-                            className="mt-2 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-black/5 pt-3 md:flex"
-                            aria-label={t('accessibility.mainNavigation')}
-                        >
-                            {links.map((link) => (
-                                <AffiliateLink
-                                    key={link.key}
-                                    href={link.url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={phoenixNavLinkClass(isActive(link.url))}
-                                >
-                                    {link.label}
-                                </AffiliateLink>
-                            ))}
-                        </nav>
+                        {links.length > 0 ? (
+                            <nav
+                                className="mt-2 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-black/5 pt-3 md:flex"
+                                aria-label={t('accessibility.mainNavigation')}
+                            >
+                                {links.map((link) => (
+                                    <AffiliateLink
+                                        key={link.key}
+                                        href={link.url}
+                                        target={link.openInNewTab ? '_blank' : undefined}
+                                        rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                        className={phoenixNavLinkClass(isActive(link.url))}
+                                    >
+                                        {link.label}
+                                    </AffiliateLink>
+                                ))}
+                            </nav>
+                        ) : null}
                     </div>
 
                     {/* Mobile drawer */}

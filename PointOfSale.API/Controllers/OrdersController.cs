@@ -12,6 +12,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Pagination;
+using PointOfSale.Core.Pricing;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Infrastructure.DocumentNumbers;
@@ -2036,21 +2037,14 @@ public class OrdersController : ControllerBase
         ProductUnit? configuredUnit,
         ProductVariant? defaultVariant)
     {
-        if (configuredUnit?.SellingPrice.HasValue == true)
+        if (product.HasVariants)
         {
-            return RoundCurrency(configuredUnit.SellingPrice.Value);
+            return defaultVariant is null
+                ? 0m
+                : RoundCurrency(CatalogPricingAuthority.ResolveVariantOnlinePrice(defaultVariant));
         }
 
-        if (defaultVariant != null)
-        {
-            return RoundCurrency(defaultVariant.EffectiveOnlinePrice);
-        }
-
-        var productPrice = product.OnlinePrice.HasValue && product.OnlinePrice.Value > 0m
-            ? product.OnlinePrice.Value
-            : product.SalePrice;
-
-        return RoundCurrency(productPrice);
+        return RoundCurrency(CatalogPricingAuthority.ResolveSimpleSellingPrice(configuredUnit));
     }
 
     private static decimal CalculateAuthoritativeItemTax(Product product, decimal taxableAmount)

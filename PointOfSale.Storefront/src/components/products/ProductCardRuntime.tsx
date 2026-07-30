@@ -99,7 +99,7 @@ export function useProductCardRuntime({
         return undefined;
     }, [displayName, language, product.name, product.nameAr]);
 
-    const canQuickAdd = product.isAvailable && product.inStock && !product.hasVariants;
+    const canQuickAdd = product.availability?.canAddToCart === true;
 
     const handleQuickAdd = useCallback(async (event: React.MouseEvent<HTMLButtonElement>) => {
         event.preventDefault();
@@ -136,13 +136,13 @@ export function useProductCardRuntime({
         imageSrc,
         price,
         categoryName: product.categoryName,
-        isAvailable: product.isAvailable,
+        isAvailable: product.availability?.isAvailable ?? product.isAvailable,
         inStock: product.inStock,
         canQuickAdd,
         isAddingToCart,
         labels: {
             addToCart: t('product.addToCart'),
-            inStock: t('product.inStock'),
+            inStock: product.availability?.stockLabel ?? t('product.inStock'),
             outOfStock: t('product.outOfStock'),
         },
         handleQuickAdd,

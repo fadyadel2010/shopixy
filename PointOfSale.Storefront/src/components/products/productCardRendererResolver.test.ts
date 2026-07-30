@@ -17,11 +17,12 @@ describe('product card renderer resolver', () => {
         expect(resolveProductCardRenderer('pearl', 'compact')).toBe('pearl');
         expect(resolveProductCardRenderer('phoenix', 'compact')).toBe('phoenix');
         expect(resolveProductCardRenderer('hype', 'compact')).toBe('hype');
+        expect(resolveProductCardRenderer('alizon', 'compact')).toBe('alizon');
     });
 
     it('preserves explicit product-level specialized layouts', () => {
-        expect(resolveProductCardRenderer('minimal', 'fashion')).toBe('fashion');
-        expect(resolveProductCardRenderer('pearl', 'electronics')).toBe('electronics');
+        expect(resolveProductCardRenderer('fashion', 'fashion')).toBe('fashion');
+        expect(resolveProductCardRenderer('electronics', 'electronics')).toBe('electronics');
     });
 
     it('falls back deterministically without changing theme resolver or registry', () => {
@@ -67,6 +68,7 @@ describe('product card runtime architecture', () => {
         expect(renderersSrc).toContain('data-product-card-theme="phoenix"');
         expect(renderersSrc).toContain('data-product-card-theme="hype"');
         expect(renderersSrc).toContain('data-product-card-theme="electronics"');
+        expect(renderersSrc).toContain('data-product-card-theme="alizon"');
 
         expect(renderersSrc).toContain('ThemeSurface');
         expect(renderersSrc).toContain('ThemeProductTitle');

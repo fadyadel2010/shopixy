@@ -82,21 +82,23 @@ const FashionHeader: React.FC = () => {
                         </div>
                     </div>
 
-                    <nav className="mt-5 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex" aria-label="Fashion navigation">
-                        {links.map((link) => (
-                            <AffiliateLink
-                                key={link.key}
-                                href={link.url}
-                                target={link.openInNewTab ? '_blank' : undefined}
-                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className={`text-xs uppercase tracking-[0.18em] transition-colors lg:text-sm lg:tracking-[0.22em] ${
-                                    isActive(link.url) ? 'text-white' : 'text-white/60 hover:text-white'
-                                }`}
-                            >
-                                {link.label}
-                            </AffiliateLink>
-                        ))}
-                    </nav>
+                    {links.length > 0 ? (
+                        <nav className="mt-5 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex" aria-label="Fashion navigation">
+                            {links.map((link) => (
+                                <AffiliateLink
+                                    key={link.key}
+                                    href={link.url}
+                                    target={link.openInNewTab ? '_blank' : undefined}
+                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                    className={`text-xs uppercase tracking-[0.18em] transition-colors lg:text-sm lg:tracking-[0.22em] ${
+                                        isActive(link.url) ? 'text-white' : 'text-white/60 hover:text-white'
+                                    }`}
+                                >
+                                    {link.label}
+                                </AffiliateLink>
+                            ))}
+                        </nav>
+                    ) : null}
                 </div>
 
                 {mobileOpen ? (

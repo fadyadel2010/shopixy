@@ -459,33 +459,8 @@ public class StorefrontProductsController : ControllerBase
     private ProductListItemDto MapToCategoryTreeListItemDto(
         PointOfSale.Infrastructure.MongoDB.Documents.ProductDocument doc)
     {
-        // Check if product has active variants
-        var activeVariants = (doc.Variants ?? new List<PointOfSale.Infrastructure.MongoDB.Documents.ProductVariantDocument>())
-            .Where(v => v.IsActive)
-            .ToList();
-        var defaultVariant = activeVariants.FirstOrDefault(v => v.IsDefault) ?? activeVariants.FirstOrDefault();
-        
-        decimal effectivePrice;
-        bool inStock;
-        int stockQuantity;
-        
-        if (activeVariants.Count > 0 && defaultVariant != null)
-        {
-            // VARIANT SOURCE OF TRUTH: Use default variant's effective price
-            effectivePrice = defaultVariant.EffectivePrice;
-            inStock = activeVariants.Any(v => v.TotalStock > 0);
-            stockQuantity = (int)activeVariants.Sum(v => v.TotalStock);
-        }
-        else
-        {
-            // LEGACY FALLBACK: Use product-level price
-            // Use EffectivePrice computed property which handles null OnlinePrice correctly
-            effectivePrice = doc.StorefrontEffectivePrice;
-            inStock = doc.InStock;
-            stockQuantity = doc.StockQuantity;
-        }
-        
-        var isAvailable = doc.IsActive && doc.IsOnlineVisible && effectivePrice > 0;
+        var purchasability = ProductStorefrontVisibilityAuthority.Evaluate(doc);
+        var effectivePrice = purchasability.Price;
 
         return new ProductListItemDto
         {
@@ -505,9 +480,16 @@ public class StorefrontProductsController : ControllerBase
             ProductTemplate = doc.ProductTemplate,
             StorefrontLayout = doc.ProductTemplate,
             IsFeatured = doc.IsFeatured,
-            IsAvailable = isAvailable,
-            InStock = inStock,
-            StockQuantity = stockQuantity,
+            Availability = StorefrontAvailabilityPresentationMapper.Build(
+                purchasability.IsAvailable,
+                purchasability.InStock,
+                purchasability.StockQuantity,
+                purchasability.RequiresVariantSelection,
+                purchasability.CanPurchase,
+                purchasability.UnavailableReason),
+            IsAvailable = purchasability.IsAvailable,
+            InStock = purchasability.InStock,
+            StockQuantity = purchasability.StockQuantity,
             // PHASE: Promotions Engine - Badge Display Fields (CRITICAL FIX)
             // These fields were MISSING, causing promotion badges to not appear on category pages
             HasActivePromotion = doc.HasActivePromotion,

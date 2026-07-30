@@ -20,6 +20,9 @@ const surfaceStyles: Record<ThemeComponentTheme, string> = {
     phoenix: 'overflow-hidden border border-black/10 bg-background shadow-sm transition-all duration-normal motion-safe:hover:-translate-y-1 hover:border-primary/50',
     hype: 'overflow-hidden rounded-lg border border-muted/20 bg-background shadow-sm ring-1 ring-muted/5 transition-all duration-fast hover:border-primary/50 hover:shadow-md',
     electronics: 'overflow-hidden rounded-md border border-muted/25 bg-background shadow-sm ring-1 ring-muted/5 transition-all duration-fast hover:border-primary/50 hover:shadow-md',
+    alizon: 'overflow-hidden border border-muted/20 bg-background shadow-sm transition-all duration-fast hover:border-primary/50 hover:shadow-md',
+    sharp: 'overflow-hidden bg-background shadow-[0_4px_16px_rgba(1,52,35,0.04)] transition-all duration-fast hover:shadow-lg',
+    seven: 'overflow-hidden bg-background transition-transform duration-slow motion-safe:hover:-translate-y-1',
     default: 'overflow-hidden rounded-xl border border-muted/20 bg-background shadow-sm transition-colors duration-normal hover:border-primary/30',
 };
 
@@ -79,6 +82,27 @@ const sectionHeaderStyles: Record<ThemeComponentTheme, {
         subtitle: 'mt-2 max-w-3xl text-sm leading-6 text-muted',
         action: 'rounded border border-primary/35 px-3 py-2 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary transition-colors hover:bg-primary hover:text-white',
     },
+    alizon: {
+        wrapper: 'mb-6 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.16em] text-primary',
+        title: 'text-2xl font-semibold leading-tight text-text sm:text-3xl',
+        subtitle: 'mt-2 max-w-xl text-sm leading-6 text-muted',
+        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-primary',
+    },
+    sharp: {
+        wrapper: 'mb-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between',
+        eyebrow: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        title: 'text-2xl font-semibold leading-tight text-text sm:text-3xl',
+        subtitle: 'mt-3 max-w-xl text-sm leading-6 text-muted',
+        action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-secondary',
+    },
+    seven: {
+        wrapper: 'mb-12 grid gap-5 border-l-4 border-text pl-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
+        eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary',
+        title: 'mt-3 max-w-3xl text-4xl font-black uppercase leading-[0.95] text-slate-950 sm:text-5xl',
+        subtitle: 'mt-5 max-w-xl text-base leading-7 text-slate-600',
+        action: 'self-start border-b-2 border-text pb-1 text-xs font-bold uppercase tracking-[0.26em] text-slate-950 transition-colors hover:border-primary hover:text-primary',
+    },
     default: {
         wrapper: 'mb-8 flex items-end justify-between gap-4',
         eyebrow: 'text-sm font-semibold uppercase tracking-[0.2em] text-primary',
@@ -125,6 +149,24 @@ const categoryArt = {
         'bg-[linear-gradient(135deg,#18181b_0%,#3f3f46_52%,#facc15_52%,#fef9c3_100%)]',
         'bg-[linear-gradient(135deg,#0f172a_0%,#334155_50%,#a855f7_50%,#f3e8ff_100%)]',
     ],
+    alizon: [
+        'bg-[linear-gradient(135deg,#131921_0%,#1E293B_50%,#FF0000_50%,#FFFFFF_100%)]',
+        'bg-[linear-gradient(135deg,#0F1729_0%,#1E293B_48%,#FFD814_48%,#FFFFFF_100%)]',
+        'bg-[linear-gradient(135deg,#1E293B_0%,#334159_52%,#FF0000_52%,#F1F5F9_100%)]',
+        'bg-[linear-gradient(135deg,#0F1729_0%,#1E293B_50%,#FF0000_50%,#FFFFFF_100%)]',
+    ],
+    sharp: [
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_44%,#013423_44%,#013423_100%)]',
+        'bg-[linear-gradient(135deg,#F0F9FF_0%,#FFFFFF_46%,#013423_46%,#013423_100%)]',
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F1F5F9_48%,#013423_48%,#013423_100%)]',
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_45%,#013423_45%,#013423_100%)]',
+    ],
+    seven: [
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_44%,#9D7877_44%,#131316_100%)]',
+        'bg-[linear-gradient(135deg,#F5F0EB_0%,#FFFFFF_46%,#9D7877_46%,#131316_100%)]',
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F1F5F9_48%,#9D7877_48%,#131316_100%)]',
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_45%,#9D7877_45%,#131316_100%)]',
+    ],
     default: [
         'bg-gradient-to-br from-primary/10 to-secondary/10',
         'bg-gradient-to-br from-secondary/10 to-primary/10',
@@ -139,6 +181,9 @@ const buttonStyles: Record<ThemeComponentTheme, string> = {
     phoenix: 'border border-primary bg-primary px-7 py-3 text-xs font-bold uppercase tracking-[0.22em] text-white transition-colors duration-normal hover:bg-text hover:border-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
     hype: 'rounded-full bg-primary px-5 py-3 text-xs font-bold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
     electronics: 'rounded-md bg-primary px-4 py-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    alizon: 'rounded-none bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    sharp: 'bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    seven: 'border-2 border-current bg-slate-950 px-8 py-3.5 text-xs font-black uppercase tracking-[0.24em] text-white transition-all duration-normal hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
     default: 'rounded-xl bg-primary px-7 py-3 font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
 };
 
@@ -305,6 +350,21 @@ export function ThemeBadge({
             accent: 'border border-primary/40 bg-primary/10 text-primary',
             muted: 'border border-muted/25 bg-muted/10 text-muted',
         },
+        alizon: {
+            primary: 'bg-primary text-white',
+            accent: 'bg-primary text-white',
+            muted: 'border border-muted/20 bg-background text-muted',
+        },
+        sharp: {
+            primary: 'bg-primary text-white',
+            accent: 'bg-primary text-white',
+            muted: 'border border-muted/20 bg-background text-muted',
+        },
+        seven: {
+            primary: 'bg-text text-background',
+            accent: 'bg-primary text-white',
+            muted: 'border border-text/20 bg-background/90 text-text',
+        },
         default: {
             primary: 'bg-primary text-white',
             accent: 'bg-rose-500 text-white',
@@ -319,6 +379,9 @@ export function ThemeBadge({
         phoenix: 'px-3 py-1 text-[10px] font-bold uppercase tracking-[0.24em]',
         hype: 'rounded-sm px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em]',
         electronics: 'rounded-sm px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]',
+        alizon: 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]',
+        sharp: 'px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]',
+        seven: 'px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.28em] text-primary',
         default: 'rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] shadow-sm',
     };
 
@@ -347,6 +410,9 @@ export function ThemeLabel({
         phoenix: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.22em] text-text',
         hype: 'rounded-sm border border-primary/25 bg-primary/5 px-2 py-1 text-[11px] font-bold uppercase tracking-[0.1em] text-primary',
         electronics: 'rounded-sm border border-primary/25 bg-primary/5 px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary',
+        alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        seven: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.24em] text-text',
         default: 'rounded-full border border-primary/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-primary',
     };
 
@@ -371,6 +437,9 @@ export function ThemeProductTitle({
         phoenix: 'line-clamp-2 text-lg font-black uppercase leading-[1.02] text-text sm:text-xl',
         hype: 'line-clamp-2 text-sm font-bold leading-snug text-text sm:text-base',
         electronics: 'line-clamp-2 text-sm font-bold leading-snug text-text sm:text-base',
+        alizon: 'line-clamp-2 text-sm font-normal leading-snug text-text sm:text-base',
+        sharp: 'line-clamp-2 text-base font-semibold leading-snug text-text transition-colors duration-fast group-hover:text-primary',
+        seven: 'line-clamp-2 text-xl font-black uppercase leading-[1.02] text-text sm:text-2xl',
         default: 'line-clamp-2 text-base font-semibold leading-snug text-text',
     };
 
@@ -397,6 +466,9 @@ export function ThemeProductMeta({
         phoenix: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.22em] text-primary',
         hype: 'text-[11px] font-semibold uppercase tracking-[0.1em] text-muted',
         electronics: 'font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted',
+        alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
+        sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        seven: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.24em] text-primary',
         default: 'text-xs font-semibold uppercase tracking-[0.16em] text-muted',
     };
 
@@ -429,6 +501,9 @@ export function ThemePrice({
         phoenix: 'flex items-baseline gap-2',
         hype: 'flex items-baseline gap-2 tabular-nums',
         electronics: 'flex items-baseline gap-2 tabular-nums',
+        alizon: 'flex items-baseline gap-2 tabular-nums',
+        sharp: 'flex items-baseline gap-2',
+        seven: 'flex flex-col gap-1',
         default: 'flex items-baseline gap-2',
     };
     const currentStyles: Record<ThemeComponentTheme, string> = {
@@ -439,6 +514,9 @@ export function ThemePrice({
         phoenix: 'text-lg font-black leading-none text-primary',
         hype: 'text-lg font-black leading-none text-primary tabular-nums',
         electronics: 'font-mono text-lg font-black leading-none text-primary tabular-nums',
+        alizon: 'text-lg font-bold text-primary tabular-nums',
+        sharp: 'text-lg font-semibold text-text',
+        seven: 'text-2xl font-black leading-none text-primary',
         default: 'text-lg font-bold text-primary',
     };
     const mutedStyles: Record<ThemeComponentTheme, string> = {
@@ -449,6 +527,9 @@ export function ThemePrice({
         phoenix: 'text-sm font-semibold text-muted',
         hype: 'text-xs font-semibold text-muted tabular-nums',
         electronics: 'font-mono text-xs font-semibold text-muted tabular-nums',
+        alizon: 'text-sm font-semibold text-muted tabular-nums',
+        sharp: 'text-sm font-medium text-muted',
+        seven: 'text-base font-semibold text-muted',
         default: 'text-sm font-medium text-muted',
     };
     const compareStyles: Record<ThemeComponentTheme, string> = {
@@ -459,6 +540,9 @@ export function ThemePrice({
         phoenix: 'text-sm font-semibold text-muted line-through',
         hype: 'text-xs text-muted line-through tabular-nums',
         electronics: 'font-mono text-xs text-muted line-through tabular-nums',
+        alizon: 'text-sm text-muted line-through tabular-nums',
+        sharp: 'text-sm text-muted line-through',
+        seven: 'text-sm font-semibold text-muted line-through',
         default: 'text-sm text-muted line-through',
     };
     const wrapper = cx(wrapperStyles[theme], className);
@@ -505,6 +589,9 @@ export function ThemeImageFrame({
         phoenix: 'relative aspect-[3/4] overflow-hidden bg-muted/5 after:pointer-events-none after:absolute after:inset-0 after:border after:border-black/10',
         hype: 'relative aspect-product overflow-hidden bg-muted/5 before:pointer-events-none before:absolute before:inset-0 before:z-10 before:bg-[linear-gradient(90deg,rgba(240,103,54,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(39,205,228,0.08)_1px,transparent_1px)] before:bg-[size:24px_24px]',
         electronics: 'relative aspect-product overflow-hidden bg-muted/5 before:pointer-events-none before:absolute before:inset-0 before:z-10 before:bg-[linear-gradient(90deg,rgba(100,116,139,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(100,116,139,0.08)_1px,transparent_1px)] before:bg-[size:24px_24px]',
+        alizon: 'relative aspect-[4/3] overflow-hidden bg-muted/5',
+        sharp: 'relative aspect-square overflow-hidden bg-muted/5',
+        seven: 'relative aspect-[3/4] overflow-hidden bg-muted/5 after:pointer-events-none after:absolute after:inset-0 after:border after:border-black/10',
         default: 'relative aspect-square overflow-hidden bg-muted/5',
     };
 
@@ -554,6 +641,9 @@ export function ThemeLoadingSkeleton({
         phoenix: 'animate-pulse border border-black/10 bg-[linear-gradient(90deg,#ece9e2_0%,#ece9e2_44%,#ffffff_44%,#ffffff_100%)]',
         hype: 'animate-pulse rounded-lg border border-muted/20 bg-[linear-gradient(90deg,rgba(240,103,54,0.10)_1px,transparent_1px),linear-gradient(180deg,rgba(39,205,228,0.10)_1px,transparent_1px)] bg-[size:20px_20px]',
         electronics: 'animate-pulse rounded-md border border-muted/25 bg-[linear-gradient(90deg,rgba(100,116,139,0.10)_1px,transparent_1px),linear-gradient(180deg,rgba(100,116,139,0.10)_1px,transparent_1px)] bg-[size:20px_20px]',
+        alizon: 'animate-pulse border border-muted/20 bg-[linear-gradient(90deg,rgba(255,0,0,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(255,0,0,0.06)_1px,transparent_1px)] bg-[size:20px_20px]',
+        sharp: 'animate-pulse border border-muted/20 bg-[linear-gradient(90deg,rgba(1,52,35,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(1,52,35,0.06)_1px,transparent_1px)] bg-[size:20px_20px]',
+        seven: 'animate-pulse bg-[linear-gradient(90deg,#e5e7eb_0%,#e5e7eb_44%,#cbd5e1_44%,#cbd5e1_100%)]',
         default: 'animate-pulse rounded-xl bg-muted/10',
     };
 
@@ -607,6 +697,21 @@ export function ThemeEmptyState({
             wrapper: 'rounded-md border border-muted/25 bg-background px-5 py-8 text-left text-muted',
             title: 'font-mono text-sm font-bold uppercase tracking-[0.08em] text-text',
             message: 'mt-2 max-w-md text-sm leading-6',
+        },
+        alizon: {
+            wrapper: 'rounded border border-muted/20 bg-background px-6 py-10 text-center text-muted shadow-sm',
+            title: 'text-lg font-semibold text-text',
+            message: 'mx-auto mt-2 max-w-md text-sm leading-6',
+        },
+        sharp: {
+            wrapper: 'border border-muted/20 bg-background px-6 py-10 text-center text-muted shadow-[0_4px_16px_rgba(1,52,35,0.04)]',
+            title: 'text-lg font-semibold text-text',
+            message: 'mx-auto mt-2 max-w-md text-sm leading-6',
+        },
+        seven: {
+            wrapper: 'border-l-4 border-text px-6 py-12 text-left text-slate-500',
+            title: 'text-2xl font-black uppercase leading-none text-text',
+            message: 'mt-3 max-w-md text-sm leading-6',
         },
         default: {
             wrapper: 'px-6 py-10 text-center text-muted',
@@ -737,6 +842,57 @@ export function ThemeCategoryCard({
                     </div>
                     <div className="absolute inset-x-4 bottom-4">
                         <h3 className="overflow-hidden font-mono text-lg font-black uppercase leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] sm:text-xl">{title}</h3>
+                    </div>
+                </article>
+            </AffiliateLink>
+        );
+    }
+
+    if (theme === 'alizon') {
+        const artClass = categoryArt.alizon[index % categoryArt.alizon.length];
+
+        return (
+            <AffiliateLink href={href} className="group block overflow-hidden border border-muted/20 bg-background shadow-sm transition-all duration-fast hover:-translate-y-1 hover:border-primary/50 hover:shadow-md">
+                <article className="relative aspect-[4/3] min-h-[12rem] overflow-hidden">
+                    <div className={cx('absolute inset-0 transition-transform duration-normal group-hover:scale-[1.03]', artClass)} />
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(19,25,33,0.72)_0%,rgba(19,25,33,0.18)_100%)]" />
+                    <div className="absolute inset-x-4 bottom-4">
+                        <h3 className="overflow-hidden text-lg font-semibold leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{title}</h3>
+                    </div>
+                </article>
+            </AffiliateLink>
+        );
+    }
+
+    if (theme === 'sharp') {
+        const artClass = categoryArt.sharp[index % categoryArt.sharp.length];
+
+        return (
+            <AffiliateLink href={href} className="group block overflow-hidden bg-background shadow-sm transition-transform duration-fast hover:-translate-y-1">
+                <article className="relative aspect-[4/3] min-h-[13rem] overflow-hidden border border-muted/20">
+                    <div className={cx('absolute inset-0 transition-transform duration-normal group-hover:scale-[1.03]', artClass)} />
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,52,35,0.08)_0%,rgba(1,52,35,0.78)_100%)]" />
+                    <div className="absolute inset-x-4 bottom-4">
+                        <h3 className="overflow-hidden text-lg font-semibold leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{title}</h3>
+                    </div>
+                </article>
+            </AffiliateLink>
+        );
+    }
+
+    if (theme === 'seven') {
+        const artClass = categoryArt.seven[index % categoryArt.seven.length];
+
+        return (
+            <AffiliateLink href={href} className="group block overflow-hidden bg-slate-950 ring-1 ring-white/10 transition-transform duration-300 hover:-translate-y-1">
+                <article className="relative aspect-[4/3] min-h-[13rem] overflow-hidden">
+                    <div className={cx('absolute inset-0 transition-transform duration-700 group-hover:scale-105', artClass)} />
+                    <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(19,19,22,0.04)_0%,rgba(19,19,22,0.76)_100%)]" />
+                    <div className="absolute inset-x-4 bottom-4">
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-[0.22em] text-white/70">
+                            {String(index + 1).padStart(2, '0')}
+                        </p>
+                        <h3 className="max-w-[15rem] overflow-hidden text-xl font-black uppercase leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] sm:text-2xl">{title}</h3>
                     </div>
                 </article>
             </AffiliateLink>

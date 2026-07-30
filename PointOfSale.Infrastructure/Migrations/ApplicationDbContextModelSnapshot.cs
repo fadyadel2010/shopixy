@@ -14553,6 +14553,12 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<string>("RelatedProductIds")
                         .HasColumnType("text");
 
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<string>("SKU")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -14876,7 +14882,12 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasDatabaseName("UX_ProductUnits_ProductId_UnitId_Active")
                         .HasFilter("\"IsDeleted\" = false");
 
-                    b.ToTable("ProductUnits");
+                    b.ToTable("ProductUnits", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ProductUnits_BaseUnit_ConversionFactor_One", "NOT \"IsBaseUnit\" OR \"ConversionFactor\" = 1");
+
+                            t.HasCheckConstraint("CK_ProductUnits_ConversionFactor_Positive", "\"ConversionFactor\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ProductVariant", b =>

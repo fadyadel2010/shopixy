@@ -1,0 +1,55 @@
+name: ARCH-2 Machine-Enforced Governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  storefront-architecture-governance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Restore .NET
+        run: dotnet restore PointOfSale.sln
+
+      - name: Architecture Tests
+        run: dotnet test PointOfSale.Tests/PointOfSale.Tests.csproj --no-restore --filter "FullyQualifiedName~PointOfSale.Tests.Architecture"
+
+      - name: Projection Admission Tests
+        run: dotnet test PointOfSale.Tests/PointOfSale.Tests.csproj --no-restore --filter "FullyQualifiedName~ProductSqlAuthorityProjectionWriterTests"
+
+      - name: Mutation Tests
+        run: dotnet test PointOfSale.Tests/PointOfSale.Tests.csproj --no-restore --filter "FullyQualifiedName~StorefrontArchitectureMutationTests"
+
+      - name: Storefront Static Analysis
+        run: dotnet test PointOfSale.Tests/PointOfSale.Tests.csproj --no-restore --filter "FullyQualifiedName~StorefrontArchitectureEnforcementTests|FullyQualifiedName~StorefrontArchitectureHardeningGovernanceTests|FullyQualifiedName~StorefrontRuntimePurchasabilityHarmonizationTests"
+
+      - name: Storefront Frontend Governance Tests
+        working-directory: PointOfSale.Storefront
+        run: |
+          npm ci
+          npm test -- --run
+          npm run build
+
+      - name: Admin Frontend Governance Tests
+        working-directory: PointOfSale.Web
+        run: |
+          npm ci
+          npm test -- --run
+          npm run build

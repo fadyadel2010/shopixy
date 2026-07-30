@@ -105,7 +105,7 @@ export const MinimalProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
 export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     <ThemeSurface
         themeId="fashion"
-        className="group relative"
+        className="group relative h-full bg-white"
         data-product-card-theme="fashion"
         data-product-card-layout={runtime.layout}
     >
@@ -116,8 +116,8 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
-                className="relative aspect-[3/4] overflow-hidden bg-muted/5"
-                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.04]"
+                className="relative aspect-[4/5] overflow-hidden border border-slate-200 bg-slate-50"
+                imageClassName="h-full w-full object-contain p-4 transition-transform duration-slow group-hover:scale-[1.04]"
                 sizes="(max-width: 768px) 90vw, (max-width: 1280px) 40vw, 420px"
             />
 
@@ -128,7 +128,7 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
                     </ThemeProductMeta>
                 ) : null}
 
-                <ThemeProductTitle themeId="fashion">
+                <ThemeProductTitle themeId="fashion" className="min-h-[4.25rem] overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
                     {runtime.displayName}
                 </ThemeProductTitle>
 
@@ -150,6 +150,73 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
                     <ThemeLabel themeId="fashion">
                         {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
                     </ThemeLabel>
+                </div>
+            </div>
+        </ProductCardLink>
+    </ThemeSurface>
+);
+
+export const SevenProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
+    <ThemeSurface
+        themeId="seven"
+        className="group relative h-full bg-white"
+        data-product-card-theme="seven"
+        data-product-card-layout={runtime.layout}
+    >
+        <div className="absolute right-4 top-4 z-20">
+            <ProductCardWishlist runtime={runtime} size="medium" />
+        </div>
+
+        <ProductCardLink runtime={runtime} className="block">
+            <ProductCardMedia
+                runtime={runtime}
+                className="relative aspect-[4/5] overflow-hidden bg-white"
+                imageClassName="h-full w-full object-contain p-4 transition-transform duration-slow group-hover:scale-[1.04]"
+                sizes="(max-width: 768px) 90vw, (max-width: 1280px) 40vw, 420px"
+            />
+
+            {runtime.price.kind === 'sale' ? (
+                <div className="absolute left-3 top-3 z-10 rounded-none bg-[#CD1515] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white">
+                    Sale!
+                </div>
+            ) : null}
+
+            <div className="space-y-3 py-4">
+                {runtime.categoryName ? (
+                    <ThemeProductMeta themeId="seven" className="text-primary">
+                        {runtime.categoryName}
+                    </ThemeProductMeta>
+                ) : null}
+
+                <ThemeProductTitle themeId="seven" className="min-h-[4.25rem] overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">
+                    {runtime.displayName}
+                </ThemeProductTitle>
+
+                {runtime.alternateName ? (
+                    <ThemeProductMeta themeId="seven" dir={runtime.alternateName.dir}>
+                        {runtime.alternateName.value}
+                    </ThemeProductMeta>
+                ) : null}
+
+                <div className="flex items-end justify-between gap-4 border-t border-muted/15 pt-4">
+                    <ProductCardPrice
+                        runtime={runtime}
+                        className="flex flex-col gap-1"
+                        textClassName="text-base font-medium text-muted"
+                        currentClassName="text-xl font-semibold text-text"
+                        saleClassName="text-xl font-semibold text-[#CD1515]"
+                        compareClassName="text-sm text-muted line-through"
+                    />
+                    {runtime.canQuickAdd ? (
+                        <ProductCardQuickAddButton
+                            runtime={runtime}
+                            className="text-xs font-black uppercase tracking-[0.12em] text-primary"
+                        />
+                    ) : (
+                        <ThemeLabel themeId="seven">
+                            {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
+                        </ThemeLabel>
+                    )}
                 </div>
             </div>
         </ProductCardLink>
@@ -324,6 +391,90 @@ export const HypeProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     </ThemeSurface>
 );
 
+export const AlizonProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
+    <ThemeSurface
+        themeId="alizon"
+        className="group relative"
+        data-product-card-theme="alizon"
+        data-product-card-layout={runtime.layout}
+    >
+        <div className="absolute right-3 top-3 z-20">
+            <ProductCardWishlist runtime={runtime} size="small" />
+        </div>
+
+        <ProductCardLink runtime={runtime} className="block">
+            <ProductCardMedia
+                runtime={runtime}
+                className="relative aspect-[4/3] overflow-hidden bg-muted/5"
+                imageClassName="h-full w-full object-contain p-4 transition-transform duration-normal group-hover:scale-105"
+                sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 320px"
+            />
+
+            <div className="space-y-3 p-4">
+                <ThemeProductTitle themeId="alizon">
+                    {runtime.displayName}
+                </ThemeProductTitle>
+                <div className="flex items-center justify-between gap-3">
+                    <ProductCardPrice runtime={runtime} />
+                </div>
+            </div>
+        </ProductCardLink>
+
+        <div className="px-4 pb-4">
+            <ProductCardQuickAddButton
+                runtime={runtime}
+                className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-none bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:bg-muted disabled:text-white disabled:cursor-not-allowed"
+            />
+        </div>
+    </ThemeSurface>
+);
+
+export const SharpProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
+    <ThemeSurface
+        themeId="sharp"
+        className="group relative"
+        data-product-card-theme="sharp"
+        data-product-card-layout={runtime.layout}
+    >
+        <div className="absolute right-3 top-3 z-20">
+            <ProductCardWishlist runtime={runtime} size="small" />
+        </div>
+
+        <ProductCardLink runtime={runtime} className="block">
+            <ProductCardMedia
+                runtime={runtime}
+                className="relative aspect-square overflow-hidden bg-muted/5"
+                imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-105"
+                sizes="(max-width: 768px) 50vw, (max-width: 1280px) 33vw, 320px"
+            />
+
+            <div className="space-y-3 p-4">
+                {runtime.categoryName ? (
+                    <ThemeProductMeta themeId="sharp">
+                        {runtime.categoryName}
+                    </ThemeProductMeta>
+                ) : null}
+
+                <ThemeProductTitle themeId="sharp">
+                    {runtime.displayName}
+                </ThemeProductTitle>
+
+                <div className="flex items-center justify-between gap-3 border-t border-secondary/30 pt-3">
+                    <ProductCardPrice
+                        runtime={runtime}
+                        className="flex items-baseline gap-2"
+                        textClassName="text-sm font-medium text-muted"
+                        currentClassName="text-base font-semibold text-text"
+                        saleClassName="text-base font-semibold text-primary"
+                        compareClassName="text-xs text-muted line-through"
+                    />
+                    <span className="h-2 w-2 rounded-full bg-secondary" aria-hidden="true" />
+                </div>
+            </div>
+        </ProductCardLink>
+    </ThemeSurface>
+);
+
 export const PRODUCT_CARD_RENDERERS: Record<ProductCardRendererId, ProductCardRenderer> = {
     modern: ModernProductCardRenderer,
     minimal: MinimalProductCardRenderer,
@@ -332,4 +483,7 @@ export const PRODUCT_CARD_RENDERERS: Record<ProductCardRendererId, ProductCardRe
     phoenix: PhoenixProductCardRenderer,
     hype: HypeProductCardRenderer,
     electronics: ElectronicsProductCardRenderer,
+    alizon: AlizonProductCardRenderer,
+    sharp: SharpProductCardRenderer,
+    seven: SevenProductCardRenderer,
 };

@@ -182,7 +182,7 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
     }
 
     [Fact]
-    public async Task ApplyAsync_ProjectsSimpleProductsWithoutDefaultUnitAsNonPurchasable()
+    public async Task ApplyAsync_RejectsSimpleProductsWithoutDefaultUnitBeforeProjectionPersistence()
     {
         var tenantId = Guid.NewGuid();
         var productId = Guid.NewGuid();
@@ -198,31 +198,29 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
         var mutationBoundary = new StorefrontProductProjectionMutationBoundary(repository.Object);
         var writer = new ProductSqlAuthorityProjectionWriter(dbContext, mutationBoundary);
 
-        var result = await writer.ApplyAsync(
-            new ProductSqlAuthorityProjectionWriteRequest(
-                tenantId,
-                productId,
-                new ProductDocument
-                {
-                    TenantId = tenantId,
-                    ProductId = productId,
-                    Price = 999m,
-                    DefaultUnit = new ProductUnitDocument
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.ApplyAsync(
+                new ProductSqlAuthorityProjectionWriteRequest(
+                    tenantId,
+                    productId,
+                    new ProductDocument
                     {
-                        UnitId = Guid.NewGuid(),
-                        Name = "Stale",
-                        SalePrice = 999m
-                    }
-                },
-                Guid.NewGuid(),
-                DateTime.UtcNow,
-                EventVersion: 10));
+                        TenantId = tenantId,
+                        ProductId = productId,
+                        Price = 999m,
+                        DefaultUnit = new ProductUnitDocument
+                        {
+                            UnitId = Guid.NewGuid(),
+                            Name = "Stale",
+                            SalePrice = 999m
+                        }
+                    },
+                    Guid.NewGuid(),
+                    DateTime.UtcNow,
+                    EventVersion: 10)));
 
-        Assert.Equal(ProductSqlAuthorityProjectionWriteDisposition.Upserted, result.Disposition);
-        Assert.NotNull(capturedProjection);
-        Assert.Null(capturedProjection!.DefaultUnit);
-        Assert.Empty(capturedProjection.Units);
-        Assert.Equal(0m, capturedProjection.StorefrontEffectivePrice);
+        Assert.Equal("STOREFRONT_PRODUCT_ADMISSION_DEFAULT_UNIT_REQUIRED", ex.Message);
+        Assert.Null(capturedProjection);
     }
 
     [Fact]
@@ -340,6 +338,63 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
             Times.Never);
     }
 
+    [Fact]
+    public async Task StorefrontProductProjectionAdmission_RejectsStaleProjectionVersion()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var repository = new Mock<IProductReadRepository>(MockBehavior.Loose);
+        var boundary = new StorefrontProductProjectionMutationBoundary(repository.Object);
+        var projection = CreateAdmissibleSimpleProjection(tenantId, productId);
+        projection.ProjectionVersion = ProductDocument.CurrentProjectionVersion - 1;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            boundary.ApplyAsync(CreateUpsertMutation(tenantId, productId, projection)));
+
+        Assert.Equal("STOREFRONT_PRODUCT_ADMISSION_PROJECTION_VERSION_STALE", ex.Message);
+        repository.Verify(
+            item => item.UpsertAsync(It.IsAny<ProductDocument>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StorefrontProductProjectionAdmission_RejectsInvalidDefaultUnit()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var repository = new Mock<IProductReadRepository>(MockBehavior.Loose);
+        var boundary = new StorefrontProductProjectionMutationBoundary(repository.Object);
+        var projection = CreateAdmissibleSimpleProjection(tenantId, productId);
+        projection.DefaultUnit!.SalePrice = 0m;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            boundary.ApplyAsync(CreateUpsertMutation(tenantId, productId, projection)));
+
+        Assert.Equal("STOREFRONT_PRODUCT_ADMISSION_DEFAULT_UNIT_PRICE_INVALID", ex.Message);
+        repository.Verify(
+            item => item.UpsertAsync(It.IsAny<ProductDocument>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task StorefrontProductProjectionAdmission_RejectsMissingVariantId()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var repository = new Mock<IProductReadRepository>(MockBehavior.Loose);
+        var boundary = new StorefrontProductProjectionMutationBoundary(repository.Object);
+        var projection = CreateAdmissibleVariantProjection(tenantId, productId);
+        projection.Variants[0].VariantId = Guid.Empty;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            boundary.ApplyAsync(CreateUpsertMutation(tenantId, productId, projection)));
+
+        Assert.Equal("STOREFRONT_PRODUCT_ADMISSION_VARIANT_ID_REQUIRED", ex.Message);
+        repository.Verify(
+            item => item.UpsertAsync(It.IsAny<ProductDocument>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static Mock<IProductReadRepository> CreateRepositoryMock(
         Action<ProductDocument> capture,
         bool tombstoneApplied = false)
@@ -446,6 +501,83 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
             ConversionFactor = conversionFactor,
             IsDefault = isDefault,
             IsBaseUnit = isBaseUnit
+        };
+    }
+
+    private static StorefrontProductProjectionMutation CreateUpsertMutation(
+        Guid tenantId,
+        Guid productId,
+        ProductDocument projection)
+    {
+        return new StorefrontProductProjectionMutation(
+            StorefrontProductProjectionMutationKind.ReviewedFullDocumentUpsert,
+            tenantId,
+            productId,
+            projection,
+            DateTime.UtcNow,
+            EventVersion: 22,
+            Guid.NewGuid(),
+            ReviewReason: "unit test admission");
+    }
+
+    private static ProductDocument CreateAdmissibleSimpleProjection(Guid tenantId, Guid productId)
+    {
+        var unitId = Guid.NewGuid();
+        return new ProductDocument
+        {
+            TenantId = tenantId,
+            ProductId = productId,
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = false,
+            LastEventId = Guid.NewGuid(),
+            LastEventOccurredAtUtc = DateTime.UtcNow,
+            LastEventVersion = 22,
+            DefaultUnit = new ProductUnitDocument
+            {
+                UnitId = unitId,
+                Name = "Piece",
+                SalePrice = 25m,
+                ConversionFactor = 1m,
+                IsBaseUnit = true
+            },
+            Units =
+            [
+                new ProductUnitDocument
+                {
+                    UnitId = unitId,
+                    Name = "Piece",
+                    SalePrice = 25m,
+                    ConversionFactor = 1m,
+                    IsBaseUnit = true
+                }
+            ]
+        };
+    }
+
+    private static ProductDocument CreateAdmissibleVariantProjection(Guid tenantId, Guid productId)
+    {
+        return new ProductDocument
+        {
+            TenantId = tenantId,
+            ProductId = productId,
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = true,
+            LastEventId = Guid.NewGuid(),
+            LastEventOccurredAtUtc = DateTime.UtcNow,
+            LastEventVersion = 22,
+            Variants =
+            [
+                new ProductVariantDocument
+                {
+                    VariantId = Guid.NewGuid(),
+                    IsActive = true,
+                    IsDefault = true,
+                    Price = 25m,
+                    TotalStock = 5m
+                }
+            ]
         };
     }
 }
