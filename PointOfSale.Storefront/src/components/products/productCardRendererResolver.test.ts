@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { describe, expect, it } from 'vitest';
 import { resolveProductCardRenderer } from './productCardRendererResolver';
+import { getProductCardHref } from './productCardLinks';
 
 const productDir = __dirname;
 const read = (name: string) => readFileSync(join(productDir, name), 'utf8');
@@ -32,6 +33,11 @@ describe('product card renderer resolver', () => {
 });
 
 describe('product card runtime architecture', () => {
+    it('generates canonical storefront product detail URLs from product slugs', () => {
+        expect(getProductCardHref({ id: 'product-id', slug: 'oppo-a6t' })).toBe('/products/oppo-a6t');
+        expect(getProductCardHref({ id: 'product-id', slug: undefined })).toBe('/products/product-id');
+    });
+
     it('routes through ThemeContext and the shared runtime rather than concrete business-card forks', () => {
         expect(productCardSrc).toContain("from '@/storefront/themes/ThemeContext'");
         expect(productCardSrc).toContain('useProductCardRuntime');

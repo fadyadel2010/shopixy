@@ -1,0 +1,302 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import ProductVariantsTab from './ProductVariantsTab'
+
+const apiGetMock = vi.hoisted(() => vi.fn())
+const apiPostMock = vi.hoisted(() => vi.fn())
+const apiPutMock = vi.hoisted(() => vi.fn())
+const apiDeleteMock = vi.hoisted(() => vi.fn())
+
+vi.mock('../services/api', () => ({
+    default: {
+        get: apiGetMock,
+        post: apiPostMock,
+        put: apiPutMock,
+        delete: apiDeleteMock,
+    },
+}))
+
+vi.mock('../common/confirm/ConfirmDialogProvider', () => ({
+    useConfirmDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+}))
+
+vi.mock('../services/posRuntimeCache', () => ({
+    invalidatePosRuntimeCache: vi.fn(),
+}))
+
+vi.mock('react-i18next', () => ({
+    useTranslation: () => ({
+        t: (key: string) => key,
+    }),
+}))
+
+const product = {
+    id: 'product-1',
+    name: 'T Shirt',
+    sku: 'TSHIRT',
+    categoryId: 'category-1',
+    purchasePrice: 0,
+    salePrice: 0,
+    priceIncludesTax: false,
+    taxRate: 10,
+    unit: 'Piece',
+    minimumStockLevel: 0,
+    isActive: true,
+    trackStock: false,
+    hasVariants: true,
+    publishStatus: 0,
+    isOnlineVisible: true,
+    isSearchable: true,
+    isFeatured: false,
+    lowStockThreshold: 10,
+    allowBackorder: false,
+    weightUnit: 'kg',
+    dimensionUnit: 'cm',
+    features: [],
+    faqs: [],
+    rowVersion: '4',
+    units: [],
+}
+
+function mockReads() {
+    apiGetMock.mockImplementation((url: string) => {
+        if (url === '/products/product-1/variants') return Promise.resolve({ data: [] })
+        if (url === '/products/product-1') return Promise.resolve({ data: product })
+        if (url === '/warehouses') return Promise.resolve({ data: [{ id: 'warehouse-1', name: 'Main', isDefault: true }] })
+        if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+        return Promise.resolve({ data: [] })
+    })
+}
+
+async function createTwoGeneratedRows(container: HTMLElement) {
+    fireEvent.click(await screen.findByLabelText('Color'))
+    fireEvent.click(screen.getByLabelText('Size'))
+
+    let valueInputs = Array.from(container.querySelectorAll('input[placeholder="Type a value and press Enter"]'))
+    fireEvent.change(valueInputs[0], { target: { value: 'Red' } })
+    fireEvent.keyDown(valueInputs[0], { key: 'Enter' })
+    valueInputs = Array.from(container.querySelectorAll('input[placeholder="Type a value and press Enter"]'))
+    fireEvent.change(valueInputs[0], { target: { value: 'Blue' } })
+    fireEvent.keyDown(valueInputs[0], { key: 'Enter' })
+    valueInputs = Array.from(container.querySelectorAll('input[placeholder="Type a value and press Enter"]'))
+    fireEvent.change(valueInputs[1], { target: { value: 'S' } })
+    fireEvent.keyDown(valueInputs[1], { key: 'Enter' })
+
+    await screen.findByText('Red / S')
+    await screen.findByText('Blue / S')
+}
+
+async function addOptionValue(container: HTMLElement, inputIndex: number, value: string) {
+    const valueInputs = Array.from(container.querySelectorAll('input[placeholder="Type a value and press Enter"]')) as HTMLInputElement[]
+    fireEvent.change(valueInputs[inputIndex], { target: { value } })
+    fireEvent.keyDown(valueInputs[inputIndex], { key: 'Enter' })
+}
+
+function fillRequiredPrices(container: HTMLElement) {
+    const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
+    fireEvent.change(numericInputs[0], { target: { value: '5' } })
+    fireEvent.change(numericInputs[1], { target: { value: '10' } })
+    fireEvent.change(numericInputs[4], { target: { value: '6' } })
+    fireEvent.change(numericInputs[5], { target: { value: '12' } })
+}
+
+describe('variant authoring workspace', () => {
+    beforeEach(() => {
+        apiGetMock.mockReset()
+        apiPostMock.mockReset()
+        apiPutMock.mockReset()
+        apiDeleteMock.mockReset()
+        apiPutMock.mockResolvedValue({ data: { ...product, rowVersion: '5' } })
+        mockReads()
+    })
+
+    it('saves generated variants through canonical product authoring', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+        fillRequiredPrices(container)
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith(
+            '/products/product-1',
+            expect.objectContaining({
+                hasVariants: true,
+                productUnits: null,
+                variants: [
+                    expect.objectContaining({
+                        sku: null,
+                        costPrice: 5,
+                        price: 10,
+                        isDefault: true,
+                        attributes: { Color: 'Red', Size: 'S' },
+                    }),
+                    expect.objectContaining({
+                        costPrice: 6,
+                        price: 12,
+                        attributes: { Color: 'Blue', Size: 'S' },
+                    }),
+                ],
+            }),
+            expect.objectContaining({
+                headers: expect.objectContaining({
+                    'Idempotency-Key': expect.stringContaining('variant-authoring:product-1:matrix:'),
+                    'If-Match': '"4"',
+                }),
+            }),
+        ))
+
+        expect(apiPostMock).not.toHaveBeenCalledWith(expect.stringContaining('/products/product-1/variants'), expect.anything())
+        expect(apiDeleteMock).not.toHaveBeenCalled()
+    })
+
+    it('blocks duplicate SKU values before save', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+        const textInputs = Array.from(container.querySelectorAll('table input[type="text"]')) as HTMLInputElement[]
+        fireEvent.change(textInputs[0], { target: { value: 'DUP-SKU' } })
+        fireEvent.change(textInputs[2], { target: { value: 'DUP-SKU' } })
+        fillRequiredPrices(container)
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        expect((await screen.findAllByText('Duplicate SKU values are not allowed.')).length).toBeGreaterThan(0)
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('updates the live variant counter while editing attributes', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        fireEvent.click(await screen.findByLabelText('Color'))
+        fireEvent.click(screen.getByLabelText('Size'))
+        await addOptionValue(container, 0, 'Red')
+        await addOptionValue(container, 0, 'Blue')
+        await addOptionValue(container, 1, 'S')
+        await addOptionValue(container, 1, 'M')
+        await addOptionValue(container, 1, 'L')
+
+        expect(screen.getByText('Variants to Generate')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Generate 6 Variants' })).toBeInTheDocument()
+        expect(await screen.findByText('Blue / L')).toBeInTheDocument()
+    })
+
+    it('shows a large variant warning above the safe threshold', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        fireEvent.click(await screen.findByLabelText('Color'))
+        fireEvent.click(screen.getByLabelText('Size'))
+        for (let index = 1; index <= 101; index += 1) {
+            await addOptionValue(container, 0, `Color ${index}`)
+        }
+        await addOptionValue(container, 1, 'M')
+
+        expect(screen.getByText('Moderate matrix')).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Generate 101 Variants' })).toBeInTheDocument()
+    })
+
+    it('loads frontend-only variant templates', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Electronics' }))
+
+        const optionNameInputs = Array.from(container.querySelectorAll('input[placeholder="e.g. Size, Color, Material"]')) as HTMLInputElement[]
+        expect(optionNameInputs.map(input => input.value)).toEqual(['Color', 'Storage'])
+    })
+
+    it('detects duplicate attribute values and prevents generation', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        fireEvent.click(await screen.findByLabelText('Color'))
+        fireEvent.click(screen.getByLabelText('Size'))
+        await addOptionValue(container, 0, 'Red')
+        await addOptionValue(container, 0, 'Red')
+        await addOptionValue(container, 1, 'M')
+
+        expect(screen.getByText('Duplicate attribute values are not allowed.')).toBeInTheDocument()
+        expect(screen.queryByText('Red / M')).not.toBeInTheDocument()
+    })
+
+    it('previews SKU patterns and applies generated SKUs to selected rows', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+        fireEvent.change(screen.getByPlaceholderText('Pattern, e.g. TSHIRT-{COLOR}-{SIZE}'), {
+            target: { value: 'TSHIRT-{COLOR}-{SIZE}' },
+        })
+
+        expect(screen.getByText('TSHIRT-RED-S')).toBeInTheDocument()
+
+        const rowCheckboxes = Array.from(container.querySelectorAll('tbody input[type="checkbox"]')) as HTMLInputElement[]
+        fireEvent.click(rowCheckboxes[0])
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 1 Selected' }))
+
+        await waitFor(() => {
+            const textInputs = Array.from(container.querySelectorAll('table input[type="text"]')) as HTMLInputElement[]
+            expect(textInputs[0].value).toBe('TSHIRT-RED-S')
+        })
+    })
+
+    it('excludes combinations before they appear in the matrix', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        fireEvent.click(await screen.findByLabelText('Color'))
+        fireEvent.click(screen.getByLabelText('Size'))
+        await addOptionValue(container, 0, 'Red')
+        await addOptionValue(container, 0, 'Blue')
+        await addOptionValue(container, 1, 'S')
+        await addOptionValue(container, 1, 'M')
+
+        const selects = Array.from(container.querySelectorAll('select.input')) as HTMLSelectElement[]
+        fireEvent.change(selects[2], { target: { value: 'Red' } })
+        fireEvent.change(selects[3], { target: { value: 'M' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Add Exclusion' }))
+
+        expect(screen.queryByText('Red / M')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Generate 3 Variants' })).toBeInTheDocument()
+    })
+
+    it('shows live statistics and smart selection captions', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+
+        expect(screen.getByText('Workspace Statistics')).toBeInTheDocument()
+        expect(screen.getByText('Missing SKU')).toBeInTheDocument()
+
+        fireEvent.click(container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+
+        expect(screen.getByRole('button', { name: 'Delete 2 Selected' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Enable 2 Selected' })).toBeInTheDocument()
+    })
+
+    it('blocks negative inventory and weight before save', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+        fillRequiredPrices(container)
+        const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
+        fireEvent.change(numericInputs[2], { target: { value: '-1' } })
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        expect((await screen.findAllByText('Inventory cannot be negative.')).length).toBeGreaterThan(0)
+        expect(apiPutMock).not.toHaveBeenCalled()
+
+        fireEvent.change(numericInputs[2], { target: { value: '0' } })
+        fireEvent.change(numericInputs[3], { target: { value: '-0.5' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        expect((await screen.findAllByText('Weight cannot be negative.')).length).toBeGreaterThan(0)
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('registers an unsaved changes warning for refresh navigation', async () => {
+        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+
+        await createTwoGeneratedRows(container)
+
+        const beforeUnload = new Event('beforeunload', { cancelable: true })
+        expect(window.dispatchEvent(beforeUnload)).toBe(false)
+    })
+})

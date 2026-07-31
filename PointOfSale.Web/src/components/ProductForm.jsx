@@ -12,9 +12,14 @@ import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 import { getProductTemplateOptions } from '@/storefront/products/ProductTemplateRegistry'
 import { useAuthStore } from '../store/authStore'
 
-function WorkspaceSection({ eyebrow, title, description, children, className = '' }) {
+const WorkspaceSection = forwardRef(function WorkspaceSection({ eyebrow, title, description, children, className = '', id, tabIndex }, ref) {
     return (
-        <section className={`overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm ${className}`}>
+        <section
+            ref={ref}
+            id={id}
+            tabIndex={tabIndex}
+            className={`overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm ${className}`}
+        >
             <div className="border-b border-gray-100 px-6 py-5">
                 {eyebrow && <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-400">{eyebrow}</p>}
                 <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
@@ -23,7 +28,7 @@ function WorkspaceSection({ eyebrow, title, description, children, className = '
             <div className="px-6 py-6">{children}</div>
         </section>
     )
-}
+})
 
 function EmbeddedSection({ title, description, children }) {
     return (
@@ -240,7 +245,8 @@ const ProductForm = forwardRef(function ProductForm({
     mode = 'modal',
     formId = 'product-form',
     hideActions = false,
-    onMetaChange
+    onMetaChange,
+    focusSection
 }, ref) {
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
@@ -249,6 +255,7 @@ const ProductForm = forwardRef(function ProductForm({
     const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
     const [loading, setLoading] = useState(false)
     const variantsTabRef = useRef(null)
+    const variantsSectionRef = useRef(null)
     const formDataRef = useRef(null)
     const pendingSaveRef = useRef(null)
     const [categories, setCategories] = useState([])
@@ -263,10 +270,7 @@ const ProductForm = forwardRef(function ProductForm({
     const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
     const [simpleProductData, setSimpleProductData] = useState({
         sku: '',
-        barcode: '',
-        price: '',
-        onlinePrice: '',
-        costPrice: ''
+        barcode: ''
     })
     const [formData, setFormData] = useState({
         name: '',
@@ -306,6 +310,8 @@ const ProductForm = forwardRef(function ProductForm({
     })
 
     const isWorkspace = mode === 'workspace'
+    const isCreateMode = !productId
+    const isVariantCreateMode = isCreateMode && hasVariants
 
     useEffect(() => {
         formDataRef.current = formData
@@ -342,7 +348,43 @@ const ProductForm = forwardRef(function ProductForm({
         onMetaChange
     ])
 
+    useEffect(() => {
+        if (focusSection !== 'variants' || loading || !productId || !hasVariants) {
+            return
+        }
+
+        const focusTimer = window.setTimeout(() => {
+            variantsSectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+            variantsSectionRef.current?.focus?.({ preventScroll: true })
+        }, 0)
+
+        return () => window.clearTimeout(focusTimer)
+    }, [focusSection, hasVariants, loading, productId])
+
+    const hasPendingVariantChanges = () => (
+        !!(productId && hasVariants && variantsTabRef.current?.hasPendingChanges?.())
+    )
+
+    const requestDiscardPendingChanges = async () => {
+        if (!hasPendingVariantChanges()) {
+            return true
+        }
+
+        return await confirm({
+            confirmLabel: t('common.leave') || 'Leave',
+            description: t('variants.unsavedLeavePrompt') || 'Unsaved changes detected. Leave anyway?',
+            title: t('common.warning') || 'Warning',
+            variant: 'warning',
+        })
+    }
+
     useImperativeHandle(ref, () => ({
+        hasPendingChanges() {
+            return hasPendingVariantChanges()
+        },
+        async confirmDiscardPendingChanges() {
+            return await requestDiscardPendingChanges()
+        },
         applyAiGeneratedData(generatedProduct) {
             const currentFormData = formDataRef.current
 
@@ -400,7 +442,7 @@ const ProductForm = forwardRef(function ProductForm({
 
             return counters
         }
-    }), [])
+    }), [productId, hasVariants, confirm, t])
 
     const fetchCategories = async () => {
         try {
@@ -506,10 +548,7 @@ const ProductForm = forwardRef(function ProductForm({
                 setDefaultVariant(defaultVar)
                 setSimpleProductData({
                     sku: defaultVar.sku || '',
-                    barcode: defaultVar.barcode || '',
-                    price: defaultVar.price?.toString() || '',
-                    onlinePrice: defaultVar.onlinePrice?.toString() || '',
-                    costPrice: defaultVar.costPrice?.toString() || ''
+                    barcode: defaultVar.barcode || ''
                 })
             }
         } catch (err) {
@@ -530,12 +569,12 @@ const ProductForm = forwardRef(function ProductForm({
     }
 
     const handleModeChange = async (newHasVariants) => {
-        if (newHasVariants && !hasVariants && (simpleProductData.price || simpleProductData.sku)) {
+        if (newHasVariants && !hasVariants && simpleProductData.sku) {
             const confirmed = await confirm({
                 confirmLabel: t('common.confirm'),
                 description:
                     t('products.switchToVariantModeConfirm')
-                    || 'Switching to variant mode will move all pricing and stock data to the default variant. Continue?',
+                    || 'Switching to variant mode will move SKU and stock identity to variants. Continue?',
                 title: t('common.warning'),
                 variant: 'warning',
             })
@@ -546,6 +585,13 @@ const ProductForm = forwardRef(function ProductForm({
         }
 
         setHasVariants(newHasVariants)
+
+        if (newHasVariants && !productId) {
+            setFormData(prev => ({
+                ...prev,
+                publishStatus: 0
+            }))
+        }
     }
 
     const getCompleteProductUnitDrafts = () => (
@@ -634,7 +680,7 @@ const ProductForm = forwardRef(function ProductForm({
     }
 
     const getAuthoringValidationError = () => {
-        const publishStatus = normalizePublishStatus(formData.publishStatus)
+        const publishStatus = isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus)
         const isDraft = publishStatus === 0
         const isPublic = publishStatus === 1 && formData.isActive && formData.isOnlineVisible
 
@@ -705,13 +751,15 @@ const ProductForm = forwardRef(function ProductForm({
             return
         }
 
-        if (normalizePublishStatus(formData.publishStatus) !== 0 && !hasVariants && !productId && (!simpleProductData.price || parseFloat(simpleProductData.price) <= 0)) {
-            setError(t('products.priceRequired') || 'Price is required for the product')
-            setLoading(false)
-            return
-        }
-
         try {
+            if (productId && hasVariants && variantsTabRef.current?.savePendingChanges) {
+                const variantsSaved = await variantsTabRef.current.savePendingChanges()
+                if (!variantsSaved) {
+                    setLoading(false)
+                    return
+                }
+            }
+
             const productData = {
                 ...formData,
                 taxRate: parseFloat(formData.taxRate) || 0,
@@ -720,18 +768,15 @@ const ProductForm = forwardRef(function ProductForm({
                 hasVariants,
                 sku: hasVariants ? null : simpleProductData.sku,
                 barcode: hasVariants ? null : simpleProductData.barcode,
-                purchasePrice: hasVariants ? 0 : (parseFloat(simpleProductData.costPrice) || 0),
-                salePrice: hasVariants ? 0 : (parseFloat(simpleProductData.price) || 0),
-                onlinePrice: hasVariants ? null : (simpleProductData.onlinePrice ? parseFloat(simpleProductData.onlinePrice) : null),
                 weight: formData.weight ? parseFloat(formData.weight) : null,
                 length: formData.length ? parseFloat(formData.length) : null,
                 width: formData.width ? parseFloat(formData.width) : null,
                 height: formData.height ? parseFloat(formData.height) : null,
                 lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
-                publishStatus: normalizePublishStatus(formData.publishStatus),
+                publishStatus: isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus),
                 productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null,
-                productUnits: buildProductUnitsPayload(),
-                variants: buildVariantAuthoringSnapshot()
+                productUnits: isVariantCreateMode ? null : buildProductUnitsPayload(),
+                variants: productId && hasVariants ? null : buildVariantAuthoringSnapshot()
             }
 
             if (import.meta.env.DEV) {
@@ -767,7 +812,10 @@ const ProductForm = forwardRef(function ProductForm({
             }
 
             invalidatePosRuntimeCache({ reason: 'product-updated' })
-            onSave(savedProduct)
+            onSave({
+                ...savedProduct,
+                hasVariants: savedProduct?.hasVariants ?? hasVariants
+            })
             pendingSaveRef.current = null
         } catch (err) {
             setError(err.response?.data?.message || t('products.failedToSave'))
@@ -840,26 +888,62 @@ const ProductForm = forwardRef(function ProductForm({
             description={t('products.productTypeDescription') || 'Choose how this product is sold.'}
             className="border-purple-100 bg-gradient-to-r from-white to-purple-50"
         >
-            <label className="flex items-start gap-3 rounded-xl border border-purple-100 bg-white p-4">
-                <input
-                    type="checkbox"
-                    checked={hasVariants}
-                    onChange={(e) => handleModeChange(e.target.checked)}
-                    className="mt-1 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
-                />
-                <div>
-                    <span className="font-medium text-gray-900">
-                        {t('products.hasMultipleOptions') || 'This product has multiple options (size, color, etc.)'}
-                    </span>
-                    <p className="mt-1 text-sm text-gray-500">
-                        {hasVariants
-                            ? (t('products.variantModeHint') || 'Each variant has its own SKU, price, and stock.')
-                            : (t('products.simpleModeHint') || 'Single product with one SKU and price.')}
-                    </p>
-                </div>
-            </label>
+            <div className="grid gap-3 md:grid-cols-2" role="radiogroup" aria-label={t('products.productType') || 'Product Type'}>
+                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-4 transition ${
+                    !hasVariants ? 'border-primary-300 ring-2 ring-primary-100' : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                    <input
+                        type="radio"
+                        name="product-type"
+                        checked={!hasVariants}
+                        onChange={() => handleModeChange(false)}
+                        className="mt-1 border-primary-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <div>
+                        <span className="font-medium text-gray-900">
+                            {t('products.simpleProduct') || 'Simple Product'}
+                        </span>
+                        <p className="mt-1 text-sm text-gray-500">
+                            {t('products.simpleModeHint') || 'Single product sold through default Product Unit pricing.'}
+                        </p>
+                    </div>
+                </label>
+
+                <label className={`flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-4 transition ${
+                    hasVariants ? 'border-purple-300 ring-2 ring-purple-100' : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                    <input
+                        type="radio"
+                        name="product-type"
+                        checked={hasVariants}
+                        onChange={() => handleModeChange(true)}
+                        className="mt-1 border-purple-300 text-purple-600 focus:ring-purple-500"
+                    />
+                    <div>
+                        <span className="font-medium text-gray-900">
+                            {t('products.variantProduct') || 'Variant Product'}
+                        </span>
+                        <p className="mt-1 text-sm text-gray-500">
+                            {t('products.variantModeHint') || 'Pricing, inventory, SKU and stock are configured after creating product variants.'}
+                        </p>
+                    </div>
+                </label>
+            </div>
         </WorkspaceSection>
     )
+
+    const variantCreateGuidanceSection = isVariantCreateMode ? (
+        <WorkspaceSection
+            eyebrow={isWorkspace ? (t('variants.productVariants') || 'Variants') : null}
+            title={t('products.variantProduct') || 'Variant Product'}
+            description={t('products.variantCreatePricingDeferred') || 'Pricing, inventory, SKU and stock will be configured after creating product variants.'}
+            className="border-blue-100 bg-gradient-to-r from-white to-blue-50"
+        >
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+                {t('products.variantCreateDraftNotice') || 'The parent product will be created as a draft, then opened on Variants so you can configure the sellable items.'}
+            </div>
+        </WorkspaceSection>
+    ) : null
 
     const basicInformationSection = (
         <WorkspaceSection
@@ -932,11 +1016,11 @@ const ProductForm = forwardRef(function ProductForm({
         </WorkspaceSection>
     )
 
-    const simplePricingSection = !hasVariants ? (
+    const simpleIdentitySection = !hasVariants ? (
         <WorkspaceSection
-            eyebrow={isWorkspace ? (t('products.salePrice') || 'Pricing') : null}
-            title={t('products.skuPricing') || 'SKU & Pricing'}
-            description={t('products.simpleModeHint') || 'Simple products keep pricing, barcode, and SKU on the default variant.'}
+            eyebrow={isWorkspace ? (t('products.identity') || 'Identity') : null}
+            title={t('products.simpleIdentity') || 'Simple Product Identity'}
+            description={t('products.simpleIdentityDescription') || 'SKU and barcode are product identity; prices are authored on Product Units.'}
             className="border-emerald-100 bg-gradient-to-r from-white to-emerald-50"
         >
             <div className="grid gap-4 md:grid-cols-2">
@@ -971,52 +1055,6 @@ const ProductForm = forwardRef(function ProductForm({
                         </button>
                     </div>
                 </div>
-
-                <div>
-                    <label className="label">{t('products.salePrice') || 'POS Sale Price'} *</label>
-                    <input
-                        type="number"
-                        step="0.01"
-                        value={simpleProductData.price}
-                        onChange={(e) => handleSimpleChange('price', e.target.value)}
-                        className="input"
-                        placeholder="0.00"
-                        required={!hasVariants && normalizePublishStatus(formData.publishStatus) !== 0}
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                        {t('products.posPriceHint') || 'Price used in the POS system.'}
-                    </p>
-                </div>
-
-                <div>
-                    <label className="label">{t('products.onlinePrice') || 'Online Price'}</label>
-                    <input
-                        type="number"
-                        step="0.01"
-                        value={simpleProductData.onlinePrice}
-                        onChange={(e) => handleSimpleChange('onlinePrice', e.target.value)}
-                        className="input"
-                        placeholder={t('products.samePosPrice') || 'Same as POS price if empty'}
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                        {t('products.onlinePriceHint') || 'Price displayed on the storefront.'}
-                    </p>
-                </div>
-
-                <div>
-                    <label className="label">{t('products.costPrice') || 'Cost Price'}</label>
-                    <input
-                        type="number"
-                        step="0.01"
-                        value={simpleProductData.costPrice}
-                        onChange={(e) => handleSimpleChange('costPrice', e.target.value)}
-                        className="input"
-                        placeholder="0.00"
-                    />
-                    <p className="mt-1 text-xs text-gray-500">
-                        {t('products.costPriceHint') || 'Purchase cost used for profit analysis.'}
-                    </p>
-                </div>
             </div>
 
             <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
@@ -1029,7 +1067,7 @@ const ProductForm = forwardRef(function ProductForm({
         <WorkspaceSection
             eyebrow={isWorkspace ? (t('products.units') || 'Units') : null}
             title={t('products.productUnits') || 'Product Units'}
-            description={t('products.productUnitsDescription') || 'Author base/default units, conversion factors, and unit prices with the product.'}
+            description={t('products.productUnitsDescription') || 'Author base/default units, conversion factors, and canonical unit prices with the product.'}
             className="border-indigo-100 bg-gradient-to-r from-white to-indigo-50"
         >
             <div className="space-y-5">
@@ -1114,7 +1152,7 @@ const ProductForm = forwardRef(function ProductForm({
                             </div>
 
                             <div>
-                                <label className="label">{t('products.purchasePrice') || 'Unit Cost'}</label>
+                                <label className="label">{t('products.purchasePrice') || 'Purchase Price'}</label>
                                 <input
                                     type="number"
                                     step="0.01"
@@ -1126,7 +1164,7 @@ const ProductForm = forwardRef(function ProductForm({
                             </div>
 
                             <div>
-                                <label className="label">{t('products.sellingPrice') || 'Unit Price'}</label>
+                                <label className="label">{t('products.sellingPrice') || 'Selling Price'}</label>
                                 <input
                                     type="number"
                                     step="0.01"
@@ -1196,6 +1234,9 @@ const ProductForm = forwardRef(function ProductForm({
 
     const variantsSection = hasVariants ? (
         <WorkspaceSection
+            ref={variantsSectionRef}
+            id="product-variants"
+            tabIndex={-1}
             eyebrow={isWorkspace ? (t('variants.productVariants') || 'Variants') : null}
             title={t('variants.productVariants') || 'Product Variants'}
             description={t('products.variantModeInfo') || 'Manage sellable variants, attributes, and pricing from one table.'}
@@ -1449,10 +1490,22 @@ const ProductForm = forwardRef(function ProductForm({
         </EmbeddedSection>
     )
 
+    const resolvePixelProductPrice = () => {
+        if (hasVariants) {
+            const representativeVariant = productVariantsSnapshot.find((variant) => variant.isDefault)
+                || productVariantsSnapshot.find((variant) => variant.isActive !== false)
+                || defaultVariant
+
+            return toPositiveNumber(representativeVariant?.onlinePrice) || toPositiveNumber(representativeVariant?.price)
+        }
+
+        return toPositiveNumber(defaultUnitDraft?.sellingPrice)
+    }
+
     const pixelOverrideSection = productId ? (
         <ProductPixelOverrideTab
             productId={productId}
-            productPrice={hasVariants && defaultVariant ? defaultVariant.price : (parseFloat(simpleProductData.price) || 0)}
+            productPrice={resolvePixelProductPrice()}
         />
     ) : (
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
@@ -1468,11 +1521,17 @@ const ProductForm = forwardRef(function ProductForm({
         </div>
     ) : null
 
+    const handleClose = async () => {
+        if (await requestDiscardPendingChanges()) {
+            onClose?.()
+        }
+    }
+
     const legacyActions = !hideActions && (
         <div className="flex gap-3">
             <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 className="flex-1 btn-secondary"
                 disabled={loading}
             >
@@ -1492,11 +1551,12 @@ const ProductForm = forwardRef(function ProductForm({
         <div className="space-y-6">
             {productTypeSection}
             {basicInformationSection}
-            {simplePricingSection}
-            {productUnitsSection}
+            {simpleIdentitySection}
+            {variantCreateGuidanceSection}
+            {!isVariantCreateMode && productUnitsSection}
             {mediaSection}
-            {variantsSection}
-            {inventorySection}
+            {!isVariantCreateMode && variantsSection}
+            {!isVariantCreateMode && inventorySection}
 
             <WorkspaceSection title={t('products.publicationSettings') || 'Storefront Settings'}>
                 {storefrontSettingsFields}
@@ -1520,11 +1580,12 @@ const ProductForm = forwardRef(function ProductForm({
             <div className="space-y-6">
                 {productTypeSection}
                 {basicInformationSection}
-                {simplePricingSection}
-                {productUnitsSection}
+                {simpleIdentitySection}
+                {variantCreateGuidanceSection}
+                {!isVariantCreateMode && productUnitsSection}
                 {mediaSection}
-                {variantsSection}
-                {inventorySection}
+                {!isVariantCreateMode && variantsSection}
+                {!isVariantCreateMode && inventorySection}
             </div>
 
             <div className="space-y-4 xl:sticky xl:top-28 xl:self-start">

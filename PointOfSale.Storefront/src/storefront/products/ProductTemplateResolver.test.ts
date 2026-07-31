@@ -39,7 +39,7 @@ describe('ProductTemplateResolver', () => {
         expect(resolved.sections[0].settings.layoutVariant).toBe('fashion');
     });
 
-    it('prefers the configured product page before built-ins for the default template', () => {
+    it('prefers the configured product page before built-ins when it contains product detail sections', () => {
         const config = {
             updatedAtUtc: '2026-07-28T00:00:01.000Z',
             pages: {
@@ -68,5 +68,41 @@ describe('ProductTemplateResolver', () => {
         expect(resolved.sections).toHaveLength(1);
         expect(resolved.sections[0].id).toBe('configured_product_page_section');
         expect(resolved.sections[0].settings.title).toBe('Configured Details');
+    });
+
+    it('falls back to the canonical product detail template when the configured product page is a listing section set', () => {
+        const config = {
+            updatedAtUtc: '2026-07-28T00:00:02.000Z',
+            pages: {
+                product: {
+                    sections: [
+                        {
+                            id: 'configured_listing_grid',
+                            type: 'product-grid',
+                            enabled: true,
+                            order: 0,
+                            settings: {
+                                title: 'All products',
+                                subtitle: '',
+                                source: 'featured',
+                                maxItems: 12,
+                                columns: 4,
+                                rows: 3,
+                                showPrice: true,
+                                showRating: false,
+                                layout: 'grid',
+                                productIds: [],
+                            },
+                        },
+                    ],
+                },
+            },
+            productTemplates: {},
+        } as unknown as StoreConfig;
+
+        const resolved = resolveProductTemplate(null, config);
+
+        expect(resolved.sections[0].type).toBe('product-hero');
+        expect(resolved.sections.map((section) => section.type)).not.toContain('product-grid');
     });
 });

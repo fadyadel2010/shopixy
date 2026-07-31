@@ -393,7 +393,10 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
                     variant.CostPrice,
                     variant.IsActive,
                     variant.IsDefault,
-                    variant.Attributes ?? new Dictionary<string, string>()))
+                    variant.Attributes ?? new Dictionary<string, string>(),
+                    variant.Weight,
+                    variant.MediaId,
+                    variant.ImageUrl))
                 .ToList(),
             new ProductAuthoringMetadata(
                 aiGenerated,

@@ -43,7 +43,8 @@ export default function VariantMatrixTable({
     onSetDefault,
     onEditFallback,
     onDeleteFallback,
-    showFallbackActions = false
+    showFallbackActions = false,
+    rowIssues = {}
 }) {
     const { t } = useTranslation()
     const [pickerRowKey, setPickerRowKey] = useState(null)
@@ -136,16 +137,16 @@ export default function VariantMatrixTable({
                                     {tx('variants.barcode', 'Barcode')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {tx('variants.price', 'POS Price')}
+                                    {tx('variants.costPrice', 'Purchase Price')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {tx('variants.onlinePrice', 'Online Price')}
+                                    {tx('variants.price', 'Selling Price')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {tx('variants.costPrice', 'Cost Price')}
+                                    {tx('variants.inventory', 'Inventory')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {tx('variants.availability', 'Stock Status')}
+                                    {tx('variants.weight', 'Weight')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     {tx('variants.default', 'Default')}
@@ -167,10 +168,13 @@ export default function VariantMatrixTable({
                                 const usesGalleryImage = !!row.mediaId && mediaById.has(row.mediaId)
                                 const usesLegacyImage = !usesGalleryImage && !!row.imageUrl
                                 const canManageLegacyRow = showFallbackActions && !!row.id && row.isLegacy
+                                const issues = rowIssues[row.key] || {}
+                                const issueInputClass = 'input min-w-[10rem] border-red-300 bg-red-50 text-red-800 focus:border-red-500 focus:ring-red-200'
+                                const numberIssueInputClass = 'input min-w-[8rem] border-red-300 bg-red-50 text-red-800 focus:border-red-500 focus:ring-red-200'
 
                                 return (
                                     <Fragment key={row.key}>
-                                        <tr className={row.isDirty ? 'bg-amber-50/50' : ''}>
+                                        <tr className={issues.combination ? 'bg-red-50/60' : row.isDirty ? 'bg-amber-50/50' : ''}>
                                             <td className="px-4 py-4 align-top">
                                                 <input
                                                     type="checkbox"
@@ -232,7 +236,8 @@ export default function VariantMatrixTable({
                                                     type="text"
                                                     value={row.sku}
                                                     onChange={(e) => onRowChange(row.key, { sku: e.target.value })}
-                                                    className="input min-w-[10rem]"
+                                                    className={issues.sku ? issueInputClass : 'input min-w-[10rem]'}
+                                                    aria-invalid={issues.sku ? 'true' : 'false'}
                                                 />
                                             </td>
                                             <td className="px-4 py-4 align-top">
@@ -240,7 +245,17 @@ export default function VariantMatrixTable({
                                                     type="text"
                                                     value={row.barcode}
                                                     onChange={(e) => onRowChange(row.key, { barcode: e.target.value })}
-                                                    className="input min-w-[10rem]"
+                                                    className={issues.barcode ? issueInputClass : 'input min-w-[10rem]'}
+                                                    aria-invalid={issues.barcode ? 'true' : 'false'}
+                                                />
+                                            </td>
+                                            <td className="px-4 py-4 align-top">
+                                                <input
+                                                    type="number"
+                                                    step="0.01"
+                                                    value={row.costPrice}
+                                                    onChange={(e) => onRowChange(row.key, { costPrice: e.target.value })}
+                                                    className="input min-w-[8rem]"
                                                 />
                                             </td>
                                             <td className="px-4 py-4 align-top">
@@ -255,27 +270,22 @@ export default function VariantMatrixTable({
                                             <td className="px-4 py-4 align-top">
                                                 <input
                                                     type="number"
-                                                    step="0.01"
-                                                    value={row.onlinePrice}
-                                                    onChange={(e) => onRowChange(row.key, { onlinePrice: e.target.value })}
-                                                    className="input min-w-[8rem]"
+                                                    step="1"
+                                                    value={row.inventory}
+                                                    onChange={(e) => onRowChange(row.key, { inventory: e.target.value })}
+                                                    className={issues.inventory ? numberIssueInputClass : 'input min-w-[8rem]'}
+                                                    aria-invalid={issues.inventory ? 'true' : 'false'}
                                                 />
                                             </td>
                                             <td className="px-4 py-4 align-top">
                                                 <input
                                                     type="number"
-                                                    step="0.01"
-                                                    value={row.costPrice}
-                                                    onChange={(e) => onRowChange(row.key, { costPrice: e.target.value })}
-                                                    className="input min-w-[8rem]"
+                                                    step="0.001"
+                                                    value={row.weight}
+                                                    onChange={(e) => onRowChange(row.key, { weight: e.target.value })}
+                                                    className={issues.weight ? numberIssueInputClass : 'input min-w-[8rem]'}
+                                                    aria-invalid={issues.weight ? 'true' : 'false'}
                                                 />
-                                            </td>
-                                            <td className="px-4 py-4 align-top">
-                                                <div className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${row.totalStock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                                    {row.totalStock > 0
-                                                        ? `${tx('variants.inStock', 'In Stock')} (${row.totalStock})`
-                                                        : tx('variants.outOfStock', 'Out of Stock')}
-                                                </div>
                                             </td>
                                             <td className="px-4 py-4 align-top">
                                                 <input

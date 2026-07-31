@@ -51,9 +51,8 @@ export default function VariantSelectModal({
         onSelect({
             ...product,
             variantId: selectedVariant.id,
-            salePrice: selectedVariant.price,
-            costPrice: selectedVariant.costPrice,
-            purchasePrice: selectedVariant.costPrice || selectedVariant.price,
+            canonicalUnitPrice: selectedVariant.price,
+            canonicalCostPrice: selectedVariant.costPrice,
             sku: selectedVariant.sku,
             barcode: selectedVariant.barcode,
             stockQuantity: selectedVariant.warehouseStock,

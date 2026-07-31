@@ -2308,4 +2308,7 @@ public record ProductAuthoringVariantRequest(
     decimal CostPrice,
     bool IsActive = true,
     bool IsDefault = false,
-    Dictionary<string, string>? Attributes = null);
+    Dictionary<string, string>? Attributes = null,
+    decimal? Weight = null,
+    Guid? MediaId = null,
+    string? ImageUrl = null);

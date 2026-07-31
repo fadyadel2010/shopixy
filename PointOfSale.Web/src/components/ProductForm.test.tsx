@@ -162,15 +162,12 @@ describe('product affiliate entry presentation', () => {
         fireEvent.change(container.querySelector('select')!, {
             target: { value: 'category-1' },
         })
-        fireEvent.change(container.querySelectorAll('input[type="number"]')[1], {
-            target: { value: '12' },
-        })
 
         fireEvent.click(screen.getByRole('button', { name: 'products.addProductUnit' }))
         fireEvent.change(container.querySelectorAll('select')[3], {
             target: { value: 'unit-piece' },
         })
-        fireEvent.change(container.querySelectorAll('input[type="number"]')[6], {
+        fireEvent.change(container.querySelectorAll('input[type="number"]')[3], {
             target: { value: '12' },
         })
 
@@ -200,6 +197,56 @@ describe('product affiliate entry presentation', () => {
                 expect.anything(),
             )
         })
+
+        const payload = apiPostMock.mock.calls[0][1]
+        expect(payload).not.toHaveProperty('purchasePrice')
+        expect(payload).not.toHaveProperty('salePrice')
+        expect(payload).not.toHaveProperty('onlinePrice')
+    })
+
+    it('separates variant create from product unit pricing and creates the parent as draft', async () => {
+        const onSave = vi.fn()
+        const { container } = render(<ProductForm mode="modal" onSave={onSave} />)
+
+        await screen.findByText('products.basicInfo')
+        fireEvent.click(screen.getByLabelText(/products.variantProduct/))
+
+        expect(screen.queryByText('products.productUnits')).not.toBeInTheDocument()
+        expect(screen.queryByText('products.purchasePrice')).not.toBeInTheDocument()
+        expect(screen.queryByText('products.sellingPrice')).not.toBeInTheDocument()
+        expect(screen.getByText('products.variantCreatePricingDeferred')).toBeInTheDocument()
+
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: 'Variant Shirt' },
+        })
+        fireEvent.change(container.querySelector('select')!, {
+            target: { value: 'category-1' },
+        })
+
+        fireEvent.click(screen.getByRole('button', { name: 'products.create' }))
+
+        await waitFor(() => {
+            expect(apiPostMock).toHaveBeenCalledWith('/products', expect.objectContaining({
+                name: 'Variant Shirt',
+                categoryId: 'category-1',
+                hasVariants: true,
+                sku: null,
+                barcode: null,
+                publishStatus: 0,
+                productUnits: null,
+                variants: [],
+            }), expect.objectContaining({
+                headers: expect.objectContaining({
+                    'Idempotency-Key': expect.stringContaining('product-authoring:create:'),
+                }),
+            }))
+        })
+
+        expect(screen.queryByText('products.activePricedVariantRequired')).not.toBeInTheDocument()
+        expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+            id: 'product-new',
+            hasVariants: true,
+        }))
     })
 
     it('allows draft products without publication-ready units', async () => {
@@ -246,14 +293,11 @@ describe('product affiliate entry presentation', () => {
         fireEvent.change(container.querySelector('select')!, {
             target: { value: 'category-1' },
         })
-        fireEvent.change(container.querySelectorAll('input[type="number"]')[1], {
-            target: { value: '12' },
-        })
         fireEvent.click(screen.getByRole('button', { name: 'products.addProductUnit' }))
         fireEvent.change(container.querySelectorAll('select')[3], {
             target: { value: 'unit-piece' },
         })
-        fireEvent.change(container.querySelectorAll('input[type="number"]')[6], {
+        fireEvent.change(container.querySelectorAll('input[type="number"]')[3], {
             target: { value: '12' },
         })
 
@@ -265,6 +309,10 @@ describe('product affiliate entry presentation', () => {
         await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
 
         expect(apiPostMock.mock.calls[1][2].headers['Idempotency-Key']).toBe(firstKey)
+        const payload = apiPostMock.mock.calls[1][1]
+        expect(payload).not.toHaveProperty('purchasePrice')
+        expect(payload).not.toHaveProperty('salePrice')
+        expect(payload).not.toHaveProperty('onlinePrice')
     })
 
     it('updates an existing product with exactly one canonical product mutation request', async () => {
@@ -291,5 +339,9 @@ describe('product affiliate entry presentation', () => {
         })
 
         expect(apiPostMock).not.toHaveBeenCalled()
+        const payload = apiPutMock.mock.calls[0][1]
+        expect(payload).not.toHaveProperty('purchasePrice')
+        expect(payload).not.toHaveProperty('salePrice')
+        expect(payload).not.toHaveProperty('onlinePrice')
     })
 })

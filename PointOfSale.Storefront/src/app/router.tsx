@@ -5,7 +5,8 @@
  * Phase 10.1: Multi-language URL routing with /ar/ and /en/ prefixes
  */
 
-import { Navigate, createBrowserRouter, Outlet, useLocation } from 'react-router-dom';
+import { Navigate, createBrowserRouter, createMemoryRouter, Outlet, useLocation } from 'react-router-dom';
+import type { RouteObject } from 'react-router-dom';
 import { useEffect } from 'react';
 import {
     HomePage,
@@ -89,7 +90,7 @@ const LegacyCheckoutSuccessRedirect: React.FC = () => {
 /**
  * Core page routes (used in both language-prefixed and non-prefixed versions)
  */
-const pageRoutes = [
+export const pageRoutes = [
     {
         index: true,
         element: <HomePage />,
@@ -155,7 +156,7 @@ const pageRoutes = [
 // Router Configuration
 // ============================================================================
 
-export const router = createBrowserRouter([
+export const storefrontRoutes = [
     {
         element: <RootLayout />,
         children: [
@@ -281,7 +282,11 @@ export const router = createBrowserRouter([
             },
         ],
     },
-]);
+] satisfies RouteObject[];
+
+export const router = typeof document === 'undefined'
+    ? createMemoryRouter(storefrontRoutes)
+    : createBrowserRouter(storefrontRoutes);
 
 // ============================================================================
 // Helper Functions

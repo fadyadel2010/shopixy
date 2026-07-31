@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AxiosAdapter, AxiosResponse } from 'axios';
 
 vi.mock('@/features/checkout/checkoutSelectionTelemetry', () => ({
     emitCheckoutSelectionInvalidated: vi.fn(),
@@ -24,7 +25,9 @@ import {
 } from '@/bootstrap';
 import { sendAnalyticsEvent } from '@/analytics/AnalyticsClient';
 import { AnalyticsEventType, type AnalyticsEvent } from '@/analytics/eventTypes';
+import { httpClient, isAuthEndpoint } from '@/services/api/httpClient';
 import { useCheckoutStore } from '@/store/checkoutStore';
+import type { CartDto } from '@/types';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
@@ -68,6 +71,44 @@ function makeAnalyticsEvent(tenantId: string, sessionId: string): AnalyticsEvent
             tenantId,
             pageUrl: 'https://store.example.test/checkout',
         },
+    };
+}
+
+function makeCartResponse(sessionId: string, tenantId: string): CartDto {
+    return {
+        cartId: `cart:${sessionId}`,
+        tenantId,
+        ownerType: 'session',
+        ownerId: sessionId,
+        items: [],
+        itemCount: 0,
+        subtotal: 0,
+        discountTotal: 0,
+        taxTotal: 0,
+        grandTotal: 0,
+        currency: 'USD',
+        lastUpdatedUtc: '2026-07-31T00:00:00.000Z',
+        expiresAtUtc: '2026-08-01T00:00:00.000Z',
+        appliedCouponCode: null,
+        appliedCoupon: null,
+    };
+}
+
+function createCartEchoAdapter(captured: string[]): AxiosAdapter {
+    return async (config) => {
+        const sessionId = String(config.headers?.['X-Session-Id'] ?? '');
+        const tenantId = String(config.headers?.['X-Tenant-Id'] ?? '');
+        captured.push(`${config.method?.toUpperCase()} ${config.url} ${tenantId} ${sessionId}`);
+
+        const response: AxiosResponse<CartDto> = {
+            data: makeCartResponse(sessionId, tenantId),
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config,
+        };
+
+        return response;
     };
 }
 
@@ -138,6 +179,38 @@ describe('commerce authority certification', () => {
 
         await expect(sendAnalyticsEvent(makeAnalyticsEvent(TENANT_B, SESSION_A)))
             .rejects.toThrow(/tenant context/i);
+    });
+
+    it('keeps the same guest identity from POST add item to GET cart', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const capturedRequests: string[] = [];
+        const adapter = createCartEchoAdapter(capturedRequests);
+
+        const addResponse = await httpClient.post<CartDto>(
+            '/api/storefront/cart/items',
+            { productId: '44444444-4444-4444-8444-444444444444', quantity: 1 },
+            { adapter }
+        );
+        const getResponse = await httpClient.get<CartDto>(
+            '/api/storefront/cart',
+            { adapter }
+        );
+
+        expect(addResponse.data.cartId).toBe(`cart:${SESSION_A}`);
+        expect(getResponse.data.cartId).toBe(addResponse.data.cartId);
+        expect(addResponse.data.ownerId).toBe(SESSION_A);
+        expect(getResponse.data.ownerId).toBe(addResponse.data.ownerId);
+        expect(capturedRequests).toEqual([
+            `POST /api/storefront/cart/items ${TENANT_A} ${SESSION_A}`,
+            `GET /api/storefront/cart ${TENANT_A} ${SESSION_A}`,
+        ]);
+    });
+
+    it('keeps storefront auth probes out of forced logout interception', () => {
+        expect(isAuthEndpoint('/api/storefront/auth/me')).toBe(true);
+        expect(isAuthEndpoint('/api/storefront/auth/refresh')).toBe(true);
+        expect(isAuthEndpoint('/api/storefront/cart')).toBe(false);
     });
 
     it('rejects unknown client payment admission instead of marking it valid', () => {

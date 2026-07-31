@@ -202,7 +202,7 @@ export function usePOSCart() {
                 unitId: defaultUnitId,
                 unitName: defaultUnit?.unitName || product.unit || t('common.piece'),
                 conversionFactor: defaultConversionFactor,
-                unitPrice: Math.max(0, toSafeNumber(defaultUnit?.sellingPrice ?? product.salePrice)),
+                unitPrice: Math.max(0, toSafeNumber(defaultUnit?.sellingPrice ?? product.canonicalUnitPrice)),
                 quantity: requestedQuantity,
                 taxRate: Math.max(0, toSafeNumber(product.taxRate)),
                 priceIncludesTax: Boolean(product.priceIncludesTax),

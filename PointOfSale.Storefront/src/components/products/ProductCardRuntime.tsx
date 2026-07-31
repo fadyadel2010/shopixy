@@ -13,6 +13,7 @@ import { useLocalizedContent } from '@/i18n';
 import { useCartStore, useToast } from '@/store';
 import type { ProductCardLayout } from '@/storefront/utils/resolveProductCardLayout';
 import { resolveProductImage } from '@/utils';
+import { getProductCardHref } from './productCardLinks';
 import ProductBadges from './ProductBadges';
 import { WishlistButton } from './WishlistButton';
 
@@ -132,7 +133,7 @@ export function useProductCardRuntime({
         themeId,
         displayName,
         alternateName,
-        href: product.slug ? `/products/${product.slug}` : `/products/${product.id}`,
+        href: getProductCardHref(product),
         imageSrc,
         price,
         categoryName: product.categoryName,

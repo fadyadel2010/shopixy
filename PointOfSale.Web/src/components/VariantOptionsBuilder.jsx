@@ -1,26 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-
-function uniqueValues(values) {
-    const seen = new Set()
-
-    return values.filter((value) => {
-        const normalized = value.trim().toLowerCase()
-        if (!normalized || seen.has(normalized)) {
-            return false
-        }
-
-        seen.add(normalized)
-        return true
-    })
-}
 
 export default function VariantOptionsBuilder({
     optionGroups,
     onChange,
     maxOptions = 3,
     combinationCount = 0,
-    maxCombinations = 100
+    risk = { level: 'safe', label: 'Safe', message: '' },
+    duplicateValueMap = {},
+    validationMessages = [],
+    safeLimit = 100,
+    infoLimit = 300,
+    warningLimit = 1000
 }) {
     const { t } = useTranslation()
     const [draftValues, setDraftValues] = useState({})
@@ -28,15 +19,6 @@ export default function VariantOptionsBuilder({
         const value = t(key)
         return value === key ? fallback : value
     }
-
-    const hasLimitWarning = combinationCount > maxCombinations
-    const helperText = useMemo(() => {
-        if (hasLimitWarning) {
-            return tx('variants.combinationLimitWarning', `Maximum ${maxCombinations} combinations allowed.`)
-        }
-
-        return tx('variants.combinationCount', 'Generated combinations')
-    }, [hasLimitWarning, maxCombinations, t])
 
     const updateGroup = (groupId, patch) => {
         onChange(optionGroups.map((group) => (
@@ -71,16 +53,16 @@ export default function VariantOptionsBuilder({
     const addValue = (groupId) => {
         const draftValue = draftValues[groupId] || ''
         const group = optionGroups.find(optionGroup => optionGroup.id === groupId)
-        const candidateValues = uniqueValues([...(group?.values || []), draftValue.trim()])
+        const candidateValues = [...(group?.values || []), draftValue.trim()].filter(Boolean)
 
         updateGroup(groupId, { values: candidateValues })
         setDraftValues(prev => ({ ...prev, [groupId]: '' }))
     }
 
-    const removeValue = (groupId, valueToRemove) => {
+    const removeValue = (groupId, valueIndexToRemove) => {
         onChange(optionGroups.map((group) => (
             group.id === groupId
-                ? { ...group, values: group.values.filter(value => value !== valueToRemove) }
+                ? { ...group, values: group.values.filter((_, valueIndex) => valueIndex !== valueIndexToRemove) }
                 : group
         )))
     }
@@ -111,8 +93,13 @@ export default function VariantOptionsBuilder({
             </div>
 
             <div className="space-y-3">
-                {optionGroups.map((group, index) => (
-                    <div key={group.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
+                {optionGroups.map((group, index) => {
+                    const duplicateValues = duplicateValueMap[group.id] || new Set()
+                    const hasDuplicateValues = duplicateValues.size > 0
+                    const hasEmptyValues = group.name?.trim() && (group.values || []).filter(value => value?.trim()).length === 0
+
+                    return (
+                    <div key={group.id} className={`rounded-2xl border bg-gray-50 p-4 ${hasDuplicateValues || hasEmptyValues ? 'border-red-300' : 'border-gray-200'}`}>
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <div className="flex-1">
                                 <label className="label">
@@ -139,18 +126,29 @@ export default function VariantOptionsBuilder({
                         <div>
                             <label className="label">{tx('variants.optionValues', 'Values')}</label>
                             <div className="flex flex-wrap gap-2 rounded-xl border border-gray-200 bg-white p-3">
-                                {group.values.map((value) => (
-                                    <span key={value} className="inline-flex items-center gap-2 rounded-full bg-primary-50 px-3 py-1 text-sm font-medium text-primary-700">
+                                {group.values.map((value, valueIndex) => {
+                                    const isDuplicate = duplicateValues.has(value.trim().toLowerCase())
+
+                                    return (
+                                    <span
+                                        key={`${value}-${valueIndex}`}
+                                        className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
+                                            isDuplicate
+                                                ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
+                                                : 'bg-primary-50 text-primary-700'
+                                        }`}
+                                    >
                                         {value}
                                         <button
                                             type="button"
-                                            onClick={() => removeValue(group.id, value)}
+                                            onClick={() => removeValue(group.id, valueIndex)}
                                             className="text-primary-500 transition hover:text-primary-700"
                                         >
                                             x
                                         </button>
                                     </span>
-                                ))}
+                                    )
+                                })}
 
                                 <input
                                     type="text"
@@ -175,16 +173,60 @@ export default function VariantOptionsBuilder({
                                     {tx('common.add', 'Add')}
                                 </button>
                             </div>
+                            {hasDuplicateValues && (
+                                <p className="mt-2 text-xs font-medium text-red-700">
+                                    {tx('variants.duplicateAttributeValues', 'Duplicate attribute values are not allowed.')}
+                                </p>
+                            )}
+                            {hasEmptyValues && (
+                                <p className="mt-2 text-xs font-medium text-red-700">
+                                    {tx('variants.emptyAttributeValues', 'Add at least one value for this attribute.')}
+                                </p>
+                            )}
                         </div>
                     </div>
-                ))}
+                    )
+                })}
             </div>
 
-            <div className={`rounded-xl border px-4 py-3 text-sm ${hasLimitWarning ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>
-                <div className="font-medium">{helperText}</div>
-                <div className="mt-1">
-                    {combinationCount} / {maxCombinations}
+            <div className={`rounded-xl border px-4 py-3 text-sm ${
+                risk.level === 'confirm'
+                    ? 'border-red-300 bg-red-50 text-red-800'
+                    : risk.level === 'warning'
+                        ? 'border-amber-300 bg-amber-50 text-amber-800'
+                        : risk.level === 'info'
+                            ? 'border-blue-300 bg-blue-50 text-blue-800'
+                            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+            }`}>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide opacity-75">
+                            {tx('variants.variantsToGenerate', 'Variants to Generate')}
+                        </div>
+                        <div className="mt-1 text-3xl font-semibold text-gray-900">
+                            {combinationCount}
+                        </div>
+                    </div>
+                    <div className="sm:max-w-md">
+                        <div className="font-semibold">{risk.label}</div>
+                        <div className="mt-1">{risk.message}</div>
+                        <div className="mt-1 text-xs opacity-80">
+                            {tx('variants.variantExplosionThresholds', 'Safe <= {{safe}}, info {{infoStart}}-{{info}}, warning {{warningStart}}-{{warning}}, confirmation above {{warning}}')
+                                .replace('{{safe}}', safeLimit)
+                                .replace('{{infoStart}}', safeLimit + 1)
+                                .replace('{{info}}', infoLimit)
+                                .replace('{{warningStart}}', infoLimit + 1)
+                                .replace('{{warning}}', warningLimit)}
+                        </div>
+                    </div>
                 </div>
+                {validationMessages.length > 0 && (
+                    <div className="mt-3 border-t border-current/20 pt-3">
+                        {validationMessages.map((message) => (
+                            <div key={message}>{message}</div>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     )

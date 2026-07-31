@@ -1259,6 +1259,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 Price = authoredVariant.Price,
                 OnlinePrice = authoredVariant.OnlinePrice,
                 CostPrice = authoredVariant.CostPrice,
+                Weight = authoredVariant.Weight,
+                MediaId = authoredVariant.MediaId,
+                ImageUrl = authoredVariant.MediaId.HasValue ? null : authoredVariant.ImageUrl,
                 IsActive = authoredVariant.IsActive,
                 IsDefault = authoredVariant.IsDefault,
                 SortOrder = sortOrder++,
@@ -1329,6 +1332,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                     Price = authoredVariant.Price,
                     OnlinePrice = authoredVariant.OnlinePrice,
                     CostPrice = authoredVariant.CostPrice,
+                    Weight = authoredVariant.Weight,
+                    MediaId = authoredVariant.MediaId,
+                    ImageUrl = authoredVariant.MediaId.HasValue ? null : authoredVariant.ImageUrl,
                     IsActive = authoredVariant.IsActive,
                     IsDefault = authoredVariant.IsDefault,
                     SortOrder = sortOrder++,
@@ -1348,6 +1354,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             SetVariantIfChanged(existing, variant => variant.Price, (variant, value) => variant.Price = value, authoredVariant.Price, nameof(ProductVariant.Price), changedFields);
             SetVariantIfChanged(existing, variant => variant.OnlinePrice, (variant, value) => variant.OnlinePrice = value, authoredVariant.OnlinePrice, nameof(ProductVariant.OnlinePrice), changedFields);
             SetVariantIfChanged(existing, variant => variant.CostPrice, (variant, value) => variant.CostPrice = value, authoredVariant.CostPrice, nameof(ProductVariant.CostPrice), changedFields);
+            SetVariantIfChanged(existing, variant => variant.Weight, (variant, value) => variant.Weight = value, authoredVariant.Weight, nameof(ProductVariant.Weight), changedFields);
+            SetVariantIfChanged(existing, variant => variant.MediaId, (variant, value) => variant.MediaId = value, authoredVariant.MediaId, nameof(ProductVariant.MediaId), changedFields);
+            SetVariantIfChanged(existing, variant => variant.ImageUrl, (variant, value) => variant.ImageUrl = value, authoredVariant.MediaId.HasValue ? null : authoredVariant.ImageUrl, nameof(ProductVariant.ImageUrl), changedFields);
             SetVariantIfChanged(existing, variant => variant.IsActive, (variant, value) => variant.IsActive = value, authoredVariant.IsActive, nameof(ProductVariant.IsActive), changedFields);
             SetVariantIfChanged(existing, variant => variant.IsDefault, (variant, value) => variant.IsDefault = value, authoredVariant.IsDefault, nameof(ProductVariant.IsDefault), changedFields);
             SetVariantIfChanged(existing, variant => variant.SortOrder, (variant, value) => variant.SortOrder = value, sortOrder++, nameof(ProductVariant.SortOrder), changedFields);

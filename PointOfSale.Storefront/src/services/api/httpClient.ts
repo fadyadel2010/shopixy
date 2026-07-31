@@ -84,11 +84,8 @@ export function setAuthInterceptor(actions: {
     forcedLogoutPromise = null;
 }
 
-function isAuthEndpoint(url: string): boolean {
-    return url.includes('/auth/login') ||
-        url.includes('/auth/register') ||
-        url.includes('/auth/refresh') ||
-        url.includes('/auth/logout');
+export function isAuthEndpoint(url: string): boolean {
+    return url.includes('/api/storefront/auth/');
 }
 
 function getThemePreviewToken(): string | null {

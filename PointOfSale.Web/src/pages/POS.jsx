@@ -135,7 +135,7 @@ export default function POS() {
                 return {
                     ...product,
                     variantId: matchedVariant.id,
-                    salePrice: matchedVariant.price,
+                    canonicalUnitPrice: matchedVariant.price,
                     sku: matchedVariant.sku,
                     barcode: matchedVariant.barcode || product.barcode,
                     stockQuantity: getVariantWarehouseStock(matchedVariant),
@@ -150,7 +150,7 @@ export default function POS() {
             return {
                 ...product,
                 variantId: defaultVariant.id,
-                salePrice: defaultVariant.price,
+                canonicalUnitPrice: defaultVariant.price,
                 sku: defaultVariant.sku,
                 barcode: defaultVariant.barcode || product.barcode,
                 stockQuantity: getVariantWarehouseStock(defaultVariant),
@@ -161,6 +161,7 @@ export default function POS() {
 
         return {
             ...product,
+            canonicalUnitPrice: product.salePrice,
             stockQuantity: getWarehouseProductStock(product),
         }
     }

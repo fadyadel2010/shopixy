@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import ProductForm from '../components/ProductForm'
 import ProductWorkspaceLayout from '../components/ProductWorkspaceLayout'
@@ -33,11 +33,13 @@ function getWorkspaceStatus(meta, t) {
 export default function ProductWorkspacePage() {
     const { productId } = useParams()
     const navigate = useNavigate()
+    const location = useLocation()
     const { t } = useTranslation()
     const productFormRef = useRef(null)
     const { showError, showSuccess } = useToast()
     const isCreateMode = productId === 'new'
     const resolvedProductId = isCreateMode ? null : productId
+    const focusSection = new URLSearchParams(location.search).get('focus') || null
     const [isAiModalOpen, setIsAiModalOpen] = useState(false)
 
     const [workspaceMeta, setWorkspaceMeta] = useState({
@@ -53,7 +55,14 @@ export default function ProductWorkspacePage() {
         setWorkspaceMeta(prev => ({ ...prev, ...nextMeta }))
     }, [])
 
-    const handleBack = useCallback(() => {
+    const handleBack = useCallback(async () => {
+        if (productFormRef.current?.confirmDiscardPendingChanges) {
+            const canLeave = await productFormRef.current.confirmDiscardPendingChanges()
+            if (!canLeave) {
+                return
+            }
+        }
+
         navigate('/products')
     }, [navigate])
 
@@ -61,7 +70,8 @@ export default function ProductWorkspacePage() {
         showSuccess(t('common.updatedSuccessfully') || 'Saved successfully')
 
         if (isCreateMode && savedProduct?.id) {
-            navigate(`/products/${savedProduct.id}/edit`, { replace: true })
+            const focusQuery = savedProduct.hasVariants ? '?focus=variants' : ''
+            navigate(`/products/${savedProduct.id}/edit${focusQuery}`, { replace: true })
         }
     }, [isCreateMode, navigate, showSuccess, t])
 
@@ -175,6 +185,7 @@ export default function ProductWorkspacePage() {
                 onClose={handleBack}
                 onSave={handleSave}
                 onMetaChange={handleMetaChange}
+                focusSection={focusSection}
             />
             <AiProductGeneratorModal
                 isOpen={isAiModalOpen}

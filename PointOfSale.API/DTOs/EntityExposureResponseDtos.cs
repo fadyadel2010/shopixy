@@ -119,6 +119,7 @@ public sealed class ProductUnitResponseDto
     public string UnitName { get; set; } = string.Empty;
     public string? UnitSymbol { get; set; }
     public decimal ConversionFactor { get; set; }
+    public decimal? PurchasePrice { get; set; }
     public decimal? SellingPrice { get; set; }
     public string? Barcode { get; set; }
     public bool IsDefault { get; set; }

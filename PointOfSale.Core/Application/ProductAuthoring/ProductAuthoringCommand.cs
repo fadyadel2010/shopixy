@@ -105,7 +105,10 @@ public sealed record ProductAuthoringVariant(
     decimal CostPrice,
     bool IsActive,
     bool IsDefault,
-    IReadOnlyDictionary<string, string> Attributes);
+    IReadOnlyDictionary<string, string> Attributes,
+    decimal? Weight = null,
+    Guid? MediaId = null,
+    string? ImageUrl = null);
 
 public sealed record ProductAuthoringMetadata(
     bool AiGenerated,

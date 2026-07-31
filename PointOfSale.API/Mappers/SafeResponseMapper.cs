@@ -384,6 +384,7 @@ public static class SafeResponseMapper
         UnitName = unit.Unit?.Name ?? string.Empty,
         UnitSymbol = unit.Unit?.Symbol,
         ConversionFactor = unit.ConversionFactor,
+        PurchasePrice = unit.PurchasePrice,
         SellingPrice = unit.SellingPrice,
         Barcode = unit.Barcode,
         IsDefault = unit.IsDefault,

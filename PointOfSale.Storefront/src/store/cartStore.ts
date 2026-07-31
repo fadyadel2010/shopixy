@@ -409,6 +409,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 isLoading: false,
+                isInitialized: true,
                 hydrationSource: 'api',
                 skipNextFetch: false,
                 recoveryMessage: null,
@@ -505,6 +506,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 updatingItemId: null,
+                isInitialized: true,
                 hydrationSource: 'api',
                 skipNextFetch: false,
                 recoveryMessage: null,
@@ -585,6 +587,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 updatingItemId: null,
+                isInitialized: true,
                 hydrationSource: 'api',
                 skipNextFetch: false,
                 recoveryMessage: null,
@@ -635,6 +638,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
         set({
             cart: EMPTY_CART,
             isLoading: true,
+            isInitialized: true,
             error: null,
             hydrationSource: 'api',
             skipNextFetch: false,
@@ -698,6 +702,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 isApplyingCoupon: false,
+                isInitialized: true,
                 couponError: null,
                 hydrationSource: 'api',
                 skipNextFetch: false,
@@ -761,6 +766,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 isApplyingCoupon: false,
+                isInitialized: true,
                 couponError: null,
                 hydrationSource: 'api',
                 skipNextFetch: false,
@@ -815,6 +821,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             set({
                 cart,
                 isLoading: false,
+                isInitialized: true,
                 hydrationSource: 'api',
                 skipNextFetch: false,
                 recoveryMessage: null,

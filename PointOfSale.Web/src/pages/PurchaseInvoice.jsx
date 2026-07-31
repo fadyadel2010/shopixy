@@ -174,8 +174,8 @@ export default function PurchaseInvoice() {
             variantId = defaultVariant.id
             productToAdd = {
                 ...product,
-                salePrice: defaultVariant.price,
-                purchasePrice: defaultVariant.costPrice || defaultVariant.price,
+                canonicalUnitPrice: defaultVariant.price,
+                canonicalCostPrice: defaultVariant.costPrice,
                 sku: defaultVariant.sku
             }
         }
@@ -188,7 +188,7 @@ export default function PurchaseInvoice() {
     const handleVariantSelect = async (productWithVariant) => {
         if (!pendingProduct || !productWithVariant) return
 
-        // productWithVariant already has variantId, purchasePrice, costPrice, variantAttributes
+        // productWithVariant already has variantId, canonicalCostPrice, and variantAttributes.
         await addItemWithVariant(
             productWithVariant,
             productWithVariant.variantId,
@@ -245,8 +245,7 @@ export default function PurchaseInvoice() {
                 unitId: defaultUnit?.unitId || null,
                 unitName: defaultUnit?.unitName || product.unit || t('common.unit'),
                 conversionFactor: defaultUnit?.conversionFactor || 1,
-                // Priority: costPrice (from variant) > purchasePrice > defaultUnit.purchasePrice > salePrice
-                unitCost: roundCurrency(product.costPrice || product.purchasePrice || defaultUnit?.purchasePrice || product.salePrice || 0),
+                unitCost: roundCurrency(product.canonicalCostPrice || defaultUnit?.purchasePrice || 0),
                 taxRate: toSafeNumber(product.taxRate),
                 productUnits: productUnits
             }])

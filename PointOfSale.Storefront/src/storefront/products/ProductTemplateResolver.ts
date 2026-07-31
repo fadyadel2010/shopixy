@@ -11,6 +11,16 @@ const cloneTemplate = (template: StorefrontProductTemplate): StorefrontProductTe
     })),
 });
 
+const PRODUCT_DETAIL_SECTION_TYPES = new Set([
+    'product-hero',
+    'product-gallery',
+    'product-specs',
+    'product-video',
+]);
+
+const isProductDetailPageTemplate = (template?: StorefrontProductTemplate | null): template is StorefrontProductTemplate =>
+    Boolean(template?.sections?.some((section) => PRODUCT_DETAIL_SECTION_TYPES.has(section.type)));
+
 export const resolveProductTemplate = (
     templateId: string | null | undefined,
     config?: StoreConfig | null
@@ -25,12 +35,15 @@ export const resolveProductTemplate = (
 
     const savedTemplate = config?.productTemplates?.[resolvedTemplateId];
     const hasConfiguredDefaultProductSections = (config?.pages?.product?.sections?.length ?? 0) > 0;
-    const defaultProductPageTemplate = resolvedTemplateId === 'default' && hasConfiguredDefaultProductSections && config?.pages?.product
+    const configuredDefaultProductPageTemplate = resolvedTemplateId === 'default' && hasConfiguredDefaultProductSections && config?.pages?.product
         ? {
             templateId: 'default',
             name: 'Default Template',
             sections: config.pages.product.sections || [],
         }
+        : null;
+    const defaultProductPageTemplate = isProductDetailPageTemplate(configuredDefaultProductPageTemplate)
+        ? configuredDefaultProductPageTemplate
         : null;
     const builtinTemplate = getBuiltinProductTemplate(resolvedTemplateId);
     const fallbackTemplate = savedTemplate
@@ -52,6 +65,7 @@ export const resolveProductTemplate = (
             usedBuiltinTemplate: !savedTemplate && !defaultProductPageTemplate && Boolean(builtinTemplate),
             usedSavedTemplate: Boolean(savedTemplate),
             usedDefaultProductPage: !savedTemplate && Boolean(defaultProductPageTemplate),
+            ignoredDefaultProductPage: Boolean(configuredDefaultProductPageTemplate && !defaultProductPageTemplate),
             availableSavedTemplates: Object.keys(config?.productTemplates || {}),
             finalTemplateId: normalizedTemplate.templateId,
             finalSectionTypes: normalizedTemplate.sections.map((section) => section.type),

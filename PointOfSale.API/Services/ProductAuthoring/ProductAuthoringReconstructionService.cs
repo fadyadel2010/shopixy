@@ -124,7 +124,10 @@ public sealed class ProductAuthoringReconstructionService : IProductAuthoringRec
                 variant.IsDefault,
                 variant.Attributes
                     .Where(attribute => !attribute.IsDeleted)
-                    .ToDictionary(attribute => attribute.Name, attribute => attribute.Value)))
+                    .ToDictionary(attribute => attribute.Name, attribute => attribute.Value),
+                variant.Weight,
+                variant.MediaId,
+                variant.ImageUrl))
             .ToList();
     }
 

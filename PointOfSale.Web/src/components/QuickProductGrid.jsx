@@ -86,7 +86,7 @@ export default function QuickProductGrid({ onProductSelect, warehouseId, refresh
             name: item.name,
             sku: item.sku,
             barcode: item.barcode,
-            salePrice: item.price,
+            canonicalUnitPrice: item.price,
             stockQuantity: Math.max(0, Number(item.stockQuantity || 0)),
             images: item.images,
             variantAttributes: item.attributes || [],

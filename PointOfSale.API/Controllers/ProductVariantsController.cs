@@ -1598,6 +1598,7 @@ public class ProductVariantsController : ControllerBase
             Price = variant.Price,
             OnlinePrice = variant.OnlinePrice,
             CostPrice = variant.CostPrice,
+            Weight = variant.Weight,
             IsDefault = variant.IsDefault,
             IsActive = variant.IsActive,
             MediaId = variant.MediaId,
@@ -2182,6 +2183,7 @@ public class ProductVariantDto
     public decimal Price { get; set; }
     public decimal? OnlinePrice { get; set; }
     public decimal CostPrice { get; set; }
+    public decimal? Weight { get; set; }
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; }
     public Guid? MediaId { get; set; }
@@ -2218,6 +2220,7 @@ public class CreateVariantRequest
     public decimal Price { get; set; }
     public decimal? OnlinePrice { get; set; }
     public decimal CostPrice { get; set; }
+    public decimal? Weight { get; set; }
     public bool IsActive { get; set; } = true;
     public Guid? MediaId { get; set; }
     public string? ImageUrl { get; set; }
@@ -2233,6 +2236,7 @@ public class UpdateVariantRequest
     public decimal Price { get; set; }
     public decimal? OnlinePrice { get; set; }
     public decimal CostPrice { get; set; }
+    public decimal? Weight { get; set; }
     public bool IsActive { get; set; } = true;
     public Guid? MediaId { get; set; }
     public string? ImageUrl { get; set; }
