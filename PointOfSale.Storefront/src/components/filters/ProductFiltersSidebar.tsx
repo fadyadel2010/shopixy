@@ -109,6 +109,14 @@ const filterPanelStyles = {
         content: 'px-3',
         count: 'rounded-sm bg-primary px-2 py-0.5 text-[10px] font-semibold text-white',
     },
+    cosmetics: {
+        aside: 'w-72 flex-shrink-0',
+        panel: 'sticky top-6 overflow-hidden border-y border-primary/20 bg-background',
+        header: 'border-b border-primary/15 px-3 py-3',
+        title: 'text-[11px] font-semibold uppercase tracking-[0.18em] text-primary',
+        content: 'px-3',
+        count: 'bg-primary px-2 py-0.5 text-[10px] font-semibold text-white',
+    },
     default: {
         aside: 'w-64 flex-shrink-0',
         panel: 'sticky top-6 overflow-hidden rounded-xl bg-surface shadow-sm',
@@ -498,6 +506,7 @@ export const MobileFilterButton: React.FC<FilterButtonProps> = ({
         alizon: 'rounded-md border border-muted/25 text-xs font-bold uppercase tracking-[0.14em] text-text hover:border-primary/50',
         seven: 'border-2 border-text bg-background font-black uppercase tracking-[0.08em] text-text hover:bg-text hover:text-background',
         sharp: 'rounded-md border border-muted/25 text-xs font-bold uppercase tracking-[0.2em] text-text hover:border-primary/50',
+        cosmetics: 'border border-primary/25 bg-background text-xs font-semibold uppercase tracking-[0.14em] text-primary hover:bg-primary hover:text-white',
         default: 'rounded-lg border border-muted/20 text-text hover:bg-muted/10',
     }[theme];
 

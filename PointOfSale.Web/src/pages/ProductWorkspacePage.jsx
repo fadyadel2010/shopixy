@@ -4,7 +4,6 @@ import { useTranslation } from 'react-i18next'
 import ProductForm from '../components/ProductForm'
 import ProductWorkspaceLayout from '../components/ProductWorkspaceLayout'
 import AiProductGeneratorModal from '../components/AiProductGeneratorModal'
-import { useToast } from '../components/Toast'
 
 const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
 const PRODUCT_WORKSPACE_FORM_ID = 'product-workspace-form'
@@ -36,7 +35,6 @@ export default function ProductWorkspacePage() {
     const location = useLocation()
     const { t } = useTranslation()
     const productFormRef = useRef(null)
-    const { showError, showSuccess } = useToast()
     const isCreateMode = productId === 'new'
     const resolvedProductId = isCreateMode ? null : productId
     const focusSection = new URLSearchParams(location.search).get('focus') || null
@@ -67,34 +65,21 @@ export default function ProductWorkspacePage() {
     }, [navigate])
 
     const handleSave = useCallback((savedProduct) => {
-        showSuccess(t('common.updatedSuccessfully') || 'Saved successfully')
-
         if (isCreateMode && savedProduct?.id) {
             const focusQuery = savedProduct.hasVariants ? '?focus=variants' : ''
             navigate(`/products/${savedProduct.id}/edit${focusQuery}`, { replace: true })
         }
-    }, [isCreateMode, navigate, showSuccess, t])
+    }, [isCreateMode, navigate])
 
     const handleApplyAiProduct = useCallback((generatedProduct) => {
         const applyResult = productFormRef.current?.applyAiGeneratedData?.(generatedProduct)
 
         if (!applyResult) {
-            showError('Unable to apply the generated product data to the form.')
             return false
         }
 
-        if (applyResult.appliedFieldCount > 0) {
-            showSuccess(
-                applyResult.skippedFieldCount > 0
-                    ? 'AI content applied to empty fields. Existing values were left unchanged.'
-                    : 'AI content applied to the product form.'
-            )
-            return true
-        }
-
-        showError('All matching product fields already have values, so nothing was changed.')
-        return false
-    }, [showError, showSuccess])
+        return applyResult.appliedFieldCount > 0
+    }, [])
 
     const status = useMemo(() => getWorkspaceStatus(workspaceMeta, t), [workspaceMeta, t])
     const title = workspaceMeta.name?.trim()

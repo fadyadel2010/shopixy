@@ -11,6 +11,7 @@ export type ThemeComponentTheme =
     | 'electronics'
     | 'alizon'
     | 'sharp'
+    | 'cosmetics'
     | 'seven'
     | 'default';
 

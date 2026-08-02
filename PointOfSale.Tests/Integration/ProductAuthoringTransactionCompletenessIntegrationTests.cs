@@ -49,6 +49,89 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
     }
 
     [Fact]
+    public async Task UpdateVariantTemplate_ReusesExistingDefaultVariant_AndPersistsNewAttributes()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var createResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "template-default-create",
+            variants: [],
+            variantsSubmitted: false,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, createResult.Status);
+        var productId = Assert.IsType<Guid>(createResult.ProductId);
+        var defaultVariant = await harness.Context.ProductVariants
+            .SingleAsync(variant => variant.ProductId == productId && variant.IsDefault);
+        Assert.Empty(await harness.Context.ProductVariantAttributes
+            .Where(attribute => attribute.VariantId == defaultVariant.Id)
+            .ToListAsync());
+        harness.Context.ChangeTracker.Clear();
+        IReadOnlyList<EntityState>? observedAttributeStates = null;
+        harness.Observer.ObserveAfterVariantSynchronization(() =>
+        {
+            observedAttributeStates = harness.Context.ChangeTracker
+                .Entries<ProductVariantAttribute>()
+                .Where(entry => entry.Entity.VariantId == defaultVariant.Id)
+                .OrderBy(entry => entry.Entity.Name)
+                .Select(entry => entry.State)
+                .ToArray();
+        });
+
+        var updateResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: true,
+            idempotencyKey: "template-default-update",
+            productId: productId,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false,
+            variants:
+            [
+                new ProductAuthoringVariant(
+                    defaultVariant.Id,
+                    "TEMPLATE-RED-M",
+                    "9310731213001",
+                    40m,
+                    40m,
+                    25m,
+                    IsActive: true,
+                    IsDefault: true,
+                    new Dictionary<string, string>
+                    {
+                        ["Color"] = "Red",
+                        ["Size"] = "M"
+                    },
+                    Weight: 0.5m)
+            ]));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, updateResult.Status);
+        Assert.Equal(
+            new[] { EntityState.Added, EntityState.Added },
+            observedAttributeStates);
+        harness.Context.ChangeTracker.Clear();
+
+        var persistedVariant = await harness.Context.ProductVariants
+            .Include(variant => variant.Attributes)
+            .SingleAsync(variant => variant.ProductId == productId && !variant.IsDeleted);
+        Assert.Equal(defaultVariant.Id, persistedVariant.Id);
+        Assert.Equal("TEMPLATE-RED-M", persistedVariant.SKU);
+        Assert.Equal("9310731213001", persistedVariant.Barcode);
+        Assert.Equal(25m, persistedVariant.CostPrice);
+        Assert.Equal(40m, persistedVariant.Price);
+        Assert.Equal(0.5m, persistedVariant.Weight);
+        Assert.Equal(
+            new[] { (Name: "Color", Value: "Red"), (Name: "Size", Value: "M") },
+            persistedVariant.Attributes
+                .OrderBy(attribute => attribute.Name)
+                .Select(attribute => (attribute.Name, attribute.Value))
+                .ToArray());
+    }
+
+    [Fact]
     public async Task FailureAfterUnitSynchronization_RollsBackAllBusinessOutboxAndAuditRows()
     {
         await using var harness = await Harness.CreateAsync(
@@ -207,23 +290,30 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
             ProductAuthoringOperation operation,
             bool hasVariants = false,
             string idempotencyKey = "authoring-command",
-            IReadOnlyList<ProductAuthoringVariant>? variants = null)
+            IReadOnlyList<ProductAuthoringVariant>? variants = null,
+            Guid? productId = null,
+            bool? variantsSubmitted = null,
+            bool productUnitsSubmitted = true,
+            PublishStatus publishStatus = PublishStatus.Published,
+            bool isOnlineVisible = true)
         {
-            var units = new[]
-            {
-                new ProductAuthoringUnit(null, UnitId, 1m, 5m, 12m, null, true, true)
-            };
+            IReadOnlyList<ProductAuthoringUnit> units = productUnitsSubmitted
+                ? [new ProductAuthoringUnit(null, UnitId, 1m, 5m, 12m, null, true, true)]
+                : Array.Empty<ProductAuthoringUnit>();
 
             return new ProductAuthoringCommand(
                 operation,
-                new ProductAuthoringIdentity(TenantContext.TenantId!.Value, null, CategoryId, hasVariants ? null : "SKU-1", hasVariants ? null : "BAR-1"),
+                new ProductAuthoringIdentity(TenantContext.TenantId!.Value, productId, CategoryId, hasVariants ? null : "SKU-1", hasVariants ? null : "BAR-1"),
                 new ProductAuthoringContent("Complete product", null, null, null, "Brand", "Maker", [], [], []),
                 new ProductAuthoringPricing(5m, 12m, 12m, false, 0m),
-                new ProductAuthoringPublication(PublishStatus.Published, true, true, true, false),
+                new ProductAuthoringPublication(publishStatus, true, isOnlineVisible, true, false),
                 new ProductAuthoringSeo(null, null, null, null),
                 new ProductAuthoringShippingProfile(0m, 0m, 0m, 0m, "kg", "cm"),
                 new ProductAuthoringInventoryProfile("Piece", 0m, true, hasVariants, 10, false),
-                new ProductAuthoringUnits(UnitId, UnitId, units),
+                new ProductAuthoringUnits(
+                    productUnitsSubmitted ? UnitId : null,
+                    productUnitsSubmitted ? UnitId : null,
+                    units),
                 variants ?? [],
                 new ProductAuthoringMetadata(
                     false,
@@ -235,8 +325,8 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                     null,
                     new Dictionary<string, string>
                     {
-                        ["productUnitsSubmitted"] = "true",
-                        ["variantsSubmitted"] = hasVariants ? "true" : "false"
+                        ["productUnitsSubmitted"] = productUnitsSubmitted ? "true" : "false",
+                        ["variantsSubmitted"] = (variantsSubmitted ?? hasVariants) ? "true" : "false"
                     }));
         }
 
@@ -394,14 +484,21 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
     private sealed class ThrowingTransactionObserver(ProductAuthoringFailurePoint? failurePoint) : IProductAuthoringTransactionObserver
     {
         private ProductAuthoringFailurePoint? _failurePoint = failurePoint;
+        private Action? _afterVariantSynchronization;
 
         public void Disable() => _failurePoint = null;
+
+        public void ObserveAfterVariantSynchronization(Action observer) =>
+            _afterVariantSynchronization = observer;
 
         public Task AfterUnitSynchronizationAsync(ProductAuthoringCommand command, Product product, CancellationToken cancellationToken) =>
             ThrowIf(ProductAuthoringFailurePoint.AfterUnitSynchronization);
 
-        public Task AfterVariantSynchronizationAsync(ProductAuthoringCommand command, Product product, CancellationToken cancellationToken) =>
-            ThrowIf(ProductAuthoringFailurePoint.AfterVariantSynchronization);
+        public Task AfterVariantSynchronizationAsync(ProductAuthoringCommand command, Product product, CancellationToken cancellationToken)
+        {
+            _afterVariantSynchronization?.Invoke();
+            return ThrowIf(ProductAuthoringFailurePoint.AfterVariantSynchronization);
+        }
 
         public Task BeforeCommitAsync(ProductAuthoringCommand command, Product product, CancellationToken cancellationToken) =>
             ThrowIf(ProductAuthoringFailurePoint.BeforeCommit);

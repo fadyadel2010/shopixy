@@ -6,6 +6,7 @@ const apiGetMock = vi.hoisted(() => vi.fn())
 const apiPostMock = vi.hoisted(() => vi.fn())
 const apiPutMock = vi.hoisted(() => vi.fn())
 const apiDeleteMock = vi.hoisted(() => vi.fn())
+const saveVariantDraftMock = vi.hoisted(() => vi.fn())
 
 vi.mock('../services/api', () => ({
     default: {
@@ -68,6 +69,18 @@ function mockReads() {
     })
 }
 
+function renderVariantTab(props = {}) {
+    return render(
+        <ProductVariantsTab
+            productId="product-1"
+            forceMatrixMode
+            productSkuPrefix="T Shirt"
+            onSaveVariantDraft={saveVariantDraftMock}
+            {...props}
+        />
+    )
+}
+
 async function createTwoGeneratedRows(container: HTMLElement) {
     fireEvent.click(await screen.findByLabelText('Color'))
     fireEvent.click(screen.getByLabelText('Size'))
@@ -96,8 +109,8 @@ function fillRequiredPrices(container: HTMLElement) {
     const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
     fireEvent.change(numericInputs[0], { target: { value: '5' } })
     fireEvent.change(numericInputs[1], { target: { value: '10' } })
-    fireEvent.change(numericInputs[4], { target: { value: '6' } })
-    fireEvent.change(numericInputs[5], { target: { value: '12' } })
+    fireEvent.change(numericInputs[3], { target: { value: '6' } })
+    fireEvent.change(numericInputs[4], { target: { value: '12' } })
 }
 
 describe('variant authoring workspace', () => {
@@ -107,23 +120,22 @@ describe('variant authoring workspace', () => {
         apiPutMock.mockReset()
         apiDeleteMock.mockReset()
         apiPutMock.mockResolvedValue({ data: { ...product, rowVersion: '5' } })
+        saveVariantDraftMock.mockReset()
+        saveVariantDraftMock.mockResolvedValue({ ...product, rowVersion: '5' })
         mockReads()
     })
 
-    it('saves generated variants through canonical product authoring', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+    it('hands generated variant drafts to the parent product authoring owner', async () => {
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
         fillRequiredPrices(container)
 
         fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
 
-        await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith(
-            '/products/product-1',
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalledWith(
             expect.objectContaining({
-                hasVariants: true,
-                productUnits: null,
-                variants: [
+                authoringVariants: [
                     expect.objectContaining({
                         sku: null,
                         costPrice: 5,
@@ -137,21 +149,49 @@ describe('variant authoring workspace', () => {
                         attributes: { Color: 'Blue', Size: 'S' },
                     }),
                 ],
-            }),
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    'Idempotency-Key': expect.stringContaining('variant-authoring:product-1:matrix:'),
-                    'If-Match': '"4"',
-                }),
-            }),
+            })
         ))
 
+        expect(apiPutMock).not.toHaveBeenCalledWith('/products/product-1', expect.anything(), expect.anything())
         expect(apiPostMock).not.toHaveBeenCalledWith(expect.stringContaining('/products/product-1/variants'), expect.anything())
         expect(apiDeleteMock).not.toHaveBeenCalled()
     })
 
+    it('preserves matrix edits when the parent product save adapter fails', async () => {
+        saveVariantDraftMock.mockRejectedValueOnce(new Error('At least one active priced variant is required before publication.'))
+
+        const { container } = renderVariantTab()
+
+        await createTwoGeneratedRows(container)
+        fillRequiredPrices(container)
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalled())
+        expect(apiPutMock).not.toHaveBeenCalledWith('/products/product-1', expect.anything(), expect.anything())
+
+        expect(await screen.findByText('At least one active priced variant is required before publication.')).toBeInTheDocument()
+        expect(screen.getByText('Red / S')).toBeInTheDocument()
+        expect(screen.getByText('Blue / S')).toBeInTheDocument()
+    })
+
+    it('surfaces nested product authoring concurrency conflict details without clearing matrix rows', async () => {
+        saveVariantDraftMock.mockRejectedValueOnce(new Error('Product has been changed by another transaction.'))
+
+        const { container } = renderVariantTab()
+
+        await createTwoGeneratedRows(container)
+        fillRequiredPrices(container)
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        expect(await screen.findByText('Product has been changed by another transaction.')).toBeInTheDocument()
+        expect(screen.getByText('Red / S')).toBeInTheDocument()
+        expect(screen.getByText('Blue / S')).toBeInTheDocument()
+    })
+
     it('blocks duplicate SKU values before save', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
         const textInputs = Array.from(container.querySelectorAll('table input[type="text"]')) as HTMLInputElement[]
@@ -166,7 +206,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('updates the live variant counter while editing attributes', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
@@ -182,7 +222,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('shows a large variant warning above the safe threshold', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
@@ -193,10 +233,10 @@ describe('variant authoring workspace', () => {
 
         expect(screen.getByText('Moderate matrix')).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Generate 101 Variants' })).toBeInTheDocument()
-    })
+    }, 10000)
 
     it('loads frontend-only variant templates', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         fireEvent.click(await screen.findByRole('button', { name: 'Electronics' }))
 
@@ -205,7 +245,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('detects duplicate attribute values and prevents generation', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
@@ -218,7 +258,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('previews SKU patterns and applies generated SKUs to selected rows', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
         fireEvent.change(screen.getByPlaceholderText('Pattern, e.g. TSHIRT-{COLOR}-{SIZE}'), {
@@ -238,7 +278,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('excludes combinations before they appear in the matrix', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
@@ -257,7 +297,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('shows live statistics and smart selection captions', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
 
@@ -270,21 +310,23 @@ describe('variant authoring workspace', () => {
         expect(screen.getByRole('button', { name: 'Enable 2 Selected' })).toBeInTheDocument()
     })
 
-    it('blocks negative inventory and weight before save', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+    it('removes direct inventory editing from variant authoring', async () => {
+        const { container } = renderVariantTab()
+
+        await createTwoGeneratedRows(container)
+
+        expect(screen.queryByText('Inventory')).not.toBeInTheDocument()
+        expect(screen.queryByText('Set Inventory')).not.toBeInTheDocument()
+        expect(screen.getAllByText('Managed by inventory workflows').length).toBeGreaterThan(0)
+    })
+
+    it('blocks negative weight before save', async () => {
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
         fillRequiredPrices(container)
         const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
-        fireEvent.change(numericInputs[2], { target: { value: '-1' } })
-
-        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
-
-        expect((await screen.findAllByText('Inventory cannot be negative.')).length).toBeGreaterThan(0)
-        expect(apiPutMock).not.toHaveBeenCalled()
-
-        fireEvent.change(numericInputs[2], { target: { value: '0' } })
-        fireEvent.change(numericInputs[3], { target: { value: '-0.5' } })
+        fireEvent.change(numericInputs[2], { target: { value: '-0.5' } })
         fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
 
         expect((await screen.findAllByText('Weight cannot be negative.')).length).toBeGreaterThan(0)
@@ -292,7 +334,7 @@ describe('variant authoring workspace', () => {
     })
 
     it('registers an unsaved changes warning for refresh navigation', async () => {
-        const { container } = render(<ProductVariantsTab productId="product-1" forceMatrixMode />)
+        const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
 

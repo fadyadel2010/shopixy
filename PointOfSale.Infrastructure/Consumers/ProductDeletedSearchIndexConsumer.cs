@@ -46,6 +46,8 @@ public class ProductDeletedSearchIndexConsumer :
             nameof(ProductDeletedEvent),
             context.Message.ProductId,
             context.CorrelationId?.ToString(),
+            context.MessageId,
+            context.GetRetryAttempt(),
             context.CancellationToken);
 
     public Task Consume(ConsumeContext<ProductArchivedEvent> context) =>
@@ -54,6 +56,8 @@ public class ProductDeletedSearchIndexConsumer :
             nameof(ProductArchivedEvent),
             context.Message.ProductId,
             context.CorrelationId?.ToString(),
+            context.MessageId,
+            context.GetRetryAttempt(),
             context.CancellationToken);
 
     public Task Consume(ConsumeContext<ProductPublishStatusChangedEvent> context) =>
@@ -62,6 +66,8 @@ public class ProductDeletedSearchIndexConsumer :
             nameof(ProductPublishStatusChangedEvent),
             context.Message.ProductId,
             context.CorrelationId?.ToString(),
+            context.MessageId,
+            context.GetRetryAttempt(),
             context.CancellationToken);
 
     private async Task ApplySqlSearchVisibilityAsync(
@@ -69,9 +75,24 @@ public class ProductDeletedSearchIndexConsumer :
         string eventType,
         Guid productId,
         string? contextCorrelationId,
+        Guid? messageId,
+        int retryCount,
         CancellationToken cancellationToken)
     {
         var correlationId = @event.CorrelationId ?? contextCorrelationId ?? "N/A";
+
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=SearchConsumer | ConsumerName={ConsumerName} | MessageId={MessageId} | EventType={EventType} | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | ReceiveTime={ReceiveTime:O} | CorrelationId={CorrelationId} | RetryCount={RetryCount}",
+            ConsumerName,
+            messageId,
+            eventType,
+            @event.EventId,
+            productId,
+            @event.TenantId,
+            @event.EventVersion,
+            DateTime.UtcNow,
+            correlationId,
+            retryCount);
 
         _logger.LogInformation(
             "Processing product lifecycle event for Elasticsearch | EventType: {EventType} | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",

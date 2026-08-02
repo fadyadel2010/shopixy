@@ -27,7 +27,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                     eyebrow={model.labels.eyebrowProducts}
                     title={model.title}
                     subtitle={model.subtitle}
-                    action={{ label: model.labels.viewAll, href: '/products' }}
+                    action={model.viewAllHref ? { label: model.labels.viewAll, href: model.viewAllHref } : undefined}
                 />
 
                 {model.isLoading ? (

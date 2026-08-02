@@ -22,6 +22,7 @@ const surfaceStyles: Record<ThemeComponentTheme, string> = {
     electronics: 'overflow-hidden rounded-md border border-muted/25 bg-background shadow-sm ring-1 ring-muted/5 transition-all duration-fast hover:border-primary/50 hover:shadow-md',
     alizon: 'overflow-hidden border border-muted/20 bg-background shadow-sm transition-all duration-fast hover:border-primary/50 hover:shadow-md',
     sharp: 'overflow-hidden bg-background shadow-[0_4px_16px_rgba(1,52,35,0.04)] transition-all duration-fast hover:shadow-lg',
+    cosmetics: 'overflow-hidden bg-background transition-all duration-slow hover:shadow-[0_16px_34px_rgba(208,93,97,0.10)]',
     seven: 'overflow-hidden bg-background transition-transform duration-slow motion-safe:hover:-translate-y-1',
     default: 'overflow-hidden rounded-xl border border-muted/20 bg-background shadow-sm transition-colors duration-normal hover:border-primary/30',
 };
@@ -96,6 +97,13 @@ const sectionHeaderStyles: Record<ThemeComponentTheme, {
         subtitle: 'mt-3 max-w-xl text-sm leading-6 text-muted',
         action: 'inline-flex items-center gap-1 text-sm font-semibold uppercase tracking-[0.14em] text-text transition-colors hover:text-secondary',
     },
+    cosmetics: {
+        wrapper: 'mb-0 flex min-h-[50px] items-center justify-between gap-4 px-3 py-3',
+        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-primary',
+        title: 'text-sm font-normal capitalize leading-[26.4px] text-primary sm:text-2xl',
+        subtitle: 'mt-2 max-w-xl text-sm leading-6 text-muted',
+        action: 'text-sm font-normal capitalize leading-7 text-text transition-opacity hover:opacity-70 sm:text-[19px]',
+    },
     seven: {
         wrapper: 'mb-12 grid gap-5 border-l-4 border-text pl-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end',
         eyebrow: 'text-xs font-bold uppercase tracking-[0.34em] text-primary',
@@ -161,6 +169,12 @@ const categoryArt = {
         'bg-[linear-gradient(135deg,#FFFFFF_0%,#F1F5F9_48%,#013423_48%,#013423_100%)]',
         'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_45%,#013423_45%,#013423_100%)]',
     ],
+    cosmetics: [
+        'bg-[linear-gradient(135deg,#C99673_0%,#C99673_47%,#E7DFDB_47%,#FFFFFF_100%)]',
+        'bg-[linear-gradient(135deg,#FFFFFF_0%,#E7DFDB_46%,#D05D61_46%,#7A4E4C_100%)]',
+        'bg-[linear-gradient(135deg,#F7E8E6_0%,#FFFFFF_48%,#D05D61_48%,#1C1A17_100%)]',
+        'bg-[linear-gradient(135deg,#B88773_0%,#E7DFDB_45%,#FFFFFF_45%,#D05D61_100%)]',
+    ],
     seven: [
         'bg-[linear-gradient(135deg,#FFFFFF_0%,#F8FAFC_44%,#9D7877_44%,#131316_100%)]',
         'bg-[linear-gradient(135deg,#F5F0EB_0%,#FFFFFF_46%,#9D7877_46%,#131316_100%)]',
@@ -183,6 +197,7 @@ const buttonStyles: Record<ThemeComponentTheme, string> = {
     electronics: 'rounded-md bg-primary px-4 py-2.5 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:cursor-not-allowed disabled:bg-muted disabled:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
     alizon: 'rounded-none bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
     sharp: 'bg-primary px-6 py-3 text-sm font-semibold text-white transition-colors duration-fast hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
+    cosmetics: 'border border-current bg-transparent px-7 py-3 text-xs font-bold uppercase tracking-[0.08em] text-current transition-colors duration-slow hover:bg-current hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2',
     seven: 'border-2 border-current bg-slate-950 px-8 py-3.5 text-xs font-black uppercase tracking-[0.24em] text-white transition-all duration-normal hover:bg-white hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950',
     default: 'rounded-xl bg-primary px-7 py-3 font-semibold text-white transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2',
 };
@@ -360,6 +375,11 @@ export function ThemeBadge({
             accent: 'bg-primary text-white',
             muted: 'border border-muted/20 bg-background text-muted',
         },
+        cosmetics: {
+            primary: 'bg-primary text-white',
+            accent: 'bg-[#F2627B] text-white',
+            muted: 'border border-primary/20 bg-background/95 text-primary',
+        },
         seven: {
             primary: 'bg-text text-background',
             accent: 'bg-primary text-white',
@@ -381,6 +401,7 @@ export function ThemeBadge({
         electronics: 'rounded-sm px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em]',
         alizon: 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]',
         sharp: 'px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em]',
+        cosmetics: 'px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em]',
         seven: 'px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.28em] text-primary',
         default: 'rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] shadow-sm',
     };
@@ -412,6 +433,7 @@ export function ThemeLabel({
         electronics: 'rounded-sm border border-primary/25 bg-primary/5 px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.08em] text-primary',
         alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
         sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        cosmetics: 'text-[11px] font-medium uppercase tracking-[0.16em] text-primary',
         seven: 'border-l-2 border-primary pl-2 text-xs font-bold uppercase tracking-[0.24em] text-text',
         default: 'rounded-full border border-primary/20 px-3 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-primary',
     };
@@ -439,6 +461,7 @@ export function ThemeProductTitle({
         electronics: 'line-clamp-2 text-sm font-bold leading-snug text-text sm:text-base',
         alizon: 'line-clamp-2 text-sm font-normal leading-snug text-text sm:text-base',
         sharp: 'line-clamp-2 text-base font-semibold leading-snug text-text transition-colors duration-fast group-hover:text-primary',
+        cosmetics: 'line-clamp-2 text-sm font-normal capitalize leading-[1.45] text-primary transition-opacity duration-fast group-hover:opacity-80',
         seven: 'line-clamp-2 text-xl font-black uppercase leading-[1.02] text-text sm:text-2xl',
         default: 'line-clamp-2 text-base font-semibold leading-snug text-text',
     };
@@ -468,6 +491,7 @@ export function ThemeProductMeta({
         electronics: 'font-mono text-[11px] font-semibold uppercase tracking-[0.08em] text-muted',
         alizon: 'text-[11px] font-semibold uppercase tracking-[0.14em] text-muted',
         sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        cosmetics: 'text-[10px] font-semibold uppercase tracking-[0.18em] text-primary',
         seven: 'line-clamp-1 text-xs font-bold uppercase tracking-[0.24em] text-primary',
         default: 'text-xs font-semibold uppercase tracking-[0.16em] text-muted',
     };
@@ -503,6 +527,7 @@ export function ThemePrice({
         electronics: 'flex items-baseline gap-2 tabular-nums',
         alizon: 'flex items-baseline gap-2 tabular-nums',
         sharp: 'flex items-baseline gap-2',
+        cosmetics: 'flex items-baseline gap-2 tabular-nums',
         seven: 'flex flex-col gap-1',
         default: 'flex items-baseline gap-2',
     };
@@ -516,6 +541,7 @@ export function ThemePrice({
         electronics: 'font-mono text-lg font-black leading-none text-primary tabular-nums',
         alizon: 'text-lg font-bold text-primary tabular-nums',
         sharp: 'text-lg font-semibold text-text',
+        cosmetics: 'text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)] tabular-nums',
         seven: 'text-2xl font-black leading-none text-primary',
         default: 'text-lg font-bold text-primary',
     };
@@ -529,6 +555,7 @@ export function ThemePrice({
         electronics: 'font-mono text-xs font-semibold text-muted tabular-nums',
         alizon: 'text-sm font-semibold text-muted tabular-nums',
         sharp: 'text-sm font-medium text-muted',
+        cosmetics: 'text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)] tabular-nums',
         seven: 'text-base font-semibold text-muted',
         default: 'text-sm font-medium text-muted',
     };
@@ -542,6 +569,7 @@ export function ThemePrice({
         electronics: 'font-mono text-xs text-muted line-through tabular-nums',
         alizon: 'text-sm text-muted line-through tabular-nums',
         sharp: 'text-sm text-muted line-through',
+        cosmetics: 'text-[10px] text-[rgba(3,3,2,0.5)] line-through tabular-nums',
         seven: 'text-sm font-semibold text-muted line-through',
         default: 'text-sm text-muted line-through',
     };
@@ -591,6 +619,7 @@ export function ThemeImageFrame({
         electronics: 'relative aspect-product overflow-hidden bg-muted/5 before:pointer-events-none before:absolute before:inset-0 before:z-10 before:bg-[linear-gradient(90deg,rgba(100,116,139,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(100,116,139,0.08)_1px,transparent_1px)] before:bg-[size:24px_24px]',
         alizon: 'relative aspect-[4/3] overflow-hidden bg-muted/5',
         sharp: 'relative aspect-square overflow-hidden bg-muted/5',
+        cosmetics: 'relative aspect-square overflow-hidden bg-[#e6e6e6]',
         seven: 'relative aspect-[3/4] overflow-hidden bg-muted/5 after:pointer-events-none after:absolute after:inset-0 after:border after:border-black/10',
         default: 'relative aspect-square overflow-hidden bg-muted/5',
     };
@@ -643,6 +672,7 @@ export function ThemeLoadingSkeleton({
         electronics: 'animate-pulse rounded-md border border-muted/25 bg-[linear-gradient(90deg,rgba(100,116,139,0.10)_1px,transparent_1px),linear-gradient(180deg,rgba(100,116,139,0.10)_1px,transparent_1px)] bg-[size:20px_20px]',
         alizon: 'animate-pulse border border-muted/20 bg-[linear-gradient(90deg,rgba(255,0,0,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(255,0,0,0.06)_1px,transparent_1px)] bg-[size:20px_20px]',
         sharp: 'animate-pulse border border-muted/20 bg-[linear-gradient(90deg,rgba(1,52,35,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(1,52,35,0.06)_1px,transparent_1px)] bg-[size:20px_20px]',
+        cosmetics: 'animate-pulse bg-[linear-gradient(90deg,#f5eeee_0%,#f5eeee_44%,#e7dfdb_44%,#e7dfdb_100%)]',
         seven: 'animate-pulse bg-[linear-gradient(90deg,#e5e7eb_0%,#e5e7eb_44%,#cbd5e1_44%,#cbd5e1_100%)]',
         default: 'animate-pulse rounded-xl bg-muted/10',
     };
@@ -706,6 +736,11 @@ export function ThemeEmptyState({
         sharp: {
             wrapper: 'border border-muted/20 bg-background px-6 py-10 text-center text-muted shadow-[0_4px_16px_rgba(1,52,35,0.04)]',
             title: 'text-lg font-semibold text-text',
+            message: 'mx-auto mt-2 max-w-md text-sm leading-6',
+        },
+        cosmetics: {
+            wrapper: 'border-y border-primary/20 bg-background px-6 py-10 text-center text-muted',
+            title: 'text-lg font-normal text-primary',
             message: 'mx-auto mt-2 max-w-md text-sm leading-6',
         },
         seven: {
@@ -874,6 +909,24 @@ export function ThemeCategoryCard({
                     <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(1,52,35,0.08)_0%,rgba(1,52,35,0.78)_100%)]" />
                     <div className="absolute inset-x-4 bottom-4">
                         <h3 className="overflow-hidden text-lg font-semibold leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{title}</h3>
+                    </div>
+                </article>
+            </AffiliateLink>
+        );
+    }
+
+    if (theme === 'cosmetics') {
+        const artClass = categoryArt.cosmetics[index % categoryArt.cosmetics.length];
+
+        return (
+            <AffiliateLink href={href} className="group block overflow-hidden bg-[#eeeeee] transition-transform duration-slow hover:-translate-y-0.5">
+                <article className="relative aspect-[4/5] min-h-[18rem] overflow-hidden">
+                    <div className={cx('absolute inset-0 transition-transform duration-700 group-hover:scale-105', artClass)} />
+                    <div className="absolute inset-0 bg-black/20" />
+                    <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+                        <h3 className="max-w-[18rem] overflow-hidden text-xl font-medium uppercase leading-[1.5] tracking-[0.02em] text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] sm:text-2xl">
+                            {title}
+                        </h3>
                     </div>
                 </article>
             </AffiliateLink>

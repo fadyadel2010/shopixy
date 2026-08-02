@@ -15,6 +15,7 @@ export interface ProductGridPresentationModel {
     title: string;
     subtitle?: string;
     layout: string;
+    viewAllHref?: string | null;
     pageSize: number;
     products: ProductPresentationModel[];
     isLoading: boolean;

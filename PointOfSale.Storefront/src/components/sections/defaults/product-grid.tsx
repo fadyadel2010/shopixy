@@ -23,9 +23,11 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                     ) : null}
                 </div>
 
-                <AffiliateLink href="/products" className="text-primary hover:underline rtl-flip shrink-0">
-                    {model.labels.viewAll} {'\u2192'}
-                </AffiliateLink>
+                {model.viewAllHref ? (
+                    <AffiliateLink href={model.viewAllHref} className="text-primary hover:underline rtl-flip shrink-0">
+                        {model.labels.viewAll} {'\u2192'}
+                    </AffiliateLink>
+                ) : null}
             </div>
 
             {model.isLoading ? (

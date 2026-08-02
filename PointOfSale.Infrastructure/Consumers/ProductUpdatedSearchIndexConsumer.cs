@@ -54,6 +54,18 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
         var correlationId = @event.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A";
 
         _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=SearchConsumer | ConsumerName={ConsumerName} | MessageId={MessageId} | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | ReceiveTime={ReceiveTime:O} | CorrelationId={CorrelationId} | RetryCount={RetryCount}",
+            ConsumerName,
+            context.MessageId,
+            @event.EventId,
+            @event.ProductId,
+            @event.TenantId,
+            @event.EventVersion,
+            DateTime.UtcNow,
+            correlationId,
+            context.GetRetryAttempt());
+
+        _logger.LogInformation(
             "Processing ProductUpdatedEvent for Elasticsearch | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | ChangedFields: {ChangedFields}",
             @event.EventId, @event.ProductId, @event.TenantId, 
             string.Join(",", @event.ChangedFields ?? Array.Empty<string>()));
@@ -112,11 +124,32 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
             if (product == null)
             {
                 _logger.LogWarning(
+                    "PROJECTION_EVENT_TRACE | Stage=SearchConsumer | Outcome=ProjectionMissing | ProjectionFound={ProjectionFound} | ProjectionMissing={ProjectionMissing} | ProjectionNotReadyException={ProjectionNotReadyException} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | RetryCount={RetryCount} | Timestamp={Timestamp:O}",
+                    false,
+                    true,
+                    true,
+                    @event.ProductId,
+                    @event.TenantId,
+                    @event.EventId,
+                    context.GetRetryAttempt(),
+                    DateTime.UtcNow);
+                _logger.LogWarning(
                     "Product not found in MongoDB - throwing ProjectionNotReadyException, will retry ES sync | ProductId: {ProductId} | TenantId: {TenantId}",
                     @event.ProductId, @event.TenantId);
                 throw new ProjectionNotReadyException(
                     $"MongoDB product projection for {@event.ProductId} is not available before ProductUpdatedEvent indexing.");
             }
+
+            _logger.LogInformation(
+                "PROJECTION_EVENT_TRACE | Stage=SearchConsumer | Outcome=ProjectionFound | ProjectionFound={ProjectionFound} | ProjectionMissing={ProjectionMissing} | ProjectionNotReadyException={ProjectionNotReadyException} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | RetryCount={RetryCount} | Timestamp={Timestamp:O}",
+                true,
+                false,
+                false,
+                @event.ProductId,
+                @event.TenantId,
+                @event.EventId,
+                context.GetRetryAttempt(),
+                DateTime.UtcNow);
 
             product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
                 _dbContext,

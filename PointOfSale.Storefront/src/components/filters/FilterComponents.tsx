@@ -62,6 +62,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         alizon: 'border-b border-muted/20 py-3 last:border-b-0',
         seven: 'border-b-2 border-text py-4 last:border-b-0',
         sharp: 'border-b border-muted/20 py-4 last:border-b-0',
+        cosmetics: 'border-b border-primary/15 py-4 last:border-b-0',
         default: 'border-b border-muted/10 py-4 last:border-b-0',
     }[theme];
     const titleClass = {
@@ -75,6 +76,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         alizon: 'text-[11px] font-bold uppercase tracking-[0.14em] text-text',
         seven: 'text-xs font-black uppercase tracking-[0.24em] text-text',
         sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        cosmetics: 'text-[11px] font-semibold uppercase tracking-[0.18em] text-primary',
         default: 'text-sm font-semibold text-text',
     }[theme];
     const countClass = {
@@ -88,6 +90,7 @@ export const FilterSection: React.FC<FilterSectionProps> = ({
         alizon: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary',
         seven: 'bg-text px-1.5 py-0.5 text-xs font-black text-background',
         sharp: 'rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary',
+        cosmetics: 'bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-white',
         default: 'rounded-full bg-primary/10 px-1.5 py-0.5 text-xs font-medium text-primary',
     }[theme];
 
@@ -500,6 +503,7 @@ export const ActiveFiltersBar: React.FC<ActiveFiltersBarProps> = ({
         alizon: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
         seven: 'bg-text text-background',
         sharp: 'rounded-sm border border-primary/25 bg-primary/5 text-primary',
+        cosmetics: 'border border-primary/25 bg-background text-primary',
         default: 'rounded-full bg-primary/10 text-primary',
     }[theme];
 
@@ -626,6 +630,7 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
         alizon: 'rounded-md border border-muted/25 bg-background text-xs font-bold uppercase tracking-[0.14em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
         seven: 'border-2 border-text bg-background font-bold uppercase tracking-[0.08em] text-text focus:ring-2 focus:ring-text/20',
         sharp: 'rounded-md border border-muted/25 bg-background text-xs font-bold uppercase tracking-[0.2em] text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
+        cosmetics: 'border border-primary/25 bg-background text-xs font-semibold uppercase tracking-[0.14em] text-primary focus:border-primary focus:ring-2 focus:ring-primary/20',
         default: 'rounded-lg border border-muted/20 bg-background text-text focus:border-primary focus:ring-2 focus:ring-primary/20',
     }[theme];
     const labelClass = {
@@ -639,6 +644,7 @@ export const SortSelector: React.FC<SortSelectorProps> = ({
         alizon: 'text-[11px] font-bold uppercase tracking-[0.14em] text-muted',
         seven: 'text-xs font-black uppercase tracking-[0.24em] text-text',
         sharp: 'text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary',
+        cosmetics: 'text-[11px] font-semibold uppercase tracking-[0.18em] text-primary',
         default: 'text-sm text-muted',
     }[theme];
 

@@ -26,6 +26,7 @@ import type {
 
 const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PRODUCT_CATALOG_HREF = '/products';
 
 interface RuntimeSectionContainerProps {
     component: ComponentType<any>;
@@ -58,6 +59,30 @@ function isSubcategorySection(sectionType: string): boolean {
 
 function isProductHeroSection(sectionType: string): boolean {
     return sectionType.trim().toLowerCase() === 'product-hero';
+}
+
+function normalizePath(value: unknown): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    try {
+        const pathname = new URL(trimmed, 'https://storefront.local').pathname;
+        return pathname.replace(/\/+$/, '') || '/';
+    } catch {
+        return trimmed.split(/[?#]/)[0].replace(/\/+$/, '') || '/';
+    }
+}
+
+function shouldSuppressActionHref(sectionProps: Record<string, unknown>, href: string): boolean {
+    const suppressedHref = normalizePath(sectionProps.suppressActionHref);
+    const actionHref = normalizePath(href);
+    return suppressedHref !== null && actionHref !== null && suppressedHref === actionHref;
 }
 
 function ElectronicsRuntimeProductCard({ product }: { product: ProductListItemDto }) {
@@ -128,10 +153,14 @@ function ProductGridRuntimeContainer({
         : collectionSource === 'random'
           ? 'Random shelves pull from your current storefront catalog automatically.'
           : t('home.productsWillAppear');
+    const viewAllHref = shouldSuppressActionHref(sectionProps, PRODUCT_CATALOG_HREF)
+        ? null
+        : PRODUCT_CATALOG_HREF;
     const productGridModel: ProductGridPresentationModel = {
         title: displayTitle,
         subtitle,
         layout,
+        viewAllHref,
         pageSize,
         products: productModels,
         isLoading,
@@ -277,6 +306,9 @@ function RelatedProductsRuntimeContainer({ component: Component, sectionProps }:
     const productGridModel: ProductGridPresentationModel = {
         title: typeof sectionProps.title === 'string' ? sectionProps.title : '',
         layout: 'grid',
+        viewAllHref: shouldSuppressActionHref(sectionProps, PRODUCT_CATALOG_HREF)
+            ? null
+            : PRODUCT_CATALOG_HREF,
         pageSize: limit,
         products: visibleProducts.map((item) => ({ id: item.id })),
         isLoading,

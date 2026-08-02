@@ -94,9 +94,12 @@ public sealed class ProductVariantReferenceDto
     public string? Barcode { get; set; }
     public decimal Price { get; set; }
     public decimal? OnlinePrice { get; set; }
+    public decimal CostPrice { get; set; }
     public decimal EffectiveOnlinePrice { get; set; }
+    public decimal? Weight { get; set; }
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; }
+    public Guid? MediaId { get; set; }
     public string? ImageUrl { get; set; }
     public int SortOrder { get; set; }
     public decimal TotalStock { get; set; }

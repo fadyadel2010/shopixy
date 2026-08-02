@@ -41,9 +41,6 @@ export default function VariantMatrixTable({
     onToggleSelectAll,
     onRowChange,
     onSetDefault,
-    onEditFallback,
-    onDeleteFallback,
-    showFallbackActions = false,
     rowIssues = {}
 }) {
     const { t } = useTranslation()
@@ -143,7 +140,7 @@ export default function VariantMatrixTable({
                                     {tx('variants.price', 'Selling Price')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                    {tx('variants.inventory', 'Inventory')}
+                                    {tx('variants.stock', 'Stock')}
                                 </th>
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     {tx('variants.weight', 'Weight')}
@@ -154,11 +151,6 @@ export default function VariantMatrixTable({
                                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
                                     {tx('variants.status', 'Active')}
                                 </th>
-                                {showFallbackActions && (
-                                    <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                                        {tx('common.actions', 'Actions')}
-                                    </th>
-                                )}
                             </tr>
                         </thead>
 
@@ -167,7 +159,6 @@ export default function VariantMatrixTable({
                                 const thumbnailUrl = getResolvedThumbnail(row, mediaById)
                                 const usesGalleryImage = !!row.mediaId && mediaById.has(row.mediaId)
                                 const usesLegacyImage = !usesGalleryImage && !!row.imageUrl
-                                const canManageLegacyRow = showFallbackActions && !!row.id && row.isLegacy
                                 const issues = rowIssues[row.key] || {}
                                 const issueInputClass = 'input min-w-[10rem] border-red-300 bg-red-50 text-red-800 focus:border-red-500 focus:ring-red-200'
                                 const numberIssueInputClass = 'input min-w-[8rem] border-red-300 bg-red-50 text-red-800 focus:border-red-500 focus:ring-red-200'
@@ -268,14 +259,12 @@ export default function VariantMatrixTable({
                                                 />
                                             </td>
                                             <td className="px-4 py-4 align-top">
-                                                <input
-                                                    type="number"
-                                                    step="1"
-                                                    value={row.inventory}
-                                                    onChange={(e) => onRowChange(row.key, { inventory: e.target.value })}
-                                                    className={issues.inventory ? numberIssueInputClass : 'input min-w-[8rem]'}
-                                                    aria-invalid={issues.inventory ? 'true' : 'false'}
-                                                />
+                                                <div className="min-w-[8rem] text-sm text-gray-700">
+                                                    {row.totalStock ?? 0}
+                                                </div>
+                                                <div className="mt-1 text-xs text-gray-500">
+                                                    {tx('variants.stockManagedOutsideAuthoring', 'Managed by inventory workflows')}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-4 align-top">
                                                 <input
@@ -306,30 +295,6 @@ export default function VariantMatrixTable({
                                                     {row.isActive ? tx('common.active', 'Active') : tx('common.inactive', 'Inactive')}
                                                 </label>
                                             </td>
-                                            {showFallbackActions && (
-                                                <td className="px-4 py-4 align-top">
-                                                    <div className="flex min-h-[2rem] flex-col gap-2">
-                                                        {canManageLegacyRow && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => onEditFallback(row)}
-                                                                className="text-left text-sm font-medium text-primary-600 transition hover:text-primary-700"
-                                                            >
-                                                                {tx('variants.advancedEdit', 'Advanced Edit')}
-                                                            </button>
-                                                        )}
-                                                        {canManageLegacyRow && !row.isDefault && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => onDeleteFallback(row)}
-                                                                className="text-left text-sm font-medium text-red-600 transition hover:text-red-700"
-                                                            >
-                                                                {tx('common.delete', 'Delete')}
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            )}
                                         </tr>
                                     </Fragment>
                                 )

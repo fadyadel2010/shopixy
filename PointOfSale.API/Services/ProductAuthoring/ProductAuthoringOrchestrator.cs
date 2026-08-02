@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Catalog;
 using PointOfSale.Core.Application.ProductAuthoring;
@@ -267,6 +268,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return existingIdempotencyResult;
         }
 
+        LogRuntimeRowVersionTraceBeforeIsStale(command, product);
         if (IsStale(command, product))
         {
             return command.ToResult(
@@ -397,6 +399,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return existingIdempotencyResult;
         }
 
+        LogRuntimeRowVersionTraceBeforeIsStale(command, product);
         if (IsStale(command, product))
         {
             return command.ToResult(
@@ -478,6 +481,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
 
         await mutateAndStageAsync();
         ApplyExpectedProductRowVersion(command, product);
+        LogRuntimeRowVersionTraceBeforeSaveChanges(command, product);
 
         var acceptedResult = ProductAuthoringResult.Accepted(
             product.Id,
@@ -494,8 +498,10 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             await transaction.CommitAsync(cancellationToken);
             await _transactionObserver.AfterCommitAsync(command, product, cancellationToken);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException exception)
         {
+            LogRuntimeRowVersionTraceConcurrencyException(command, product);
+            await LogDbUpdateConcurrencyExceptionEntriesAsync(exception, cancellationToken);
             await transaction.RollbackAsync(cancellationToken);
             return command.ToResult(
                 ProductAuthoringStatus.ConcurrencyConflict,
@@ -584,6 +590,22 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             _ => "Author"
         };
 
+    private void LogProjectionEventTraceStageAuthoritativeOutbox(
+        IntegrationEvent @event,
+        Product product)
+    {
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=StageAuthoritativeOutboxAsync | EventType={EventType} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | IdempotencyKey={IdempotencyKey} | ProjectionMutationVersion={ProjectionMutationVersion} | CorrelationId={CorrelationId} | Timestamp={Timestamp:O}",
+            @event.EventType,
+            product.Id,
+            @event.TenantId,
+            @event.EventId,
+            @event.IdempotencyKey,
+            product.ProjectionMutationVersion,
+            @event.CorrelationId,
+            DateTime.UtcNow);
+    }
+
     private async Task StageAuthoritativeOutboxAsync(
         ProductAuthoringCommand command,
         Product product,
@@ -606,7 +628,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
 
         if (command.Operation == ProductAuthoringOperation.Create)
         {
-            await _eventPublisher!.PublishAsync(new ProductCreatedEvent
+            var productCreatedEvent = new ProductCreatedEvent
             {
                 TenantId = product.TenantId,
                 EventVersion = eventVersion,
@@ -643,7 +665,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 AllowBackorder = product.AllowBackorder,
                 HasVariants = product.HasVariants,
                 Weight = product.Weight
-            }, cancellationToken);
+            };
+            await _eventPublisher!.PublishAsync(productCreatedEvent, cancellationToken);
+            LogProjectionEventTraceStageAuthoritativeOutbox(productCreatedEvent, product);
 
             if (defaultVariantSync is not null)
             {
@@ -679,7 +703,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             HasVariants = product.HasVariants
         }, cancellationToken);
 
-        await _eventPublisher!.PublishAsync(new ProductUpdatedEvent
+        var productUpdatedEvent = new ProductUpdatedEvent
         {
             TenantId = product.TenantId,
             EventVersion = eventVersion,
@@ -718,13 +742,15 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             AllowBackorder = product.AllowBackorder,
             HasVariants = product.HasVariants,
             Weight = product.Weight
-        }, cancellationToken);
+        };
+        await _eventPublisher!.PublishAsync(productUpdatedEvent, cancellationToken);
+        LogProjectionEventTraceStageAuthoritativeOutbox(productUpdatedEvent, product);
 
         if (previousPublishStatus.HasValue &&
             (previousPublishStatus.Value != product.PublishStatus ||
              previousIsOnlineVisible.GetValueOrDefault() != product.IsOnlineVisible))
         {
-            await _eventPublisher.PublishAsync(new ProductPublishStatusChangedEvent
+            var productPublishStatusChangedEvent = new ProductPublishStatusChangedEvent
             {
                 TenantId = product.TenantId,
                 EventVersion = eventVersion,
@@ -735,19 +761,23 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 OldStatus = previousPublishStatus.Value.ToString(),
                 NewStatus = product.PublishStatus.ToString(),
                 IsOnlineVisible = product.IsOnlineVisible
-            }, cancellationToken);
+            };
+            await _eventPublisher.PublishAsync(productPublishStatusChangedEvent, cancellationToken);
+            LogProjectionEventTraceStageAuthoritativeOutbox(productPublishStatusChangedEvent, product);
         }
 
         if (!wasArchivedBeforeMutation && (!product.IsActive || product.PublishStatus == PublishStatus.Archived))
         {
-            await _eventPublisher.PublishAsync(new ProductArchivedEvent
+            var productArchivedEvent = new ProductArchivedEvent
             {
                 TenantId = product.TenantId,
                 EventVersion = eventVersion,
                 IdempotencyKey = $"{idempotencyPrefix}:product-archived:{eventVersion}",
                 CorrelationId = command.Metadata.CorrelationId,
                 ProductId = product.Id
-            }, cancellationToken);
+            };
+            await _eventPublisher.PublishAsync(productArchivedEvent, cancellationToken);
+            LogProjectionEventTraceStageAuthoritativeOutbox(productArchivedEvent, product);
         }
 
         if (defaultVariantSync is not null)
@@ -813,7 +843,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return;
         }
 
-        await _eventPublisher.PublishAsync(new ProductDeletedEvent
+        var productDeletedEvent = new ProductDeletedEvent
         {
             TenantId = product.TenantId,
             EventVersion = eventVersion,
@@ -821,7 +851,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             CorrelationId = command.Metadata.CorrelationId,
             ProductId = product.Id,
             SKU = product.SKU
-        }, cancellationToken);
+        };
+        await _eventPublisher.PublishAsync(productDeletedEvent, cancellationToken);
+        LogProjectionEventTraceStageAuthoritativeOutbox(productDeletedEvent, product);
 
         foreach (var variant in liveVariants)
         {
@@ -1294,18 +1326,27 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             .Where(variant => variant.TenantId == product.TenantId && variant.ProductId == product.Id && !variant.IsDeleted)
             .ToListAsync(cancellationToken);
 
-        var authoredById = authoredVariants
-            .Where(variant => variant.VariantId.HasValue && variant.VariantId.Value != Guid.Empty)
-            .ToDictionary(variant => variant.VariantId!.Value);
+        var existingById = existingVariants.ToDictionary(variant => variant.Id);
+        var existingByAttributeKey = existingVariants
+            .Select(variant => new
+            {
+                Variant = variant,
+                AttributeKey = variant.AttributeCombinationKey ?? ComputeExistingVariantAttributeCombinationKey(variant)
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.AttributeKey))
+            .GroupBy(item => item.AttributeKey!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First().Variant, StringComparer.Ordinal);
+        var desiredExistingIds = ResolveAuthoredExistingVariantIds(authoredVariants, existingById, existingByAttributeKey);
 
         var created = new List<ProductVariant>();
         var updated = new List<(ProductVariant Variant, IReadOnlyList<string> ChangedFields)>();
         var deleted = new List<ProductVariant>();
         var sortOrder = 0;
+        var matchedExistingIds = new HashSet<Guid>();
 
         foreach (var existing in existingVariants)
         {
-            if (!authoredById.ContainsKey(existing.Id))
+            if (!desiredExistingIds.Contains(existing.Id))
             {
                 existing.IsDeleted = true;
                 existing.IsActive = false;
@@ -1316,9 +1357,11 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
 
         foreach (var authoredVariant in authoredVariants)
         {
-            var existing = authoredVariant.VariantId.HasValue
-                ? existingVariants.FirstOrDefault(variant => variant.Id == authoredVariant.VariantId.Value)
-                : null;
+            var existing = ResolveExistingAuthoredVariant(
+                authoredVariant,
+                existingById,
+                existingByAttributeKey,
+                matchedExistingIds);
 
             if (existing is null)
             {
@@ -1377,16 +1420,17 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         return new AuthoredVariantSyncResult(created, updated, deleted);
     }
 
-    private static void ApplyVariantAttributes(
+    private static IReadOnlyList<ProductVariantAttribute> ApplyVariantAttributes(
         ProductVariant variant,
         IReadOnlyDictionary<string, string> attributes)
     {
         variant.AttributeCombinationKey = ProductVariantAttributeCombinationKey.Compute(
             attributes.Select(attribute => (attribute.Key, attribute.Value)));
+        var createdAttributes = new List<ProductVariantAttribute>(attributes.Count);
         var sortOrder = 0;
         foreach (var (name, value) in attributes.OrderBy(attribute => attribute.Key, StringComparer.OrdinalIgnoreCase))
         {
-            variant.Attributes.Add(new ProductVariantAttribute
+            var attribute = new ProductVariantAttribute
             {
                 Id = Guid.NewGuid(),
                 VariantId = variant.Id,
@@ -1394,11 +1438,84 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 Value = value,
                 SortOrder = sortOrder++,
                 Variant = variant
-            });
+            };
+            variant.Attributes.Add(attribute);
+            createdAttributes.Add(attribute);
         }
+
+        return createdAttributes;
     }
 
-    private static bool ReplaceVariantAttributesIfChanged(
+    private static HashSet<Guid> ResolveAuthoredExistingVariantIds(
+        IReadOnlyList<ProductAuthoringVariant> authoredVariants,
+        IReadOnlyDictionary<Guid, ProductVariant> existingById,
+        IReadOnlyDictionary<string, ProductVariant> existingByAttributeKey)
+    {
+        var ids = new HashSet<Guid>();
+
+        foreach (var authoredVariant in authoredVariants)
+        {
+            if (authoredVariant.VariantId.HasValue &&
+                existingById.ContainsKey(authoredVariant.VariantId.Value))
+            {
+                ids.Add(authoredVariant.VariantId.Value);
+                continue;
+            }
+
+            var attributeKey = ComputeAuthoredVariantAttributeCombinationKey(authoredVariant);
+            if (attributeKey is not null &&
+                existingByAttributeKey.TryGetValue(attributeKey, out var existing))
+            {
+                ids.Add(existing.Id);
+            }
+        }
+
+        return ids;
+    }
+
+    private static ProductVariant? ResolveExistingAuthoredVariant(
+        ProductAuthoringVariant authoredVariant,
+        IReadOnlyDictionary<Guid, ProductVariant> existingById,
+        IReadOnlyDictionary<string, ProductVariant> existingByAttributeKey,
+        ISet<Guid> matchedExistingIds)
+    {
+        ProductVariant? existing = null;
+
+        if (authoredVariant.VariantId.HasValue)
+        {
+            existingById.TryGetValue(authoredVariant.VariantId.Value, out existing);
+        }
+
+        if (existing is null)
+        {
+            var attributeKey = ComputeAuthoredVariantAttributeCombinationKey(authoredVariant);
+            if (attributeKey is not null &&
+                existingByAttributeKey.TryGetValue(attributeKey, out var attributeMatched) &&
+                !matchedExistingIds.Contains(attributeMatched.Id))
+            {
+                existing = attributeMatched;
+            }
+        }
+
+        if (existing is not null)
+        {
+            matchedExistingIds.Add(existing.Id);
+        }
+
+        return existing;
+    }
+
+    private static string? ComputeAuthoredVariantAttributeCombinationKey(ProductAuthoringVariant authoredVariant) =>
+        ProductVariantAttributeCombinationKey.Compute(
+            authoredVariant.Attributes.Select(attribute => (attribute.Key, attribute.Value)));
+
+    private static string? ComputeExistingVariantAttributeCombinationKey(ProductVariant variant) =>
+        ProductVariantAttributeCombinationKey.Compute(
+            variant.Attributes
+                .Where(attribute => !attribute.IsDeleted)
+                .Select(attribute => (attribute.Name, attribute.Value)));
+
+    private bool ReplaceVariantAttributesIfChanged(
         ProductVariant variant,
         IReadOnlyDictionary<string, string> attributes)
     {
@@ -1419,7 +1536,8 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         }
 
         variant.Attributes.Clear();
-        ApplyVariantAttributes(variant, attributes);
+        var replacementAttributes = ApplyVariantAttributes(variant, attributes);
+        _context!.ProductVariantAttributes.AddRange(replacementAttributes);
         return true;
     }
 
@@ -1517,6 +1635,104 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
     private static bool IsStale(ProductAuthoringCommand command, Product product) =>
         TryGetExpectedProductRowVersion(command, out var expectedRowVersion) &&
         product.RowVersion != expectedRowVersion;
+
+    private void LogRuntimeRowVersionTraceBeforeIsStale(ProductAuthoringCommand command, Product product)
+    {
+        var hasExpectedVersion = TryGetExpectedProductRowVersion(command, out var expectedRowVersion);
+        uint? expected = hasExpectedVersion ? expectedRowVersion : null;
+        bool? expectedEqualsCurrent = hasExpectedVersion
+            ? expectedRowVersion == product.RowVersion
+            : null;
+
+        _logger.LogInformation(
+            "RUNTIME_ROWVERSION_TRACE | ProductAuthoringOrchestrator.BeforeIsStale | Operation: {Operation} | ProductId: {ProductId} | CommandExpectedVersion: {CommandExpectedVersion} | DatabaseRowVersion: {DatabaseRowVersion} | ExpectedEqualsCurrent: {ExpectedEqualsCurrent}",
+            command.Operation,
+            product.Id,
+            expected,
+            product.RowVersion,
+            expectedEqualsCurrent);
+    }
+
+    private void LogRuntimeRowVersionTraceBeforeSaveChanges(ProductAuthoringCommand command, Product product)
+    {
+        var rowVersionProperty = _context.Entry(product).Property(entity => entity.RowVersion);
+        _logger.LogInformation(
+            "RUNTIME_ROWVERSION_TRACE | ProductAuthoringOrchestrator.BeforeSaveChanges | Operation: {Operation} | ProductId: {ProductId} | CommandExpectedVersion: {CommandExpectedVersion} | ProductRowVersion: {ProductRowVersion} | EFOriginalRowVersion: {EFOriginalRowVersion} | EFCurrentRowVersion: {EFCurrentRowVersion}",
+            command.Operation,
+            product.Id,
+            command.Metadata.ExpectedVersion,
+            product.RowVersion,
+            rowVersionProperty.OriginalValue,
+            rowVersionProperty.CurrentValue);
+    }
+
+    private void LogRuntimeRowVersionTraceConcurrencyException(ProductAuthoringCommand command, Product product)
+    {
+        var rowVersionProperty = _context.Entry(product).Property(entity => entity.RowVersion);
+        _logger.LogWarning(
+            "RUNTIME_ROWVERSION_TRACE | ProductAuthoringOrchestrator.DbUpdateConcurrencyException | Operation: {Operation} | ProductId: {ProductId} | CommandExpectedVersion: {CommandExpectedVersion} | ProductRowVersion: {ProductRowVersion} | EFOriginalRowVersion: {EFOriginalRowVersion} | EFCurrentRowVersion: {EFCurrentRowVersion}",
+            command.Operation,
+            product.Id,
+            command.Metadata.ExpectedVersion,
+            product.RowVersion,
+            rowVersionProperty.OriginalValue,
+            rowVersionProperty.CurrentValue);
+    }
+
+    private async Task LogDbUpdateConcurrencyExceptionEntriesAsync(
+        DbUpdateConcurrencyException exception,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogWarning(
+            "RUNTIME_EF_CONCURRENCY_ENTRIES | EntriesCount: {EntriesCount}",
+            exception.Entries.Count);
+
+        for (var index = 0; index < exception.Entries.Count; index++)
+        {
+            var entry = exception.Entries[index];
+            var databaseValues = await entry.GetDatabaseValuesAsync(cancellationToken);
+            var tableName = FormatTableName(entry);
+
+            _logger.LogWarning(
+                "RUNTIME_EF_CONCURRENCY_ENTRY | Index: {Index} | EntityType: {EntityType} | EntityState: {EntityState} | TableName: {TableName} | OriginalValues.RowVersion: {OriginalRowVersion} | OriginalValues.xmin: {OriginalXmin} | CurrentValues.RowVersion: {CurrentRowVersion} | CurrentValues.xmin: {CurrentXmin} | DatabaseValuesFound: {DatabaseValuesFound} | DatabaseValues.RowVersion: {DatabaseRowVersion} | DatabaseValues.xmin: {DatabaseXmin}",
+                index,
+                entry.Entity.GetType().FullName,
+                entry.State,
+                tableName,
+                TryReadPropertyValue(entry.OriginalValues, "RowVersion"),
+                TryReadPropertyValue(entry.OriginalValues, "xmin"),
+                TryReadPropertyValue(entry.CurrentValues, "RowVersion"),
+                TryReadPropertyValue(entry.CurrentValues, "xmin"),
+                databaseValues is not null,
+                databaseValues is null ? null : TryReadPropertyValue(databaseValues, "RowVersion"),
+                databaseValues is null ? null : TryReadPropertyValue(databaseValues, "xmin"));
+        }
+    }
+
+    private static string FormatTableName(EntityEntry entry)
+    {
+        var tableName = entry.Metadata.GetTableName();
+        var schema = entry.Metadata.GetSchema();
+
+        if (string.IsNullOrWhiteSpace(tableName))
+        {
+            return "<unknown>";
+        }
+
+        return string.IsNullOrWhiteSpace(schema)
+            ? tableName
+            : $"{schema}.{tableName}";
+    }
+
+    private static object? TryReadPropertyValue(PropertyValues values, string propertyName)
+    {
+        var property = values.Properties.FirstOrDefault(property =>
+            string.Equals(property.Name, propertyName, StringComparison.Ordinal));
+
+        return property is null
+            ? null
+            : values[property];
+    }
 
     private void ApplyExpectedProductRowVersion(ProductAuthoringCommand command, Product product)
     {

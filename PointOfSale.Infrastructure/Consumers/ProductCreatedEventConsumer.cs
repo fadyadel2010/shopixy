@@ -45,6 +45,18 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
         var @event = context.Message;
         var correlationId = @event.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A";
 
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=ProjectionConsumerReceive | ConsumerName={ConsumerName} | MessageId={MessageId} | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | ReceiveTime={ReceiveTime:O} | CorrelationId={CorrelationId} | RetryCount={RetryCount}",
+            nameof(ProductCreatedEventConsumer),
+            context.MessageId,
+            @event.EventId,
+            @event.ProductId,
+            @event.TenantId,
+            @event.EventVersion,
+            DateTime.UtcNow,
+            correlationId,
+            context.GetRetryAttempt());
+
         // Start processing log
         _logger.LogInformation(
             "Processing ProductCreatedEvent | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
@@ -129,6 +141,7 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
         }
         catch (MongoException ex) when (IsTransientError(ex))
         {
+            LogProjectionConsumerException(@event, correlationId, context.GetRetryAttempt(), ex);
             // Transient MongoDB errors - let MassTransit retry
             _logger.LogWarning(ex,
                 "Transient MongoDB error processing ProductCreatedEvent - will retry | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
@@ -141,6 +154,7 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
         }
         catch (MongoException ex)
         {
+            LogProjectionConsumerException(@event, correlationId, context.GetRetryAttempt(), ex);
             // Non-transient MongoDB errors
             _logger.LogError(ex,
                 "MongoDB error processing ProductCreatedEvent | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
@@ -153,6 +167,7 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
         }
         catch (Exception ex)
         {
+            LogProjectionConsumerException(@event, correlationId, context.GetRetryAttempt(), ex);
             // Unexpected errors
             _logger.LogError(ex,
                 "Unexpected error processing ProductCreatedEvent | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
@@ -163,6 +178,25 @@ public class ProductCreatedEventConsumer : IConsumer<ProductCreatedEvent>
 
             throw;
         }
+    }
+
+    private void LogProjectionConsumerException(
+        ProductCreatedEvent @event,
+        string correlationId,
+        int retryCount,
+        Exception exception)
+    {
+        _logger.LogError(
+            exception,
+            "PROJECTION_EVENT_TRACE | Stage=ProjectionConsumer | ConsumerName={ConsumerName} | Outcome=EXCEPTION | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | CorrelationId={CorrelationId} | RetryCount={RetryCount} | Timestamp={Timestamp:O}",
+            nameof(ProductCreatedEventConsumer),
+            @event.EventId,
+            @event.ProductId,
+            @event.TenantId,
+            @event.EventVersion,
+            correlationId,
+            retryCount,
+            DateTime.UtcNow);
     }
 
     /// <summary>

@@ -380,6 +380,53 @@
       }
     },
     {
+      "id": "cosmetics",
+      "displayName": "Cosmetics",
+      "version": "1.0.0",
+      "officialStatus": "official",
+      "activationStatus": "active",
+      "backendAvailability": true,
+      "marketplaceVisibility": "visible",
+      "runtimeAvailability": true,
+      "homepageAvailability": true,
+      "componentTheme": "cosmetics",
+      "commerceBrowsingTheme": "cosmetics",
+      "supportedSections": ["hero-banner", "product-grid", "category-grid"],
+      "supportedLayouts": ["header", "footer"],
+      "supportedBuilderFeatures": ["homepage", "catalog", "product-template"],
+      "supportedProductCards": ["cosmetics"],
+      "supportedProductTemplates": ["cosmetics"],
+      "supportedPurchaseProfiles": ["cosmetics"],
+      "capabilities": ["layout.header", "layout.footer", "section.hero-banner", "section.product-grid", "section.category-grid"],
+      "marketplace": {
+        "previewImage": "/theme-previews/cosmetics.png",
+        "description": "An editorial cosmetics storefront theme with full-bleed beauty imagery, blush accents, square product cards, and compact quick-add commerce.",
+        "accent": "#D05D61"
+      },
+      "defaultThemeConfig": {
+        "colors": {
+          "primary": "#D05D61",
+          "secondary": "#E7DFDB",
+          "background": "#FFFFFF",
+          "text": "#131316",
+          "muted": "#6D5F5F"
+        },
+        "font": {
+          "family": "'Instrument Sans', sans-serif",
+          "familyAr": "'Almarai', 'Tajawal', 'Noto Sans Arabic'",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "0px",
+          "buttonStyle": "outline"
+        },
+        "layout": {
+          "productCardVariant": "compact",
+          "headerVariant": "centered"
+        }
+      }
+    },
+    {
       "id": "electronics",
       "displayName": "Electronics",
       "version": "1.0.0",
@@ -694,7 +741,7 @@
         "showStockStatus": true
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product hero layout", "visualEffect": "Purchase experience skin" },
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product hero layout", "visualEffect": "Purchase experience skin" },
         { "key": "showDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "product hero", "visualEffect": "Description visibility" },
         { "key": "showMediaGallery", "type": "toggle", "defaultValue": true, "rendererConsumer": "product media", "visualEffect": "Gallery visibility" },
         { "key": "showVariantSelector", "type": "toggle", "defaultValue": true, "rendererConsumer": "product variants", "visualEffect": "Variant selector visibility" },
@@ -712,7 +759,7 @@
         "maxImages": 6
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product gallery layout", "visualEffect": "Gallery skin" },
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product gallery layout", "visualEffect": "Gallery skin" },
         { "key": "title", "type": "text", "defaultValue": "Gallery", "rendererConsumer": "gallery heading", "visualEffect": "Section heading" },
         { "key": "showThumbnails", "type": "toggle", "defaultValue": true, "rendererConsumer": "gallery thumbnails", "visualEffect": "Thumbnail visibility" },
         { "key": "maxImages", "type": "number", "defaultValue": 6, "min": 1, "max": 12, "rendererConsumer": "gallery media", "visualEffect": "Maximum image count" }
@@ -727,7 +774,7 @@
         "items": []
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "product specs layout", "visualEffect": "Specs skin" },
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product specs layout", "visualEffect": "Specs skin" },
         { "key": "title", "type": "text", "defaultValue": "Product Details", "rendererConsumer": "specs heading", "visualEffect": "Section heading" },
         { "key": "useDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "specs body", "visualEffect": "Use product description" },
         { "key": "items", "type": "list", "defaultValue": [], "rendererConsumer": "spec rows", "visualEffect": "Structured details" }
@@ -756,7 +803,7 @@
         "reviews": []
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "reviews layout", "visualEffect": "Reviews skin" },
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "reviews layout", "visualEffect": "Reviews skin" },
         { "key": "title", "type": "text", "defaultValue": "Customer Reviews", "rendererConsumer": "reviews heading", "visualEffect": "Section heading" },
         { "key": "reviews", "type": "list", "defaultValue": [], "rendererConsumer": "review cards", "visualEffect": "Review content" }
       ]
@@ -771,7 +818,7 @@
         "showRating": true
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics"], "rendererConsumer": "related products layout", "visualEffect": "Related section skin" },
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "related products layout", "visualEffect": "Related section skin" },
         { "key": "title", "type": "text", "defaultValue": "Recommended Products", "rendererConsumer": "related products heading", "visualEffect": "Section heading" },
         { "key": "limit", "type": "number", "defaultValue": 4, "min": 1, "max": 12, "rendererConsumer": "related products query", "visualEffect": "Product count" },
         { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },

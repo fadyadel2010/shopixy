@@ -171,4 +171,42 @@ describe('storefront runtime section contract certification', () => {
         expect(carouselMarkup).toContain('flex gap-6 overflow-x-auto pb-2');
         expect(carouselMarkup).toContain('min-width:240px');
     });
+
+    it('suppresses product shelf View All when the runtime model omits a catalog href', () => {
+        const visibleMarkup = renderToStaticMarkup(
+            <FeaturedProducts
+                productGridModel={{ ...productGridModel, viewAllHref: '/products' }}
+                renderProductCard={renderProductCard}
+                displayStyle="grid"
+            />
+        );
+        const suppressedMarkup = renderToStaticMarkup(
+            <FeaturedProducts
+                productGridModel={{ ...productGridModel, viewAllHref: null }}
+                renderProductCard={renderProductCard}
+                displayStyle="grid"
+            />
+        );
+
+        expect(visibleMarkup).toContain('View all');
+        expect(suppressedMarkup).not.toContain('View all');
+    });
+
+    it('keeps themed product shelf actions model-owned instead of hardcoding the catalog path', () => {
+        const themeProductGridSources = [
+            'src/storefront/themes/modern/sections/product-grid.tsx',
+            'src/storefront/themes/minimal/sections/product-grid.tsx',
+            'src/storefront/themes/cosmetics/sections/product-grid.tsx',
+            'src/storefront/themes/electronics/sections/product-grid.tsx',
+            'src/components/sections/defaults/product-grid.tsx',
+            'src/components/sections/defaults/featured-products.tsx',
+            'src/components/sections/defaults/related-products.tsx',
+        ].map((relativePath) => readFileSync(resolve(process.cwd(), relativePath), 'utf8'));
+
+        for (const source of themeProductGridSources) {
+            expect(source).toContain('model.viewAllHref');
+            expect(source).not.toContain("href: '/products'");
+            expect(source).not.toContain('href="/products"');
+        }
+    });
 });

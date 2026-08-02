@@ -6,10 +6,7 @@ export default function VariantBulkActions({
     productId,
     selectedCount,
     onApply,
-    generationBlocked,
-    warehouses = [],
-    selectedWarehouseId = '',
-    onWarehouseChange = () => {}
+    generationBlocked
 }) {
     const { t } = useTranslation()
     const tx = (key, fallback) => {
@@ -18,7 +15,6 @@ export default function VariantBulkActions({
     }
     const [setPrice, setSetPrice] = useState('')
     const [setCostPrice, setSetCostPrice] = useState('')
-    const [setInventory, setSetInventory] = useState('')
     const [setWeight, setSetWeight] = useState('')
     const [percentChange, setPercentChange] = useState('')
     const [imagePickerOpen, setImagePickerOpen] = useState(false)
@@ -123,40 +119,6 @@ export default function VariantBulkActions({
                         className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
                     >
                         {noSelection ? tx('variants.applyIncrease', 'Increase Selected') : tx('variants.increaseCountSelected', 'Increase {{count}} Selected').replace('{{count}}', selectedCount)}
-                    </button>
-                </div>
-
-                <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                    <label className="label">{tx('variants.setInventory', 'Set Inventory')}</label>
-                    <select
-                        value={selectedWarehouseId}
-                        onChange={(e) => onWarehouseChange(e.target.value)}
-                        className="input"
-                    >
-                        {warehouses.map((warehouse) => (
-                            <option key={warehouse.id} value={warehouse.id}>
-                                {warehouse.name}
-                            </option>
-                        ))}
-                    </select>
-                    <input
-                        type="number"
-                        step="1"
-                        value={setInventory}
-                        onChange={(e) => setSetInventory(e.target.value)}
-                        className="input"
-                        placeholder="0"
-                    />
-                    <button
-                        type="button"
-                        onClick={() => {
-                            onApply({ type: 'set-inventory', value: setInventory })
-                            setSetInventory('')
-                        }}
-                        disabled={noSelection || !setInventory || !selectedWarehouseId}
-                        className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                        {applyCaption}
                     </button>
                 </div>
 

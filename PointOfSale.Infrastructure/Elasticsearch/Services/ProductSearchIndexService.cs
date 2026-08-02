@@ -57,6 +57,18 @@ public class ProductSearchIndexService : IProductSearchIndexService
 
         try
         {
+            _logger.LogInformation(
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | EventId={EventId} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                document.ProductId,
+                document.TenantId,
+                true,
+                false,
+                false,
+                document.LastEventId,
+                DateTime.UtcNow);
+
             // STALE UPDATE PROTECTION: Check if the existing document is newer
             // This prevents out-of-order events from overwriting fresher data.
             var existingDoc = await _client.GetAsync<ProductSearchDocument>(
@@ -87,12 +99,36 @@ public class ProductSearchIndexService : IProductSearchIndexService
             {
                 _telemetry.RecordIndexOperation("index", sw.Elapsed.TotalMilliseconds, true);
                 _logger.LogInformation(
+                    "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | EventId={EventId} | Result={Result} | Timestamp={Timestamp:O}",
+                    documentId,
+                    _settings.ProductsIndexName,
+                    document.ProductId,
+                    document.TenantId,
+                    true,
+                    true,
+                    false,
+                    document.LastEventId,
+                    response.Result,
+                    DateTime.UtcNow);
+                _logger.LogInformation(
                     "Successfully indexed product | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId} | Result: {Result} | LatencyMs: {LatencyMs}",
                     document.ProductId, document.TenantId, documentId, response.Result, sw.Elapsed.TotalMilliseconds);
                 return true;
             }
 
             _telemetry.RecordIndexOperation("index", sw.Elapsed.TotalMilliseconds, false);
+            _logger.LogError(
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | EventId={EventId} | Error={Error} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                document.ProductId,
+                document.TenantId,
+                true,
+                false,
+                false,
+                document.LastEventId,
+                response.ServerError?.Error?.Reason ?? response.OriginalException?.Message ?? "Unknown error",
+                DateTime.UtcNow);
             _logger.LogError(
                 "Failed to index product | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId} | Error: {Error}",
                 document.ProductId, document.TenantId, documentId,
@@ -103,6 +139,18 @@ public class ProductSearchIndexService : IProductSearchIndexService
         {
             sw.Stop();
             _telemetry.RecordIndexOperation("index", sw.Elapsed.TotalMilliseconds, false);
+            _logger.LogError(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | EventId={EventId} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                document.ProductId,
+                document.TenantId,
+                true,
+                false,
+                false,
+                document.LastEventId,
+                DateTime.UtcNow);
             _logger.LogError(ex,
                 "Exception while indexing product | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId}",
                 document.ProductId, document.TenantId, documentId);
@@ -126,6 +174,17 @@ public class ProductSearchIndexService : IProductSearchIndexService
 
         try
         {
+            _logger.LogInformation(
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                productId,
+                tenantId,
+                false,
+                false,
+                true,
+                DateTime.UtcNow);
+
             _logger.LogDebug(
                 "Deleting product document | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId}",
                 productId, tenantId, documentId);
@@ -141,12 +200,34 @@ public class ProductSearchIndexService : IProductSearchIndexService
             {
                 _telemetry.RecordIndexOperation("delete", sw.Elapsed.TotalMilliseconds, true);
                 _logger.LogInformation(
+                    "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | Result={Result} | Timestamp={Timestamp:O}",
+                    documentId,
+                    _settings.ProductsIndexName,
+                    productId,
+                    tenantId,
+                    false,
+                    true,
+                    true,
+                    response.Result,
+                    DateTime.UtcNow);
+                _logger.LogInformation(
                     "Successfully deleted product (or not found) | ProductId: {ProductId} | TenantId: {TenantId} | Result: {Result}",
                     productId, tenantId, response.Result);
                 return true;
             }
 
             _telemetry.RecordIndexOperation("delete", sw.Elapsed.TotalMilliseconds, false);
+            _logger.LogError(
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | Error={Error} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                productId,
+                tenantId,
+                false,
+                false,
+                true,
+                response.ServerError?.Error?.Reason ?? response.OriginalException?.Message ?? "Unknown error",
+                DateTime.UtcNow);
             _logger.LogError(
                 "Failed to delete product | ProductId: {ProductId} | TenantId: {TenantId} | Error: {Error}",
                 productId, tenantId,
@@ -157,6 +238,17 @@ public class ProductSearchIndexService : IProductSearchIndexService
         {
             sw.Stop();
             _telemetry.RecordIndexOperation("delete", sw.Elapsed.TotalMilliseconds, false);
+            _logger.LogError(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | Timestamp={Timestamp:O}",
+                documentId,
+                _settings.ProductsIndexName,
+                productId,
+                tenantId,
+                false,
+                false,
+                true,
+                DateTime.UtcNow);
             _logger.LogError(ex,
                 "Exception while deleting product | ProductId: {ProductId} | TenantId: {TenantId}",
                 productId, tenantId);

@@ -100,4 +100,18 @@ describe('builder/runtime section contract authority', () => {
             { id: 'products', type: 'product-grid', order: 1 },
         ])
     })
+
+    it('keeps reusable sections available for product page builder compositions', () => {
+        const mixedProductSections = [
+            { id: 'catalog-hero', type: 'hero-banner', order: 0 },
+            { id: 'catalog-shelf', type: 'product-grid', order: 1 },
+            { id: 'catalog-categories', type: 'category-grid', order: 2 },
+        ]
+
+        expect(filterSectionsForPage(mixedProductSections, 'product')).toEqual([
+            { id: 'catalog-hero', type: 'hero-banner', order: 0 },
+            { id: 'catalog-shelf', type: 'product-grid', order: 1 },
+            { id: 'catalog-categories', type: 'category-grid', order: 2 },
+        ])
+    })
 })

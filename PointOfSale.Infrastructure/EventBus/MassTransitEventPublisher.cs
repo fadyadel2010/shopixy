@@ -133,7 +133,7 @@ public class MassTransitEventPublisher : IEventPublisher
         
         try
         {
-            await _publishEndpoint.Publish(@event, cancellationToken);
+            await _publishEndpoint.Publish(@event, eventType, cancellationToken);
         }
         catch
         {

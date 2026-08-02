@@ -11,6 +11,7 @@ export type ProductCardRendererId =
     | 'electronics'
     | 'alizon'
     | 'sharp'
+    | 'cosmetics'
     | 'seven';
 
 const THEME_RENDERERS = new Map(

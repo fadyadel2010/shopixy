@@ -1,11 +1,17 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { forwardRef, useImperativeHandle } from 'react'
 import type React from 'react'
 import ProductForm from './ProductForm'
 
 const apiGetMock = vi.hoisted(() => vi.fn())
 const apiPostMock = vi.hoisted(() => vi.fn())
 const apiPutMock = vi.hoisted(() => vi.fn())
+const variantsHasPendingChangesMock = vi.hoisted(() => vi.fn())
+const variantsPrepareDraftMock = vi.hoisted(() => vi.fn())
+const variantsGetLastErrorMock = vi.hoisted(() => vi.fn())
+const showSuccessMock = vi.hoisted(() => vi.fn())
+const showErrorMock = vi.hoisted(() => vi.fn())
 const productAffiliateSettingsCardMock = vi.hoisted(() => vi.fn(() => <div>Affiliate Marketing Card</div>))
 const useAuthStoreMock = vi.hoisted(() => vi.fn((selector: (state: unknown) => unknown) => selector({
     user: { role: 'Admin' },
@@ -21,6 +27,13 @@ vi.mock('../services/api', () => ({
 
 vi.mock('../store/authStore', () => ({
     useAuthStore: useAuthStoreMock,
+}))
+
+vi.mock('../components/Toast', () => ({
+    useToast: () => ({
+        showSuccess: showSuccessMock,
+        showError: showErrorMock,
+    }),
 }))
 
 vi.mock('react-i18next', () => ({
@@ -49,7 +62,15 @@ vi.mock('../components/ProductMediaManager', () => ({
 }))
 
 vi.mock('../components/ProductVariantsTab', () => ({
-    default: () => <div>Product variants</div>,
+    default: forwardRef((_props: unknown, ref) => {
+        useImperativeHandle(ref, () => ({
+            hasPendingChanges: variantsHasPendingChangesMock,
+            prepareProductAuthoringDraft: variantsPrepareDraftMock,
+            getLastError: variantsGetLastErrorMock,
+        }))
+
+        return <div>Product variants</div>
+    }),
 }))
 
 vi.mock('../components/ProductPixelOverrideTab', () => ({
@@ -117,12 +138,71 @@ function mockProductReads() {
     })
 }
 
+function mockVariantProductReads(variants = [{
+    id: 'variant-1',
+    sku: 'VAR-1',
+    barcode: 'BAR-VAR-1',
+    price: 10,
+    onlinePrice: 10,
+    costPrice: 5,
+    isDefault: true,
+    isActive: true,
+    attributes: [{ name: 'Color', value: 'Red' }, { name: 'Size', value: 'M' }],
+}]) {
+    apiGetMock.mockImplementation((url: string) => {
+        if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+        if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+        if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+        if (url === '/products/product-1') {
+            return Promise.resolve({
+                data: {
+                    name: 'Variant Product',
+                    categoryId: 'category-1',
+                    taxRate: 10,
+                    priceIncludesTax: false,
+                    trackStock: false,
+                    isActive: true,
+                    hasVariants: true,
+                    publishStatus: 1,
+                    isOnlineVisible: true,
+                    isSearchable: true,
+                    isFeatured: false,
+                    rowVersion: '7',
+                    variants,
+                    units: [],
+                },
+            })
+        }
+
+        return Promise.resolve({ data: [] })
+    })
+}
+
 describe('product affiliate entry presentation', () => {
     beforeEach(() => {
         apiGetMock.mockReset()
         apiPostMock.mockReset()
         apiPostMock.mockResolvedValue({ data: { id: 'product-new' } })
         apiPutMock.mockReset()
+        apiPutMock.mockResolvedValue({ data: { id: 'product-1', rowVersion: '8' } })
+        variantsHasPendingChangesMock.mockReset()
+        variantsHasPendingChangesMock.mockReturnValue(false)
+        variantsPrepareDraftMock.mockReset()
+        variantsPrepareDraftMock.mockResolvedValue({
+            authoringVariants: [{
+                variantId: 'variant-1',
+                price: 12,
+                onlinePrice: 12,
+                costPrice: 5,
+                isDefault: true,
+                isActive: true,
+                attributes: { Color: 'Red' },
+            }],
+        })
+        variantsGetLastErrorMock.mockReset()
+        variantsGetLastErrorMock.mockReturnValue('')
+        showSuccessMock.mockClear()
+        showErrorMock.mockClear()
         productAffiliateSettingsCardMock.mockClear()
         useAuthStoreMock.mockImplementation((selector: (state: unknown) => unknown) => selector({
             user: { role: 'Admin' },
@@ -249,6 +329,18 @@ describe('product affiliate entry presentation', () => {
         }))
     })
 
+    it('hides Product Units for existing variant products', async () => {
+        mockVariantProductReads()
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await screen.findByText('Product variants')
+
+        expect(screen.queryByText('products.productUnits')).not.toBeInTheDocument()
+        expect(screen.queryByText('products.productUnitsValid')).not.toBeInTheDocument()
+    })
+
     it('allows draft products without publication-ready units', async () => {
         const { container } = render(<ProductForm mode="modal" onSave={vi.fn()} />)
 
@@ -343,5 +435,350 @@ describe('product affiliate entry presentation', () => {
         expect(payload).not.toHaveProperty('purchasePrice')
         expect(payload).not.toHaveProperty('salePrice')
         expect(payload).not.toHaveProperty('onlinePrice')
+    })
+
+    it('skips product authoring PUT when an existing product is submitted without changes', async () => {
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(showSuccessMock).toHaveBeenCalledWith('No changes to save.'))
+        expect(apiPutMock).not.toHaveBeenCalled()
+        expect(apiPostMock).not.toHaveBeenCalled()
+    })
+
+    it('executes product authoring PUT when product unit values change', async () => {
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+
+        fireEvent.change(container.querySelectorAll('input[type="number"]')[3], {
+            target: { value: '13' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => {
+            expect(apiPutMock).toHaveBeenCalledWith('/products/product-1', expect.objectContaining({
+                productUnits: [expect.objectContaining({
+                    unitId: 'unit-piece',
+                    sellingPrice: 13,
+                })],
+            }), expect.anything())
+        })
+    })
+
+    it('skips product authoring PUT for whitespace-only differences', async () => {
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: '  Test   Product  ' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(showSuccessMock).toHaveBeenCalledWith('No changes to save.'))
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('skips product authoring PUT for null versus empty optional fields', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url === '/products/product-1') {
+                return Promise.resolve({
+                    data: {
+                        name: 'Test Product',
+                        nameAr: null,
+                        categoryId: 'category-1',
+                        description: null,
+                        descriptionAr: null,
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: true,
+                        isActive: true,
+                        slug: null,
+                        metaTitle: null,
+                        metaDescription: null,
+                        metaKeywords: null,
+                        weight: null,
+                        length: null,
+                        width: null,
+                        height: null,
+                        lowStockThreshold: null,
+                        brand: null,
+                        manufacturer: null,
+                        tags: null,
+                        videoUrl: null,
+                        hasVariants: false,
+                        rowVersion: '7',
+                        variants: [],
+                        units: [{
+                            id: 'product-unit-1',
+                            unitId: 'unit-piece',
+                            conversionFactor: 1,
+                            purchasePrice: null,
+                            sellingPrice: 12,
+                            barcode: null,
+                            isBaseUnit: true,
+                            isDefault: true,
+                        }],
+                    },
+                })
+            }
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({ data: [{ id: 'variant-default', isDefault: true, sku: '', barcode: '' }] })
+            }
+
+            return Promise.resolve({ data: {} })
+        })
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(showSuccessMock).toHaveBeenCalledWith('No changes to save.'))
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('executes product authoring PUT when variant price changes', async () => {
+        variantsHasPendingChangesMock.mockReturnValue(true)
+        variantsPrepareDraftMock.mockResolvedValue({
+            authoringVariants: [{
+                variantId: 'variant-1',
+                sku: 'VAR-1',
+                barcode: 'BAR-VAR-1',
+                price: 14,
+                onlinePrice: 10,
+                costPrice: 5,
+                isDefault: true,
+                isActive: true,
+                attributes: { Color: 'Red', Size: 'M' },
+            }],
+        })
+        mockVariantProductReads()
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await screen.findByText('Product variants')
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => {
+            expect(apiPutMock).toHaveBeenCalledWith('/products/product-1', expect.objectContaining({
+                variants: [expect.objectContaining({
+                    variantId: 'variant-1',
+                    price: 14,
+                })],
+            }), expect.anything())
+        })
+    })
+
+    it('skips product authoring PUT for equivalent ordering-only variant drafts', async () => {
+        variantsHasPendingChangesMock.mockReturnValue(true)
+        variantsPrepareDraftMock.mockResolvedValue({
+            authoringVariants: [{
+                variantId: 'variant-1',
+                sku: 'VAR-1',
+                barcode: 'BAR-VAR-1',
+                price: 10,
+                onlinePrice: 10,
+                costPrice: 5,
+                isDefault: true,
+                isActive: true,
+                attributes: { Size: 'M', Color: 'Red' },
+            }],
+        })
+        mockVariantProductReads()
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await screen.findByText('Product variants')
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(showSuccessMock).toHaveBeenCalledWith('No changes to save.'))
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('surfaces nested product authoring concurrency conflict details', async () => {
+        apiPutMock.mockRejectedValueOnce({
+            response: {
+                status: 409,
+                data: {
+                    code: 'CONFLICT',
+                    message: 'Product authoring concurrency conflict.',
+                    data: {
+                        status: 'ConcurrencyConflict',
+                        errors: [
+                            {
+                                field: 'expectedVersion',
+                                message: 'Product has been changed by another transaction.',
+                            },
+                        ],
+                    },
+                },
+            },
+        })
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: 'Updated Product' },
+        })
+
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        expect(await screen.findByText('Product has been changed by another transaction.')).toBeInTheDocument()
+    })
+
+    it('surfaces post-matrix variant validation at the parent form and prevents the parent update', async () => {
+        variantsHasPendingChangesMock.mockReturnValue(true)
+        variantsPrepareDraftMock.mockResolvedValue({
+            authoringVariants: [{
+                variantId: 'variant-1',
+                price: 0,
+                costPrice: 5,
+                isDefault: true,
+                isActive: true,
+                attributes: { Color: 'Red' },
+            }],
+        })
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url === '/products/product-1') {
+                return Promise.resolve({
+                    data: {
+                        name: 'Variant Product',
+                        categoryId: 'category-1',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: false,
+                        isActive: true,
+                        hasVariants: true,
+                        publishStatus: 1,
+                        isOnlineVisible: true,
+                        isSearchable: true,
+                        isFeatured: false,
+                        rowVersion: '7',
+                        variants: [{
+                            id: 'variant-1',
+                            price: 10,
+                            costPrice: 5,
+                            isDefault: true,
+                            isActive: true,
+                            attributes: [{ name: 'Color', value: 'Red' }],
+                        }],
+                        units: [],
+                    },
+                })
+            }
+
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await screen.findByText('Product variants')
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(variantsPrepareDraftMock).toHaveBeenCalled())
+        expect(await screen.findByText('At least one active priced variant is required before publication.')).toBeInTheDocument()
+        expect(apiPutMock).not.toHaveBeenCalled()
+    })
+
+    it('owns the product update when saving a pending variant draft', async () => {
+        const onSave = vi.fn()
+        variantsHasPendingChangesMock.mockReturnValue(true)
+        variantsPrepareDraftMock.mockResolvedValue({
+            authoringVariants: [{
+                variantId: 'variant-1',
+                price: 14,
+                costPrice: 6,
+                isDefault: true,
+                isActive: true,
+                attributes: { Color: 'Blue' },
+            }],
+        })
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url === '/products/product-1') {
+                return Promise.resolve({
+                    data: {
+                        name: 'Variant Product',
+                        categoryId: 'category-1',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: false,
+                        isActive: true,
+                        hasVariants: true,
+                        publishStatus: 1,
+                        isOnlineVisible: true,
+                        isSearchable: true,
+                        isFeatured: false,
+                        rowVersion: '7',
+                        variants: [{
+                            id: 'variant-1',
+                            price: 10,
+                            costPrice: 5,
+                            isDefault: true,
+                            isActive: true,
+                            attributes: [{ name: 'Color', value: 'Red' }],
+                        }],
+                        units: [{
+                            id: 'legacy-unit-1',
+                            unitId: 'unit-piece',
+                            conversionFactor: 1,
+                            sellingPrice: 10,
+                            isBaseUnit: true,
+                            isDefault: true,
+                        }],
+                    },
+                })
+            }
+
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={onSave} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await screen.findByText('Product variants')
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => {
+            expect(variantsPrepareDraftMock).toHaveBeenCalled()
+            expect(apiPutMock).toHaveBeenCalledWith('/products/product-1', expect.objectContaining({
+                variants: [expect.objectContaining({
+                    variantId: 'variant-1',
+                    price: 14,
+                    attributes: { Color: 'Blue' },
+                })],
+            }), expect.objectContaining({
+                headers: expect.objectContaining({
+                    'Idempotency-Key': expect.stringContaining('product-authoring:product-1:'),
+                    'If-Match': '"7"',
+                }),
+            }))
+            expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+                id: 'product-1',
+                rowVersion: '8',
+                hasVariants: true,
+            }))
+        })
     })
 })

@@ -28,9 +28,11 @@ const FeaturedProducts: React.FC<FeaturedProductsProps> = ({
         <section className="py-12 px-4 container mx-auto">
             <div className="flex justify-between items-end mb-8">
                 <h2 className="text-2xl font-bold text-text">{model.title}</h2>
-                <AffiliateLink href="/products" className="text-primary hover:underline rtl-flip">
-                    {model.labels.viewAll} {'\u2192'}
-                </AffiliateLink>
+                {model.viewAllHref ? (
+                    <AffiliateLink href={model.viewAllHref} className="text-primary hover:underline rtl-flip">
+                        {model.labels.viewAll} {'\u2192'}
+                    </AffiliateLink>
+                ) : null}
             </div>
 
             {model.isLoading ? (

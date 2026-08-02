@@ -37,25 +37,75 @@ public sealed class ProductVisibilityLifecycleProjectionConsumer :
     }
 
     public Task Consume(ConsumeContext<ProductDeletedEvent> context) =>
-        ApplySqlVisibilityAuthorityAsync(
+        TraceAndApplySqlVisibilityAuthorityAsync(
+            context,
             context.Message,
             nameof(ProductDeletedEvent),
             context.Message.ProductId,
-            context.CancellationToken);
+            context.CorrelationId?.ToString());
 
     public Task Consume(ConsumeContext<ProductArchivedEvent> context) =>
-        ApplySqlVisibilityAuthorityAsync(
+        TraceAndApplySqlVisibilityAuthorityAsync(
+            context,
             context.Message,
             nameof(ProductArchivedEvent),
             context.Message.ProductId,
-            context.CancellationToken);
+            context.CorrelationId?.ToString());
 
     public Task Consume(ConsumeContext<ProductPublishStatusChangedEvent> context) =>
-        ApplySqlVisibilityAuthorityAsync(
+        TraceAndApplySqlVisibilityAuthorityAsync(
+            context,
             context.Message,
             nameof(ProductPublishStatusChangedEvent),
             context.Message.ProductId,
-            context.CancellationToken);
+            context.CorrelationId?.ToString());
+
+    private async Task TraceAndApplySqlVisibilityAuthorityAsync<TEvent>(
+        ConsumeContext<TEvent> context,
+        IntegrationEvent @event,
+        string eventType,
+        Guid productId,
+        string? contextCorrelationId)
+        where TEvent : class
+    {
+        var correlationId = @event.CorrelationId ?? contextCorrelationId ?? "N/A";
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=ProjectionConsumerReceive | ConsumerName={ConsumerName} | MessageId={MessageId} | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | ReceiveTime={ReceiveTime:O} | CorrelationId={CorrelationId} | RetryCount={RetryCount}",
+            ConsumerName,
+            context.MessageId,
+            @event.EventId,
+            productId,
+            @event.TenantId,
+            @event.EventVersion,
+            DateTime.UtcNow,
+            correlationId,
+            context.GetRetryAttempt());
+
+        try
+        {
+            await ApplySqlVisibilityAuthorityAsync(
+                @event,
+                eventType,
+                productId,
+                context.CancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=ProjectionConsumer | ConsumerName={ConsumerName} | Outcome=EXCEPTION | EventType={EventType} | EventId={EventId} | ProductId={ProductId} | TenantId={TenantId} | EventVersion={EventVersion} | CorrelationId={CorrelationId} | RetryCount={RetryCount} | Timestamp={Timestamp:O}",
+                ConsumerName,
+                eventType,
+                @event.EventId,
+                productId,
+                @event.TenantId,
+                @event.EventVersion,
+                correlationId,
+                context.GetRetryAttempt(),
+                DateTime.UtcNow);
+            throw;
+        }
+    }
 
     private async Task ApplySqlVisibilityAuthorityAsync(
         IntegrationEvent @event,

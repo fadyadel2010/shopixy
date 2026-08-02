@@ -337,11 +337,28 @@ public class ProductsController : ControllerBase
             request.ProductTemplate,
             request.IsOnlineVisible);
 
+        var ifMatchHeader = ReadHeaderValue("If-Match");
+        var expectedVersionHeader = ReadHeaderValue("Expected-Version");
+        _logger.LogInformation(
+            "RUNTIME_ROWVERSION_TRACE | ProductsController.UpdateProduct.BeforeMapping | ProductId: {ProductId} | IfMatch: {IfMatch} | ExpectedVersionHeader: {ExpectedVersionHeader}",
+            id,
+            ifMatchHeader,
+            expectedVersionHeader);
+
         var authoringCommand = _productAuthoringCommandMapper.FromUpdateRequest(
             ProductAuthoringOperation.Update,
             id,
             request,
             request.Variants);
+
+        _logger.LogInformation(
+            "RUNTIME_ROWVERSION_TRACE | ProductsController.UpdateProduct.AfterMapping | ProductId: {ProductId} | IfMatch: {IfMatch} | ExpectedVersionHeader: {ExpectedVersionHeader} | MapperExpectedVersion: {MapperExpectedVersion} | HeadersMatchMapper: {HeadersMatchMapper}",
+            id,
+            ifMatchHeader,
+            expectedVersionHeader,
+            authoringCommand.Metadata.ExpectedVersion,
+            HeaderVersionsMatchMappedExpectedVersion(ifMatchHeader, expectedVersionHeader, authoringCommand.Metadata.ExpectedVersion));
+
         var result = await _productAuthoringOrchestrator.AuthorAsync(authoringCommand, cancellationToken);
         if (result.Status != ProductAuthoringStatus.Accepted || result.ProductId is null)
         {
@@ -1172,6 +1189,29 @@ public class ProductsController : ControllerBase
         version = 0;
         var normalized = value?.Trim().Trim('"');
         return long.TryParse(normalized, out version) && version >= 0 && version <= uint.MaxValue;
+    }
+
+    private string? ReadHeaderValue(string headerName) =>
+        Request.Headers.TryGetValue(headerName, out var values)
+            ? values.FirstOrDefault()
+            : null;
+
+    private static bool HeaderVersionsMatchMappedExpectedVersion(
+        string? ifMatch,
+        string? expectedVersion,
+        long? mappedExpectedVersion)
+    {
+        if (!mappedExpectedVersion.HasValue)
+        {
+            return false;
+        }
+
+        var candidate = !string.IsNullOrWhiteSpace(ifMatch)
+            ? ifMatch
+            : expectedVersion;
+
+        return TryParseExpectedVersion(candidate, out var parsed) &&
+            parsed == mappedExpectedVersion.Value;
     }
 
     private static ProductAuthoringUnitRequest ToProductAuthoringUnitRequest(ProductAuthoringUnit unit) =>

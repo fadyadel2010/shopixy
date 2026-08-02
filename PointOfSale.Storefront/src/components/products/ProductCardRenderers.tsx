@@ -475,6 +475,55 @@ export const SharpProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
     </ThemeSurface>
 );
 
+export const CosmeticsProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
+    <ThemeSurface
+        themeId="cosmetics"
+        className="group relative h-full border-r border-b border-black bg-white"
+        data-product-card-theme="cosmetics"
+        data-product-card-layout={runtime.layout}
+    >
+        <ProductCardLink runtime={runtime} className="block">
+            <div className="relative">
+                <ProductCardMedia
+                    runtime={runtime}
+                    className="relative aspect-square overflow-hidden bg-[#e6e6e6]"
+                    imageClassName="h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.04]"
+                    sizes="(max-width: 768px) 82vw, (max-width: 1280px) 33vw, 360px"
+                    showUnavailableOverlay={false}
+                />
+
+                {runtime.canQuickAdd ? (
+                    <ProductCardQuickAddButton
+                        runtime={runtime}
+                        className="absolute bottom-3 left-1/2 z-20 h-9 min-h-9 w-9 -translate-x-1/2 overflow-hidden rounded-full border-0 bg-white/90 px-0 py-0 text-sm font-medium text-text shadow-[0_6px_18px_rgba(0,0,0,0.12)] backdrop-blur transition-all duration-slow hover:w-32 hover:rounded-full hover:bg-white [&>span:first-child]:text-xl [&>span:last-child]:hidden hover:[&>span:last-child]:inline"
+                    />
+                ) : null}
+            </div>
+
+            <div className="space-y-2 px-3 py-3 text-center">
+                <ThemeProductTitle themeId="cosmetics">
+                    {runtime.displayName}
+                </ThemeProductTitle>
+
+                {runtime.alternateName ? (
+                    <ThemeProductMeta themeId="cosmetics" dir={runtime.alternateName.dir}>
+                        {runtime.alternateName.value}
+                    </ThemeProductMeta>
+                ) : null}
+
+                <ProductCardPrice
+                    runtime={runtime}
+                    className="justify-center"
+                    textClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
+                    currentClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
+                    saleClassName="text-[10px] font-normal leading-[0.71] text-[rgba(3,3,2,0.76)]"
+                    compareClassName="text-[10px] text-[rgba(3,3,2,0.5)] line-through"
+                />
+            </div>
+        </ProductCardLink>
+    </ThemeSurface>
+);
+
 export const PRODUCT_CARD_RENDERERS: Record<ProductCardRendererId, ProductCardRenderer> = {
     modern: ModernProductCardRenderer,
     minimal: MinimalProductCardRenderer,
@@ -485,5 +534,6 @@ export const PRODUCT_CARD_RENDERERS: Record<ProductCardRendererId, ProductCardRe
     electronics: ElectronicsProductCardRenderer,
     alizon: AlizonProductCardRenderer,
     sharp: SharpProductCardRenderer,
+    cosmetics: CosmeticsProductCardRenderer,
     seven: SevenProductCardRenderer,
 };

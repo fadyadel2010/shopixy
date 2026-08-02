@@ -333,9 +333,12 @@ public static class SafeResponseMapper
             Barcode = variant.Barcode,
             Price = variant.Price,
             OnlinePrice = variant.OnlinePrice,
+            CostPrice = variant.CostPrice,
             EffectiveOnlinePrice = variant.EffectiveOnlinePrice,
+            Weight = variant.Weight,
             IsDefault = variant.IsDefault,
             IsActive = variant.IsActive,
+            MediaId = variant.MediaId,
             ImageUrl = variant.ImageUrl,
             SortOrder = variant.SortOrder,
             TotalStock = variant.Stocks

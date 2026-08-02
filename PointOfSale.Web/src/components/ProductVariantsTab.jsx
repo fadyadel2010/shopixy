@@ -1,12 +1,11 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import api from '../services/api'
 import { useTranslation } from 'react-i18next'
 import VariantOptionsBuilder from './VariantOptionsBuilder'
 import VariantBulkActions from './VariantBulkActions'
 import VariantMatrixTable from './VariantMatrixTable'
-import VariantMediaPicker from './VariantMediaPicker'
-import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
+import { toProductAuthoringVariant } from '../utils/productAuthoringVariants'
 
 const SAFE_COMBINATION_LIMIT = 100
 const INFO_COMBINATION_LIMIT = 300
@@ -24,6 +23,43 @@ function normalizeText(value) {
     return (value || '').trim()
 }
 
+function extractApiErrorMessage(error, fallback) {
+    const data = error?.response?.data
+    const nestedData = data?.data
+
+    if (Array.isArray(data?.errors)) {
+        const messages = data.errors
+            .map((item) => item?.message || item?.Message)
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    if (data?.errors && typeof data.errors === 'object') {
+        const messages = Object.values(data.errors)
+            .flatMap((value) => Array.isArray(value) ? value : [value])
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    if (Array.isArray(nestedData?.errors)) {
+        const messages = nestedData.errors
+            .map((item) => item?.message || item?.Message)
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    return nestedData?.message || data?.message || data?.error || fallback
+}
+
 function normalizeKeyPart(value) {
     return normalizeText(value).toLowerCase()
 }
@@ -39,28 +75,6 @@ function normalizeToken(value) {
         .replace(/[^a-z0-9]+/gi, '_')
         .replace(/^_+|_+$/g, '')
         .toUpperCase()
-}
-
-function createVariantAuthoringIdempotencyKey(productId, scope = 'matrix') {
-    const randomPart = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
-    return `variant-authoring:${productId}:${scope}:${randomPart}`
-}
-
-function createEmptyVariantForm(sortOrder = 0) {
-    return {
-        sku: '',
-        barcode: '',
-        price: '',
-        onlinePrice: '',
-        costPrice: '',
-        inventory: '',
-        weight: '',
-        isActive: true,
-        mediaId: null,
-        imageUrl: '',
-        sortOrder,
-        attributes: []
-    }
 }
 
 function attributesToKey(attributes) {
@@ -397,160 +411,7 @@ function generateCombinations(optionGroups, excludedRules = []) {
     return combinations
 }
 
-function buildVariantPayload(row, sortOrder) {
-    return {
-        sku: normalizeText(row.sku) || null,
-        barcode: normalizeText(row.barcode) || null,
-        price: parseFloat(row.price) || 0,
-        onlinePrice: row.onlinePrice !== '' ? parseFloat(row.onlinePrice) : null,
-        costPrice: parseFloat(row.costPrice) || 0,
-        weight: row.weight !== '' ? parseFloat(row.weight) : null,
-        isActive: !!row.isActive,
-        mediaId: row.mediaId || null,
-        imageUrl: row.mediaId ? null : normalizeText(row.imageUrl) || null,
-        sortOrder,
-        attributes: (row.attributes || []).map((attribute, index) => ({
-            name: attribute.name,
-            value: attribute.value,
-            sortOrder: index
-        }))
-    }
-}
-
-function rowMatchesVariant(row, variant, sortOrder) {
-    const payload = buildVariantPayload(row, sortOrder)
-    const original = {
-        sku: normalizeText(variant.sku),
-        barcode: normalizeText(variant.barcode),
-        price: Number(variant.price || 0),
-        onlinePrice: variant.onlinePrice == null ? null : Number(variant.onlinePrice),
-        costPrice: Number(variant.costPrice || 0),
-        weight: variant.weight == null ? null : Number(variant.weight),
-        isActive: !!variant.isActive,
-        mediaId: variant.mediaId || null,
-        imageUrl: normalizeText(variant.imageUrl),
-        sortOrder: variant.sortOrder ?? 0,
-        attributes: (variant.attributes || []).map((attribute, index) => ({
-            name: attribute.name,
-            value: attribute.value,
-            sortOrder: attribute.sortOrder ?? index
-        }))
-    }
-
-    return JSON.stringify(payload) === JSON.stringify(original)
-}
-
-function toAuthoringVariant(row, sortOrder) {
-    return {
-        variantId: row.id || null,
-        sku: normalizeText(row.sku) || null,
-        barcode: normalizeText(row.barcode) || null,
-        price: parseFloat(row.price) || 0,
-        onlinePrice: row.onlinePrice !== '' ? parseFloat(row.onlinePrice) : null,
-        costPrice: parseFloat(row.costPrice) || 0,
-        weight: row.weight !== '' ? parseFloat(row.weight) : null,
-        mediaId: row.mediaId || null,
-        imageUrl: row.mediaId ? null : normalizeText(row.imageUrl) || null,
-        isActive: !!row.isActive,
-        isDefault: !!row.isDefault,
-        attributes: (row.attributes || []).reduce((acc, attribute) => {
-            const name = normalizeText(attribute.name)
-            if (name) {
-                acc[name] = normalizeText(attribute.value)
-            }
-            return acc
-        }, {}),
-        sortOrder
-    }
-}
-
-function productUnitsToAuthoringPayload(product) {
-    return (product.units || product.productUnits || []).map((unit) => ({
-        productUnitId: unit.id || unit.productUnitId || null,
-        unitId: unit.unitId,
-        conversionFactor: Number(unit.conversionFactor) || 1,
-        purchasePrice: unit.purchasePrice == null ? null : Number(unit.purchasePrice),
-        sellingPrice: unit.sellingPrice == null ? null : Number(unit.sellingPrice),
-        barcode: unit.barcode || null,
-        isDefault: !!unit.isDefault,
-        isBaseUnit: !!unit.isBaseUnit
-    })).filter(unit => unit.unitId)
-}
-
-function normalizePublishStatus(value) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return value
-    }
-
-    const normalizedValue = typeof value === 'string' ? value.trim().toLowerCase() : ''
-    if (normalizedValue === 'draft') return 0
-    if (normalizedValue === 'published') return 1
-    if (normalizedValue === 'archived') return 2
-
-    const parsedValue = Number.parseInt(value, 10)
-    return Number.isFinite(parsedValue) ? parsedValue : 1
-}
-
-function buildProductAuthoringPayload(product, variants) {
-    return {
-        name: product.name,
-        nameAr: product.nameAr || null,
-        barcode: null,
-        sku: null,
-        description: product.description || null,
-        descriptionAr: product.descriptionAr || null,
-        categoryId: product.categoryId,
-        purchasePrice: Number(product.purchasePrice) || 0,
-        salePrice: Number(product.salePrice) || 0,
-        onlinePrice: product.onlinePrice == null ? null : Number(product.onlinePrice),
-        priceIncludesTax: !!product.priceIncludesTax,
-        taxRate: Number(product.taxRate) || 0,
-        unit: product.unit || 'Piece',
-        minimumStockLevel: Number(product.minimumStockLevel) || 0,
-        images: null,
-        isActive: product.isActive !== false,
-        trackStock: false,
-        hasVariants: true,
-        slug: product.slug || null,
-        metaTitle: product.metaTitle || null,
-        metaDescription: product.metaDescription || null,
-        metaKeywords: product.metaKeywords || null,
-        weight: product.weight == null ? null : Number(product.weight),
-        length: product.length == null ? null : Number(product.length),
-        width: product.width == null ? null : Number(product.width),
-        height: product.height == null ? null : Number(product.height),
-        weightUnit: product.weightUnit || 'kg',
-        dimensionUnit: product.dimensionUnit || 'cm',
-        publishStatus: normalizePublishStatus(product.publishStatus),
-        isOnlineVisible: product.isOnlineVisible ?? true,
-        isSearchable: product.isSearchable ?? true,
-        isFeatured: product.isFeatured ?? false,
-        lowStockThreshold: product.lowStockThreshold ?? null,
-        allowBackorder: product.allowBackorder ?? false,
-        brand: product.brand || null,
-        manufacturer: product.manufacturer || null,
-        tags: product.tags || null,
-        features: product.features || [],
-        faqs: product.faqs || [],
-        aiGenerated: !!product.aiGenerated,
-        aiMetadata: product.aiMetadata || null,
-        videoUrl: product.videoUrl || null,
-        productTemplate: product.productTemplate || null,
-        productUnits: null,
-        variants
-    }
-}
-
-function getWarehouseQuantity(row, warehouseId) {
-    if (!warehouseId) {
-        return row.totalStock || 0
-    }
-
-    const stock = (row.stocks || []).find(item => item.warehouseId === warehouseId)
-    return stock?.quantity ?? 0
-}
-
-function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, selectedWarehouseId, isLegacy = false }) {
+function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, isLegacy = false }) {
     const base = variant
         ? {
             id: variant.id,
@@ -595,7 +456,6 @@ function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, sel
         key,
         attributes,
         name: getRowName(attributes, variant ? getRowName(variant.attributes, variant.sku || variant.barcode) : 'Default Variant'),
-        inventory: merged.inventory ?? getWarehouseQuantity(merged, selectedWarehouseId).toString(),
         isDefault,
         isLegacy,
         isNew: !variant,
@@ -604,7 +464,13 @@ function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, sel
     }
 }
 
-const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, forceMatrixMode = false }, ref) {
+const ProductVariantsTab = forwardRef(function ProductVariantsTab({
+    productId,
+    forceMatrixMode = false,
+    productSkuPrefix = '',
+    onVariantDraftChange = null,
+    onSaveVariantDraft = null
+}, ref) {
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
     const tx = (key, fallback) => {
@@ -613,18 +479,14 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
     }
     const [loading, setLoading] = useState(true)
     const [savingMatrix, setSavingMatrix] = useState(false)
-    const [applyingStock, setApplyingStock] = useState(false)
     const [variants, setVariants] = useState([])
-    const [parentProduct, setParentProduct] = useState(null)
-    const [warehouses, setWarehouses] = useState([])
-    const [selectedWarehouseId, setSelectedWarehouseId] = useState('')
     const [optionGroups, setOptionGroups] = useState([])
     const [rowDrafts, setRowDrafts] = useState({})
     const [deletedKeys, setDeletedKeys] = useState(new Set())
     const [selectedKeys, setSelectedKeys] = useState(new Set())
     const [defaultKey, setDefaultKey] = useState(null)
     const [error, setError] = useState('')
-    const [success, setSuccess] = useState('')
+    const lastErrorRef = useRef('')
     const [showLegacyRows, setShowLegacyRows] = useState(false)
     const [skuBuilder, setSkuBuilder] = useState({
         prefix: '',
@@ -636,42 +498,35 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
     const [draftExclusionRule, setDraftExclusionRule] = useState({})
     const [confirmedGenerationSignature, setConfirmedGenerationSignature] = useState('')
 
-    const [showModal, setShowModal] = useState(false)
-    const [showManualMediaPicker, setShowManualMediaPicker] = useState(false)
-    const [editingVariant, setEditingVariant] = useState(null)
-    const [confirmDelete, setConfirmDelete] = useState(null)
-    const [formData, setFormData] = useState(createEmptyVariantForm())
-    const [newAttribute, setNewAttribute] = useState({ name: '', value: '' })
-
     useEffect(() => {
         if (productId) {
             fetchVariants()
         }
     }, [productId])
 
+    useEffect(() => {
+        if (!productSkuPrefix) {
+            return
+        }
+
+        setSkuBuilder(prev => ({
+            ...prev,
+            prefix: prev.prefix || normalizeSkuPart(productSkuPrefix)
+        }))
+    }, [productSkuPrefix])
+
     const fetchVariants = async () => {
         try {
             setLoading(true)
-            const [variantsResponse, productResponse, warehousesResponse] = await Promise.all([
-                api.get(`/products/${productId}/variants`),
-                api.get(`/products/${productId}`),
-                api.get('/warehouses')
-            ])
+            const variantsResponse = await api.get(`/products/${productId}/variants`)
             const nextVariants = (variantsResponse.data || []).map(normalizeVariantForMatrix)
             const derivedGroups = reconstructOptionGroupsFromVariants(nextVariants)
             const currentDefault = nextVariants.find(variant => variant.isDefault)
-            const nextWarehouses = Array.isArray(warehousesResponse.data)
-                ? warehousesResponse.data
-                : warehousesResponse.data?.items || []
-            const nextProduct = productResponse.data || null
 
             setVariants(nextVariants)
-            setParentProduct(nextProduct)
-            setWarehouses(nextWarehouses)
-            setSelectedWarehouseId(prev => prev || nextWarehouses.find(warehouse => warehouse.isDefault)?.id || nextWarehouses[0]?.id || '')
             setSkuBuilder(prev => ({
                 ...prev,
-                prefix: prev.prefix || normalizeSkuPart(nextProduct?.sku || nextProduct?.name || '')
+                prefix: prev.prefix || normalizeSkuPart(productSkuPrefix || '')
             }))
             setOptionGroups(derivedGroups)
             setExcludedRules([])
@@ -755,8 +610,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                     attributes,
                     draft: rowDrafts[key],
                     isDefault: defaultKey ? defaultKey === key : existingVariant?.isDefault,
-                    index,
-                    selectedWarehouseId
+                    index
                 }))
             })
         }
@@ -776,13 +630,12 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                     draft: rowDrafts[fallbackKey],
                     isDefault: defaultKey ? defaultKey === fallbackKey : variant.isDefault,
                     index: rows.length + index,
-                    selectedWarehouseId,
                     isLegacy: generatedCombinations.length > 0
                 }))
             })
 
         return rows
-    }, [defaultKey, deletedKeys, generatedCombinations, generationBlocked, rowDrafts, selectedWarehouseId, variants])
+    }, [defaultKey, deletedKeys, generatedCombinations, generationBlocked, rowDrafts, variants])
 
     useEffect(() => {
         if (matrixRows.length === 0) {
@@ -815,12 +668,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
     )
 
     useEffect(() => {
-        if (isMatrixMode && showModal) {
-            setShowModal(false)
-        }
-    }, [isMatrixMode, showModal])
-
-    useEffect(() => {
         if (showLegacyRows || legacyRows.length === 0) {
             return
         }
@@ -836,6 +683,22 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             || exclusionRulesToSignature(excludedRules) !== '[]'
             || !!(defaultKey && matrixRows.find(row => row.original?.isDefault)?.key !== defaultKey)
     }, [defaultKey, deletedKeys, excludedRules, matrixRows, optionGroups, originalOptionGroups, rowDrafts])
+
+    const authoringVariants = useMemo(() => (
+        matrixRows.map((row, index) => toProductAuthoringVariant({
+            ...row,
+            isDefault: (defaultKey || matrixRows[0]?.key) === row.key
+        }, index))
+    ), [defaultKey, matrixRows])
+
+    const variantDraftSnapshot = useMemo(() => ({
+        authoringVariants,
+        hasPendingChanges: isMatrixMode && hasUnsavedChanges
+    }), [authoringVariants, hasUnsavedChanges, isMatrixMode])
+
+    useEffect(() => {
+        onVariantDraftChange?.(variantDraftSnapshot)
+    }, [onVariantDraftChange, variantDraftSnapshot])
 
     useEffect(() => {
         if (!hasUnsavedChanges) {
@@ -875,119 +738,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             document.removeEventListener('click', handleDocumentClick, true)
         }
     }, [hasUnsavedChanges, tx])
-
-    const handleAddVariant = () => {
-        setEditingVariant(null)
-        setFormData(createEmptyVariantForm(matrixRows.length))
-        setNewAttribute({ name: '', value: '' })
-        setShowManualMediaPicker(false)
-        setShowModal(true)
-    }
-
-    const handleEditVariant = (variant) => {
-        setEditingVariant(variant)
-        setFormData({
-            sku: variant.sku || '',
-            barcode: variant.barcode || '',
-            price: variant.price?.toString() || '',
-            onlinePrice: variant.onlinePrice?.toString() || '',
-            costPrice: variant.costPrice?.toString() || '',
-            isActive: variant.isActive,
-            mediaId: variant.mediaId || null,
-            imageUrl: variant.imageUrl || '',
-            sortOrder: variant.sortOrder ?? 0,
-            attributes: variant.attributes || []
-        })
-        setNewAttribute({ name: '', value: '' })
-        setShowManualMediaPicker(false)
-        setShowModal(true)
-    }
-
-    const handleSelectManualMedia = (mediaItem) => {
-        setFormData((prev) => ({
-            ...prev,
-            mediaId: mediaItem?.id || null,
-            imageUrl: mediaItem ? '' : prev.imageUrl
-        }))
-        setShowManualMediaPicker(false)
-    }
-
-    const handleSaveVariant = async () => {
-        setError('')
-
-        try {
-            const payload = buildVariantPayload(formData, formData.sortOrder)
-
-            if (editingVariant) {
-                await api.put(`/products/${productId}/variants/${editingVariant.id}`, payload)
-                setSuccess(tx('variants.variantUpdated', 'Variant updated successfully'))
-            } else {
-                await api.post(`/products/${productId}/variants`, payload)
-                setSuccess(tx('variants.variantCreated', 'Variant created successfully'))
-            }
-
-            invalidatePosRuntimeCache({ reason: 'product-updated' })
-            setShowModal(false)
-            await fetchVariants()
-            setTimeout(() => setSuccess(''), 3000)
-        } catch (err) {
-            console.error('Failed to save variant', err)
-            setError(err.response?.data?.message || tx('variants.failedToSave', 'Failed to save variant'))
-        }
-    }
-
-    const handleDeleteVariant = (variant) => {
-        if (variant.isDefault) {
-            setError(tx('variants.cannotDeleteDefault', 'Cannot delete the default variant. Set another variant as default first.'))
-            setTimeout(() => setError(''), 5000)
-            return
-        }
-
-        setConfirmDelete(variant)
-    }
-
-    const confirmDeleteVariant = async () => {
-        if (!confirmDelete) return
-
-        try {
-            const headers = {}
-            if (confirmDelete.totalStock > 0) {
-                headers['X-Confirm-Delete'] = 'true'
-            }
-
-            await api.delete(`/products/${productId}/variants/${confirmDelete.id}`, { headers })
-            setSuccess(tx('variants.variantDeleted', 'Variant deleted successfully'))
-            setConfirmDelete(null)
-            invalidatePosRuntimeCache({ reason: 'product-updated' })
-            await fetchVariants()
-            setTimeout(() => setSuccess(''), 3000)
-        } catch (err) {
-            console.error('Failed to delete variant', err)
-            setError(err.response?.data?.message || tx('variants.failedToDelete', 'Failed to delete variant'))
-            setConfirmDelete(null)
-        }
-    }
-
-    const handleAddAttribute = () => {
-        if (!newAttribute.name || !newAttribute.value) return
-
-        setFormData(prev => ({
-            ...prev,
-            attributes: [...prev.attributes, {
-                name: newAttribute.name,
-                value: newAttribute.value,
-                sortOrder: prev.attributes.length
-            }]
-        }))
-        setNewAttribute({ name: '', value: '' })
-    }
-
-    const handleRemoveAttribute = (index) => {
-        setFormData(prev => ({
-            ...prev,
-            attributes: prev.attributes.filter((_, i) => i !== index)
-        }))
-    }
 
     const handleRowChange = (key, patch) => {
         setRowDrafts(prev => ({
@@ -1122,7 +872,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
 
     const buildSkuForRow = (row, index) => {
         const separator = skuBuilder.separator || '-'
-        const prefix = normalizeSkuPart(skuBuilder.prefix || parentProduct?.sku || parentProduct?.name || 'VARIANT')
+        const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix || 'VARIANT')
         const attributes = row.attributes || []
         const tokenValues = attributes.reduce((acc, attribute) => {
             acc[normalizeToken(attribute.name)] = normalizeSkuPart(attribute.value)
@@ -1164,7 +914,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             duplicateSku: 0,
             duplicateBarcode: 0,
             duplicateCombinations: 0,
-            negativeInventory: matrixRows.filter(row => row.inventory !== '' && !Number.isNaN(parseFloat(row.inventory)) && parseFloat(row.inventory) < 0).length,
             negativeWeight: matrixRows.filter(row => row.weight !== '' && !Number.isNaN(parseFloat(row.weight)) && parseFloat(row.weight) < 0).length
         }
         const issues = {}
@@ -1197,9 +946,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             }
             if (combinationKey && combinationCounts.get(combinationKey) > 1) {
                 rowIssues.combination = true
-            }
-            if (row.inventory !== '' && !Number.isNaN(parseFloat(row.inventory)) && parseFloat(row.inventory) < 0) {
-                rowIssues.inventory = true
             }
             if (row.weight !== '' && !Number.isNaN(parseFloat(row.weight)) && parseFloat(row.weight) < 0) {
                 rowIssues.weight = true
@@ -1266,10 +1012,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             return tx('variants.priceRequired', 'Each variant requires a valid selling price.')
         }
 
-        if (rows.some(row => row.inventory !== '' && (Number.isNaN(parseFloat(row.inventory)) || parseFloat(row.inventory) < 0))) {
-            return tx('variants.invalidStockQuantity', 'Inventory cannot be negative.')
-        }
-
         if (rows.some(row => row.weight !== '' && (Number.isNaN(parseFloat(row.weight)) || parseFloat(row.weight) < 0))) {
             return tx('variants.invalidWeight', 'Weight cannot be negative.')
         }
@@ -1285,7 +1027,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             return
         }
 
-        if (type === 'set-price' || type === 'set-cost-price' || type === 'set-inventory' || type === 'set-weight') {
+        if (type === 'set-price' || type === 'set-cost-price' || type === 'set-weight') {
             const numericValue = parseFloat(value)
             if (Number.isNaN(numericValue) || numericValue < 0) {
                 setError(tx('variants.invalidBulkValue', 'Enter a non-negative value.'))
@@ -1295,7 +1037,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             const field = {
                 'set-price': 'price',
                 'set-cost-price': 'costPrice',
-                'set-inventory': 'inventory',
                 'set-weight': 'weight'
             }[type]
 
@@ -1388,7 +1129,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                 })
             } catch (err) {
                 console.error('Failed to generate barcodes', err)
-                setError(err.response?.data?.message || tx('products.failedToGenerateBarcode', 'Failed to generate barcode'))
+                setError(extractApiErrorMessage(err, tx('products.failedToGenerateBarcode', 'Failed to generate barcode')))
             }
             return
         }
@@ -1399,50 +1140,15 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             return
         }
 
-        if (type === 'set-stock') {
-            const quantity = parseFloat(value)
-            if (Number.isNaN(quantity) || quantity < 0) {
-                setError(tx('variants.invalidStockQuantity', 'Enter a valid stock quantity'))
-                return
-            }
-
-            const persistedRows = selectedRows.filter(row => row.id)
-            if (!persistedRows.length) {
-                setError(tx('variants.saveBeforeStock', 'Save new variants before applying stock changes.'))
-                return
-            }
-
-            try {
-                setApplyingStock(true)
-                for (const row of persistedRows) {
-                    await api.put(`/products/${productId}/variants/${row.id}/stock/${warehouseId}`, {
-                        quantity,
-                        reason: normalizeText(reason) || 'Variant matrix bulk update'
-                    }, {
-                        headers: {
-                            'Idempotency-Key': createVariantAuthoringIdempotencyKey(productId, `stock:${row.id}`)
-                        }
-                    })
-                }
-
-                setSuccess(tx('inventoryManagement.stockAdjusted', 'Stock updated'))
-                invalidatePosRuntimeCache({ reason: 'stock-adjusted' })
-                await fetchVariants()
-                setTimeout(() => setSuccess(''), 3000)
-            } catch (err) {
-                console.error('Failed to update stock', err)
-                setError(err.response?.data?.message || tx('inventoryManagement.failedToAdjust', 'Failed to adjust stock'))
-            } finally {
-                setApplyingStock(false)
-            }
-        }
     }
 
-    const saveMatrixChanges = async () => {
+    const prepareProductAuthoringDraft = async () => {
         setError('')
+        lastErrorRef.current = ''
 
         const validationError = validateMatrixRows(matrixRows)
         if (validationError) {
+            lastErrorRef.current = validationError
             setError(validationError)
             return false
         }
@@ -1463,78 +1169,48 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             }
         }
 
+        return variantDraftSnapshot
+    }
+
+    const saveMatrixChanges = async () => {
+        const draft = await prepareProductAuthoringDraft()
+        if (!draft) {
+            return false
+        }
+
+        if (typeof onSaveVariantDraft !== 'function') {
+            const message = tx('variants.productSaveUnavailable', 'Product save is unavailable for this variant draft.')
+            lastErrorRef.current = message
+            setError(message)
+            return false
+        }
+
         try {
             setSavingMatrix(true)
-            const productResponse = parentProduct ? { data: parentProduct } : await api.get(`/products/${productId}`)
-            const product = productResponse.data
-            const authoringVariants = matrixRows.map((row, index) => toAuthoringVariant({
-                ...row,
-                isDefault: (defaultKey || matrixRows[0]?.key) === row.key
-            }, index))
-            const productData = buildProductAuthoringPayload(product, authoringVariants)
-            const rowVersion = product.rowVersion || product.RowVersion || null
-            const requestOptions = {
-                headers: {
-                    'Idempotency-Key': createVariantAuthoringIdempotencyKey(productId)
-                }
+
+            if (import.meta.env.DEV) {
+                console.info('[ProductVariantsTab] Matrix draft handoff starting', {
+                    productId,
+                    variantCount: draft.authoringVariants.length
+                })
             }
 
-            if (rowVersion) {
-                requestOptions.headers['If-Match'] = `"${rowVersion}"`
+            const savedProduct = await onSaveVariantDraft(draft)
+            if (import.meta.env.DEV) {
+                console.info('[ProductVariantsTab] Matrix draft handoff saved', {
+                    productId
+                })
             }
 
-            const savedProductResponse = await api.put(`/products/${productId}`, productData, requestOptions)
-            setParentProduct(savedProductResponse.data || product)
-
-            const inventoryRows = matrixRows.filter(row => Object.prototype.hasOwnProperty.call(rowDrafts[row.key] || {}, 'inventory'))
-            if (selectedWarehouseId && inventoryRows.length > 0) {
-                const latestVariantsResponse = await api.get(`/products/${productId}/variants`)
-                const latestByKey = new Map(
-                    (latestVariantsResponse.data || [])
-                        .map(normalizeVariantForMatrix)
-                        .map(variant => [getCombinationKeyFromVariant(variant), variant])
-                )
-
-                for (const row of inventoryRows) {
-                    const quantity = parseFloat(row.inventory)
-                    if (Number.isNaN(quantity) || quantity < 0) {
-                        continue
-                    }
-
-                    const latestVariant = row.id
-                        ? (latestVariantsResponse.data || []).find(variant => variant.id === row.id)
-                        : latestByKey.get(row.key)
-
-                    if (!latestVariant?.id) {
-                        continue
-                    }
-
-                    await api.put(`/products/${productId}/variants/${latestVariant.id}/stock/${selectedWarehouseId}`, {
-                        quantity,
-                        reason: 'Variant authoring inventory update'
-                    }, {
-                        headers: {
-                            'Idempotency-Key': createVariantAuthoringIdempotencyKey(productId, `stock:${latestVariant.id}`)
-                        }
-                    })
-                }
-            }
-
-            setSuccess(tx('variants.variantMatrixSaved', 'Variant matrix saved successfully'))
-            invalidatePosRuntimeCache({ reason: 'product-updated' })
             await fetchVariants()
-            setTimeout(() => setSuccess(''), 3000)
-            return true
+            return savedProduct
         } catch (err) {
-            console.error('Failed to save variant matrix', err)
-            setError(
-                err.response?.status === 401
-                    ? 'Your session expired or this account is not allowed to manage variants. Please sign in again.'
-                    :
-                err.response?.data?.message
-                || err.response?.data?.error
-                || tx('variants.failedToSave', 'Failed to save variant matrix')
-            )
+            console.error('Failed to hand off variant matrix draft', err)
+            const message = err.response?.status === 401
+                ? 'Your session expired or this account is not allowed to manage variants. Please sign in again.'
+                : (err.message || extractApiErrorMessage(err, tx('variants.failedToSave', 'Failed to save variant matrix')))
+            lastErrorRef.current = message
+            setError(message)
             return false
         } finally {
             setSavingMatrix(false)
@@ -1549,16 +1225,17 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
         hasPendingChanges() {
             return isMatrixMode && hasUnsavedChanges
         },
-        async savePendingChanges() {
-            if (!isMatrixMode || !hasUnsavedChanges) {
-                return true
+        getLastError() {
+            return lastErrorRef.current || error
+        },
+        async prepareProductAuthoringDraft() {
+            if (!isMatrixMode) {
+                return variantDraftSnapshot
             }
 
-            return await saveMatrixChanges()
+            return await prepareProductAuthoringDraft()
         }
-    }), [hasUnsavedChanges, isMatrixMode, saveMatrixChanges])
-
-    const hasDraftSelection = matrixRows.some(row => selectedKeys.has(row.key) && !row.id)
+    }), [error, isMatrixMode, variantDraftSnapshot])
 
     if (!productId) {
         return (
@@ -1581,9 +1258,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
             <div>
                 <h3 className="text-lg font-semibold">{tx('variants.productVariants', 'Product Variants')}</h3>
                 <p className="text-sm text-gray-500">
-                    {isMatrixMode
-                        ? tx('variants.matrixDescription', 'Build option groups, generate combinations, and keep variant data aligned with the existing API.')
-                        : tx('variants.manualDescription', 'Manage simple products with the legacy single-variant workflow.')}
+                    {tx('variants.matrixDescription', 'Build option groups, generate combinations, and keep variant data aligned with the existing API.')}
                 </p>
             </div>
 
@@ -1592,13 +1267,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                     {error}
                 </div>
             )}
-            {success && (
-                <div className="p-3 bg-green-100 border border-green-400 text-green-700 rounded">
-                    {success}
-                </div>
-            )}
-
-            {isMatrixMode ? (
+            {(
                 <>
                     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                         <div className="mb-3">
@@ -1825,7 +1494,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                                     ))}
                                     {rowValidationSummary.summary.duplicateSku > 0 && <div className="mt-1">{tx('variants.duplicateSku', 'Duplicate SKU values are not allowed.')}</div>}
                                     {rowValidationSummary.summary.duplicateBarcode > 0 && <div className="mt-1">{tx('variants.duplicateBarcode', 'Duplicate barcode values are not allowed.')}</div>}
-                                    {rowValidationSummary.summary.negativeInventory > 0 && <div className="mt-1">{tx('variants.invalidStockQuantity', 'Inventory cannot be negative.')}</div>}
                                     {rowValidationSummary.summary.negativeWeight > 0 && <div className="mt-1">{tx('variants.invalidWeight', 'Weight cannot be negative.')}</div>}
                                 </div>
                             )}
@@ -1843,8 +1511,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                                                     ? tx('variants.legacyRowVisibleSingle', 'One legacy variant is visible for cleanup. It does not match the current option groups and may not appear correctly on the storefront.')
                                                     : tx('variants.legacyRowVisibleMultiple', 'Legacy variants are visible for cleanup. They do not match the current option groups and may not appear correctly on the storefront.'))
                                                 : (legacyRows.length === 1
-                                                    ? tx('variants.legacyRowHiddenSingle', 'One legacy variant is hidden to keep this matrix clean. Show it only if you want to edit or delete it.')
-                                                    : tx('variants.legacyRowHiddenMultiple', 'Legacy variants are hidden to keep this matrix clean. Show them only if you want to edit or delete them.'))}
+                                                    ? tx('variants.legacyRowHiddenSingle', 'One legacy variant is hidden to keep this matrix clean. Show it only if you want to review it before saving cleanup changes.')
+                                                    : tx('variants.legacyRowHiddenMultiple', 'Legacy variants are hidden to keep this matrix clean. Show them only if you want to review them before saving cleanup changes.'))}
                                         </p>
                                         <button
                                             type="button"
@@ -1868,23 +1536,20 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                                     onToggleSelectAll={handleToggleSelectAll}
                                     onRowChange={handleRowChange}
                                     onSetDefault={setDefaultKey}
-                                    onEditFallback={handleEditVariant}
-                                    onDeleteFallback={handleDeleteVariant}
-                                    showFallbackActions={legacyRows.length > 0}
                                     rowIssues={rowValidationSummary.issues}
                                 />
                             )}
 
                             {visibleMatrixRows.length === 0 && legacyRows.length > 0 && !showLegacyRows && (
                                 <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 px-4 py-6 text-center text-sm text-gray-500">
-                                    {tx('variants.allLegacyRowsHidden', 'Only legacy variants exist right now. Use "Show legacy variants" if you want to review or delete them.')}
+                                    {tx('variants.allLegacyRowsHidden', 'Only legacy variants exist right now. Use "Show legacy variants" if you want to review them before saving cleanup changes.')}
                                 </div>
                             )}
                         </>
                     ) : (
                         <div className="text-center py-12 bg-gray-50 rounded-lg">
                             <p className="text-gray-500 mb-4">
-                                {tx('variants.noVariants', 'No variants yet. Start by adding option groups or use the fallback modal.')}
+                                {tx('variants.noVariants', 'No variants yet. Start by adding option groups or a variant template.')}
                             </p>
                         </div>
                     )}
@@ -1894,9 +1559,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                         selectedCount={selectedKeys.size}
                         onApply={handleApplyBulkAction}
                         generationBlocked={generationBlocked}
-                        warehouses={warehouses}
-                        selectedWarehouseId={selectedWarehouseId}
-                        onWarehouseChange={setSelectedWarehouseId}
                         skuBuilder={skuBuilder}
                     />
 
@@ -1923,344 +1585,6 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({ productId, f
                         </div>
                     )}
                 </>
-            ) : (
-                <>
-                    {variants.length > 0 ? (
-                        <div className="space-y-3">
-                            {variants.map((variant) => (
-                                <div
-                                    key={variant.id}
-                                    className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm"
-                                >
-                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                        <div className="space-y-3">
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <h4 className="text-base font-semibold text-gray-900">
-                                                    {getRowName(variant.attributes, variant.sku || variant.barcode || (t('variants.defaultVariant') || 'Default Variant'))}
-                                                </h4>
-                                                {variant.isDefault && (
-                                                    <span className="rounded-full bg-primary-50 px-3 py-1 text-xs font-semibold text-primary-700">
-                                                        {t('variants.default') || 'Default'}
-                                                    </span>
-                                                )}
-                                                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${variant.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
-                                                    {variant.isActive ? (t('common.active') || 'Active') : (t('common.inactive') || 'Inactive')}
-                                                </span>
-                                                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${variant.totalStock > 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                                    {variant.totalStock > 0
-                                                        ? `${t('variants.inStock') || 'In Stock'} (${variant.totalStock})`
-                                                        : (t('variants.outOfStock') || 'Out of Stock')}
-                                                </span>
-                                            </div>
-
-                                            {variant.attributes?.length > 0 && (
-                                                <p className="text-sm text-gray-600">
-                                                    {variant.attributes.map(attr => `${attr.name}: ${attr.value}`).join(', ')}
-                                                </p>
-                                            )}
-
-                                            <div className="grid gap-3 text-sm text-gray-600 sm:grid-cols-2 xl:grid-cols-5">
-                                                <div>
-                                                    <span className="font-medium text-gray-900">{t('variants.sku') || 'SKU'}:</span> {variant.sku || '-'}
-                                                </div>
-                                                <div>
-                                                    <span className="font-medium text-gray-900">{t('variants.barcode') || 'Barcode'}:</span> {variant.barcode || '-'}
-                                                </div>
-                                                <div>
-                                                    <span className="font-medium text-gray-900">{t('variants.price') || 'POS Price'}:</span> {variant.price}
-                                                </div>
-                                                <div>
-                                                    <span className="font-medium text-gray-900">{t('variants.onlinePrice') || 'Online Price'}:</span> {variant.onlinePrice ?? '-'}
-                                                </div>
-                                                <div>
-                                                    <span className="font-medium text-gray-900">{t('variants.costPrice') || 'Cost Price'}:</span> {variant.costPrice}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="flex gap-3">
-                                            <button
-                                                type="button"
-                                                onClick={() => handleEditVariant(variant)}
-                                                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-50"
-                                            >
-                                                {t('common.edit') || 'Edit'}
-                                            </button>
-                                            {!variant.isDefault && (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDeleteVariant(variant)}
-                                                    className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
-                                                >
-                                                    {t('common.delete') || 'Delete'}
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <div className="text-center py-12 bg-gray-50 rounded-lg">
-                            <p className="text-gray-500">
-                                {tx('variants.noVariants', 'No variants yet. Use the legacy workflow to add one.')}
-                            </p>
-                        </div>
-                    )}
-
-                    <div className="flex justify-start">
-                        <button
-                            type="button"
-                            onClick={handleAddVariant}
-                            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-gray-50"
-                        >
-                            + {t('variants.addVariant') || 'Add Variant'}
-                        </button>
-                    </div>
-                </>
-            )}
-
-            {showModal && !isMatrixMode && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto m-4">
-                        <div className="p-6">
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-lg font-semibold">
-                                    {editingVariant
-                                        ? (t('variants.editVariant') || 'Edit Variant')
-                                        : (t('variants.addVariant') || 'Add Variant')}
-                                </h3>
-                                <button
-                                    type="button"
-                                    onClick={() => setShowModal(false)}
-                                    className="text-gray-400 hover:text-gray-600"
-                                >
-                                    x
-                                </button>
-                            </div>
-
-                            <div className="space-y-6">
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="label">{t('variants.sku') || 'SKU'}</label>
-                                        <input
-                                            type="text"
-                                            value={formData.sku}
-                                            onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="label">{t('variants.barcode') || 'Barcode'}</label>
-                                        <input
-                                            type="text"
-                                            value={formData.barcode}
-                                            onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="grid grid-cols-3 gap-4">
-                                    <div>
-                                        <label className="label">{t('variants.price') || 'POS Price'} *</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={formData.price}
-                                            onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="label">{t('variants.onlinePrice') || 'Online Price'}</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={formData.onlinePrice}
-                                            onChange={(e) => setFormData({ ...formData, onlinePrice: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="label">{t('variants.costPrice') || 'Cost Price'}</label>
-                                        <input
-                                            type="number"
-                                            step="0.01"
-                                            value={formData.costPrice}
-                                            onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
-                                            className="input"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <h4 className="font-medium mb-3">{t('variants.attributes') || 'Attributes'}</h4>
-                                    {formData.attributes.length > 0 && (
-                                        <div className="mb-4 space-y-2">
-                                            {formData.attributes.map((attr, index) => (
-                                                <div key={`${attr.name}-${attr.value}-${index}`} className="flex items-center gap-2 bg-gray-50 p-2 rounded">
-                                                    <span className="font-medium text-sm">{attr.name}:</span>
-                                                    <span className="text-sm text-gray-600">{attr.value}</span>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => handleRemoveAttribute(index)}
-                                                        className="ml-auto text-red-500 hover:text-red-700"
-                                                    >
-                                                        x
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            placeholder={t('variants.attributeName') || 'Name'}
-                                            value={newAttribute.name}
-                                            onChange={(e) => setNewAttribute({ ...newAttribute, name: e.target.value })}
-                                            className="input flex-1"
-                                        />
-                                        <input
-                                            type="text"
-                                            placeholder={t('variants.attributeValue') || 'Value'}
-                                            value={newAttribute.value}
-                                            onChange={(e) => setNewAttribute({ ...newAttribute, value: e.target.value })}
-                                            className="input flex-1"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={handleAddAttribute}
-                                            className="btn-primary px-4"
-                                            disabled={!newAttribute.name || !newAttribute.value}
-                                        >
-                                            {t('common.add') || 'Add'}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-3">
-                                    <label className="label">{tx('variants.variantImage', 'Variant Image')}</label>
-                                    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                            <div>
-                                                <p className="text-sm font-medium text-gray-900">
-                                                    {formData.mediaId
-                                                        ? tx('variants.galleryImageSelected', 'Gallery image selected')
-                                                        : formData.imageUrl
-                                                            ? tx('variants.legacyImagePreserved', 'Legacy image will be preserved')
-                                                            : tx('variants.noImage', 'No variant image selected')}
-                                                </p>
-                                                <p className="mt-1 text-xs text-gray-500">
-                                                    {tx('variants.variantImageHelp', 'Choose one image from the product media gallery.')}
-                                                </p>
-                                            </div>
-
-                                            <div className="flex gap-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => setShowManualMediaPicker(true)}
-                                                    className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 transition hover:border-gray-300 hover:bg-white"
-                                                >
-                                                    {formData.mediaId
-                                                        ? tx('variants.changeImage', 'Change Image')
-                                                        : tx('variants.selectImage', 'Select Image')}
-                                                </button>
-                                                {(formData.mediaId || formData.imageUrl) && (
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setFormData((prev) => ({ ...prev, mediaId: null, imageUrl: '' }))}
-                                                        className="rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-50"
-                                                    >
-                                                        {tx('common.clear', 'Clear')}
-                                                    </button>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="flex items-center gap-2">
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.isActive}
-                                            onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                                            className="rounded"
-                                        />
-                                        <span className="text-sm font-medium text-gray-700">
-                                            {t('variants.variantActive') || 'Variant is active'}
-                                        </span>
-                                    </label>
-                                </div>
-
-                                <div className="flex justify-end gap-3 pt-4 border-t">
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowModal(false)}
-                                        className="btn-secondary"
-                                    >
-                                        {t('common.cancel') || 'Cancel'}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={handleSaveVariant}
-                                        className="btn-primary"
-                                    >
-                                        {editingVariant
-                                            ? (t('common.save') || 'Save')
-                                            : (t('variants.createVariant') || 'Create Variant')}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            <VariantMediaPicker
-                open={showManualMediaPicker}
-                productId={productId}
-                selectedMediaId={formData.mediaId ?? null}
-                onClose={() => setShowManualMediaPicker(false)}
-                onSelect={handleSelectManualMedia}
-            />
-
-            {confirmDelete && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md m-4 p-6">
-                        <h3 className="text-lg font-semibold mb-4">
-                            {t('variants.confirmDelete') || 'Confirm Delete'}
-                        </h3>
-                        <p className="text-gray-600 mb-4">
-                            {t('variants.deleteWarning') || 'Are you sure you want to delete this variant?'}
-                        </p>
-                        {confirmDelete.totalStock > 0 && (
-                            <div className="p-3 bg-yellow-50 border border-yellow-200 rounded mb-4">
-                                <p className="text-yellow-800 text-sm">
-                                    {t('variants.hasStock') || 'This variant has'} {confirmDelete.totalStock} {t('variants.unitsInStock') || 'units in stock.'}
-                                </p>
-                            </div>
-                        )}
-                        <div className="flex justify-end gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setConfirmDelete(null)}
-                                className="btn-secondary"
-                            >
-                                {t('common.cancel') || 'Cancel'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={confirmDeleteVariant}
-                                className="btn-danger"
-                            >
-                                {t('common.delete') || 'Delete'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
             )}
         </div>
     )

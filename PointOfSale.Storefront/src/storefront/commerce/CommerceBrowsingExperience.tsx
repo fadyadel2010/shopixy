@@ -181,6 +181,23 @@ export const commercePageStyles: Record<ThemeComponentTheme, {
         activeFilters: 'mx-auto mb-7 max-w-5xl border border-muted/20 bg-background/95 p-4',
         pagination: 'mt-14 border-t border-muted/25 pt-8',
     },
+    cosmetics: {
+        page: 'bg-white',
+        container: 'mx-auto w-full px-0 py-0',
+        breadcrumb: 'mx-auto mb-5 max-w-7xl px-4 pt-6 text-sm',
+        header: 'mx-auto mb-7 flex max-w-7xl items-center justify-between px-3 pt-3',
+        eyebrow: 'text-[11px] font-medium uppercase tracking-[0.18em] text-primary',
+        title: 'text-2xl font-bold uppercase leading-tight text-text md:text-4xl',
+        subtitle: 'mt-2 max-w-2xl text-sm leading-6 text-muted',
+        controls: 'mx-auto mb-3 max-w-7xl border-y border-black/10 bg-background px-3 py-3',
+        controlPanel: 'flex items-center gap-3 flex-wrap justify-end',
+        categoryNav: 'mx-auto mb-6 max-w-7xl border-y border-primary/20 px-3 py-4',
+        main: 'mx-auto flex max-w-7xl gap-0 px-0',
+        sidebar: 'hidden lg:block lg:px-3',
+        resultPanel: 'min-w-0 flex-1',
+        activeFilters: 'mx-3 mb-5 border-y border-primary/20 bg-background py-3',
+        pagination: 'mx-3 mt-10 border-t border-black/10 pt-8',
+    },
     seven: {
         page: 'bg-[linear-gradient(180deg,rgba(157,120,119,0.04)_0%,transparent_22rem)]',
         container: 'container mx-auto px-4 py-6 md:py-12',
@@ -227,6 +244,7 @@ export const commerceGridStyles: Record<ThemeComponentTheme, string> = {
     electronics: 'grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4',
     alizon: 'grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4',
     sharp: 'grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-4',
+    cosmetics: 'grid grid-cols-2 gap-0 md:grid-cols-3 xl:grid-cols-4',
     seven: 'grid grid-cols-1 gap-x-6 gap-y-12 sm:grid-cols-2 xl:grid-cols-3',
     default: 'grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 md:gap-6',
 };
@@ -244,6 +262,10 @@ export function getCommerceGridItemClass(themeId: string | null | undefined, ind
 
     if (theme === 'phoenix' && index === 0) {
         return 'sm:col-span-2';
+    }
+
+    if (theme === 'cosmetics') {
+        return 'min-h-full';
     }
 
     if (theme === 'electronics' || theme === 'hype') {
@@ -276,6 +298,7 @@ export function CommercePageHeader({
         electronics: 'Product matrix',
         alizon: 'Superstore browse',
         sharp: 'Jewelry browse',
+        cosmetics: 'Beauty edit',
         seven: 'Collection edit',
         default: 'Browse',
     }[theme];
@@ -289,6 +312,7 @@ export function CommercePageHeader({
         electronics: 'Availability, sorting, and facets are kept prominent for comparison-led decisions.',
         alizon: 'A general-merchandise browsing path with product shelves organized by category.',
         sharp: 'A jewelry browsing path with product carousels organized by collection.',
+        cosmetics: 'A beauty browsing path with square product cards, compact pricing, and editorial collection rhythm.',
         seven: 'An editorial path through the current collection.',
         default: 'Browse available products.',
     }[theme];
@@ -396,6 +420,19 @@ export function CommerceMerchandisingBlock({
                     {topCategories.length > 0
                         ? `Explore ${topCategories.join(', ')} with ${inStockCount} available pieces.`
                         : `Explore ${inStockCount} available pieces selected from the current catalog.`}
+                </p>
+            </section>
+        );
+    }
+
+    if (theme === 'cosmetics') {
+        return (
+            <section className="mx-3 mb-8 border-y border-primary/20 bg-background py-5 text-center" aria-label="Beauty curation">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Beauty curation</p>
+                <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-muted">
+                    {topCategories.length > 0
+                        ? `Explore ${topCategories.join(', ')} with ${inStockCount} available beauty essentials.`
+                        : `Explore ${inStockCount} available beauty essentials selected from the current catalog.`}
                 </p>
             </section>
         );
@@ -592,6 +629,20 @@ export const searchPageStyles: Record<ThemeComponentTheme, {
         meta: 'mb-5 text-center text-sm text-muted',
         list: 'border border-muted/25 bg-background shadow-[0_4px_16px_rgba(1,52,35,0.04)] divide-y divide-muted/10',
         pagerButton: 'border border-muted/25 text-text hover:border-secondary',
+        disabledPagerButton: 'cursor-not-allowed border border-muted/10 text-muted',
+    },
+    cosmetics: {
+        page: 'flex-1 bg-white px-0 py-8',
+        header: 'mx-auto mb-8 max-w-4xl border-y border-primary/20 px-4 py-8 text-center',
+        eyebrow: 'mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary',
+        title: 'mb-5 text-3xl font-bold uppercase leading-none text-text md:text-5xl',
+        resultWrap: 'mx-auto max-w-5xl px-4',
+        tabs: 'mb-7 flex justify-center gap-2 overflow-x-auto border-y border-primary/20 py-3',
+        activeTab: 'bg-primary text-white',
+        inactiveTab: 'border border-primary/20 text-primary hover:bg-primary hover:text-white',
+        meta: 'mb-5 text-center text-sm text-muted',
+        list: 'border-y border-primary/20 bg-background divide-y divide-primary/10',
+        pagerButton: 'border border-primary/25 text-primary hover:bg-primary hover:text-white',
         disabledPagerButton: 'cursor-not-allowed border border-muted/10 text-muted',
     },
     seven: {

@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -44,13 +46,23 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IStorefrontProductProjectionMutationBoundary _mutationBoundary;
+    private readonly ILogger<ProductSqlAuthorityProjectionWriter> _logger;
 
     public ProductSqlAuthorityProjectionWriter(
         ApplicationDbContext dbContext,
         IStorefrontProductProjectionMutationBoundary mutationBoundary)
+        : this(dbContext, mutationBoundary, NullLogger<ProductSqlAuthorityProjectionWriter>.Instance)
+    {
+    }
+
+    public ProductSqlAuthorityProjectionWriter(
+        ApplicationDbContext dbContext,
+        IStorefrontProductProjectionMutationBoundary mutationBoundary,
+        ILogger<ProductSqlAuthorityProjectionWriter> logger)
     {
         _dbContext = dbContext;
         _mutationBoundary = mutationBoundary;
+        _logger = logger;
     }
 
     public async Task<ProductSqlAuthorityProjectionWriteResult> ApplyAsync(
@@ -86,54 +98,141 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
             projectionSeed.CreatedAtUtc = request.EventOccurredAtUtc;
         }
 
-        var sqlProjection = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-            _dbContext,
-            projectionSeed,
-            request.TenantId,
-            cancellationToken);
-
-        if (sqlProjection == null || !sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
+        ProductDocument? sqlProjection = null;
+        try
         {
-            var tombstone = await _mutationBoundary.ApplyAsync(
+            sqlProjection = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                _dbContext,
+                projectionSeed,
+                request.TenantId,
+                cancellationToken);
+
+            LogProjectionWriterDecision(
+                request,
+                sqlProjection,
+                admissionDecision: "PendingMutationBoundary",
+                mutationFenceDecision: "Pending");
+
+            if (sqlProjection == null || !sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
+            {
+                var tombstone = await _mutationBoundary.ApplyAsync(
+                    new StorefrontProductProjectionMutation(
+                        StorefrontProductProjectionMutationKind.ReviewedVisibilityTombstone,
+                        request.TenantId,
+                        request.ProductId,
+                        Projection: null,
+                        request.EventOccurredAtUtc,
+                        request.EventVersion,
+                        request.EventId,
+                        ReviewReason: "SQL authority no longer proves storefront product visibility."),
+                    cancellationToken);
+
+                var disposition = tombstone.Applied
+                    ? ProductSqlAuthorityProjectionWriteDisposition.Tombstoned
+                    : ProductSqlAuthorityProjectionWriteDisposition.SkippedStaleTombstone;
+                LogProjectionWriterOutcome(
+                    request,
+                    disposition,
+                    tombstone.Applied ? "TOMBSTONE" : "SKIPPED",
+                    tombstone.Applied ? "Applied" : "MutationFenceRejected");
+
+                return new ProductSqlAuthorityProjectionWriteResult(disposition);
+            }
+
+            sqlProjection.LastEventId = request.EventId;
+            sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc;
+            sqlProjection.LastEventVersion = request.EventVersion;
+            sqlProjection.ReadModelName = ReadModelEvolutionRegistry.StorefrontProduct;
+            sqlProjection.ReadModelSchemaVersion = ProductDocument.CurrentReadModelSchemaVersion;
+            sqlProjection.ProjectionVersion = ProductDocument.CurrentProjectionVersion;
+
+            var upsert = await _mutationBoundary.ApplyAsync(
                 new StorefrontProductProjectionMutation(
-                    StorefrontProductProjectionMutationKind.ReviewedVisibilityTombstone,
+                    StorefrontProductProjectionMutationKind.ReviewedFullDocumentUpsert,
                     request.TenantId,
                     request.ProductId,
-                    Projection: null,
+                    sqlProjection,
                     request.EventOccurredAtUtc,
                     request.EventVersion,
                     request.EventId,
-                    ReviewReason: "SQL authority no longer proves storefront product visibility."),
+                    ReviewReason: "SQL authority recomposed complete storefront ProductDocument."),
                 cancellationToken);
 
-            return new ProductSqlAuthorityProjectionWriteResult(
-                tombstone.Applied
-                    ? ProductSqlAuthorityProjectionWriteDisposition.Tombstoned
-                    : ProductSqlAuthorityProjectionWriteDisposition.SkippedStaleTombstone);
+            var upsertDisposition = upsert.Applied
+                ? ProductSqlAuthorityProjectionWriteDisposition.Upserted
+                : ProductSqlAuthorityProjectionWriteDisposition.SkippedStaleUpsert;
+            LogProjectionWriterOutcome(
+                request,
+                upsertDisposition,
+                upsert.Applied ? "UPSERT" : "IGNORED",
+                upsert.Applied ? "Applied" : "MutationFenceRejected");
+
+            return new ProductSqlAuthorityProjectionWriteResult(upsertDisposition);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=ProjectionWriter | Outcome=EXCEPTION | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | EventVersion={EventVersion} | OverlayResult={OverlayResult} | AdmissionDecision={AdmissionDecision} | VisibilityDecision={VisibilityDecision} | MutationFenceDecision={MutationFenceDecision} | Timestamp={Timestamp:O}",
+                request.ProductId,
+                request.TenantId,
+                request.EventId,
+                request.EventVersion,
+                sqlProjection is null ? "Null" : "Projected",
+                "Exception",
+                ResolveVisibilityDecision(sqlProjection),
+                "Exception",
+                DateTime.UtcNow);
+            throw;
+        }
+    }
+
+    private void LogProjectionWriterDecision(
+        ProductSqlAuthorityProjectionWriteRequest request,
+        ProductDocument? sqlProjection,
+        string admissionDecision,
+        string mutationFenceDecision)
+    {
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=ProjectionWriter | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | EventVersion={EventVersion} | OverlayResult={OverlayResult} | AdmissionDecision={AdmissionDecision} | VisibilityDecision={VisibilityDecision} | MutationFenceDecision={MutationFenceDecision} | Timestamp={Timestamp:O}",
+            request.ProductId,
+            request.TenantId,
+            request.EventId,
+            request.EventVersion,
+            sqlProjection is null ? "Null" : "Projected",
+            admissionDecision,
+            ResolveVisibilityDecision(sqlProjection),
+            mutationFenceDecision,
+            DateTime.UtcNow);
+    }
+
+    private void LogProjectionWriterOutcome(
+        ProductSqlAuthorityProjectionWriteRequest request,
+        ProductSqlAuthorityProjectionWriteDisposition disposition,
+        string outcome,
+        string mutationFenceDecision)
+    {
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=ProjectionWriter | Outcome={Outcome} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | EventVersion={EventVersion} | Disposition={Disposition} | MutationFenceDecision={MutationFenceDecision} | Timestamp={Timestamp:O}",
+            outcome,
+            request.ProductId,
+            request.TenantId,
+            request.EventId,
+            request.EventVersion,
+            disposition,
+            mutationFenceDecision,
+            DateTime.UtcNow);
+    }
+
+    private static string ResolveVisibilityDecision(ProductDocument? sqlProjection)
+    {
+        if (sqlProjection is null)
+        {
+            return "RejectedBySqlOverlay";
         }
 
-        sqlProjection.LastEventId = request.EventId;
-        sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc;
-        sqlProjection.LastEventVersion = request.EventVersion;
-        sqlProjection.ReadModelName = ReadModelEvolutionRegistry.StorefrontProduct;
-        sqlProjection.ReadModelSchemaVersion = ProductDocument.CurrentReadModelSchemaVersion;
-        sqlProjection.ProjectionVersion = ProductDocument.CurrentProjectionVersion;
-
-        var upsert = await _mutationBoundary.ApplyAsync(
-            new StorefrontProductProjectionMutation(
-                StorefrontProductProjectionMutationKind.ReviewedFullDocumentUpsert,
-                request.TenantId,
-                request.ProductId,
-                sqlProjection,
-                request.EventOccurredAtUtc,
-                request.EventVersion,
-                request.EventId,
-                ReviewReason: "SQL authority recomposed complete storefront ProductDocument."),
-            cancellationToken);
-
-        return new ProductSqlAuthorityProjectionWriteResult(
-            upsert.Applied
-                ? ProductSqlAuthorityProjectionWriteDisposition.Upserted
-                : ProductSqlAuthorityProjectionWriteDisposition.SkippedStaleUpsert);
+        return sqlProjection is { IsActive: true, IsOnlineVisible: true }
+            ? "Visible"
+            : "NotVisible";
     }
 }

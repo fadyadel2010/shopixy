@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -167,10 +169,19 @@ public interface IProductReadRepository
 public class ProductReadRepository : IProductReadRepository
 {
     private readonly MongoDbContext _context;
+    private readonly ILogger<ProductReadRepository> _logger;
 
     public ProductReadRepository(MongoDbContext context)
+        : this(context, NullLogger<ProductReadRepository>.Instance)
+    {
+    }
+
+    public ProductReadRepository(
+        MongoDbContext context,
+        ILogger<ProductReadRepository> logger)
     {
         _context = context;
+        _logger = logger;
     }
 
     /// <inheritdoc />
@@ -199,8 +210,34 @@ public class ProductReadRepository : IProductReadRepository
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
+            _logger.LogWarning(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=Mongo | Outcome=SKIPPED | Collection={Collection} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | MatchedCount={MatchedCount} | ModifiedCount={ModifiedCount} | UpsertedId={UpsertedId} | DocumentVersion={DocumentVersion} | ProjectionMutationVersion={ProjectionMutationVersion} | Timestamp={Timestamp:O}",
+                _context.Products.CollectionNamespace.CollectionName,
+                document.ProductId,
+                document.TenantId,
+                document.LastEventId,
+                0,
+                0,
+                null,
+                document.ProjectionVersion,
+                document.LastEventVersion,
+                DateTime.UtcNow);
             return false;
         }
+
+        _logger.LogInformation(
+            "PROJECTION_EVENT_TRACE | Stage=Mongo | Outcome=WRITE | Collection={Collection} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | MatchedCount={MatchedCount} | ModifiedCount={ModifiedCount} | UpsertedId={UpsertedId} | DocumentVersion={DocumentVersion} | ProjectionMutationVersion={ProjectionMutationVersion} | Timestamp={Timestamp:O}",
+            _context.Products.CollectionNamespace.CollectionName,
+            document.ProductId,
+            document.TenantId,
+            document.LastEventId,
+            result.MatchedCount,
+            result.ModifiedCount,
+            result.UpsertedId,
+            document.ProjectionVersion,
+            document.LastEventVersion,
+            DateTime.UtcNow);
 
         // Return true if we modified or inserted a document
         return result.ModifiedCount > 0 || result.UpsertedId != null;
@@ -610,10 +647,36 @@ public class ProductReadRepository : IProductReadRepository
                 new UpdateOptions { IsUpsert = true },
                 cancellationToken);
 
+            _logger.LogInformation(
+                "PROJECTION_EVENT_TRACE | Stage=Mongo | Outcome=TOMBSTONE_WRITE | Collection={Collection} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | MatchedCount={MatchedCount} | ModifiedCount={ModifiedCount} | UpsertedId={UpsertedId} | DocumentVersion={DocumentVersion} | ProjectionMutationVersion={ProjectionMutationVersion} | Timestamp={Timestamp:O}",
+                _context.Products.CollectionNamespace.CollectionName,
+                productId,
+                tenantId,
+                eventId,
+                result.MatchedCount,
+                result.ModifiedCount,
+                result.UpsertedId,
+                ProductDocument.CurrentProjectionVersion,
+                eventVersion,
+                DateTime.UtcNow);
+
             return result.ModifiedCount > 0 || result.UpsertedId != null;
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
+            _logger.LogWarning(
+                ex,
+                "PROJECTION_EVENT_TRACE | Stage=Mongo | Outcome=SKIPPED | Collection={Collection} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | MatchedCount={MatchedCount} | ModifiedCount={ModifiedCount} | UpsertedId={UpsertedId} | DocumentVersion={DocumentVersion} | ProjectionMutationVersion={ProjectionMutationVersion} | Timestamp={Timestamp:O}",
+                _context.Products.CollectionNamespace.CollectionName,
+                productId,
+                tenantId,
+                eventId,
+                0,
+                0,
+                null,
+                ProductDocument.CurrentProjectionVersion,
+                eventVersion,
+                DateTime.UtcNow);
             return false;
         }
     }

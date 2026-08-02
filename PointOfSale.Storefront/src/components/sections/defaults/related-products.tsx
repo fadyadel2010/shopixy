@@ -38,9 +38,11 @@ const RelatedProducts: React.FC<RelatedProductsProps> = ({
                 <div className={profile.relatedShellClassName}>
                     <div className="mb-6 flex items-end justify-between gap-4">
                         <h2 className="text-2xl font-bold text-text">{title || profile.relatedTitle}</h2>
-                        <AffiliateLink href="/products" className="text-sm font-medium text-primary hover:underline">
-                            {t('common.viewAll')}
-                        </AffiliateLink>
+                        {model.viewAllHref ? (
+                            <AffiliateLink href={model.viewAllHref} className="text-sm font-medium text-primary hover:underline">
+                                {t('common.viewAll')}
+                            </AffiliateLink>
+                        ) : null}
                     </div>
 
                     {model.isLoading ? (

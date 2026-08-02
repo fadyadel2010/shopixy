@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import api from '../services/api'
 import { useTranslation } from 'react-i18next'
@@ -11,6 +11,8 @@ import SidebarPanel from './SidebarPanel'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 import { getProductTemplateOptions } from '@/storefront/products/ProductTemplateRegistry'
 import { useAuthStore } from '../store/authStore'
+import { useToast } from '../components/Toast'
+import { normalizeProductAuthoringVariants } from '../utils/productAuthoringVariants'
 
 const WorkspaceSection = forwardRef(function WorkspaceSection({ eyebrow, title, description, children, className = '', id, tabIndex }, ref) {
     return (
@@ -189,6 +191,52 @@ function toPositiveNumber(value) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
+function translateWithFallback(t, key, fallback) {
+    const value = t(key)
+    return value && value !== key ? value : fallback
+}
+
+function extractApiErrorMessage(error, fallback) {
+    const data = error?.response?.data
+    const nestedData = data?.data
+
+    if (Array.isArray(data?.errors)) {
+        const messages = data.errors
+            .map((item) => item?.message || item?.Message)
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    if (data?.errors && typeof data.errors === 'object') {
+        const messages = Object.values(data.errors)
+            .flatMap((value) => Array.isArray(value) ? value : [value])
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    if (Array.isArray(nestedData?.errors)) {
+        const messages = nestedData.errors
+            .map((item) => item?.message || item?.Message)
+            .filter(Boolean)
+
+        if (messages.length > 0) {
+            return messages.join(' ')
+        }
+    }
+
+    return nestedData?.message || data?.message || data?.error || fallback
+}
+
+function getProductRowVersion(product, fallback = null) {
+    return product?.rowVersion || product?.RowVersion || fallback
+}
+
 function createProductAuthoringIdempotencyKey(productId) {
     const randomPart = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
     return `product-authoring:${productId || 'create'}:${randomPart}`
@@ -204,6 +252,156 @@ function buildProductAuthoringRequestOptions(productId, rowVersion, idempotencyK
     }
 
     return { headers }
+}
+
+function buildProductUnitsPayloadFromDrafts(productUnits) {
+    return productUnits
+        .filter((unit) => unit.unitId)
+        .map((unit) => ({
+            productUnitId: unit.productUnitId,
+            unitId: unit.unitId,
+            conversionFactor: Number.parseFloat(unit.conversionFactor) || 0,
+            purchasePrice: unit.purchasePrice === '' ? null : Number.parseFloat(unit.purchasePrice) || 0,
+            sellingPrice: unit.sellingPrice === '' ? null : Number.parseFloat(unit.sellingPrice) || 0,
+            barcode: unit.barcode || null,
+            isDefault: unit.isDefault,
+            isBaseUnit: unit.isBaseUnit
+        }))
+}
+
+function buildProductAuthoringPayloadFromDraft({
+    formData,
+    productId,
+    hasVariants,
+    simpleProductData,
+    productUnits,
+    variantAuthoringSummary,
+    variantsOverride = null,
+    includeVariants = false
+}) {
+    const isVariantCreateMode = !productId && hasVariants
+    const variantSnapshot = Array.isArray(variantsOverride)
+        ? normalizeProductAuthoringVariants(variantsOverride)
+        : (hasVariants ? normalizeProductAuthoringVariants(variantAuthoringSummary) : [])
+
+    return {
+        ...formData,
+        taxRate: parseFloat(formData.taxRate) || 0,
+        images: null,
+        categoryId: formData.categoryId,
+        hasVariants,
+        sku: hasVariants ? null : simpleProductData.sku,
+        barcode: hasVariants ? null : simpleProductData.barcode,
+        weight: formData.weight ? parseFloat(formData.weight) : null,
+        length: formData.length ? parseFloat(formData.length) : null,
+        width: formData.width ? parseFloat(formData.width) : null,
+        height: formData.height ? parseFloat(formData.height) : null,
+        lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
+        publishStatus: isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus),
+        productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null,
+        productUnits: hasVariants ? null : buildProductUnitsPayloadFromDrafts(productUnits),
+        variants: hasVariants
+            ? (productId && !includeVariants ? null : variantSnapshot)
+            : []
+    }
+}
+
+const PRODUCT_AUTHORING_COMPARISON_IGNORED_FIELDS = new Set([
+    'RowVersion',
+    'rowVersion',
+    'expectedVersion',
+    'idempotency',
+    'idempotencyKey',
+    'localId',
+    'reactKey',
+    'key',
+    'sortOrder'
+])
+
+function normalizeProductAuthoringText(value) {
+    const normalized = `${value ?? ''}`.trim().replace(/\s+/g, ' ')
+    return normalized || null
+}
+
+function stableStringify(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableStringify).join(',')}]`
+    }
+
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`
+    }
+
+    return JSON.stringify(value)
+}
+
+function isEmptyCanonicalValue(value) {
+    return value == null
+        || (Array.isArray(value) && value.length === 0)
+        || (value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0)
+}
+
+function canonicalizeProductAuthoringValue(value, fieldName = '') {
+    if (value == null) {
+        return null
+    }
+
+    if (typeof value === 'string') {
+        return normalizeProductAuthoringText(value)
+    }
+
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? Number(value) : null
+    }
+
+    if (typeof value === 'boolean') {
+        return value
+    }
+
+    if (Array.isArray(value)) {
+        return value
+            .map((item) => canonicalizeProductAuthoringValue(item, fieldName))
+            .filter((item) => !isEmptyCanonicalValue(item))
+            .sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)))
+    }
+
+    if (typeof value === 'object') {
+        return Object.keys(value)
+            .sort()
+            .reduce((acc, key) => {
+                if (PRODUCT_AUTHORING_COMPARISON_IGNORED_FIELDS.has(key)) {
+                    return acc
+                }
+
+                const normalizedValue = canonicalizeProductAuthoringValue(value[key], key)
+                if (!isEmptyCanonicalValue(normalizedValue)) {
+                    acc[key] = normalizedValue
+                }
+
+                return acc
+            }, {})
+    }
+
+    return value
+}
+
+function createCanonicalProductAuthoringSnapshot(payload, previousSnapshot = null) {
+    const snapshot = canonicalizeProductAuthoringValue(payload)
+
+    if (payload?.hasVariants === true && payload?.variants == null && previousSnapshot?.variants !== undefined) {
+        snapshot.variants = previousSnapshot.variants
+    }
+
+    return snapshot
+}
+
+function hasSemanticProductAuthoringChanges(baselineSnapshot, currentPayload) {
+    if (!baselineSnapshot) {
+        return true
+    }
+
+    const currentSnapshot = createCanonicalProductAuthoringSnapshot(currentPayload, baselineSnapshot)
+    return stableStringify(baselineSnapshot) !== stableStringify(currentSnapshot)
 }
 
 function buildGeneratedDescription(generatedProduct) {
@@ -251,6 +449,7 @@ const ProductForm = forwardRef(function ProductForm({
     const { t } = useTranslation()
     const { confirm } = useConfirmDialog()
     const { formatCurrency } = useSettings()
+    const { showError, showSuccess } = useToast()
     const userRole = useAuthStore((state) => state.user?.role)
     const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
     const [loading, setLoading] = useState(false)
@@ -258,6 +457,8 @@ const ProductForm = forwardRef(function ProductForm({
     const variantsSectionRef = useRef(null)
     const formDataRef = useRef(null)
     const pendingSaveRef = useRef(null)
+    const lastProductSaveErrorRef = useRef('')
+    const productAuthoringBaselineRef = useRef(null)
     const [categories, setCategories] = useState([])
     const [units, setUnits] = useState([])
     const [generatingBarcode, setGeneratingBarcode] = useState(false)
@@ -266,7 +467,7 @@ const ProductForm = forwardRef(function ProductForm({
     const [hasVariants, setHasVariants] = useState(false)
     const [defaultVariant, setDefaultVariant] = useState(null)
     const [productUnits, setProductUnits] = useState([])
-    const [productVariantsSnapshot, setProductVariantsSnapshot] = useState([])
+    const [variantAuthoringSummary, setVariantAuthoringSummary] = useState([])
     const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
     const [simpleProductData, setSimpleProductData] = useState({
         sku: '',
@@ -389,6 +590,7 @@ const ProductForm = forwardRef(function ProductForm({
             const currentFormData = formDataRef.current
 
             if (!currentFormData || !generatedProduct) {
+                showError('Unable to apply the generated product data to the form.')
                 return { appliedFieldCount: 0, skippedFieldCount: 0 }
             }
 
@@ -440,9 +642,19 @@ const ProductForm = forwardRef(function ProductForm({
             formDataRef.current = nextFormData
             setFormData(nextFormData)
 
+            if (counters.appliedFieldCount > 0) {
+                showSuccess(
+                    counters.skippedFieldCount > 0
+                        ? 'AI content applied to empty fields. Existing values were left unchanged.'
+                        : 'AI content applied to the product form.'
+                )
+            } else {
+                showError('All matching product fields already have values, so nothing was changed.')
+            }
+
             return counters
         }
-    }), [productId, hasVariants, confirm, t])
+    }), [productId, hasVariants, confirm, showError, showSuccess, t])
 
     const fetchCategories = async () => {
         try {
@@ -479,12 +691,8 @@ const ProductForm = forwardRef(function ProductForm({
             const product = response.data
             const variantCount = Array.isArray(product.variants) ? product.variants.length : 0
             const derivedHasVariants = !!product.hasVariants || variantCount > 1
-
-            setAcceptedRowVersion(product.rowVersion || product.RowVersion || null)
-            setHasVariants(derivedHasVariants)
-            setProductUnits(normalizeProductUnitDrafts(product.units))
-            setProductVariantsSnapshot(Array.isArray(product.variants) ? product.variants : [])
-            setFormData({
+            const loadedProductUnits = normalizeProductUnitDrafts(product.units)
+            const loadedFormData = {
                 name: product.name,
                 nameAr: product.nameAr || '',
                 categoryId: product.categoryId || '',
@@ -519,11 +727,32 @@ const ProductForm = forwardRef(function ProductForm({
                 faqs: parseStructuredFaqValue(product.faqJson ?? product.faqs),
                 aiGenerated: Boolean(product.aiGenerated),
                 aiMetadata: parseStructuredAiMetadata(product.aiMetadataJson ?? product.aiMetadata)
-            })
+            }
+            let loadedHasVariants = derivedHasVariants
+            let loadedSimpleProductData = { sku: '', barcode: '' }
+            let loadedVariants = product.variants
+
+            setAcceptedRowVersion(product.rowVersion || product.RowVersion || null)
+            setHasVariants(derivedHasVariants)
+            setProductUnits(loadedProductUnits)
+            setFormData(loadedFormData)
 
             if (!derivedHasVariants) {
-                await fetchDefaultVariant()
+                const defaultVariantLoad = await fetchDefaultVariant()
+                loadedHasVariants = defaultVariantLoad?.hasVariants || false
+                loadedSimpleProductData = defaultVariantLoad?.simpleProductData || loadedSimpleProductData
+                loadedVariants = defaultVariantLoad?.variants || loadedVariants
             }
+
+            productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(buildProductAuthoringPayloadFromDraft({
+                formData: loadedFormData,
+                productId,
+                hasVariants: loadedHasVariants,
+                simpleProductData: loadedSimpleProductData,
+                productUnits: loadedProductUnits,
+                variantAuthoringSummary: loadedVariants,
+                includeVariants: loadedHasVariants
+            }))
         } catch (err) {
             setError(t('products.failedToLoad'))
         } finally {
@@ -534,25 +763,50 @@ const ProductForm = forwardRef(function ProductForm({
     const fetchDefaultVariant = async () => {
         try {
             const response = await api.get(`/products/${productId}/variants`)
-            const variants = response.data
+            const variants = response.data || []
 
             if (variants.length > 1) {
                 setHasVariants(true)
                 setDefaultVariant(null)
-                return
+                return {
+                    hasVariants: true,
+                    variants,
+                    simpleProductData: { sku: '', barcode: '' }
+                }
             }
 
             const defaultVar = variants.find(v => v.isDefault)
 
             if (defaultVar) {
-                setDefaultVariant(defaultVar)
-                setSimpleProductData({
+                const loadedSimpleProductData = {
                     sku: defaultVar.sku || '',
                     barcode: defaultVar.barcode || ''
-                })
+                }
+
+                setDefaultVariant(defaultVar)
+                setSimpleProductData(loadedSimpleProductData)
+                return {
+                    hasVariants: false,
+                    variants,
+                    defaultVariant: defaultVar,
+                    simpleProductData: loadedSimpleProductData
+                }
+            }
+
+            return {
+                hasVariants: false,
+                variants,
+                defaultVariant: null,
+                simpleProductData: { sku: '', barcode: '' }
             }
         } catch (err) {
             console.error('Failed to load default variant', err)
+            return {
+                hasVariants: false,
+                variants: [],
+                defaultVariant: null,
+                simpleProductData: { sku: '', barcode: '' }
+            }
         }
     }
 
@@ -598,41 +852,9 @@ const ProductForm = forwardRef(function ProductForm({
         productUnits.filter((unit) => unit.unitId)
     )
 
-    const buildProductUnitsPayload = () => (
-        getCompleteProductUnitDrafts().map((unit) => ({
-            productUnitId: unit.productUnitId,
-            unitId: unit.unitId,
-            conversionFactor: Number.parseFloat(unit.conversionFactor) || 0,
-            purchasePrice: unit.purchasePrice === '' ? null : Number.parseFloat(unit.purchasePrice) || 0,
-            sellingPrice: unit.sellingPrice === '' ? null : Number.parseFloat(unit.sellingPrice) || 0,
-            barcode: unit.barcode || null,
-            isDefault: unit.isDefault,
-            isBaseUnit: unit.isBaseUnit
-        }))
+    const buildVariantAuthoringSnapshot = () => (
+        hasVariants ? normalizeProductAuthoringVariants(variantAuthoringSummary) : []
     )
-
-    const buildVariantAuthoringSnapshot = () => {
-        if (!hasVariants) {
-            return []
-        }
-
-        return productVariantsSnapshot.map((variant) => ({
-            variantId: variant.id,
-            sku: variant.sku || variant.SKU || null,
-            barcode: variant.barcode || null,
-            price: Number.parseFloat(variant.price) || 0,
-            onlinePrice: variant.onlinePrice == null ? null : Number.parseFloat(variant.onlinePrice) || 0,
-            costPrice: Number.parseFloat(variant.costPrice) || 0,
-            isActive: variant.isActive !== false,
-            isDefault: Boolean(variant.isDefault),
-            attributes: Array.isArray(variant.attributes)
-                ? variant.attributes.reduce((acc, attribute) => {
-                    if (attribute.name) acc[attribute.name] = attribute.value || ''
-                    return acc
-                }, {})
-                : {}
-        }))
-    }
 
     const handleAddProductUnit = () => {
         setProductUnits((prev) => [
@@ -679,7 +901,28 @@ const ProductForm = forwardRef(function ProductForm({
         setProductUnits((prev) => prev.filter((unit) => unit.localId !== localId))
     }
 
-    const getAuthoringValidationError = () => {
+    const getCurrentVariantAuthoringSnapshot = (variantsOverride = null) => (
+        Array.isArray(variantsOverride)
+            ? normalizeProductAuthoringVariants(variantsOverride)
+            : buildVariantAuthoringSnapshot()
+    )
+
+    const buildProductAuthoringPayload = ({ variantsOverride = null, includeVariants = false } = {}) => buildProductAuthoringPayloadFromDraft({
+        formData,
+        productId,
+        hasVariants,
+        simpleProductData,
+        productUnits,
+        variantAuthoringSummary,
+        variantsOverride,
+        includeVariants
+    })
+
+    const handleVariantDraftChange = useCallback((draft) => {
+        setVariantAuthoringSummary(normalizeProductAuthoringVariants(draft?.authoringVariants))
+    }, [])
+
+    const getAuthoringValidationError = (variantsOverride = null) => {
         const publishStatus = isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus)
         const isDraft = publishStatus === 0
         const isPublic = publishStatus === 1 && formData.isActive && formData.isOnlineVisible
@@ -701,13 +944,13 @@ const ProductForm = forwardRef(function ProductForm({
         }
 
         if (hasVariants) {
-            const hasActivePricedVariant = buildVariantAuthoringSnapshot().some((variant) => (
+            const hasActivePricedVariant = getCurrentVariantAuthoringSnapshot(variantsOverride).some((variant) => (
                 variant.isActive && (toPositiveNumber(variant.onlinePrice) > 0 || toPositiveNumber(variant.price) > 0)
             ))
 
             return hasActivePricedVariant
                 ? null
-                : (t('products.activePricedVariantRequired') || 'At least one active priced variant is required before publication.')
+                : translateWithFallback(t, 'products.activePricedVariantRequired', 'At least one active priced variant is required before publication.')
         }
 
         const completeUnits = getCompleteProductUnitDrafts()
@@ -733,55 +976,45 @@ const ProductForm = forwardRef(function ProductForm({
         return null
     }
 
-    const handleSubmit = async (e) => {
-        e.preventDefault()
-        setLoading(true)
-        setError('')
+    const saveProductAuthoring = async ({ variantsOverride = null, includeVariants = false } = {}) => {
+        lastProductSaveErrorRef.current = ''
 
         if (!formData.categoryId) {
-            setError(t('products.categoryRequired'))
-            setLoading(false)
-            return
+            const message = t('products.categoryRequired')
+            lastProductSaveErrorRef.current = message
+            setError(message)
+            showError(message)
+            return false
         }
 
-        const authoringValidationError = getAuthoringValidationError()
+        const authoringValidationError = getAuthoringValidationError(variantsOverride)
         if (authoringValidationError) {
+            lastProductSaveErrorRef.current = authoringValidationError
             setError(authoringValidationError)
-            setLoading(false)
-            return
+            showError(authoringValidationError)
+            return false
         }
 
         try {
-            if (productId && hasVariants && variantsTabRef.current?.savePendingChanges) {
-                const variantsSaved = await variantsTabRef.current.savePendingChanges()
-                if (!variantsSaved) {
-                    setLoading(false)
-                    return
-                }
-            }
+            const productData = buildProductAuthoringPayload({ variantsOverride, includeVariants })
+            const effectiveRowVersion = acceptedRowVersion
 
-            const productData = {
-                ...formData,
-                taxRate: parseFloat(formData.taxRate) || 0,
-                images: null,
-                categoryId: formData.categoryId,
-                hasVariants,
-                sku: hasVariants ? null : simpleProductData.sku,
-                barcode: hasVariants ? null : simpleProductData.barcode,
-                weight: formData.weight ? parseFloat(formData.weight) : null,
-                length: formData.length ? parseFloat(formData.length) : null,
-                width: formData.width ? parseFloat(formData.width) : null,
-                height: formData.height ? parseFloat(formData.height) : null,
-                lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
-                publishStatus: isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus),
-                productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null,
-                productUnits: isVariantCreateMode ? null : buildProductUnitsPayload(),
-                variants: productId && hasVariants ? null : buildVariantAuthoringSnapshot()
+            if (productId && !hasSemanticProductAuthoringChanges(productAuthoringBaselineRef.current, productData)) {
+                const message = translateWithFallback(t, 'products.noChangesToSave', 'No changes to save.')
+                showSuccess(message)
+                return {
+                    id: productId,
+                    rowVersion: effectiveRowVersion || null,
+                    hasVariants,
+                    __productAuthoringNoChanges: true
+                }
             }
 
             if (import.meta.env.DEV) {
                 console.info('[ProductForm] Submitting product payload', {
                     productId,
+                    expectedRowVersion: effectiveRowVersion || null,
+                    includesVariantDraft: includeVariants,
                     isOnlineVisible: formData.isOnlineVisible,
                     selectedProductTemplate: formData.productTemplate,
                     payloadProductTemplate: productData.productTemplate
@@ -790,7 +1023,7 @@ const ProductForm = forwardRef(function ProductForm({
 
             const saveFingerprint = JSON.stringify({
                 productId: productId || null,
-                rowVersion: productId ? acceptedRowVersion || null : null,
+                rowVersion: productId ? effectiveRowVersion || null : null,
                 productData
             })
             const idempotencyKey = pendingSaveRef.current?.fingerprint === saveFingerprint
@@ -799,26 +1032,94 @@ const ProductForm = forwardRef(function ProductForm({
             pendingSaveRef.current = { fingerprint: saveFingerprint, key: idempotencyKey }
 
             let savedProduct
-            const requestOptions = buildProductAuthoringRequestOptions(productId, acceptedRowVersion, idempotencyKey)
+            const requestOptions = buildProductAuthoringRequestOptions(productId, effectiveRowVersion, idempotencyKey)
 
             if (productId) {
                 const response = await api.put(`/products/${productId}`, productData, requestOptions)
                 savedProduct = response.data || { id: productId }
-                setAcceptedRowVersion(savedProduct.rowVersion || savedProduct.RowVersion || acceptedRowVersion)
+                const returnedRowVersion = getProductRowVersion(savedProduct, acceptedRowVersion)
+                setAcceptedRowVersion(returnedRowVersion)
+                productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(productData, productAuthoringBaselineRef.current)
+                if (import.meta.env.DEV) {
+                    console.info('[ProductForm] Product PUT saved', {
+                        productId,
+                        expectedRowVersion: effectiveRowVersion || null,
+                        returnedRowVersion: returnedRowVersion || null
+                    })
+                }
             } else {
                 const response = await api.post('/products', productData, requestOptions)
                 savedProduct = response.data
-                setAcceptedRowVersion(savedProduct.rowVersion || savedProduct.RowVersion || null)
+                const returnedRowVersion = getProductRowVersion(savedProduct)
+                setAcceptedRowVersion(returnedRowVersion)
+                productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(productData)
+                if (import.meta.env.DEV) {
+                    console.info('[ProductForm] Product POST saved', {
+                        productId: savedProduct?.id || null,
+                        returnedRowVersion: returnedRowVersion || null
+                    })
+                }
             }
 
             invalidatePosRuntimeCache({ reason: 'product-updated' })
+            showSuccess(t('common.updatedSuccessfully') || 'Saved successfully')
             onSave({
                 ...savedProduct,
                 hasVariants: savedProduct?.hasVariants ?? hasVariants
             })
             pendingSaveRef.current = null
+            return savedProduct
         } catch (err) {
-            setError(err.response?.data?.message || t('products.failedToSave'))
+            const message = extractApiErrorMessage(err, t('products.failedToSave'))
+            lastProductSaveErrorRef.current = message
+            setError(message)
+            showError(message)
+            return false
+        }
+    }
+
+    const handleSaveVariantDraft = useCallback(async (variantDraft) => {
+        setError('')
+
+        const savedProduct = await saveProductAuthoring({
+            variantsOverride: variantDraft?.authoringVariants || [],
+            includeVariants: true
+        })
+
+        if (!savedProduct) {
+            throw new Error(lastProductSaveErrorRef.current || t('products.failedToSave'))
+        }
+
+        return savedProduct
+    }, [acceptedRowVersion, formData, hasVariants, productId, variantAuthoringSummary, showError, showSuccess, t])
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        setLoading(true)
+        setError('')
+
+        try {
+            let variantDraft = null
+            let includeVariants = false
+
+            if (productId && hasVariants && variantsTabRef.current?.hasPendingChanges?.()) {
+                variantDraft = await variantsTabRef.current.prepareProductAuthoringDraft?.()
+                if (!variantDraft) {
+                    const variantError = variantsTabRef.current?.getLastError?.()
+                    if (variantError) {
+                        setError(variantError)
+                        showError(variantError)
+                    }
+                    return
+                }
+
+                includeVariants = true
+            }
+
+            await saveProductAuthoring({
+                variantsOverride: variantDraft?.authoringVariants || null,
+                includeVariants
+            })
         } finally {
             setLoading(false)
         }
@@ -862,18 +1163,20 @@ const ProductForm = forwardRef(function ProductForm({
         || !formData.isOnlineVisible
         || (hasVariants ? variantPublicationReady : simplePublicationReady)
     const readinessItems = [
-        {
-            label: t('products.baseUnitSelected') || 'Base Unit selected',
-            ready: Boolean(baseUnitId)
-        },
-        {
-            label: t('products.defaultUnitSelected') || 'Default Unit selected',
-            ready: Boolean(defaultUnitId)
-        },
-        {
-            label: t('products.productUnitsValid') || 'Product Units valid',
-            ready: productUnitsValid || normalizePublishStatus(formData.publishStatus) === 0
-        },
+        ...(!hasVariants ? [
+            {
+                label: t('products.baseUnitSelected') || 'Base Unit selected',
+                ready: Boolean(baseUnitId)
+            },
+            {
+                label: t('products.defaultUnitSelected') || 'Default Unit selected',
+                ready: Boolean(defaultUnitId)
+            },
+            {
+                label: t('products.productUnitsValid') || 'Product Units valid',
+                ready: productUnitsValid || normalizePublishStatus(formData.publishStatus) === 0
+            }
+        ] : []),
         {
             label: t('products.readyForPublication') || 'Ready for publication',
             ready: publicationReady
@@ -1243,7 +1546,14 @@ const ProductForm = forwardRef(function ProductForm({
             className="border-purple-100 bg-gradient-to-r from-white to-purple-50"
         >
             {productId ? (
-                <ProductVariantsTab ref={variantsTabRef} productId={productId} forceMatrixMode={hasVariants} />
+                <ProductVariantsTab
+                    ref={variantsTabRef}
+                    productId={productId}
+                    forceMatrixMode={hasVariants}
+                    productSkuPrefix={formData.name}
+                    onVariantDraftChange={handleVariantDraftChange}
+                    onSaveVariantDraft={handleSaveVariantDraft}
+                />
             ) : (
                 <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
                     <p className="text-sm font-medium text-blue-800">
@@ -1492,8 +1802,9 @@ const ProductForm = forwardRef(function ProductForm({
 
     const resolvePixelProductPrice = () => {
         if (hasVariants) {
-            const representativeVariant = productVariantsSnapshot.find((variant) => variant.isDefault)
-                || productVariantsSnapshot.find((variant) => variant.isActive !== false)
+            const currentVariants = buildVariantAuthoringSnapshot()
+            const representativeVariant = currentVariants.find((variant) => variant.isDefault)
+                || currentVariants.find((variant) => variant.isActive !== false)
                 || defaultVariant
 
             return toPositiveNumber(representativeVariant?.onlinePrice) || toPositiveNumber(representativeVariant?.price)
@@ -1553,7 +1864,7 @@ const ProductForm = forwardRef(function ProductForm({
             {basicInformationSection}
             {simpleIdentitySection}
             {variantCreateGuidanceSection}
-            {!isVariantCreateMode && productUnitsSection}
+            {!hasVariants && productUnitsSection}
             {mediaSection}
             {!isVariantCreateMode && variantsSection}
             {!isVariantCreateMode && inventorySection}
@@ -1582,7 +1893,7 @@ const ProductForm = forwardRef(function ProductForm({
                 {basicInformationSection}
                 {simpleIdentitySection}
                 {variantCreateGuidanceSection}
-                {!isVariantCreateMode && productUnitsSection}
+                {!hasVariants && productUnitsSection}
                 {mediaSection}
                 {!isVariantCreateMode && variantsSection}
                 {!isVariantCreateMode && inventorySection}
