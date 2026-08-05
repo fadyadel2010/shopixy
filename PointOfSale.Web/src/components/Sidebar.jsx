@@ -3,6 +3,9 @@ import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
     Activity,
+    BarChart3,
+    Bot,
+    Target,
     FileText,
     Files,
     History,
@@ -16,7 +19,14 @@ import {
     PanelBottomDashed,
     PanelsTopLeft,
     PanelTop,
+    Package,
+    CreditCard,
+    Tag,
+    Truck,
+    Shield,
+    Settings,
     ShoppingBag,
+    ShoppingBasket,
     Store,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
@@ -24,26 +34,20 @@ import { useRTL } from '../hooks/useRTL'
 import { isServiceMarketplaceWorkflowActor } from '../marketplace/authority'
 import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
 import {
-    STOREFRONT_NAVIGATION,
+    STOREFRONT_PRODUCT_NAVIGATION,
     STOREFRONT_SIDEBAR_STATE_KEY,
+    STOREFRONT_OPERATIONS_SIDEBAR_STATE_KEY,
     isStorefrontNodeActive,
     resolveStorefrontScreen,
 } from '../modules/storefront/informationArchitecture'
 
-const STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH = new Map([
-    ['/ecommerce/blocked-phones', 'commercehub.orders.view'],
-    ['/ecommerce/whatsapp', 'commercehub.orders.view'],
-    ['/ecommerce/cart-recovery', 'commercehub.orders.view'],
-    ['/ecommerce/abandoned-checkouts', 'commercehub.orders.view'],
-    ['/ecommerce/online-customers', 'commercehub.orders.view'],
-    ['/ecommerce/coupons', 'commercehub.storefront.manage'],
-    ['/ecommerce/promotions', 'commercehub.storefront.manage'],
-    ['/ecommerce/smart-offers', 'commercehub.storefront.manage'],
-    ['/ecommerce/commerce-ai', 'commercehub.storefront.manage'],
-])
+
 
 const STOREFRONT_ICONS = {
     Activity,
+    BarChart3,
+    Bot,
+    Target,
     FileText,
     Files,
     History,
@@ -57,15 +61,25 @@ const STOREFRONT_ICONS = {
     PanelBottomDashed,
     PanelsTopLeft,
     PanelTop,
+    Package,
+    CreditCard,
+    Tag,
+    Truck,
+    Shield,
+    Settings,
     ShoppingBag,
+    ShoppingBasket,
     Store,
 }
 
 const readExpandedMenus = () => {
     try {
-        const storedValue = window.localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY)
-        const parsedValue = storedValue ? JSON.parse(storedValue) : null
-        return parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue) ? parsedValue : {}
+        const storefrontValue = window.localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY)
+        const operationsValue = window.localStorage.getItem(STOREFRONT_OPERATIONS_SIDEBAR_STATE_KEY)
+        const parsedStorefront = storefrontValue ? JSON.parse(storefrontValue) : null
+        const parsedOperations = operationsValue ? JSON.parse(operationsValue) : null
+        const merged = { ...(parsedStorefront || {}), ...(parsedOperations || {}) }
+        return typeof merged === 'object' && !Array.isArray(merged) ? merged : {}
     } catch {
         return {}
     }
@@ -103,11 +117,15 @@ export default function Sidebar({ isOpen, onClose }) {
             : <span aria-hidden="true">{icon}</span>
     }
 
-    const localizeStorefrontNode = (node) => ({
+    // Wave 2: unified localizer for the merged Storefront product tree.
+    // Handles both Design nodes (which get requiredRoles injected) and
+    // Operations nodes (which already have requiredRoles from IA data).
+    const localizeStorefrontProductNode = (node) => ({
         ...node,
         label: t(node.labelKey, node.fallbackLabel),
-        requiredRoles: ['Owner', 'Admin'],
-        children: node.children?.map(localizeStorefrontNode),
+        // Design nodes get Owner/Admin requirement; Operations nodes already have it
+        requiredRoles: node.requiredRoles || ['Owner', 'Admin'],
+        children: node.children?.map(localizeStorefrontProductNode),
     })
 
     // New navigation structure with renamed items and proper order
@@ -221,37 +239,8 @@ export default function Sidebar({ isOpen, onClose }) {
                 { path: '/reports/visa-statement', label: t('nav.visaStatement'), icon: '💳' }
             ]
         },
-        // 10) E-commerce
-        {
-            key: 'ecommerce',
-            label: t('nav.ecommerce'),
-            icon: '🛒',
-            children: [
-                { path: '/ecommerce/orders', label: t('orders.title'), icon: '📦', capability: 'commercehub.orders.view' },
-                { path: '/ecommerce/blocked-phones', label: t('nav.blockedPhones', 'Blocked Phones'), icon: '📵' },
-                // WhatsApp Integration (Phase 14) - Consolidated Settings Page
-                { path: '/ecommerce/whatsapp', label: t('nav.whatsappSettings', 'WhatsApp Settings'), icon: '📱' },
-                // Smart Cart Recovery (Abandoned Cart Hardening)
-                { path: '/ecommerce/cart-recovery', label: t('nav.cartRecovery', 'Smart Cart Recovery'), icon: '🔄' },
-                // Abandoned Checkouts (Lost Orders Phase)
-                { path: '/ecommerce/abandoned-checkouts', label: t('nav.abandonedCheckouts', 'Abandoned Checkouts'), icon: '🚫' },
-                { path: '/admin/shipping/setup', label: t('shippingSetup.title', 'Shipping'), icon: 'Shipping', requiredRoles: ['Owner', 'Admin', 'Manager'] },
-                { path: '/ecommerce/online-customers', label: t('nav.onlineCustomers', 'Online Customers'), icon: '👥' },
-                { path: '/ecommerce/auth-providers', label: t('nav.authProviders', 'Auth Providers'), icon: '🔐', capability: 'commercehub.storefront.manage' },
-                { path: '/ecommerce/payment-methods', label: t('paymentMethods.title', 'Payment Methods'), icon: '💳', capability: 'commercehub.payments.view' },
-                { path: '/ecommerce/manual-payments', label: t('nav.manualPayments', 'Manual Payments'), icon: '💸', capability: 'commercehub.payments.view' },
-                { path: '/ecommerce/coupons', label: t('coupons.title'), icon: '🎟️' },
-                { path: '/ecommerce/promotions', label: t('promotions.title', 'Offers'), icon: '🏷️' },
-                { path: '/ecommerce/smart-offers', label: t('nav.smartOffers', 'Smart Offers'), icon: '💥' },
-                { path: '/ecommerce/commerce-ai', label: t('commerceAi.title', 'AI Assistant'), icon: '🤖' },
-                { path: '/ecommerce/pixel-tracking', label: t('nav.pixelTracking', 'Signal Hardening'), icon: '📡', capability: 'commercehub.analytics.view' },
-                { path: '/analytics/funnels', label: t('nav.conversionFunnels', 'Conversion Funnels'), icon: '📊', capability: 'commercehub.analytics.view' },
-                { path: '/analytics/attribution', label: t('nav.marketingAttribution', 'Marketing Attribution'), icon: '🎯', capability: 'commercehub.analytics.view' },
-                { path: '/analytics/attribution/costs', label: t('nav.campaignCosts', 'Campaign Costs'), icon: '💰', capability: 'commercehub.analytics.view' },
-                { path: '/analytics/attribution/roi', label: t('nav.marketingRoi', 'Marketing ROI'), icon: '📈', capability: 'commercehub.analytics.view' },
-                { path: '/settings/analytics', label: t('nav.analyticsSettings', 'Analytics Providers'), icon: '⚙️', capability: 'commercehub.analytics.view' }
-            ]
-        },
+        // Wave 2: Unified Storefront product — Design + Operations under one root
+        localizeStorefrontProductNode(STOREFRONT_PRODUCT_NAVIGATION),
         // 11) Services Marketplace (Phase P2 - Tab-Based Navigation)
         {
             key: 'marketplace',
@@ -267,7 +256,6 @@ export default function Sidebar({ isOpen, onClose }) {
             icon: '🏪',
             children: [
                 { path: '/admin/commercehub', label: t('nav.commerceHubSettings', 'Publishing Settings'), icon: '⚙️', capability: 'commercehub.catalog.manage' },
-                { path: '/ecommerce/orders', label: t('orders.title', 'Orders'), icon: '📦', capability: 'commercehub.orders.view' },
                 { path: '/commercehub/finance', label: t('nav.commerceHubFinance', 'Finance Dashboard'), icon: '💼', capability: 'commercehub.finance.view' },
                 { path: '/commercehub/earnings', label: t('nav.commerceHubEarnings', 'Vendor Earnings'), icon: '📈', capability: 'commercehub.finance.view' },
                 { path: '/commercehub/payments', label: t('nav.commerceHubDebtRepayment', 'Debt Repayment'), icon: '💸', capability: 'commercehub.payments.view' },
@@ -282,8 +270,7 @@ export default function Sidebar({ isOpen, onClose }) {
             path: '/admin/affiliates',
             requiredRoles: ['Owner', 'Admin'],
         },
-        // Storefront administration information architecture (Owner/Admin only)
-        localizeStorefrontNode(STOREFRONT_NAVIGATION),
+
         // 10) Reports
         {
             key: 'reports',
@@ -352,7 +339,13 @@ export default function Sidebar({ isOpen, onClose }) {
 
     // Filter menu items based on user roles
     // Backend returns single 'role' string (e.g., "Owner", "Admin")
+    // Constitutional law (ONLINE_STORE_CANONICAL_BLUEPRINT.md §17 Law 16):
+    //   The Storefront product must never disappear. When capability-based
+    //   filtering removes all children of a Storefront-product section, a
+    //   placeholder is rendered instead of collapsing the section entirely.
     const userRole = user?.role
+    const STOREFRONT_PRODUCT_KEYS = new Set(['storefront', 'storefront-design', 'operations'])
+
     const filterMenuNode = (item) => {
         if (item.requiresMarketplaceActor && !isServiceMarketplaceWorkflowActor(user, true)) {
             return null
@@ -362,13 +355,29 @@ export default function Sidebar({ isOpen, onClose }) {
             return null
         }
 
-        const capability = item.capability || STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH.get(item.path)
-        if (capability && !canAccessCommerceHubVendorNavigationCapability(user, capability)) {
+        if (item.capability && !canAccessCommerceHubVendorNavigationCapability(user, item.capability)) {
             return null
         }
 
         const children = item.children?.map(filterMenuNode).filter(Boolean)
         if (item.children && children.length === 0) {
+            // Storefront product sections must never vanish — render a placeholder
+            // (ONLINE_STORE_CANONICAL_BLUEPRINT.md §12.6, §17 Law 16)
+            if (STOREFRONT_PRODUCT_KEYS.has(item.key)) {
+                return {
+                    ...item,
+                    children: [{
+                        path: item.path || '#',
+                        label: t('storefront.accessPlaceholder', 'Request access to this workspace'),
+                        icon: '🔒',
+                        placeholder: true,
+                        onClick: () => {
+                            const url = `/support?context=${encodeURIComponent(item.label || item.key)}`
+                            window.open(url, '_blank', 'noopener,noreferrer')
+                        },
+                    }],
+                }
+            }
             return null
         }
 
@@ -389,7 +398,9 @@ export default function Sidebar({ isOpen, onClose }) {
 
     useEffect(() => {
         try {
-            window.localStorage.setItem(STOREFRONT_SIDEBAR_STATE_KEY, JSON.stringify(expandedMenus))
+            const serialized = JSON.stringify(expandedMenus)
+            window.localStorage.setItem(STOREFRONT_SIDEBAR_STATE_KEY, serialized)
+            window.localStorage.setItem(STOREFRONT_OPERATIONS_SIDEBAR_STATE_KEY, serialized)
         } catch {
             // Navigation remains functional when browser storage is unavailable.
         }
@@ -444,6 +455,19 @@ export default function Sidebar({ isOpen, onClose }) {
                             {node.children.map((child) => renderNestedNode(child, depth + 1))}
                         </div>
                     </div>
+                </div>
+            )
+        }
+
+        if (node.placeholder) {
+            return (
+                <div
+                    key={node.path || node.key}
+                    onClick={node.onClick}
+                    className="flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm cursor-pointer text-indigo-200 hover:bg-indigo-500/30 transition-all duration-200"
+                >
+                    {renderIcon(node.icon, depth > 1 ? 16 : 18)}
+                    <span>{node.label}</span>
                 </div>
             )
         }

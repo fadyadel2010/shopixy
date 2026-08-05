@@ -103,6 +103,8 @@ import AbandonedCartRecovery from './pages/AbandonedCartRecovery'
 // Abandoned Checkouts (Lost Orders Phase)
 import AbandonedCheckouts from './pages/AbandonedCheckouts'
 import BlockedPhones from './pages/BlockedPhones'
+// Storefront Operations Overview (Wave 1 - Information Architecture Migration)
+import OperationsOverview from './pages/OperationsOverview'
 // Treasury & Finance Control Center (Phase 5 + Phase FTM)
 import {
     TreasuryDashboard,
@@ -294,39 +296,46 @@ function App() {
                                         <Route path="settings/audit-log" element={<AuditLog />} />
                                         <Route path="maintenance/reset-database" element={<ResetDatabase />} />
                                         {/* E-commerce Routes */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
-                                            <Route path="ecommerce/shipping-methods" element={<ShippingMethods />} />
-                                        </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.payments.view" />}>
-                                            <Route path="ecommerce/payment-methods" element={<PaymentMethods />} />
-                                            <Route path="ecommerce/manual-payments" element={<ManualPayments />} />
-                                        </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
-                                            <Route path="ecommerce/coupons" element={<Coupons />} />
-                                        </Route>
-                                        {/* Promotions (Offers) - PHASE: Promotions Engine */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
-                                            <Route path="ecommerce/promotions" element={<Promotions />} />
-                                            <Route path="ecommerce/smart-offers" element={<SmartOffersPage />} />
-                                        </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
+                                        {/* Storefront Operations domain — POS Admin screens (Owner/Admin) */}
+                                        {/* These are the store owner's own storefront screens, NOT CommerceHub marketplace routes */}
+                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
+                                            {/* Operations Overview — canonical entry point */}
+                                            <Route path="ecommerce/overview" element={<OperationsOverview />} />
+                                            {/* Orders */}
                                             <Route path="ecommerce/orders" element={<Orders />} />
                                             <Route path="ecommerce/orders/:orderId" element={<Orders />} />
-                                        </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
                                             <Route path="ecommerce/blocked-phones" element={<BlockedPhones />} />
-                                        </Route>
-                                        {/* Online Customers (Phase P1 - Storefront Customer Management) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
                                             <Route path="ecommerce/online-customers" element={<OnlineCustomersPage />} />
-                                        </Route>
-                                        {/* Commerce AI Admin Control (Phase 6) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
+                                            <Route path="ecommerce/whatsapp" element={<WhatsAppSettings />} />
+                                            <Route path="ecommerce/cart-recovery" element={<AbandonedCartRecovery />} />
+                                            <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
+                                            {/* Payments */}
+                                            <Route path="ecommerce/payment-methods" element={<PaymentMethods />} />
+                                            <Route path="ecommerce/manual-payments" element={<ManualPayments />} />
+                                            {/* Catalog */}
+                                            <Route path="ecommerce/coupons" element={<Coupons />} />
+                                            <Route path="ecommerce/promotions" element={<Promotions />} />
+                                            <Route path="ecommerce/smart-offers" element={<SmartOffersPage />} />
+                                            {/* Commerce AI */}
                                             <Route path="ecommerce/commerce-ai" element={<CommerceAI />} />
-                                        </Route>
-                                        {/* Pixel Tracking (Phase M1) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
+                                            {/* Pixel Tracking */}
                                             <Route path="ecommerce/pixel-tracking" element={<PixelTrackingConfigPage />} />
+                                            {/* Auth Providers */}
+                                            <Route path="ecommerce/auth-providers" element={<AuthProvidersPage />} />
+                                            {/* Analytics */}
+                                            <Route path="analytics/funnels" element={<FunnelsListPage />} />
+                                            <Route path="analytics/funnels/:funnelKey" element={<FunnelDetailsPage />} />
+                                            <Route path="analytics/attribution" element={<AttributionOverviewPage />} />
+                                            <Route path="analytics/attribution/models" element={<AttributionModelsPage />} />
+                                            <Route path="analytics/attribution/orders" element={<AttributionOrdersPage />} />
+                                            <Route path="analytics/attribution/costs" element={<CampaignCostsPage />} />
+                                            <Route path="analytics/attribution/roi" element={<RoiDashboardPage />} />
+                                            {/* Settings */}
+                                            <Route path="settings/analytics" element={<AnalyticsSettings />} />
+                                        </Route>
+                                        {/* Shipping — Owner/Admin/Manager (Manager needs shipping access) */}
+                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
+                                            <Route path="ecommerce/shipping-methods" element={<ShippingMethods />} />
                                         </Route>
                                         {/* Storefront administration: canonical IA routes plus legacy aliases */}
                                         <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
@@ -356,30 +365,6 @@ function App() {
                                                 <Route path="storefront/footer-content" element={<StorefrontFooterSettings />} />
                                             </Route>
                                         </Route>
-                                        {/* Storefront Auth Providers (Phase P2 - Provider Management) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
-                                            <Route path="ecommerce/auth-providers" element={<AuthProvidersPage />} />
-                                        </Route>
-                                        {/* Analytics Funnels (Phase 5A) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
-                                            <Route path="analytics/funnels" element={<FunnelsListPage />} />
-                                            <Route path="analytics/funnels/:funnelKey" element={<FunnelDetailsPage />} />
-                                        </Route>
-                                        {/* Analytics Attribution (Phase 8A) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
-                                            <Route path="analytics/attribution" element={<AttributionOverviewPage />} />
-                                            <Route path="analytics/attribution/models" element={<AttributionModelsPage />} />
-                                            <Route path="analytics/attribution/orders" element={<AttributionOrdersPage />} />
-                                        </Route>
-                                        {/* Campaign Cost & ROI (Phase 8B) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
-                                            <Route path="analytics/attribution/costs" element={<CampaignCostsPage />} />
-                                            <Route path="analytics/attribution/roi" element={<RoiDashboardPage />} />
-                                        </Route>
-                                        {/* Analytics Settings (Phase 6: External Analytics Integration) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
-                                            <Route path="settings/analytics" element={<AnalyticsSettings />} />
-                                        </Route>
                                         {/* Shipping Admin Dashboard (Shipping Frontend Phase + Unified Configuration) */}
                                         <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
                                             <Route path="admin/shipping" element={<ShippingAdministrationWorkspace />} />
@@ -389,19 +374,6 @@ function App() {
                                             <Route path="admin/shipping/shipments" element={<ShipmentsListPage />} />
                                             <Route path="admin/shipping/shipments/:id" element={<ShipmentDetailsPage />} />
                                             <Route path="admin/shipping/health" element={<ShippingHealthPage />} />
-                                        </Route>
-
-                                        {/* WhatsApp Admin (Phase 14) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
-                                            <Route path="ecommerce/whatsapp" element={<WhatsAppSettings />} />
-                                        </Route>
-                                        {/* Smart Cart Recovery (Abandoned Cart Hardening) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
-                                            <Route path="ecommerce/cart-recovery" element={<AbandonedCartRecovery />} />
-                                        </Route>
-                                        {/* Abandoned Checkouts - Lost Orders (Phase: Abandoned Checkout) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
-                                            <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
                                         </Route>
 
                                         {/* Services Marketplace - Tab-Based System */}

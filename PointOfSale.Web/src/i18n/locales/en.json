@@ -19,6 +19,13 @@
     "campaignCosts": "Campaign Costs",
     "marketingRoi": "Marketing ROI",
     "analyticsSettings": "Analytics Providers",
+    "allOrders": "All Orders",
+    "whatsappSettings": "WhatsApp Settings",
+    "cartRecovery": "Abandoned Cart Recovery",
+    "blockedPhones": "Blocked Phones",
+    "manualPayments": "Manual Payments",
+    "pixelTracking": "Pixel Tracking",
+    "smartOffers": "Smart Offers",
     "whatsapp": {
       "accounts": "WhatsApp Accounts",
       "templates": "Message Templates",
@@ -1057,6 +1064,7 @@
     "ia": {
       "root": "Storefront",
       "overview": "Overview",
+      "design": "Design",
       "status": "Storefront Status",
       "homepage": "Homepage",
       "catalog": "Catalog",
@@ -1096,6 +1104,7 @@
     "disabledDescription": "Store is offline",
     "unknownStatusDescription": "Status unknown",
     "onlineStore": "Online Store",
+    "accessPlaceholder": "Request access to this workspace",
     "notConfigured": "Not configured",
     "setupNow": "Set up now",
     "viewStore": "View Store",
@@ -1190,7 +1199,17 @@
       "final": "Final",
       "lastUpdate": "Last Update",
       "destination": "Destination"
-    }
+    },
+    "operations": "Operations",
+    "operationsOverview": "Overview",
+    "operationsOverviewDescription": "Manage orders, payments, catalog, shipping, and marketing for your online store. Select a section below to begin.",
+    "operationsOrders": "Orders",
+    "operationsPayments": "Payments",
+    "operationsCatalog": "Catalog",
+    "operationsShipping": "Shipping",
+    "operationsMarketing": "Marketing",
+    "operationsMarketingAttribution": "Marketing Attribution",
+    "operationsSettings": "Settings"
   },
   "variants": {
     "productVariants": "Product Variants",
