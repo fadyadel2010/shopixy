@@ -147,6 +147,9 @@ export const fetchProductsDiscover = async (
     if (query.hasPromotion !== undefined) params.append('hasPromotion', query.hasPromotion.toString());
     if (query.inStock !== undefined) params.append('inStock', query.inStock.toString());
     if (query.hasVariants !== undefined) params.append('hasVariants', query.hasVariants.toString());
+    if (query.attribute?.length) {
+        query.attribute.forEach(value => params.append('attribute', value));
+    }
     if (query.sort) params.append('sort', query.sort);
     if (query.page) params.append('page', query.page.toString());
     if (query.pageSize) params.append('pageSize', query.pageSize.toString());

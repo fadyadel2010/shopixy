@@ -82,3 +82,5 @@ public sealed class HomepageSectionSchemaFieldDto
     public string? HelpText { get; set; }
     public List<string> Options { get; set; } = new();
 }
+
+public sealed record HomepageAuthoringResult<T>(T Data, string WorkspaceVersion);

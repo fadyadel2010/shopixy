@@ -44,7 +44,7 @@ public class ProductStockPriceSearchIndexConsumer :
     IConsumer<ProductVariantStockChangedEvent>,
     IConsumer<ProductPriceChangedEvent>
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly ILogger<ProductStockPriceSearchIndexConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
@@ -55,7 +55,7 @@ public class ProductStockPriceSearchIndexConsumer :
     private const string ProductPriceConsumerName = nameof(ProductStockPriceSearchIndexConsumer) + ":" + nameof(ProductPriceChangedEvent);
 
     public ProductStockPriceSearchIndexConsumer(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         IMongoDatabase database,
         ILogger<ProductStockPriceSearchIndexConsumer> logger,
         ApplicationDbContext dbContext)
@@ -333,7 +333,7 @@ public class ProductStockPriceSearchIndexConsumer :
                     productId,
                     tenantId);
 
-                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -351,7 +351,7 @@ public class ProductStockPriceSearchIndexConsumer :
                     "[ES-{EventName}] SQL product authority is not searchable - deleting stale ES document | ProductId: {ProductId} | TenantId: {TenantId}",
                     eventName, productId, tenantId);
 
-                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -362,7 +362,7 @@ public class ProductStockPriceSearchIndexConsumer :
             }
 
             var document = ProductSearchDocumentMapper.MapFromProductDocument(product, eventId);
-            var success = await _indexService.IndexAsync(document, cancellationToken);
+            var success = await _indexService.IndexProductAsync(document, cancellationToken);
 
             if (success)
             {
@@ -475,7 +475,7 @@ public class ProductStockPriceSearchIndexConsumer :
 
             if (product == null)
             {
-                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -487,7 +487,7 @@ public class ProductStockPriceSearchIndexConsumer :
 
             if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
-                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -498,7 +498,7 @@ public class ProductStockPriceSearchIndexConsumer :
             }
 
             var document = ProductSearchDocumentMapper.MapFromProductDocument(product, eventId);
-            var success = await _indexService.IndexAsync(document, cancellationToken);
+            var success = await _indexService.IndexProductAsync(document, cancellationToken);
 
             if (!success)
             {

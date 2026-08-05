@@ -7,7 +7,6 @@ using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Reliability;
-using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -22,7 +21,6 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// 2. Fetch StoreConfig from PostgreSQL
 /// 3. Extract navigation.header.live and navigation.footer.live
 /// 4. Upsert into MongoDB storefront_navigation
-/// 5. Invalidate Redis cache
 /// </summary>
 public class NavigationProjectionConsumer :
     IConsumer<NavigationPublishedEvent>
@@ -31,18 +29,15 @@ public class NavigationProjectionConsumer :
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IMongoCollection<StorefrontNavigationDocument> _collection;
-    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<NavigationProjectionConsumer> _logger;
 
     public NavigationProjectionConsumer(
         ApplicationDbContext dbContext,
         IMongoDatabase mongoDatabase,
-        IConnectionMultiplexer redis,
         ILogger<NavigationProjectionConsumer> logger)
     {
         _dbContext = dbContext;
         _collection = mongoDatabase.GetCollection<StorefrontNavigationDocument>("storefront_navigation");
-        _redis = redis;
         _logger = logger;
     }
 
@@ -91,7 +86,7 @@ public class NavigationProjectionConsumer :
         if (fence == null)
         {
             _logger.LogInformation(
-                "Navigation projection duplicate or active replay collapsed before Mongo/Redis side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventId: {EventId}",
+                "Navigation projection duplicate or active replay collapsed before projection side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventId: {EventId}",
                 tenantId.Value,
                 storeConfigId,
                 @event.EventId);
@@ -193,17 +188,6 @@ public class NavigationProjectionConsumer :
                 "Navigation projected to MongoDB for Tenant {TenantSlug} | IsNew: {IsNew}",
                 tenant.Slug, existingDoc == null);
 
-            // Step 6: Invalidate Redis cache
-            RequireReviewedNavigationMutation(
-                DangerousProjectionPrimitive.RedisCacheMutation,
-                tenantId.Value,
-                storeConfigId,
-                @event.EventId,
-                @event.OccurredAtUtc,
-                @event.EventVersion,
-                "SQL navigation projection succeeded before reviewed Redis navigation cache invalidation.");
-            await InvalidateCacheAsync(tenant.Slug ?? tenantId.Value.ToString());
-
             await fence.CompleteAsync(
                 @event.EventId,
                 tenantId,
@@ -211,9 +195,6 @@ public class NavigationProjectionConsumer :
                 fenceKey,
                 cancellationToken);
 
-            _logger.LogInformation(
-                "Redis cache invalidated for navigation | Tenant: {TenantSlug}",
-                tenant.Slug);
         }
         catch (Exception ex)
         {
@@ -229,16 +210,7 @@ public class NavigationProjectionConsumer :
         CancellationToken cancellationToken)
     {
         var filter = Builders<StorefrontNavigationDocument>.Filter.Eq(x => x.TenantId, tenantId);
-        var existing = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
-
         await _collection.DeleteOneAsync(filter, cancellationToken);
-
-        if (!string.IsNullOrWhiteSpace(existing?.TenantSlug))
-        {
-            await InvalidateCacheAsync(existing.TenantSlug);
-        }
-
-        await InvalidateCacheAsync(tenantId.ToString());
 
         _logger.LogWarning(
             "Navigation projection failed closed because current SQL tenant/store-config lineage was not proven | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventId: {EventId}",
@@ -454,31 +426,6 @@ public class NavigationProjectionConsumer :
                 }
             }
         };
-    }
-
-    /// <summary>
-    /// Invalidates Redis cache for navigation.
-    /// </summary>
-    private async Task InvalidateCacheAsync(string tenantSlug)
-    {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var keys = new RedisKey[]
-            {
-                $"storefront:navigation:{tenantSlug}",
-                $"storefront:footer:{tenantSlug}",
-                $"storefront:menu:{tenantSlug}",
-                $"storefront:header:{tenantSlug}"
-            };
-
-            await db.KeyDeleteAsync(keys);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to invalidate Redis cache for navigation");
-            // Don't throw - cache invalidation failure is not critical
-        }
     }
 
     #region Helper Methods

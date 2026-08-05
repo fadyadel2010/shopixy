@@ -6,31 +6,15 @@
  * uppercase Jost navigation, search + cart icons, sticky with scroll elevation,
  * graceful mobile degradation (slide-in drawer).
  *
- * REUSE: This component reuses the platform's existing navigation/header
- * infrastructure rather than reimplementing it:
- *   - AffiliateLink            (themed link, affiliate-aware)
- *   - CartIconButton           (cart badge, animated)
- *   - WishlistIconButton       (wishlist badge)
- *   - LanguageSwitcher         (i18n switch)
- *   - AuthNavItems             (account/auth links)
- *   - useNavigationStore       (dynamic CMS nav links)
- *   - useScrollPosition        (sticky elevation, platform hook)
- *   - useTranslation           (i18n + RTL)
- * Only the visual shell (floating white pill, black ink, Playfair wordmark,
- * Jost uppercase nav) is Phoenix-specific. No business logic is duplicated.
+ * Runtime injects localized navigation and mandatory capability slots. Only
+ * the visual shell (floating white pill, black ink, Playfair wordmark, Jost
+ * uppercase nav) is Phoenix-specific.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { CartIconButton } from '@/components/common/CartBadge';
-import { WishlistIconButton } from '@/components/common/WishlistBadge';
-import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
-import { useStoreConfigStore, selectStoreName } from '@/store';
-import { useNavigationStore, resolveNavLinkUrl } from '@/stores/navigationStore';
 import { useScrollPosition } from '@/hooks/useScrollPosition';
-import { useTranslation } from '@/i18n';
-import { AuthNavItems } from '@/auth/components';
+import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 import {
     PHOENIX_CONTAINER,
     PHOENIX_FONT_DISPLAY,
@@ -40,38 +24,15 @@ import {
 } from './phoenixTokens';
 import AnnouncementMarquee from './AnnouncementMarquee';
 
-const PhoenixHeader: React.FC = () => {
-    const { t, language } = useTranslation();
-    const location = useLocation();
-    const storeName = useStoreConfigStore(selectStoreName);
-    const loadNavigation = useNavigationStore((state) => state.loadNavigation);
-    const headerLinks = useNavigationStore((state) => state.navigation?.header.links ?? []);
+const PhoenixHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileOpen, setMobileOpen] = useState(false);
     const { isScrolled } = useScrollPosition({ threshold: 10 });
 
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    const links = useMemo(() => {
-        return headerLinks.map((link, index) => ({
-            key: `${link.slug || link.path || link.label}-${index}`,
-            label: language === 'ar' && link.labelAr ? link.labelAr : link.label,
-            url: resolveNavLinkUrl(link),
-            openInNewTab: link.openInNewTab,
-        }));
-    }, [headerLinks, language]);
-
-    const isActive = (path: string) => {
-        if (path === '/') {
-            return location.pathname === '/';
-        }
-        return location.pathname.startsWith(path);
-    };
-
     return (
         <>
-            <AnnouncementMarquee text={t('announcement.defaultText')} />
+            <AnnouncementMarquee text={labels.announcement} />
 
             {/* Floating white pill, centered on the canvas, sticky. */}
             <div className={`sticky top-0 z-30 w-full ${PHOENIX_HEADER_SHELL}`}>
@@ -85,8 +46,9 @@ const PhoenixHeader: React.FC = () => {
                         {/* Centered brand row with side actions */}
                         <div className="flex items-center justify-between gap-4">
                             <div className="hidden flex-1 items-center gap-2 md:flex">
-                                <WishlistIconButton className="text-black/70 hover:bg-black/5 hover:text-black" />
-                                <CartIconButton className="text-black/70 hover:bg-black/5 hover:text-black" />
+                                <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-black/70 hover:bg-black/5 hover:text-black" />
+                                <WishlistSlot className="text-black/70 hover:bg-black/5 hover:text-black" />
+                                <CartSlot className="text-black/70 hover:bg-black/5 hover:text-black" />
                             </div>
 
                             <AffiliateLink
@@ -97,9 +59,9 @@ const PhoenixHeader: React.FC = () => {
                             </AffiliateLink>
 
                             <div className="hidden flex-1 items-center justify-end gap-3 md:flex">
-                                <LanguageSwitcher variant="text" size="sm" className="text-black/60 hover:text-black" />
+                                <LanguageSlot variant="text" size="sm" className="text-black/60 hover:text-black" />
                                 <div className="border-l border-black/10 pl-3">
-                                    <AuthNavItems variant="desktop" className="!text-black/80" />
+                                    <AuthenticationSlot variant="desktop" className="!text-black/80" />
                                 </div>
                             </div>
 
@@ -107,7 +69,7 @@ const PhoenixHeader: React.FC = () => {
                                 type="button"
                                 onClick={() => setMobileOpen((value) => !value)}
                                 className="flex h-10 w-10 items-center justify-center rounded-full border border-black/10 text-black/80 md:hidden"
-                                aria-label={t('header.menu')}
+                                aria-label={labels.menu}
                                 aria-expanded={mobileOpen}
                             >
                                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -117,24 +79,11 @@ const PhoenixHeader: React.FC = () => {
                         </div>
 
                         {/* Centered primary navigation */}
-                        {links.length > 0 ? (
-                            <nav
-                                className="mt-2 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-black/5 pt-3 md:flex"
-                                aria-label={t('accessibility.mainNavigation')}
-                            >
-                                {links.map((link) => (
-                                    <AffiliateLink
-                                        key={link.key}
-                                        href={link.url}
-                                        target={link.openInNewTab ? '_blank' : undefined}
-                                        rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                        className={phoenixNavLinkClass(isActive(link.url))}
-                                    >
-                                        {link.label}
-                                    </AffiliateLink>
-                                ))}
-                            </nav>
-                        ) : null}
+                        <NavigationSlot
+                            className="mt-2 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-black/5 pt-3 md:flex"
+                            ariaLabel={labels.mainNavigation}
+                            linkClassName={(link) => phoenixNavLinkClass(link.isActive)}
+                        />
                     </div>
 
                     {/* Mobile drawer */}
@@ -142,30 +91,25 @@ const PhoenixHeader: React.FC = () => {
                         <div className="border-t border-black/5 bg-white px-4 py-4 md:hidden">
                             <div className="mb-4 flex items-center justify-between">
                                 <div className="flex items-center gap-2">
-                                    <WishlistIconButton className="text-black/70 hover:bg-black/5 hover:text-black" />
-                                    <CartIconButton className="text-black/70 hover:bg-black/5 hover:text-black" />
+                                    <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-black/70 hover:bg-black/5 hover:text-black" />
+                                    <WishlistSlot className="text-black/70 hover:bg-black/5 hover:text-black" />
+                                    <CartSlot className="text-black/70 hover:bg-black/5 hover:text-black" />
                                 </div>
-                                <LanguageSwitcher variant="text" size="sm" className="text-black/60 hover:text-black" />
+                                <LanguageSlot variant="text" size="sm" className="text-black/60 hover:text-black" />
                             </div>
-                            <nav className="space-y-2" aria-label={t('header.menu')}>
-                                {links.map((link) => (
-                                    <AffiliateLink
-                                        key={link.key}
-                                        href={link.url}
-                                        target={link.openInNewTab ? '_blank' : undefined}
-                                        rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                        onClick={() => setMobileOpen(false)}
-                                        className={`block rounded-xl px-4 py-3 ${PHOENIX_NAV_LINK} ${
-                                            isActive(link.url) ? 'bg-black text-white' : 'bg-black/5 text-black/70'
-                                        }`}
-                                    >
-                                        {link.label}
-                                    </AffiliateLink>
-                                ))}
+                            <div className="space-y-2">
+                                <NavigationSlot
+                                    className="space-y-2"
+                                    ariaLabel={labels.menu}
+                                    onLinkClick={() => setMobileOpen(false)}
+                                    linkClassName={(link) => `block rounded-xl px-4 py-3 ${PHOENIX_NAV_LINK} ${
+                                        link.isActive ? 'bg-black text-white' : 'bg-black/5 text-black/70'
+                                    }`}
+                                />
                                 <div className="pt-3">
-                                    <AuthNavItems variant="mobile" onLinkClick={() => setMobileOpen(false)} />
+                                    <AuthenticationSlot variant="mobile" onLinkClick={() => setMobileOpen(false)} />
                                 </div>
-                            </nav>
+                            </div>
                         </div>
                     ) : null}
                 </header>

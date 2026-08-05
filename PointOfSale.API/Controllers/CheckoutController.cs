@@ -170,7 +170,6 @@ public class CheckoutController : ControllerBase
                 "Checkout success | TenantId: {TenantId} | CartId: {CartId} | OrderId: {OrderId} | OrderNumber: {OrderNumber} | TraceId: {TraceId}",
                 validation.TenantId, request.CartId, response.OrderId, response.OrderNumber, traceId);
 
-            SetNoStoreHeaders();
             ApplyGuestOrderAccessCookies(response);
             return Ok(response);
         }
@@ -414,7 +413,6 @@ public class CheckoutController : ControllerBase
                 traceId,
                 cancellationToken);
 
-            SetNoStoreHeaders();
             return Ok(response);
         }
         catch (CheckoutCartNotFoundException ex)
@@ -473,14 +471,6 @@ public class CheckoutController : ControllerBase
     }
 
     #region Header Validation
-
-    private void SetNoStoreHeaders()
-    {
-        Response.Headers.CacheControl = "no-store, no-cache, max-age=0, must-revalidate";
-        Response.Headers.Pragma = "no-cache";
-        Response.Headers.Expires = "0";
-        Response.Headers["Surrogate-Control"] = "no-store";
-    }
 
     private async Task<(Guid? TenantId, string? OwnerId, string? OwnerType, string? SessionId, Guid? CustomerId, string? RequestId, IActionResult? Error)> ValidateHeadersAsync(string traceId)
     {

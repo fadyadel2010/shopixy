@@ -65,6 +65,13 @@ public static class ProductSearchDocumentMapper
             IsInStock = isInStock,
             StockQuantity = stockQuantity,
             HasVariants = hasVariantsOverride ?? product.HasVariants,
+            VariantAttributes = activeVariants
+                .SelectMany(variant => variant.Attributes ?? new List<VariantAttributeDocument>())
+                .Where(attribute => !string.IsNullOrWhiteSpace(attribute.Name) && !string.IsNullOrWhiteSpace(attribute.Value))
+                .Select(attribute => NormalizeAttribute(attribute.Name, attribute.Value))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToList(),
             IsAffiliateEnabled = product.IsAffiliateEnabled,
             AffiliateEnabledAtUtc = product.AffiliateEnabledAtUtc,
             ImageUrl = GetPrimaryImageUrl(product)
@@ -73,6 +80,9 @@ public static class ProductSearchDocumentMapper
         document.BuildSearchText();
         return document;
     }
+
+    private static string NormalizeAttribute(string name, string value) =>
+        $"{name.Trim().ToLowerInvariant()}={value.Trim().ToLowerInvariant()}";
 
     public static string? GetPrimaryImageUrl(ProductDocument product)
     {

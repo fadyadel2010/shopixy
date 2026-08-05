@@ -14,7 +14,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
     ArrowLeft,
@@ -30,19 +30,40 @@ import {
     FileText,
     Home,
     Link2,
+    Package,
+    Layers3,
     Edit2,
     X,
     Check,
     RefreshCcw,
+    AlertTriangle,
 } from 'lucide-react'
-import { cmsService, extractCmsConflict } from '../services'
+import {
+    cmsService,
+    extractNavigationAdmissionError,
+    extractNavigationConflict,
+} from '../services'
 import { useCmsStore } from '../store'
-import api, { isRequestCanceled } from '../../../../services/api'
+import { isRequestCanceled } from '../../../../services/api'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringDialog,
+    AuthoringEmptyState,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringStatusBadge,
+    UnsavedChangesDialog,
+    useAuthoringGuard,
+} from '../../authoringPlatform'
 
 const LINK_TYPES = [
-    { type: 'internal', label: 'Internal Page', labelAr: 'صفحة داخلية', icon: Home },
-    { type: 'cms', label: 'CMS Page', labelAr: 'صفحة محتوى', icon: FileText },
+    { type: 'custom', label: 'Custom Page', labelAr: 'صفحة مخصصة', icon: Home },
+    { type: 'cms', label: 'Page', labelAr: 'صفحة محتوى', icon: FileText },
     { type: 'category', label: 'Category', labelAr: 'فئة', icon: Link2 },
+    { type: 'product', label: 'Product', labelAr: 'منتج', icon: Package },
+    { type: 'collection', label: 'Collection', labelAr: 'مجموعة', icon: Layers3 },
     { type: 'external', label: 'External URL', labelAr: 'رابط خارجي', icon: ExternalLink },
 ]
 
@@ -60,10 +81,15 @@ const formatSavedAt = (value) => {
     }).format(date)
 }
 
+const resolveNavigationView = (pathname, search) => {
+    return new URLSearchParams(search).get('view') === 'footer' ? 'footer' : 'header'
+}
+
 export function NavigationEditor() {
     const { t, i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const navigate = useNavigate()
+    const location = useLocation()
 
     // Store
     const navigation = useCmsStore((s) => s.navigation)
@@ -84,18 +110,34 @@ export function NavigationEditor() {
     const [publishStatus, setPublishStatus] = useState('idle')
     const [publishErrorBanner, setPublishErrorBanner] = useState(null)
     const [conflict, setConflict] = useState(null)
+    const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
     const [lastSavedAt, setLastSavedAt] = useState(null)
-    const [activeTab, setActiveTab] = useState('header')
+    const [activeTab, setActiveTab] = useState(() => resolveNavigationView(location.pathname, location.search))
     const [editingLink, setEditingLink] = useState(null)
     const [showAddModal, setShowAddModal] = useState(false)
-    const [categories, setCategories] = useState([]) // Categories for dropdown
+    const [deleteLinkIndex, setDeleteLinkIndex] = useState(null)
+    const [targets, setTargets] = useState({ categories: [], products: [], cmsPages: [], collections: [] })
 
     // Refs for debounced save
     const saveTimeoutRef = useRef(null)
     const saveAbortControllerRef = useRef(null)
     const saveRequestIdRef = useRef(0)
     const navigationLoadAbortRef = useRef(null)
-    const categoriesLoadAbortRef = useRef(null)
+    const targetsLoadAbortRef = useRef(null)
+    const acceptedNavigationRef = useRef(null)
+
+    useEffect(() => {
+        setActiveTab(resolveNavigationView(location.pathname, location.search))
+    }, [location.pathname, location.search])
+
+    const selectNavigationView = (view) => {
+        setActiveTab(view)
+        if (location.pathname === '/storefront/cms/navigation') {
+            navigate(`/storefront/cms/navigation?view=${view}`)
+            return
+        }
+        navigate(`/storefront/navigation?view=${view}`)
+    }
 
     const clearScheduledSave = useCallback((abortRequest = false) => {
         if (saveTimeoutRef.current) {
@@ -113,54 +155,34 @@ export function NavigationEditor() {
     // Load navigation and categories
     useEffect(() => {
         loadNavigation()
-        loadCategories()
+        loadTargets()
         return () => {
             reset()
             clearScheduledSave(true)
             navigationLoadAbortRef.current?.abort()
-            categoriesLoadAbortRef.current?.abort()
+            targetsLoadAbortRef.current?.abort()
         }
     }, [clearScheduledSave, reset])
 
-    const loadCategories = async () => {
-        categoriesLoadAbortRef.current?.abort()
+    const loadTargets = async () => {
+        targetsLoadAbortRef.current?.abort()
         const controller = new AbortController()
-        categoriesLoadAbortRef.current = controller
+        targetsLoadAbortRef.current = controller
 
         try {
-            const response = await api.get('/categories/tree', { signal: controller.signal })
-            // Flatten categories for dropdown with hierarchy indication
-            const flatCategories = flattenCategories(response.data || [])
-            setCategories(flatCategories)
+            const admittedTargets = await cmsService.getNavigationTargets({ signal: controller.signal })
+            setTargets(admittedTargets)
         } catch (err) {
             if (isRequestCanceled(err)) {
                 return
             }
-            console.error('Failed to load categories:', err)
-            // Non-critical - continue without categories
+            console.error('Failed to load navigation targets:', err)
+            setTargets({ categories: [], products: [], cmsPages: [], collections: [] })
         } finally {
-            if (categoriesLoadAbortRef.current === controller) {
-                categoriesLoadAbortRef.current = null
+            if (targetsLoadAbortRef.current === controller) {
+                targetsLoadAbortRef.current = null
             }
         }
-    }
-
-    // Helper to flatten category tree with indentation
-    const flattenCategories = (cats, level = 0, result = []) => {
-        for (const cat of cats) {
-            result.push({
-                id: cat.id,
-                name: cat.name,
-                nameAr: cat.nameAr,
-                slug: cat.slug,
-                level,
-                displayName: '\u00A0\u00A0'.repeat(level) + (level > 0 ? '└ ' : '') + cat.name,
-            })
-            if (cat.children?.length) {
-                flattenCategories(cat.children, level + 1, result)
-            }
-        }
-        return result
     }
 
     useEffect(() => {
@@ -181,17 +203,15 @@ export function NavigationEditor() {
         try {
             const data = await cmsService.getNavigation({ signal: controller.signal })
             setNavigation(data)
+            acceptedNavigationRef.current = data
         } catch (err) {
             if (isRequestCanceled(err)) {
                 return
             }
             console.error('Failed to load navigation:', err)
-            setError(isRTL ? 'فشل تحميل القائمة' : 'Failed to load navigation')
-            // Initialize empty if not found
-            setNavigation({
-                draft: { header: [], footer: [] },
-                live: null,
-            })
+            const admission = extractNavigationAdmissionError(err)
+            setError(admission?.message || (isRTL ? 'فشل تحميل القائمة' : 'Failed to load navigation'))
+            setNavigation(null)
         } finally {
             if (navigationLoadAbortRef.current === controller) {
                 navigationLoadAbortRef.current = null
@@ -203,37 +223,8 @@ export function NavigationEditor() {
         }
     }
 
-    const buildNavigationRequest = useCallback(() => {
-        if (!navigation?.draft) {
-            return null
-        }
-
-        return {
-            rowVersion: navigation.rowVersion,
-            header: (navigation.draft.header || []).map((link, index) => ({
-                label: link.label,
-                type: link.type,
-                path: link.path,
-                slug: link.slug,
-                openInNewTab: link.openInNewTab || false,
-                order: index,
-                enabled: link.enabled !== false,
-            })),
-            footer: (navigation.draft.footer || []).map((link, index) => ({
-                label: link.label,
-                type: link.type,
-                path: link.path,
-                slug: link.slug,
-                openInNewTab: link.openInNewTab || false,
-                order: index,
-                enabled: link.enabled !== false,
-            })),
-        }
-    }, [navigation])
-
-    const handleSave = useCallback(async (silent = false) => {
-        const request = buildNavigationRequest()
-        if (!request) {
+    const handleSave = useCallback(async (silent = false, candidate = navigation) => {
+        if (!candidate?.draft) {
             return false
         }
 
@@ -250,13 +241,14 @@ export function NavigationEditor() {
         setConflict(null)
 
         try {
-            const savedNavigation = await cmsService.updateNavigation(request, { signal: controller.signal })
+            const savedNavigation = await cmsService.updateNavigation(candidate, { signal: controller.signal })
 
             if (controller.signal.aborted || requestId !== saveRequestIdRef.current) {
                 return false
             }
 
             setNavigation(savedNavigation)
+            acceptedNavigationRef.current = savedNavigation
             setNavigationDirty(false)
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
@@ -267,15 +259,20 @@ export function NavigationEditor() {
             }
 
             console.error('Failed to save navigation:', err)
-            const conflictState = extractCmsConflict(err)
+            const conflictState = extractNavigationConflict(err)
+            const admissionState = extractNavigationAdmissionError(err)
             
             if (conflictState) {
                 // Conflict detected - show conflict banner only
                 setSaveStatus('conflict')
                 setConflict(conflictState)
+            } else if (admissionState) {
+                setSaveStatus('error')
+                setSaveErrorBanner(admissionState.message)
             } else {
                 // Generic error - show retry banner
                 const message = err?.response?.data?.message
+                    || err?.message
                     || (isRTL ? 'فشل حفظ تغييرات التنقل. حاول مرة أخرى.' : 'Failed to save navigation changes. Please try again.')
                 setSaveStatus('error')
                 setSaveErrorBanner(message)
@@ -295,7 +292,7 @@ export function NavigationEditor() {
                 setIsSaving(false)
             }
         }
-    }, [buildNavigationRequest, clearScheduledSave, isRTL, setNavigationDirty])
+    }, [clearScheduledSave, isRTL, navigation, setNavigation, setNavigationDirty])
 
     // Debounced auto-save
     const debouncedSave = useCallback(() => {
@@ -317,12 +314,6 @@ export function NavigationEditor() {
     const handlePublish = async () => {
         if (!navigation?.draft) return
 
-        if (!window.confirm(
-            isRTL
-                ? 'هل أنت متأكد من نشر قوائم التنقل؟'
-                : 'Publish navigation? It will be visible on the storefront.'
-        )) return
-
         const savedNavigation = await handleSave(true)
         if (!savedNavigation) {
             return
@@ -333,49 +324,96 @@ export function NavigationEditor() {
         setPublishErrorBanner(null)
         setConflict(null)
         try {
-            await cmsService.publishNavigation(savedNavigation.rowVersion)
-            await loadNavigation()
+            const publishedNavigation = await cmsService.publishNavigation(savedNavigation.rowVersion)
+            setNavigation(publishedNavigation)
+            acceptedNavigationRef.current = publishedNavigation
+            setNavigationDirty(false)
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
             setPublishStatus('published')
-            alert(isRTL ? '✓ تم نشر القوائم!' : '✓ Navigation published!')
+            setIsPublishConfirmOpen(false)
         } catch (err) {
             console.error('Failed to publish:', err)
-            const conflictState = extractCmsConflict(err)
+            const conflictState = extractNavigationConflict(err)
+            const admissionState = extractNavigationAdmissionError(err)
             
             if (conflictState) {
                 // Conflict detected - show conflict banner only
+                setIsPublishConfirmOpen(false)
                 setPublishStatus('conflict')
                 setConflict(conflictState)
+            } else if (admissionState) {
+                setPublishStatus('error')
+                setPublishErrorBanner(admissionState.message)
             } else {
                 // Generic error - show retry banner
                 const message = err?.response?.data?.message
+                    || err?.message
                     || (isRTL ? 'فشل نشر القوائم. حاول مرة أخرى.' : 'Failed to publish navigation. Please try again.')
                 setPublishStatus('error')
                 setPublishErrorBanner(message)
-                alert(isRTL ? 'فشل النشر' : 'Failed to publish')
             }
         } finally {
             setIsPublishing(false)
         }
     }
 
-    const handleExit = () => {
-        if (isNavigationDirty) {
-            if (!window.confirm(
-                isRTL
-                    ? 'لديك تغييرات غير محفوظة. هل تريد الخروج؟'
-                    : 'You have unsaved changes. Exit anyway?'
-            )) return
-        }
-        navigate('/storefront/cms/pages')
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty: isNavigationDirty,
+        isBusy: isSaving || isPublishing,
+        onSave: () => handleSave(false),
+    })
+
+    const handleDiscard = () => {
+        if (!acceptedNavigationRef.current) return
+        clearScheduledSave(true)
+        setNavigation(acceptedNavigationRef.current)
+        setNavigationDirty(false)
+        setSaveStatus('idle')
+        setSaveErrorBanner(null)
+        setConflict(null)
     }
+
+    const handleLoadLatest = () => {
+        if (conflict?.latestVersion) {
+            setNavigation(conflict.latestVersion)
+            acceptedNavigationRef.current = conflict.latestVersion
+            setNavigationDirty(false)
+            setEditingLink(null)
+            setShowAddModal(false)
+            setSaveStatus('idle')
+            setPublishStatus('idle')
+            setSaveErrorBanner(null)
+            setPublishErrorBanner(null)
+            setConflict(null)
+            return
+        }
+        void loadNavigation()
+    }
+
+    const handleRetryConflict = async () => {
+        if (!conflict?.latestVersion || !navigation) return
+        const retainedDraft = navigation
+        const retryCandidate = { ...retainedDraft, rowVersion: conflict.latestVersion.rowVersion }
+        setConflict(null)
+        await handleSave(false, retryCandidate)
+    }
+
+    const handleExit = () => requestNavigation('/storefront')
 
     const getCurrentLinks = () => {
         if (!navigation?.draft) return []
         return activeTab === 'header'
             ? (navigation.draft.header || [])
             : (navigation.draft.footer || [])
+    }
+
+    const getLinkDestination = (link) => {
+        if (link.type === 'cms') return link.slug ? `/${link.slug}` : link.targetId
+        if (link.type === 'category') return link.slug ? `/products?category=${link.slug}` : link.targetId
+        if (link.type === 'product' || link.type === 'collection') return link.path || link.targetId || link.collectionKey
+        if (link.type === 'custom' || link.type === 'external') return link.path
+        return ''
     }
 
     const updateLinks = (newLinks) => {
@@ -400,7 +438,15 @@ export function NavigationEditor() {
     const handleUpdateLink = (index, updates) => {
         const links = getCurrentLinks()
         const updatedLinks = links.map((link, i) =>
-            i === index ? { ...link, ...updates } : link
+            i === index
+                ? {
+                    ...link,
+                    ...updates,
+                    validationStatus: null,
+                    validationCode: null,
+                    validationMessage: null,
+                }
+                : link
         )
         updateLinks(updatedLinks)
     }
@@ -424,206 +470,69 @@ export function NavigationEditor() {
     const lastSavedLabel = formatSavedAt(lastSavedAt)
 
     if (isLoading) {
-        return (
-            <div className="flex items-center justify-center h-96">
-                <Loader2 size={32} className="animate-spin text-indigo-600" />
-            </div>
-        )
+        return <AuthoringLoadingState label="Loading Navigation draft…" />
     }
+
+    if (!navigation) {
+        return <AuthoringFeedback kind="error" title="Navigation authoring unavailable" message={error || (isRTL ? 'تعذر تحميل التنقل' : 'Navigation authoring is unavailable.')} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry load', onClick: () => void loadNavigation(), icon: RefreshCcw }} />
+    }
+
+    const draftValidationWarnings = (navigation.validationWarnings || [])
+        .filter((warning) => warning.snapshot === 'draft')
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <button
-                        onClick={handleExit}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                    >
-                        <ArrowLeft size={20} className={isRTL ? 'rotate-180' : ''} />
-                    </button>
-                    <div>
-                        <h1 className="text-2xl font-bold text-gray-900">
-                            {isRTL ? 'إدارة قوائم التنقل' : 'Navigation Editor'}
-                        </h1>
-                        <p className="text-sm text-gray-500 mt-1">
-                            {isRTL
-                                ? 'تعديل روابط الهيدر والفوتر في المتجر الإلكتروني'
-                                : 'Manage header and footer navigation links'}
-                        </p>
-                    </div>
-                </div>
-                <div className="flex items-center gap-3">
-                    {isNavigationDirty && (
-                        <span className="text-sm text-amber-600">
-                            {isRTL ? '• تغييرات غير محفوظة' : '• Unsaved changes'}
-                        </span>
-                    )}
-                    {saveStatus === 'saving' && (
-                        <span className="text-sm text-sky-600">
-                            {isRTL ? 'جارٍ الحفظ...' : 'Saving...'}
-                        </span>
-                    )}
-                    {saveStatus === 'saved' && lastSavedLabel && !isNavigationDirty && (
-                        <span className="text-sm text-emerald-600">
-                            {isRTL ? `آخر حفظ ${lastSavedLabel}` : `Last saved ${lastSavedLabel}`}
-                        </span>
-                    )}
-                    {publishStatus === 'publishing' && (
-                        <span className="text-sm text-sky-600" role="status" aria-live="polite">
-                            {isRTL ? 'جارٍ النشر...' : 'Publishing...'}
-                        </span>
-                    )}
-                    {publishStatus === 'published' && (
-                        <span className="text-sm text-emerald-600" role="status" aria-live="polite">
-                            {isRTL ? '✓ تم النشر' : '✓ Published'}
-                        </span>
-                    )}
-                    <button
-                        onClick={() => void handleSave(false)}
-                        disabled={isSaving}
-                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    >
-                        {isSaving ? (
-                            <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                            <Save size={16} />
-                        )}
-                        {isRTL ? 'حفظ المسودة' : 'Save Draft'}
-                    </button>
-                    <button
-                        onClick={handlePublish}
-                        disabled={isPublishing}
-                        className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-                    >
-                        {isPublishing ? (
-                            <Loader2 size={16} className="animate-spin" />
-                        ) : (
-                            <Globe size={16} />
-                        )}
-                        {isRTL ? 'نشر' : 'Publish'}
-                    </button>
-                </div>
-            </div>
+            <AuthoringActionBar
+                title="Navigation"
+                subtitle={lastSavedLabel && !isNavigationDirty ? `Draft last saved ${lastSavedLabel}. Header and Footer publish together.` : 'Header and Footer publish together as one Navigation scope.'}
+                backAction={{ label: 'Back', onClick: handleExit }}
+                status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isNavigationDirty ? 'dirty' : publishStatus === 'published' ? 'published' : 'draft'} />}
+                historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
+                discardAction={{ label: 'Discard', onClick: handleDiscard, disabled: !isNavigationDirty || isSaving || isPublishing }}
+                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => void handleSave(false), disabled: !isNavigationDirty || isPublishing, busy: isSaving }}
+                publishAction={{ label: 'Publish Header and Footer Navigation', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving, busy: isPublishing }}
+            />
+
+            {publishStatus === 'published' ? <AuthoringFeedback kind="success" title="Navigation published" message="Header and Footer Navigation are now live." /> : null}
 
             {/* Error */}
-            {error && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-                    {error}
-                </div>
-            )}
+            {error ? <AuthoringFeedback kind="error" title="Navigation action failed" message={error} /> : null}
 
-            {saveErrorBanner && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                            <p className="font-medium text-red-900">
-                                {isRTL ? 'تعذر حفظ تغييرات التنقل' : 'Navigation changes are not saved'}
-                            </p>
-                            <p className="mt-1 text-sm text-red-700">{saveErrorBanner}</p>
-                        </div>
-                        <button
-                            onClick={() => void handleSave(false)}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
-                        >
-                            <Save size={16} />
-                            <span>{isRTL ? 'إعادة المحاولة' : 'Retry save'}</span>
-                        </button>
-                    </div>
-                </div>
-            )}
+            {saveErrorBanner ? <AuthoringFeedback kind="error" title={isRTL ? 'تعذر حفظ تغييرات التنقل' : 'Navigation changes are not saved'} message={saveErrorBanner} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry save', onClick: () => void handleSave(false), icon: Save }} /> : null}
 
-            {publishErrorBanner && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                            <p className="font-medium text-red-900">
-                                {isRTL ? 'فشل نشر القوائم' : 'Failed to publish navigation'}
-                            </p>
-                            <p className="mt-1 text-sm text-red-700">{publishErrorBanner}</p>
-                        </div>
-                        <button
-                            onClick={() => void handlePublish()}
-                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700"
-                        >
-                            <Globe size={16} />
-                            <span>{isRTL ? 'إعادة المحاولة' : 'Retry publish'}</span>
-                        </button>
-                    </div>
-                </div>
-            )}
+            {publishErrorBanner ? <AuthoringFeedback kind="error" title={isRTL ? 'فشل نشر القوائم' : 'Failed to publish navigation'} message={publishErrorBanner} action={{ label: isRTL ? 'إعادة المحاولة' : 'Retry publish', onClick: () => void handlePublish(), icon: Globe }} /> : null}
 
-            {conflict && (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                    <p className="font-semibold">
-                        {isRTL ? 'تم اكتشاف تعارض في القوائم' : 'A newer navigation version is available'}
-                    </p>
-                    <p className="mt-1 text-amber-800">{conflict.message}</p>
-                    <p className="mt-1 text-amber-700">
-                        {isRTL
-                            ? 'تغييراتك الحالية ما زالت على الشاشة. حمّل آخر نسخة للمراجعة أو احتفظ بمسودتك للدمج اليدوي.'
-                            : 'Your current edits are still on screen. Load the latest version to review it, or keep this draft visible and merge manually.'}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (conflict.latestVersion) {
-                                    setNavigation(conflict.latestVersion)
-                                    setNavigationDirty(false)
-                                    setEditingLink(null)
-                                    setShowAddModal(false)
-                                    setLastSavedAt(null)
-                                    setSaveStatus('idle')
-                                    setPublishStatus('idle')
-                                    setSaveErrorBanner(null)
-                                    setPublishErrorBanner(null)
-                                    setError(null)
-                                    setConflict(null)
-                                    return
-                                }
-
-                                void loadNavigation()
-                            }}
-                            className="inline-flex items-center gap-2 rounded-xl bg-amber-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-950"
-                        >
-                            <RefreshCcw size={16} />
-                            {isRTL ? 'تحميل آخر نسخة' : 'Load latest version'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setConflict(null)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100"
-                        >
-                            {isRTL ? 'الاحتفاظ بمسودتي' : 'Keep my draft'}
-                        </button>
-                    </div>
-                </div>
-            )}
+            {draftValidationWarnings.length > 0 ? <AuthoringFeedback kind="warning" title={draftValidationWarnings.length === 1 ? 'One navigation link needs attention' : `${draftValidationWarnings.length} navigation links need attention`} message="Invalid links remain editable. Repair or remove the highlighted rows before saving or publishing." /> : null}
 
             {/* Tabs */}
             <div className="border-b border-gray-200">
-                <nav className="flex gap-4">
+                <nav aria-label={isRTL ? 'طرق عرض التنقل' : 'Navigation views'} className="flex gap-4" role="tablist">
                     <button
-                        onClick={() => setActiveTab('header')}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'header'}
+                        onClick={() => selectNavigationView('header')}
                         className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'header'
                             ? 'border-indigo-600 text-indigo-600'
                             : 'border-transparent text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        {isRTL ? 'قائمة الهيدر' : 'Header Navigation'}
+                        {isRTL ? 'رأس الصفحة' : 'Header'}
                         <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.header?.length || 0}
                         </span>
                     </button>
                     <button
-                        onClick={() => setActiveTab('footer')}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'footer'}
+                        onClick={() => selectNavigationView('footer')}
                         className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'footer'
                             ? 'border-indigo-600 text-indigo-600'
                             : 'border-transparent text-gray-500 hover:text-gray-700'
                             }`}
                     >
-                        {isRTL ? 'قائمة الفوتر' : 'Footer Navigation'}
+                        {isRTL ? 'روابط التذييل' : 'Footer Links'}
                         <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.footer?.length || 0}
                         </span>
@@ -650,26 +559,34 @@ export function NavigationEditor() {
 
                 {/* Links List */}
                 {getCurrentLinks().length === 0 ? (
-                    <div className="text-center py-12 text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
-                        <Link2 size={32} className="mx-auto mb-3 text-gray-400" />
-                        <p>
-                            {isRTL ? 'لا توجد روابط. أضف رابط للبدء.' : 'No links yet. Add one to get started.'}
-                        </p>
-                    </div>
+                    <AuthoringEmptyState
+                        title={isRTL ? 'لا توجد روابط' : 'No Navigation links'}
+                        description={isRTL ? 'أضف رابط للبدء.' : 'Add a link to this shared Navigation draft.'}
+                        action={{ label: isRTL ? 'إضافة رابط' : 'Add Link', onClick: () => setShowAddModal(true), icon: Plus }}
+                    />
                 ) : (
                     <div className="space-y-2">
                         {getCurrentLinks().map((link, index) => {
                             const linkDef = LINK_TYPES.find((lt) => lt.type === link.type)
                             const Icon = linkDef?.icon || Link2
                             const isEditing = editingLink === index
+                            const isInvalid = link.validationStatus === 'invalid'
 
                             return (
                                 <div
                                     key={index}
-                                    className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200"
+                                    className={`flex items-center gap-3 p-3 rounded-lg border ${
+                                        isInvalid
+                                            ? 'border-amber-300 bg-amber-50'
+                                            : 'border-gray-200 bg-gray-50'
+                                    }`}
                                 >
                                     <GripVertical size={16} className="text-gray-400 cursor-grab" />
-                                    <Icon size={16} className="text-gray-500" />
+                                    {isInvalid ? (
+                                        <AlertTriangle size={16} className="text-amber-600" />
+                                    ) : (
+                                        <Icon size={16} className="text-gray-500" />
+                                    )}
 
                                     {isEditing ? (
                                         <LinkEditForm
@@ -689,10 +606,13 @@ export function NavigationEditor() {
                                                 </span>
                                                 <span className="mx-2 text-gray-300">→</span>
                                                 <span className="text-sm text-gray-500">
-                                                    {link.type === 'cms' && `/${link.slug}`}
-                                                    {link.type === 'category' && `/products?category=${link.slug}`}
-                                                    {(link.type === 'internal' || link.type === 'external') && link.path}
+                                                    {getLinkDestination(link)}
                                                 </span>
+                                                {isInvalid && (
+                                                    <p className="mt-1 text-xs font-medium text-amber-800">
+                                                        {link.validationMessage || 'This navigation target is no longer valid.'}
+                                                    </p>
+                                                )}
                                             </div>
                                             <div className="flex items-center gap-1">
                                                 <button
@@ -716,11 +636,8 @@ export function NavigationEditor() {
                                                     <ChevronDown size={14} />
                                                 </button>
                                                 <button
-                                                    onClick={() => {
-                                                        if (window.confirm(isRTL ? 'حذف هذا الرابط؟' : 'Delete this link?')) {
-                                                            handleRemoveLink(index)
-                                                        }
-                                                    }}
+                                                    onClick={() => setDeleteLinkIndex(index)}
+                                                    aria-label="Delete navigation link"
                                                     className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
                                                 >
                                                     <Trash2 size={14} />
@@ -741,9 +658,40 @@ export function NavigationEditor() {
                     onAdd={handleAddLink}
                     onClose={() => setShowAddModal(false)}
                     isRTL={isRTL}
-                    categories={categories}
+                    targets={targets}
                 />
             )}
+            <AuthoringConfirmDialog
+                open={isPublishConfirmOpen}
+                title="Publish Header and Footer Navigation?"
+                description="Publishing replaces the live Header and Footer Navigation together. Other StoreConfig surfaces are not changed."
+                confirmLabel="Publish Header and Footer Navigation"
+                confirmTone="publish"
+                busy={isPublishing}
+                onClose={() => setIsPublishConfirmOpen(false)}
+                onConfirm={handlePublish}
+            />
+            <AuthoringConfirmDialog
+                open={deleteLinkIndex != null}
+                title="Delete Navigation Link?"
+                description="The link is removed from this draft. Save or publish is still required to commit the change."
+                confirmLabel="Delete Link"
+                confirmTone="danger"
+                onClose={() => setDeleteLinkIndex(null)}
+                onConfirm={() => {
+                    handleRemoveLink(deleteLinkIndex)
+                    setDeleteLinkIndex(null)
+                }}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                hasLatest={Boolean(conflict?.latestVersion)}
+                onClose={() => setConflict(null)}
+                onLoadLatest={handleLoadLatest}
+                onRetry={handleRetryConflict}
+            />
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }
@@ -751,35 +699,36 @@ export function NavigationEditor() {
 /**
  * Add Link Modal
  */
-function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
-    const [linkType, setLinkType] = useState('internal')
+function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
+    const [linkType, setLinkType] = useState('custom')
     const [label, setLabel] = useState('')
     const [path, setPath] = useState('')
-    const [slug, setSlug] = useState('')
     const [openInNewTab, setOpenInNewTab] = useState(false)
-    const [selectedCategoryId, setSelectedCategoryId] = useState('')
+    const [targetId, setTargetId] = useState('')
+    const [collectionKey, setCollectionKey] = useState('')
 
-    // Handle category selection
-    const handleCategorySelect = (categoryId) => {
-        setSelectedCategoryId(categoryId)
-        if (categoryId) {
-            const cat = categories.find((c) => c.id === categoryId)
-            if (cat) {
-                setLabel(cat.name) // Auto-fill label
-                setSlug(cat.slug || cat.id) // Use slug if available, fallback to ID
-            }
-        } else {
-            setLabel('')
-            setSlug('')
+    const targetOptions = linkType === 'category'
+        ? targets.categories
+        : linkType === 'product'
+            ? targets.products
+            : linkType === 'cms'
+                ? targets.cmsPages
+                : []
+
+    const handleTargetSelect = (selectedId) => {
+        setTargetId(selectedId)
+        const selected = targetOptions.find((option) => option.targetId === selectedId)
+        if (selected) {
+            setLabel(selected.label)
         }
     }
 
-    // Reset category selection when type changes
     const handleTypeChange = (newType) => {
         setLinkType(newType)
-        if (newType !== 'category') {
-            setSelectedCategoryId('')
-        }
+        setTargetId('')
+        setCollectionKey('')
+        setPath('')
+        setLabel('')
     }
 
     const handleSubmit = (e) => {
@@ -789,28 +738,21 @@ function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
         onAdd({
             label: label.trim(),
             type: linkType,
-            path: linkType === 'internal' || linkType === 'external' ? path : undefined,
-            slug: linkType === 'cms' || linkType === 'category' ? slug : undefined,
+            targetId: ['category', 'product', 'cms'].includes(linkType) ? targetId : null,
+            collectionKey: linkType === 'collection' ? collectionKey : null,
+            path: linkType === 'custom' || linkType === 'external' ? path.trim() : null,
             openInNewTab,
         })
     }
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-                <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-semibold text-gray-900">
-                        {isRTL ? 'إضافة رابط' : 'Add Link'}
-                    </h3>
-                    <button
-                        onClick={onClose}
-                        className="p-1 text-gray-400 hover:text-gray-600"
-                    >
-                        <X size={20} />
-                    </button>
-                </div>
-
-                <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthoringDialog
+            open
+            title={isRTL ? 'إضافة رابط' : 'Add Link'}
+            onClose={onClose}
+            panelClassName="!max-w-md"
+        >
+                <form onSubmit={handleSubmit} className="mt-4 space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                             {isRTL ? 'نوع الرابط' : 'Link Type'}
@@ -842,7 +784,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
                         />
                     </div>
 
-                    {(linkType === 'internal' || linkType === 'external') && (
+                    {(linkType === 'custom' || linkType === 'external') && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                 {linkType === 'external'
@@ -860,45 +802,55 @@ function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
                         </div>
                     )}
 
-                    {linkType === 'category' && (
+                    {['category', 'product', 'cms'].includes(linkType) && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                 {isRTL ? 'اختر الفئة' : 'Select Category'} *
                             </label>
                             <select
-                                value={selectedCategoryId}
-                                onChange={(e) => handleCategorySelect(e.target.value)}
+                                value={targetId}
+                                onChange={(e) => handleTargetSelect(e.target.value)}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                 required
                             >
                                 <option value="">{isRTL ? '-- اختر فئة --' : '-- Select a category --'}</option>
-                                {categories.map((cat) => (
-                                    <option key={cat.id} value={cat.id}>
-                                        {cat.displayName}
+                                {targetOptions.map((option) => (
+                                    <option key={option.targetId} value={option.targetId}>
+                                        {option.label}{option.state === 'draft' ? ' (Draft)' : ''}
                                     </option>
                                 ))}
                             </select>
-                            {selectedCategoryId && (
+                            {targetId && (
                                 <p className="mt-1 text-xs text-gray-500">
-                                    Slug: {slug}
+                                    Backend-issued identity: {targetId}
                                 </p>
                             )}
                         </div>
                     )}
 
-                    {linkType === 'cms' && (
+                    {linkType === 'collection' && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                {isRTL ? 'المعرف (Slug)' : 'Slug'} *
+                                {isRTL ? 'Collection' : 'Select Collection'} *
                             </label>
-                            <input
-                                type="text"
-                                value={slug}
-                                onChange={(e) => setSlug(e.target.value)}
-                                placeholder="about"
+                            <select
+                                value={collectionKey}
+                                onChange={(event) => {
+                                    const key = event.target.value
+                                    setCollectionKey(key)
+                                    const selected = targets.collections.find((option) => option.collectionKey === key)
+                                    if (selected) setLabel(selected.label)
+                                }}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                 required
-                            />
+                            >
+                                <option value="">-- Select a collection --</option>
+                                {targets.collections.map((option) => (
+                                    <option key={option.collectionKey} value={option.collectionKey}>
+                                        {option.label}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                     )}
 
@@ -932,8 +884,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
                         </button>
                     </div>
                 </form>
-            </div>
-        </div>
+        </AuthoringDialog>
     )
 }
 
@@ -943,7 +894,6 @@ function AddLinkModal({ onAdd, onClose, isRTL, categories = [] }) {
 function LinkEditForm({ link, onSave, onCancel, isRTL }) {
     const [label, setLabel] = useState(link.label || '')
     const [path, setPath] = useState(link.path || '')
-    const [slug, setSlug] = useState(link.slug || '')
 
     return (
         <div className="flex-1 flex items-center gap-2">
@@ -954,7 +904,7 @@ function LinkEditForm({ link, onSave, onCancel, isRTL }) {
                 placeholder={isRTL ? 'نص الرابط' : 'Label'}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
             />
-            {(link.type === 'internal' || link.type === 'external') && (
+            {(link.type === 'custom' || link.type === 'external') && (
                 <input
                     type="text"
                     value={path}
@@ -963,17 +913,8 @@ function LinkEditForm({ link, onSave, onCancel, isRTL }) {
                     className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
                 />
             )}
-            {(link.type === 'cms' || link.type === 'category') && (
-                <input
-                    type="text"
-                    value={slug}
-                    onChange={(e) => setSlug(e.target.value)}
-                    placeholder="Slug"
-                    className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
-                />
-            )}
             <button
-                onClick={() => onSave({ label, path, slug })}
+                onClick={() => onSave({ label, path })}
                 className="p-1.5 text-green-600 hover:bg-green-50 rounded"
             >
                 <Check size={14} />

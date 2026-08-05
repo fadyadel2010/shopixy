@@ -1701,6 +1701,70 @@ public class CartService : ICartService
             });
     }
 
+    /// <inheritdoc />
+    public async Task SetActiveCheckoutIdempotencyAsync(
+        Guid tenantId,
+        CartOwner owner,
+        Guid cartId,
+        string checkoutIdempotencyKey,
+        string snapshotHash,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        await EnsureOwnerTenantMatchAsync(tenantId, owner, correlationId, cancellationToken);
+
+        await ExecuteWithCartMutationLockAsync(
+            tenantId,
+            owner,
+            correlationId,
+            cancellationToken,
+            async ct =>
+            {
+                var cacheKey = BuildCacheKey(tenantId, owner);
+                var cart = await GetCartFromRedisAsync(tenantId, owner, cacheKey, correlationId);
+                if (cart == null)
+                {
+                    throw new CheckoutCartNotFoundException(cartId);
+                }
+
+                if (cart.CartId != cartId ||
+                    cart.TenantId != tenantId ||
+                    !string.Equals(cart.OwnerType, owner.OwnerType, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(cart.OwnerId, owner.OwnerId, StringComparison.Ordinal))
+                {
+                    throw new CheckoutCartOwnershipException(cartId);
+                }
+
+                cart.ActiveCheckoutIdempotencyKey = checkoutIdempotencyKey;
+                cart.ActiveCheckoutSnapshotHash = snapshotHash;
+
+                var ttl = cart.ExpiresAtUtc > DateTime.UtcNow
+                    ? cart.ExpiresAtUtc - DateTime.UtcNow
+                    : TimeSpan.FromHours(CartTtlHours);
+
+                var database = _redisFactory.GetDatabase();
+                if (database == null)
+                {
+                    throw new RedisUnavailableException();
+                }
+
+                ct.ThrowIfCancellationRequested();
+                await database.StringSetAsync(
+                    cacheKey,
+                    JsonSerializer.Serialize(cart, _jsonOptions),
+                    ttl);
+
+                _logger.LogDebug(
+                    "Persisted checkout idempotency through Cart owner | TenantId: {TenantId} | CartId: {CartId} | CheckoutId: {CheckoutId} | CorrelationId: {CorrelationId}",
+                    tenantId,
+                    cartId,
+                    checkoutIdempotencyKey,
+                    correlationId);
+
+                return true;
+            });
+    }
+
     #endregion
 
     #region Cart Validation (Phase 3.2)

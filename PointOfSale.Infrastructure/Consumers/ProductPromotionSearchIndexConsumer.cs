@@ -42,7 +42,7 @@ public class ProductPromotionSearchIndexConsumer :
     IConsumer<PromotionDeletedEvent>,
     IConsumer<PromotionExpiredEvent>
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly ILogger<ProductPromotionSearchIndexConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
@@ -51,7 +51,7 @@ public class ProductPromotionSearchIndexConsumer :
     private const string ConsumerName = nameof(ProductPromotionSearchIndexConsumer);
 
     public ProductPromotionSearchIndexConsumer(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         IMongoDatabase database,
         ILogger<ProductPromotionSearchIndexConsumer> logger,
         ApplicationDbContext dbContext)
@@ -310,7 +310,7 @@ public class ProductPromotionSearchIndexConsumer :
                 cancellationToken);
             if (sqlOverlay == null || !sqlOverlay.IsActive || !sqlOverlay.IsOnlineVisible || !sqlOverlay.IsSearchable)
             {
-                var deleted = await _indexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -327,7 +327,7 @@ public class ProductPromotionSearchIndexConsumer :
             PromotionVisibilityProjectionSupport.ApplyProductPromotionOverlay(sqlOverlay, winningPromotion);
 
             var document = MapToSearchDocument(sqlOverlay);
-            var success = await _indexService.IndexAsync(document, cancellationToken);
+            var success = await _indexService.IndexProductAsync(document, cancellationToken);
 
             if (success)
             {

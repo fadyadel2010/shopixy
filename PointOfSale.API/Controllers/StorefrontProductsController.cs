@@ -29,7 +29,7 @@ public class StorefrontProductsController : ControllerBase
     private readonly IStorefrontProductService _productService;
     private readonly IProductSearchService _searchService;
     private readonly IProductDiscoveryService _discoveryService;
-    private readonly ICategoryReadRepository _categoryRepository;
+    private readonly IStorefrontCategoryService _categoryService;
     private readonly ApplicationDbContext _dbContext;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontProductsController> _logger;
@@ -39,7 +39,7 @@ public class StorefrontProductsController : ControllerBase
         IStorefrontProductService productService,
         IProductSearchService searchService,
         IProductDiscoveryService discoveryService,
-        ICategoryReadRepository categoryRepository,
+        IStorefrontCategoryService categoryService,
         ApplicationDbContext dbContext,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<StorefrontProductsController> logger)
@@ -47,7 +47,7 @@ public class StorefrontProductsController : ControllerBase
         _productService = productService;
         _searchService = searchService;
         _discoveryService = discoveryService;
-        _categoryRepository = categoryRepository;
+        _categoryService = categoryService;
         _dbContext = dbContext;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
@@ -226,7 +226,6 @@ public class StorefrontProductsController : ControllerBase
         [FromBody] StorefrontVariantResolutionRequest? request,
         CancellationToken cancellationToken)
     {
-        ApplyNoStoreHeaders();
         var traceId = GetTraceId();
 
         var tenantValidation = ValidateTenantHeader(traceId);
@@ -306,10 +305,14 @@ public class StorefrontProductsController : ControllerBase
         List<Guid>? categoryTreeIds = null;
         if (!string.IsNullOrWhiteSpace(categoryId))
         {
-            var resolvedCategoryId = await ResolveCategoryIdAsync(tenantId, categoryId, traceId, cancellationToken);
-            
+            categoryTreeIds = await _categoryService.ResolveCategoryTreeIdsAsync(
+                tenantId,
+                categoryId,
+                traceId,
+                cancellationToken);
+
             // If categoryId was provided but couldn't be resolved, return empty results
-            if (resolvedCategoryId == null)
+            if (categoryTreeIds.Count == 0)
             {
                 _logger.LogInformation(
                     "Category not found, returning empty results | TenantId: {TenantId} | CategoryId: {CategoryId} | TraceId: {TraceId}",
@@ -323,13 +326,9 @@ public class StorefrontProductsController : ControllerBase
                 ));
             }
 
-            // Get all category IDs in the tree (parent + all subcategories)
-            categoryTreeIds = await _categoryRepository.GetCategoryTreeIdsAsync(
-                tenantId, resolvedCategoryId.Value, cancellationToken);
-            
             _logger.LogDebug(
                 "Category tree resolved | TenantId: {TenantId} | CategoryId: {CategoryId} | TreeIds: {TreeIds} | TraceId: {TraceId}",
-                tenantId, resolvedCategoryId, string.Join(",", categoryTreeIds), traceId);
+                tenantId, categoryId, string.Join(",", categoryTreeIds), traceId);
         }
 
         // Step 3: Detect Affiliate Mode
@@ -637,6 +636,7 @@ public class StorefrontProductsController : ControllerBase
     /// <param name="hasPromotion">Filter by active promotion</param>
     /// <param name="inStock">Filter by stock availability</param>
     /// <param name="hasVariants">Filter by variant products</param>
+    /// <param name="attribute">Variant attribute filters encoded as name=value</param>
     /// <param name="sort">Sort mode: relevance, price_asc, price_desc, newest, highest_discount</param>
     /// <param name="page">Page number (1-indexed, default: 1)</param>
     /// <param name="pageSize">Items per page (default: 12, max: 100)</param>
@@ -658,6 +658,7 @@ public class StorefrontProductsController : ControllerBase
         [FromQuery] bool? hasPromotion = null,
         [FromQuery] bool? inStock = null,
         [FromQuery] bool? hasVariants = null,
+        [FromQuery] List<string>? attribute = null,
         [FromQuery] string sort = "relevance",
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 12,
@@ -689,40 +690,25 @@ public class StorefrontProductsController : ControllerBase
         {
             foreach (var cat in category)
             {
-                Guid? categoryGuid = null;
-                
-                if (Guid.TryParse(cat, out var parsedGuid))
+                var categoryTreeIds = await _categoryService.ResolveCategoryTreeIdsAsync(
+                    tenantId,
+                    cat,
+                    traceId,
+                    cancellationToken);
+
+                if (categoryTreeIds.Count > 0)
                 {
-                    // Already a GUID
-                    categoryGuid = parsedGuid;
+                    resolvedCategories.AddRange(categoryTreeIds.Select(id => id.ToString()));
+
+                    _logger.LogDebug(
+                        "Category tree resolved for discovery from SQL authority | TenantId: {TenantId} | Category: {Category} | TreeIds: {TreeIds} | TraceId: {TraceId}",
+                        tenantId, cat, string.Join(",", categoryTreeIds), traceId);
                 }
                 else
                 {
-                    // Try to resolve slug to ID
-                    categoryGuid = await ResolveCategoryIdAsync(tenantId, cat, traceId, cancellationToken);
-                }
-                
-                if (categoryGuid.HasValue)
-                {
-                    // Get the full category tree (parent + all subcategories)
-                    // This ensures clicking "Electronics" shows products in "Electronics" AND "Electronics > Phones", etc.
-                    var categoryTreeIds = await _categoryRepository.GetCategoryTreeIdsAsync(
-                        tenantId, categoryGuid.Value, cancellationToken);
-                    
-                    if (categoryTreeIds?.Count > 0)
-                    {
-                        // Add all category IDs from the tree
-                        resolvedCategories.AddRange(categoryTreeIds.Select(id => id.ToString()));
-                        
-                        _logger.LogDebug(
-                            "Category tree resolved for discovery | TenantId: {TenantId} | Category: {Category} | TreeIds: {TreeIds} | TraceId: {TraceId}",
-                            tenantId, cat, string.Join(",", categoryTreeIds), traceId);
-                    }
-                    else
-                    {
-                        // Fallback: just use the single category ID
-                        resolvedCategories.Add(categoryGuid.Value.ToString());
-                    }
+                    // Preserve the requested constraint. An unknown category must never
+                    // degrade into an unfiltered catalog response.
+                    resolvedCategories.Add(Guid.Empty.ToString());
                 }
             }
         }
@@ -738,6 +724,7 @@ public class StorefrontProductsController : ControllerBase
             HasPromotion = hasPromotion,
             InStock = inStock,
             HasVariants = hasVariants,
+            Attribute = attribute?.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
             Sort = ParseSortMode(sort),
             Page = page,
             PageSize = pageSize,
@@ -837,74 +824,12 @@ public class StorefrontProductsController : ControllerBase
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
     }
 
-    private void ApplyNoStoreHeaders()
-    {
-        Response.Headers.CacheControl = "no-store, no-cache, max-age=0, must-revalidate";
-        Response.Headers.Pragma = "no-cache";
-        Response.Headers.Expires = "0";
-        Response.Headers["Surrogate-Control"] = "no-store";
-    }
-
     private IActionResult SearchUnavailableResult(string traceId, string surface, string reason)
     {
         _reliabilityTelemetry.RecordSearchFailure(surface, reason);
         return StatusCode(
             StatusCodes.Status503ServiceUnavailable,
             ApiErrorResponse.SearchUnavailable(traceId));
-    }
-
-    /// <summary>
-    /// Resolves a category identifier to a GUID.
-    /// Accepts both GUID strings and category slugs.
-    /// </summary>
-    /// <param name="tenantId">Tenant identifier</param>
-    /// <param name="categoryIdOrSlug">Category ID (GUID) or slug</param>
-    /// <param name="traceId">Trace ID for logging</param>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Resolved category GUID, or null if not found</returns>
-    private async Task<Guid?> ResolveCategoryIdAsync(
-        Guid tenantId,
-        string categoryIdOrSlug,
-        string traceId,
-        CancellationToken cancellationToken)
-    {
-        // Try to parse as GUID first
-        if (Guid.TryParse(categoryIdOrSlug, out var categoryGuid))
-        {
-            _logger.LogDebug(
-                "CategoryId is GUID | TenantId: {TenantId} | CategoryId: {CategoryId} | TraceId: {TraceId}",
-                tenantId, categoryGuid, traceId);
-            return categoryGuid;
-        }
-
-        // Not a GUID - treat as slug and look up in MongoDB
-        _logger.LogDebug(
-            "CategoryId is slug, resolving | TenantId: {TenantId} | Slug: {Slug} | TraceId: {TraceId}",
-            tenantId, categoryIdOrSlug, traceId);
-
-        try
-        {
-            var category = await _categoryRepository.FindBySlugAsync(tenantId, categoryIdOrSlug, cancellationToken);
-            if (category != null)
-            {
-                _logger.LogDebug(
-                    "Category slug resolved | TenantId: {TenantId} | Slug: {Slug} | CategoryId: {CategoryId} | TraceId: {TraceId}",
-                    tenantId, categoryIdOrSlug, category.CategoryId, traceId);
-                return category.CategoryId;
-            }
-
-            _logger.LogWarning(
-                "Category slug not found | TenantId: {TenantId} | Slug: {Slug} | TraceId: {TraceId}",
-                tenantId, categoryIdOrSlug, traceId);
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex,
-                "Failed to resolve category slug | TenantId: {TenantId} | Slug: {Slug} | TraceId: {TraceId}",
-                tenantId, categoryIdOrSlug, traceId);
-            return null;
-        }
     }
 
     #endregion

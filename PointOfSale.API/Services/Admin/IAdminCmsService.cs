@@ -80,9 +80,14 @@ public interface IAdminCmsService
         string traceId,
         CancellationToken cancellationToken = default);
 
+    Task<AdminNavigationTargetsResponse> GetNavigationTargetsAsync(
+        Guid tenantId,
+        string traceId,
+        CancellationToken cancellationToken = default);
+
     Task<AdminNavigationResponse> UpdateNavigationAsync(
         Guid tenantId,
-        AdminNavigationRequest request,
+        AdminNavigationRequest? request,
         uint expectedRowVersion,
         string traceId,
         CancellationToken cancellationToken = default);

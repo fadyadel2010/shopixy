@@ -68,20 +68,17 @@ public sealed class CmsPageService : ICmsPageService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly ICmsPageContentValidator _contentValidator;
-    private readonly ICmsPageCacheService _cacheService;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<CmsPageService> _logger;
 
     public CmsPageService(
         ApplicationDbContext dbContext,
         ICmsPageContentValidator contentValidator,
-        ICmsPageCacheService cacheService,
         IEventPublisher eventPublisher,
         ILogger<CmsPageService> logger)
     {
         _dbContext = dbContext;
         _contentValidator = contentValidator;
-        _cacheService = cacheService;
         _eventPublisher = eventPublisher;
         _logger = logger;
     }
@@ -325,7 +322,6 @@ public sealed class CmsPageService : ICmsPageService
             await transaction.CommitAsync(cancellationToken);
         }
 
-        await _cacheService.InvalidatePublishedScopeAsync(tenantId, cancellationToken);
 
         _logger.LogInformation(
             "CMS page published | TenantId: {TenantId} | PageGroupId: {PageGroupId} | Slug: {Slug} | Version: {Version}",
@@ -419,7 +415,6 @@ public sealed class CmsPageService : ICmsPageService
             await transaction.CommitAsync(cancellationToken);
         }
 
-        await _cacheService.InvalidatePublishedScopeAsync(tenantId, cancellationToken);
 
         _logger.LogInformation(
             "CMS page rolled back | TenantId: {TenantId} | PageGroupId: {PageGroupId} | RestoredFromVersion: {RestoredFromVersion} | NewVersion: {NewVersion} | Reason: {Reason}",
@@ -492,11 +487,6 @@ public sealed class CmsPageService : ICmsPageService
         if (transaction != null)
         {
             await transaction.CommitAsync(cancellationToken);
-        }
-
-        if (hadPublished)
-        {
-            await _cacheService.InvalidatePublishedScopeAsync(tenantId, cancellationToken);
         }
 
         _logger.LogInformation(

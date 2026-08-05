@@ -46,7 +46,8 @@ public sealed class RedisCacheFreshnessInvalidationCertificationTests
 
         Assert.Contains("ProjectionConsumerEventFence.TryAcquireAsync", productInvalidation, StringComparison.Ordinal);
         Assert.Contains("ResolveCurrentSqlProductSlugAsync", productInvalidation, StringComparison.Ordinal);
-        Assert.Contains("CacheKeyBuilder.HomePatternKey", productInvalidation, StringComparison.Ordinal);
+        Assert.Contains("IStorefrontProductCacheInvalidator", productInvalidation, StringComparison.Ordinal);
+        Assert.Contains("_cacheInvalidator.InvalidateProductAsync", productInvalidation, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", redisInvalidation, StringComparison.Ordinal);
         Assert.Contains("RunIntegrationInvalidationWithFenceAsync", redisInvalidation, StringComparison.Ordinal);
         Assert.Contains("RunMarketplaceInvalidationWithFenceAsync", redisInvalidation, StringComparison.Ordinal);

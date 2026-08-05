@@ -31,40 +31,40 @@ const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
     templateId: 'default',
     name: 'Default Template',
     sections: [
-      createSection('product_hero_default', 'product-hero', 0, { layoutVariant: 'default', showDescription: true, showMediaGallery: true, showVariantSelector: true, showAddToCart: true, showSku: true, showStockStatus: true }),
-      createSection('product_specs_default', 'product-specs', 1, { layoutVariant: 'default', title: 'Product Details', useDescription: true, items: [] }),
-      createSection('related_products_default', 'related-products', 2, { title: 'You May Also Like', limit: 4, showPrice: true, showRating: true }),
+      createSection('section_runtime_product_hero_default', 'product-hero', 0, { layoutVariant: 'default' }),
+      createSection('product_specs_default', 'product-specs', 1, { layoutVariant: 'default', title: 'Product Details' }),
+      createSection('related_products_default', 'related-products', 2, { title: 'You May Also Like', limit: 4 }),
     ],
   },
   electronics: {
     templateId: 'electronics',
     name: 'Electronics Template',
     sections: [
-      createSection('product_hero_electronics', 'product-hero', 0, { layoutVariant: 'electronics', showDescription: true, showMediaGallery: true, showVariantSelector: true, showAddToCart: true, showSku: true, showStockStatus: true }),
-      createSection('product_specs_electronics', 'product-specs', 1, { layoutVariant: 'electronics', title: 'Technical Specifications', useDescription: true, items: [] }),
-      createSection('product_video_electronics', 'product-video', 2, { title: 'Watch It In Action', videoUrl: '', autoplay: false, showControls: true }),
-      createSection('customer_reviews_electronics', 'customer-reviews', 3, { title: 'Customer Reviews', reviews: [] }),
-      createSection('related_products_electronics', 'related-products', 4, { title: 'Compare Similar Products', limit: 4, showPrice: true, showRating: true }),
+      createSection('section_runtime_product_hero_electronics', 'product-hero', 0, { layoutVariant: 'electronics' }),
+      createSection('product_specs_electronics', 'product-specs', 1, { layoutVariant: 'electronics', title: 'Technical Specifications' }),
+      createSection('product_video_electronics', 'product-video', 2, { title: 'Watch It In Action' }),
+      createSection('testimonials_electronics', 'testimonials', 3, { title: 'Customer Testimonials', testimonials: [] }),
+      createSection('related_products_electronics', 'related-products', 4, { title: 'Compare Similar Products', limit: 4 }),
     ],
   },
   fashion: {
     templateId: 'fashion',
     name: 'Fashion Template',
     sections: [
-      createSection('product_gallery_fashion', 'product-gallery', 0, { title: 'Gallery', showThumbnails: true, maxImages: 6 }),
-      createSection('product_hero_fashion', 'product-hero', 1, { layoutVariant: 'fashion', showDescription: true, showMediaGallery: false, showVariantSelector: true, showAddToCart: true, showSku: false, showStockStatus: true }),
-      createSection('product_specs_fashion', 'product-specs', 2, { layoutVariant: 'fashion', title: 'Style Notes', useDescription: true, items: [] }),
-      createSection('related_products_fashion', 'related-products', 3, { title: 'Complete The Look', limit: 4, showPrice: true, showRating: false }),
+      createSection('section_runtime_product_hero_fashion', 'product-hero', 0, { layoutVariant: 'fashion' }),
+      createSection('product_gallery_fashion', 'product-gallery', 1, { layoutVariant: 'fashion', title: 'Gallery' }),
+      createSection('product_specs_fashion', 'product-specs', 2, { layoutVariant: 'fashion', title: 'Style Notes' }),
+      createSection('related_products_fashion', 'related-products', 3, { layoutVariant: 'fashion', title: 'Complete The Look', limit: 4 }),
     ],
   },
   cosmetics: {
     templateId: 'cosmetics',
     name: 'Cosmetics Template',
     sections: [
-      createSection('product_hero_cosmetics', 'product-hero', 0, { layoutVariant: 'cosmetics', showDescription: true, showMediaGallery: true, showVariantSelector: false, showAddToCart: true, showSku: false, showStockStatus: true }),
-      createSection('product_specs_cosmetics', 'product-specs', 1, { layoutVariant: 'cosmetics', title: 'Ingredients & Benefits', useDescription: true, items: [] }),
-      createSection('customer_reviews_cosmetics', 'customer-reviews', 2, { title: 'What Customers Say', reviews: [] }),
-      createSection('related_products_cosmetics', 'related-products', 3, { title: 'More To Explore', limit: 4, showPrice: true, showRating: true }),
+      createSection('section_runtime_product_hero_cosmetics', 'product-hero', 0, { layoutVariant: 'cosmetics' }),
+      createSection('product_specs_cosmetics', 'product-specs', 1, { layoutVariant: 'cosmetics', title: 'Ingredients & Benefits' }),
+      createSection('testimonials_cosmetics', 'testimonials', 2, { title: 'What Customers Say', testimonials: [] }),
+      createSection('related_products_cosmetics', 'related-products', 3, { layoutVariant: 'cosmetics', title: 'More To Explore', limit: 4 }),
     ],
   },
 }
@@ -93,6 +93,46 @@ export const getProductTemplateOptions = (
   Object.entries(savedTemplates || {}).forEach(([templateId, template]) => options.set(templateId, template?.name || templateId))
   return Array.from(options.entries()).map(([id, name]) => ({ id, name }))
 }
+
+export const getSupplementalProductTemplateSections = (sections?: StorefrontSection[] | null): StorefrontSection[] =>
+  (sections || [])
+    .filter((section) => section.type !== 'product-hero')
+    .map((section, order) => ({ ...section, order, settings: { ...section.settings } }))
+
+export const createMandatoryProductHeroSection = (
+  templateId?: string | null,
+  existingSections?: StorefrontSection[] | null,
+): StorefrontSection => {
+  const acceptedHero = existingSections?.find((section) => section.type === 'product-hero')
+  const builtinHero = getBuiltinProductTemplate(templateId)?.sections.find((section) => section.type === 'product-hero')
+    || getBuiltinProductTemplate('default')?.sections.find((section) => section.type === 'product-hero')
+
+  return {
+    id: acceptedHero?.id || `section_runtime_product_hero_${(templateId || 'default').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 48)}`,
+    type: 'product-hero',
+    enabled: true,
+    order: 0,
+    settings: {
+      layoutVariant: typeof acceptedHero?.settings?.layoutVariant === 'string'
+        ? acceptedHero.settings.layoutVariant
+        : typeof builtinHero?.settings?.layoutVariant === 'string'
+          ? builtinHero.settings.layoutVariant
+        : 'default',
+    },
+  }
+}
+
+export const composeProductTemplateSections = (
+  supplementalSections: StorefrontSection[],
+  templateId?: string | null,
+  existingSections?: StorefrontSection[] | null,
+): StorefrontSection[] => [
+  createMandatoryProductHeroSection(templateId, existingSections),
+  ...getSupplementalProductTemplateSections(supplementalSections).map((section, index) => ({
+    ...section,
+    order: index + 1,
+  })),
+]
 
 export const getProductTemplatePreviewProduct = () => ({
   id: 'preview-product',

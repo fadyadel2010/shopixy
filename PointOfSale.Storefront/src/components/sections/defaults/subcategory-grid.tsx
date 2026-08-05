@@ -43,6 +43,9 @@ const SubcategoryGrid: React.FC<SubcategoryGridProps> = ({ categoryGridModel: mo
         <section className="py-12 px-4 container mx-auto">
             <div className="text-center mb-8">
                 <h2 className="text-2xl font-bold text-text">{model.title}</h2>
+                {model.subtitle ? (
+                    <p className="mt-3 mx-auto max-w-2xl text-sm leading-6 text-muted">{model.subtitle}</p>
+                ) : null}
             </div>
 
             {model.isLoading ? (

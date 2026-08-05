@@ -800,7 +800,8 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         Assert.Contains("BuildFreshStoreConfigEventFilter", storefrontConfigProjectionSource, StringComparison.Ordinal);
         Assert.Contains("TenantLineageAuthority.LoadCurrentStoreConfigProjectionAuthorityAsync", storefrontConfigProjectionSource, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", storefrontConfigProjectionSource, StringComparison.Ordinal);
-        Assert.Contains("CacheKeyBuilder.StoreConfigKey", storefrontConfigProjectionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IConnectionMultiplexer", storefrontConfigProjectionSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("KeyDeleteAsync", storefrontConfigProjectionSource, StringComparison.Ordinal);
 
         Assert.Contains("BuildFreshCurrencyEventFilter", tenantCurrencyProjectionSource, StringComparison.Ordinal);
         Assert.Contains("LastCurrencyEventVersion", tenantCurrencyProjectionSource, StringComparison.Ordinal);

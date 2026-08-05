@@ -3,12 +3,10 @@ using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
-using PointOfSale.API.Services.Catalog;
 using PointOfSale.API.Services.Cms;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
-using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.API.Services.Admin;
 
@@ -18,7 +16,7 @@ public sealed class AdminCmsService : IAdminCmsService
     private readonly ICmsPageService _cmsPageService;
     private readonly ICmsPageReadService _cmsPageReadService;
     private readonly ICmsPagePreviewTokenService _cmsPagePreviewTokenService;
-    private readonly IStoreConfigCacheService _cacheService;
+    private readonly NavigationAdmissionService _navigationAdmission;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<AdminCmsService> _logger;
 
@@ -33,7 +31,7 @@ public sealed class AdminCmsService : IAdminCmsService
         ICmsPageService cmsPageService,
         ICmsPageReadService cmsPageReadService,
         ICmsPagePreviewTokenService cmsPagePreviewTokenService,
-        IStoreConfigCacheService cacheService,
+        NavigationAdmissionService navigationAdmission,
         IEventPublisher eventPublisher,
         ILogger<AdminCmsService> logger)
     {
@@ -41,7 +39,7 @@ public sealed class AdminCmsService : IAdminCmsService
         _cmsPageService = cmsPageService;
         _cmsPageReadService = cmsPageReadService;
         _cmsPagePreviewTokenService = cmsPagePreviewTokenService;
-        _cacheService = cacheService;
+        _navigationAdmission = navigationAdmission;
         _eventPublisher = eventPublisher;
         _logger = logger;
     }
@@ -296,14 +294,264 @@ public sealed class AdminCmsService : IAdminCmsService
             .AsNoTracking()
             .FirstOrDefaultAsync(item => item.TenantId == tenantId, cancellationToken);
 
-        return config == null
+        var response = config == null
             ? GetDefaultNavigation()
             : ExtractNavigationFromConfig(config.CustomizationJson, config.RowVersion);
+        var admittedDraft = await AdmitNavigationForLoadAsync(
+            tenantId,
+            response.RowVersion,
+            "draft",
+            response.Draft,
+            NavigationAdmissionMode.Draft,
+            cancellationToken);
+        response.Draft = new AdminNavigationConfigResponse
+        {
+            Header = admittedDraft.Navigation.Header,
+            Footer = admittedDraft.Navigation.Footer
+        };
+        response.ValidationWarnings.AddRange(admittedDraft.Warnings);
+
+        if (response.Live != null)
+        {
+            var admittedLive = await AdmitNavigationForLoadAsync(
+                tenantId,
+                response.RowVersion,
+                "live",
+                response.Live,
+                NavigationAdmissionMode.Publish,
+                cancellationToken);
+            response.Live = new AdminNavigationConfigResponse
+            {
+                Header = admittedLive.Navigation.Header,
+                Footer = admittedLive.Navigation.Footer
+            };
+            response.ValidationWarnings.AddRange(admittedLive.Warnings);
+        }
+        response.BrokenLinks = response.ValidationWarnings
+            .Where(warning => warning.Status == "invalid")
+            .ToList();
+
+        return response;
     }
+
+    private async Task<NavigationLoadAdmissionResult> AdmitNavigationForLoadAsync(
+        Guid tenantId,
+        string rowVersion,
+        string snapshot,
+        AdminNavigationConfigResponse navigation,
+        NavigationAdmissionMode mode,
+        CancellationToken cancellationToken)
+    {
+        var request = new AdminNavigationRequest
+        {
+            RowVersion = rowVersion,
+            Header = navigation.Header,
+            Footer = navigation.Footer
+        };
+        NavigationAdmissionException? documentFailure = null;
+
+        try
+        {
+            var admitted = await _navigationAdmission.AdmitAsync(
+                tenantId,
+                request,
+                mode,
+                cancellationToken);
+            return new NavigationLoadAdmissionResult(admitted, []);
+        }
+        catch (NavigationAdmissionException ex)
+        {
+            documentFailure = ex;
+        }
+
+        var warnings = new List<AdminNavigationValidationWarningResponse>();
+        var admittedNavigation = new AdminNavigationRequest
+        {
+            RowVersion = rowVersion,
+            Header = await AdmitMenuForLoadAsync(
+                tenantId,
+                rowVersion,
+                snapshot,
+                "header",
+                navigation.Header,
+                mode,
+                warnings,
+                cancellationToken),
+            Footer = await AdmitMenuForLoadAsync(
+                tenantId,
+                rowVersion,
+                snapshot,
+                "footer",
+                navigation.Footer,
+                mode,
+                warnings,
+                cancellationToken)
+        };
+
+        if (documentFailure is not null &&
+            documentFailure.Index.HasValue &&
+            !warnings.Any(warning =>
+                string.Equals(warning.Snapshot, snapshot, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(warning.Menu, documentFailure.Menu, StringComparison.OrdinalIgnoreCase) &&
+                warning.Index == documentFailure.Index &&
+                string.Equals(warning.Code, documentFailure.Code, StringComparison.OrdinalIgnoreCase)))
+        {
+            var documentWarning = ToNavigationValidationWarning(
+                documentFailure,
+                snapshot,
+                documentFailure.Menu,
+                documentFailure.Index.Value,
+                ResolveLoadLink(admittedNavigation, documentFailure.Menu, documentFailure.Index.Value));
+            warnings.Add(documentWarning);
+            MarkInvalidLink(admittedNavigation, documentWarning);
+        }
+
+        return new NavigationLoadAdmissionResult(admittedNavigation, warnings);
+    }
+
+    private async Task<List<AdminNavigationLinkRequest>> AdmitMenuForLoadAsync(
+        Guid tenantId,
+        string rowVersion,
+        string snapshot,
+        string menu,
+        IReadOnlyList<AdminNavigationLinkRequest> links,
+        NavigationAdmissionMode mode,
+        List<AdminNavigationValidationWarningResponse> warnings,
+        CancellationToken cancellationToken)
+    {
+        var admitted = new List<AdminNavigationLinkRequest>(links.Count);
+
+        for (var index = 0; index < links.Count; index++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var link = links[index];
+            var request = new AdminNavigationRequest
+            {
+                RowVersion = rowVersion,
+                Header = menu == "header" ? [link] : [],
+                Footer = menu == "footer" ? [link] : []
+            };
+
+            try
+            {
+                var admittedSingle = await _navigationAdmission.AdmitAsync(
+                    tenantId,
+                    request,
+                    mode,
+                    cancellationToken);
+                var admittedLink = menu == "header"
+                    ? admittedSingle.Header.Single()
+                    : admittedSingle.Footer.Single();
+                admittedLink.Order = index;
+                admitted.Add(admittedLink);
+            }
+            catch (NavigationAdmissionException ex)
+            {
+                var preserved = PreserveInvalidNavigationLink(link, index, ex);
+                var warning = ToNavigationValidationWarning(ex, snapshot, menu, index, preserved);
+                preserved.ValidationStatus = warning.Status;
+                preserved.ValidationCode = warning.Code;
+                preserved.ValidationMessage = warning.Message;
+                warnings.Add(warning);
+                admitted.Add(preserved);
+            }
+        }
+
+        return admitted;
+    }
+
+    private static AdminNavigationLinkRequest PreserveInvalidNavigationLink(
+        AdminNavigationLinkRequest? link,
+        int index,
+        NavigationAdmissionException exception)
+    {
+        var type = NavigationStorageAdapter.NormalizeAuthoringType(link?.Type);
+        if (string.IsNullOrWhiteSpace(type))
+        {
+            type = string.IsNullOrWhiteSpace(exception.LinkType) ? "custom" : exception.LinkType;
+        }
+
+        return new AdminNavigationLinkRequest
+        {
+            Label = string.IsNullOrWhiteSpace(link?.Label) ? "Invalid navigation link" : link.Label.Trim(),
+            LabelAr = string.IsNullOrWhiteSpace(link?.LabelAr) ? null : link.LabelAr.Trim(),
+            Type = type,
+            TargetId = link?.TargetId ?? exception.TargetId,
+            CollectionKey = string.IsNullOrWhiteSpace(link?.CollectionKey) ? null : link.CollectionKey.Trim(),
+            Path = string.IsNullOrWhiteSpace(link?.Path) ? null : link.Path.Trim(),
+            Slug = string.IsNullOrWhiteSpace(link?.Slug) ? null : link.Slug.Trim(),
+            OpenInNewTab = link?.OpenInNewTab == true,
+            Order = index,
+            Enabled = link?.Enabled ?? true,
+            ValidationStatus = "invalid",
+            ValidationCode = exception.Code,
+            ValidationMessage = exception.Message
+        };
+    }
+
+    private static AdminNavigationValidationWarningResponse ToNavigationValidationWarning(
+        NavigationAdmissionException exception,
+        string snapshot,
+        string menu,
+        int index,
+        AdminNavigationLinkRequest? link) =>
+        new()
+        {
+            Code = exception.Code,
+            Message = exception.Message,
+            Snapshot = snapshot,
+            Menu = menu,
+            Index = index,
+            Field = exception.Field,
+            LinkType = string.IsNullOrWhiteSpace(exception.LinkType)
+                ? NavigationStorageAdapter.NormalizeAuthoringType(link?.Type)
+                : exception.LinkType,
+            TargetId = exception.TargetId ?? link?.TargetId,
+            Status = "invalid"
+        };
+
+    private static AdminNavigationLinkRequest? ResolveLoadLink(
+        AdminNavigationRequest navigation,
+        string menu,
+        int index)
+    {
+        var links = menu == "header"
+            ? navigation.Header
+            : menu == "footer"
+                ? navigation.Footer
+                : null;
+        return links != null && index >= 0 && index < links.Count
+            ? links[index]
+            : null;
+    }
+
+    private static void MarkInvalidLink(
+        AdminNavigationRequest navigation,
+        AdminNavigationValidationWarningResponse warning)
+    {
+        if (!warning.Index.HasValue)
+        {
+            return;
+        }
+
+        var link = ResolveLoadLink(navigation, warning.Menu, warning.Index.Value);
+        if (link == null)
+        {
+            return;
+        }
+
+        link.ValidationStatus = warning.Status;
+        link.ValidationCode = warning.Code;
+        link.ValidationMessage = warning.Message;
+    }
+
+    private sealed record NavigationLoadAdmissionResult(
+        AdminNavigationRequest Navigation,
+        List<AdminNavigationValidationWarningResponse> Warnings);
 
     public async Task<AdminNavigationResponse> UpdateNavigationAsync(
         Guid tenantId,
-        AdminNavigationRequest request,
+        AdminNavigationRequest? request,
         uint expectedRowVersion,
         string traceId,
         CancellationToken cancellationToken = default)
@@ -322,12 +570,11 @@ public sealed class AdminCmsService : IAdminCmsService
         }
 
         ApplyExpectedRowVersion(config, expectedRowVersion);
-        ValidateNavigationShape(request);
-
-        var existingCmsSlugs = await GetExistingCmsPageSlugsAsync(tenantId, cancellationToken);
-        var liveCategorySlugs = await GetLiveCategorySlugsAsync(tenantId, cancellationToken);
-        ValidateNavigationMenu(request.Header, existingCmsSlugs, liveCategorySlugs, requirePublishedCms: false);
-        ValidateNavigationMenu(request.Footer, existingCmsSlugs, liveCategorySlugs, requirePublishedCms: false);
+        var admitted = await _navigationAdmission.AdmitAsync(
+            tenantId,
+            request,
+            NavigationAdmissionMode.Draft,
+            cancellationToken);
 
         var root = ParseCustomizationJson(config.CustomizationJson);
         var navigation = root.TryGetValue("navigation", out var navigationObj)
@@ -338,11 +585,11 @@ public sealed class AdminCmsService : IAdminCmsService
         {
             ["header"] = new Dictionary<string, object>
             {
-                ["links"] = request.Header.Select(MapNavigationLink).ToList()
+                ["links"] = admitted.Header.Select(NavigationStorageAdapter.ToStorage).ToList()
             },
             ["footer"] = new Dictionary<string, object>
             {
-                ["links"] = request.Footer.Select(MapNavigationLink).ToList()
+                ["links"] = admitted.Footer.Select(NavigationStorageAdapter.ToStorage).ToList()
             }
         };
 
@@ -362,6 +609,19 @@ public sealed class AdminCmsService : IAdminCmsService
         await SaveStoreConfigChangesAsync(config, cancellationToken);
 
         return ExtractNavigationFromConfig(config.CustomizationJson, config.RowVersion);
+    }
+
+    public Task<AdminNavigationTargetsResponse> GetNavigationTargetsAsync(
+        Guid tenantId,
+        string traceId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation(
+            "GetNavigationTargets | TenantId: {TenantId} | TraceId: {TraceId}",
+            tenantId,
+            traceId);
+
+        return _navigationAdmission.GetTargetsAsync(tenantId, cancellationToken);
     }
 
     public async Task<AdminNavigationResponse> PublishNavigationAsync(
@@ -398,20 +658,31 @@ public sealed class AdminCmsService : IAdminCmsService
         }
 
         var draftElement = JsonSerializer.SerializeToElement(draftObj, JsonOptions);
-        var draft = ExtractNavigationConfig(draftElement);
-        ValidateNavigationShape(new AdminNavigationRequest
+        var draft = NavigationStorageAdapter.FromStorage(draftElement);
+        var admitted = await _navigationAdmission.AdmitAsync(
+            tenantId,
+            new AdminNavigationRequest
+            {
+                Header = draft.Header,
+                Footer = draft.Footer
+            },
+            NavigationAdmissionMode.Publish,
+            cancellationToken);
+        var admittedDraft = new Dictionary<string, object>
         {
-            Header = draft.Header,
-            Footer = draft.Footer
-        });
-        var publishedCmsSlugs = await GetPublishedCmsPageSlugsAsync(tenantId, cancellationToken);
-        var liveCategorySlugs = await GetLiveCategorySlugsAsync(tenantId, cancellationToken);
-        ValidateNavigationMenu(draft.Header, publishedCmsSlugs, liveCategorySlugs, requirePublishedCms: true);
-        ValidateNavigationMenu(draft.Footer, publishedCmsSlugs, liveCategorySlugs, requirePublishedCms: true);
-
-        var draftJson = JsonSerializer.Serialize(draftObj, JsonOptions);
-        navigation["live"] = JsonSerializer.Deserialize<object>(draftJson, JsonOptions)
-            ?? new Dictionary<string, object>();
+            ["header"] = new Dictionary<string, object>
+            {
+                ["links"] = admitted.Header.Select(NavigationStorageAdapter.ToStorage).ToList()
+            },
+            ["footer"] = new Dictionary<string, object>
+            {
+                ["links"] = admitted.Footer.Select(NavigationStorageAdapter.ToStorage).ToList()
+            }
+        };
+        navigation["draft"] = admittedDraft;
+        navigation["live"] = JsonSerializer.Deserialize<object>(
+            JsonSerializer.Serialize(admittedDraft, JsonOptions),
+            JsonOptions) ?? new Dictionary<string, object>();
         navigation["lastPublishedAt"] = DateTime.UtcNow.ToString("O");
 
         root["navigation"] = navigation;
@@ -421,76 +692,8 @@ public sealed class AdminCmsService : IAdminCmsService
 
         await StageNavigationPublishedEventAsync(config, config.LiveVersion, traceId, cancellationToken);
         await SaveStoreConfigChangesAsync(config, cancellationToken);
-        await InvalidateCacheAsync(tenantId, traceId);
 
         return ExtractNavigationFromConfig(config.CustomizationJson, config.RowVersion);
-    }
-
-    private async Task<HashSet<string>> GetExistingCmsPageSlugsAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken)
-    {
-        var slugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        var pageSlugs = await _dbContext.CmsPages
-            .AsNoTracking()
-            .Where(item => item.TenantId == tenantId)
-            .Where(item => !item.IsDeleted && (item.IsDraft || item.IsPublished))
-            .Select(item => item.Slug)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        foreach (var slug in pageSlugs)
-        {
-            slugs.Add(slug);
-        }
-
-        return slugs;
-    }
-
-    private async Task<HashSet<string>> GetPublishedCmsPageSlugsAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken)
-    {
-        var slugs = await _dbContext.CmsPages
-            .AsNoTracking()
-            .Where(item => item.TenantId == tenantId)
-            .Where(item => !item.IsDeleted && item.IsPublished && !item.IsDraft && item.PublishedAt != null)
-            .Select(item => item.Slug)
-            .Distinct()
-            .ToListAsync(cancellationToken);
-
-        return slugs.ToHashSet(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private async Task<HashSet<string>> GetLiveCategorySlugsAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken)
-    {
-        var lineage = await CategoryLineageAuthority.LoadTenantSnapshotAsync(
-            _dbContext,
-            tenantId,
-            cancellationToken);
-
-        return lineage.Rows
-            .Where(row => lineage.IsLiveInLineage(row.CategoryId))
-            .Select(row => GenerateCategorySlug(row.Name))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private static Dictionary<string, object> MapNavigationLink(AdminNavigationLinkRequest link, int index)
-    {
-        return new Dictionary<string, object>
-        {
-            ["label"] = link.Label.Trim(),
-            ["labelAr"] = link.LabelAr?.Trim() ?? string.Empty,
-            ["type"] = link.Type.Trim().ToLowerInvariant(),
-            ["path"] = link.Path?.Trim() ?? string.Empty,
-            ["slug"] = link.Slug?.Trim().ToLowerInvariant() ?? string.Empty,
-            ["openInNewTab"] = link.OpenInNewTab,
-            ["order"] = index,
-            ["enabled"] = link.Enabled
-        };
     }
 
     private static Dictionary<string, object> ParseCustomizationJson(string? json)
@@ -532,7 +735,7 @@ public sealed class AdminCmsService : IAdminCmsService
     {
         if (string.IsNullOrWhiteSpace(json))
         {
-            return GetDefaultNavigation();
+            return GetDefaultNavigation(rowVersion);
         }
 
         try
@@ -542,7 +745,7 @@ public sealed class AdminCmsService : IAdminCmsService
 
             if (!root.TryGetProperty("navigation", out var navigationElement))
             {
-                return GetDefaultNavigation();
+                return GetDefaultNavigation(rowVersion);
             }
 
             var response = new AdminNavigationResponse
@@ -552,12 +755,12 @@ public sealed class AdminCmsService : IAdminCmsService
 
             if (navigationElement.TryGetProperty("draft", out var draftElement))
             {
-                response.Draft = ExtractNavigationConfig(draftElement);
+                response.Draft = NavigationStorageAdapter.FromStorage(draftElement);
             }
 
             if (navigationElement.TryGetProperty("live", out var liveElement) && liveElement.ValueKind == JsonValueKind.Object)
             {
-                response.Live = ExtractNavigationConfig(liveElement);
+                response.Live = NavigationStorageAdapter.FromStorage(liveElement);
             }
 
             response.HasPendingChanges = navigationElement.TryGetProperty("draft", out var draft)
@@ -570,71 +773,21 @@ public sealed class AdminCmsService : IAdminCmsService
         catch (JsonException ex)
         {
             _logger.LogWarning(ex, "Failed to parse navigation configuration.");
-            return GetDefaultNavigation();
+            return GetDefaultNavigation(rowVersion);
         }
     }
 
-    private static AdminNavigationConfigResponse ExtractNavigationConfig(JsonElement element)
-    {
-        return new AdminNavigationConfigResponse
-        {
-            Header = element.TryGetProperty("header", out var headerElement)
-                ? ExtractNavigationLinks(headerElement)
-                : new List<AdminNavigationLinkRequest>(),
-            Footer = element.TryGetProperty("footer", out var footerElement)
-                ? ExtractNavigationLinks(footerElement)
-                : new List<AdminNavigationLinkRequest>()
-        };
-    }
-
-    private static List<AdminNavigationLinkRequest> ExtractNavigationLinks(JsonElement menuElement)
-    {
-        JsonElement linksElement;
-        if (menuElement.TryGetProperty("links", out var nestedLinks))
-        {
-            linksElement = nestedLinks;
-        }
-        else if (menuElement.ValueKind == JsonValueKind.Array)
-        {
-            linksElement = menuElement;
-        }
-        else
-        {
-            return new List<AdminNavigationLinkRequest>();
-        }
-
-        if (linksElement.ValueKind != JsonValueKind.Array)
-        {
-            return new List<AdminNavigationLinkRequest>();
-        }
-
-        return linksElement
-            .EnumerateArray()
-            .Select(link => new AdminNavigationLinkRequest
-            {
-                Label = GetStringProperty(link, "label", string.Empty) ?? string.Empty,
-                LabelAr = GetStringProperty(link, "labelAr", null),
-                Type = GetStringProperty(link, "type", "internal") ?? "internal",
-                Path = GetStringProperty(link, "path", null),
-                Slug = GetStringProperty(link, "slug", null),
-                OpenInNewTab = GetBoolProperty(link, "openInNewTab", false),
-                Order = GetIntProperty(link, "order", 0),
-                Enabled = GetBoolProperty(link, "enabled", true)
-            })
-            .OrderBy(link => link.Order)
-            .ToList();
-    }
-
-    private static AdminNavigationResponse GetDefaultNavigation()
+    private static AdminNavigationResponse GetDefaultNavigation(uint rowVersion = 0)
     {
         return new AdminNavigationResponse
         {
+            RowVersion = rowVersion.ToString(CultureInfo.InvariantCulture),
             Draft = new AdminNavigationConfigResponse
             {
                 Header =
                 [
-                    new AdminNavigationLinkRequest { Label = "Home", Type = "internal", Path = "/", Order = 0, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Shop", Type = "internal", Path = "/products", Order = 1, Enabled = true }
+                    new AdminNavigationLinkRequest { Label = "Home", Type = "custom", Path = "/", Order = 0, Enabled = true },
+                    new AdminNavigationLinkRequest { Label = "Shop", Type = "collection", CollectionKey = NavigationAdmissionService.AllProductsCollectionKey, Path = "/products", Order = 1, Enabled = true }
                 ],
                 Footer =
                 [
@@ -718,200 +871,11 @@ public sealed class AdminCmsService : IAdminCmsService
         config.LiveVersion = newVersionNumber;
     }
 
-    private async Task InvalidateCacheAsync(Guid tenantId, string traceId)
-    {
-        try
-        {
-            await _cacheService.InvalidateStoreConfigAsync(tenantId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to invalidate store config cache | TenantId: {TenantId} | TraceId: {TraceId}", tenantId, traceId);
-        }
-    }
-
     private void ApplyExpectedRowVersion(Core.Entities.StoreConfig config, uint expectedRowVersion)
     {
         _dbContext.Entry(config)
             .Property(item => item.RowVersion)
             .OriginalValue = expectedRowVersion;
-    }
-
-    private static void ValidateNavigationShape(AdminNavigationRequest request)
-    {
-        if (request.Header.Count > 50 || request.Footer.Count > 50)
-        {
-            throw new InvalidNavigationLinkException(
-                "menu",
-                string.Empty,
-                "Header and footer navigation are limited to 50 links each.");
-        }
-    }
-
-    private static void ValidateNavigationMenu(
-        IReadOnlyList<AdminNavigationLinkRequest> links,
-        HashSet<string> cmsSlugs,
-        HashSet<string> liveCategorySlugs,
-        bool requirePublishedCms)
-    {
-        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var link in links)
-        {
-            ValidateNavigationLink(link, cmsSlugs, liveCategorySlugs, requirePublishedCms);
-            var targetKey = GetNavigationTargetKey(link);
-            if (!targets.Add(targetKey))
-            {
-                throw new InvalidNavigationLinkException(
-                    link.Type,
-                    targetKey,
-                    $"Duplicate navigation target '{targetKey}' is not allowed in the same menu.");
-            }
-        }
-    }
-
-    private static void ValidateNavigationLink(
-        AdminNavigationLinkRequest link,
-        HashSet<string> cmsSlugs,
-        HashSet<string> liveCategorySlugs,
-        bool requirePublishedCms)
-    {
-        var linkType = link.Type?.Trim().ToLowerInvariant() ?? string.Empty;
-        var label = link.Label?.Trim() ?? string.Empty;
-        if (label.Length is < 1 or > 120)
-        {
-            throw new InvalidNavigationLinkException(linkType, label, "Navigation link labels must be between 1 and 120 characters.");
-        }
-
-        switch (linkType)
-        {
-            case "cms":
-                var slug = link.Slug?.Trim().ToLowerInvariant() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(slug))
-                {
-                    throw new InvalidNavigationLinkException(linkType, slug, $"CMS page link '{link.Label}' requires a slug.");
-                }
-
-                if (!cmsSlugs.Contains(slug))
-                {
-                    var state = requirePublishedCms ? "published" : "saved";
-                    throw new InvalidNavigationLinkException(linkType, slug, $"CMS page '{slug}' is not currently {state} for this tenant.");
-                }
-                break;
-
-            case "category":
-                var categorySlug = link.Slug?.Trim().Trim('/').ToLowerInvariant() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(categorySlug) || !liveCategorySlugs.Contains(categorySlug))
-                {
-                    throw new InvalidNavigationLinkException(linkType, categorySlug, $"Category '{categorySlug}' is not currently visible for this tenant.");
-                }
-                break;
-
-            case "external":
-                var url = link.Path?.Trim() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(url))
-                {
-                    throw new InvalidNavigationLinkException(linkType, url, $"External link '{link.Label}' requires a URL.");
-                }
-
-                if (!Uri.TryCreate(url, UriKind.Absolute, out var parsedUrl) ||
-                    (parsedUrl.Scheme != Uri.UriSchemeHttp && parsedUrl.Scheme != Uri.UriSchemeHttps) ||
-                    !string.IsNullOrEmpty(parsedUrl.UserInfo))
-                {
-                    throw new InvalidNavigationLinkException(linkType, url, $"External link '{link.Label}' must be an http(s) URL without embedded credentials.");
-                }
-                break;
-
-            case "internal":
-                var path = link.Path?.Trim() ?? string.Empty;
-                if (string.IsNullOrWhiteSpace(path))
-                {
-                    throw new InvalidNavigationLinkException(linkType, path, $"Internal link '{link.Label}' requires a path.");
-                }
-
-                if (!IsSafeInternalPath(path))
-                {
-                    throw new InvalidNavigationLinkException(linkType, path, $"Internal link '{link.Label}' must be a safe storefront-relative path.");
-                }
-                break;
-
-            default:
-                throw new InvalidNavigationLinkException(linkType, string.Empty, $"Navigation link type '{link.Type}' is not supported.");
-        }
-    }
-
-    private static string GetNavigationTargetKey(AdminNavigationLinkRequest link)
-    {
-        var type = link.Type.Trim().ToLowerInvariant();
-        var target = type is "cms" or "category"
-            ? link.Slug?.Trim().Trim('/').ToLowerInvariant()
-            : link.Path?.Trim();
-        return $"{type}:{target}";
-    }
-
-    private static bool IsSafeInternalPath(string path)
-    {
-        if (!path.StartsWith("/", StringComparison.Ordinal) ||
-            path.StartsWith("//", StringComparison.Ordinal) ||
-            path.Contains('\\') ||
-            path.Any(char.IsControl))
-        {
-            return false;
-        }
-
-        if (!Uri.TryCreate(path, UriKind.Relative, out _))
-        {
-            return false;
-        }
-
-        var lowered = path.ToLowerInvariant();
-        return !lowered.StartsWith("/api/", StringComparison.Ordinal) &&
-               !lowered.StartsWith("/admin", StringComparison.Ordinal) &&
-               !lowered.Contains("preview=true", StringComparison.Ordinal) &&
-               !lowered.Contains("previewtoken=", StringComparison.Ordinal);
-    }
-
-    private static string GenerateCategorySlug(string? name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return "category";
-        }
-
-        var slug = name.ToLowerInvariant()
-            .Replace(" ", "-")
-            .Replace("&", "and");
-
-        return System.Text.RegularExpressions.Regex.Replace(slug, @"[^a-z0-9\-]", "");
-    }
-
-    private static string? GetStringProperty(JsonElement element, string propertyName, string? defaultValue)
-    {
-        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
-            ? property.GetString() ?? defaultValue
-            : defaultValue;
-    }
-
-    private static bool GetBoolProperty(JsonElement element, string propertyName, bool defaultValue)
-    {
-        if (!element.TryGetProperty(propertyName, out var property))
-        {
-            return defaultValue;
-        }
-
-        return property.ValueKind switch
-        {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            _ => defaultValue
-        };
-    }
-
-    private static int GetIntProperty(JsonElement element, string propertyName, int defaultValue)
-    {
-        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.Number
-            ? property.GetInt32()
-            : defaultValue;
     }
 
     private sealed class VersionSnapshot

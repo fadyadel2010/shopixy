@@ -13,7 +13,7 @@
 import React from 'react';
 import type { ProductListItemDto } from '@/types';
 import { useStoreConfigStore, selectLayout } from '@/store';
-import { PRODUCT_CARD_RENDERERS, useProductCardRuntime } from '@/components/products';
+import { PRODUCT_CARD_RENDERERS, ProductCardInteractionLayer, useProductCardRuntime } from '@/components/products';
 import { resolveProductCardRenderer } from '@/components/products/productCardRendererResolver';
 import { resolveProductCardLayout } from '@/storefront/utils/resolveProductCardLayout';
 import { useTheme } from '@/storefront/themes/ThemeContext';
@@ -29,8 +29,8 @@ interface ProductCardProps {
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     const layout = useStoreConfigStore(selectLayout);
     const { themeId } = useTheme();
-    const resolvedLayout = resolveProductCardLayout(product, layout.productCardVariant);
-    const rendererId = resolveProductCardRenderer(themeId, resolvedLayout);
+    const resolvedLayout = resolveProductCardLayout(layout.productCardVariant);
+    const rendererId = resolveProductCardRenderer(themeId);
     const runtime = useProductCardRuntime({ product, layout: resolvedLayout, themeId });
 
     const CardComponent = PRODUCT_CARD_RENDERERS[rendererId] || PRODUCT_CARD_RENDERERS.modern;
@@ -43,7 +43,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
     return (
         <>
             <div data-ai-product-id={product.id} hidden aria-hidden="true" />
-            <CardComponent runtime={runtime} />
+            <div className="relative h-full" data-product-card-behavior-owner="ProductCardRuntime">
+                <CardComponent runtime={runtime} />
+                <ProductCardInteractionLayer runtime={runtime} />
+            </div>
         </>
     );
 };

@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
     History,
@@ -25,12 +26,21 @@ import { storeConfigService } from '../services'
 import { useToast } from '../../../components/Toast'
 import { useAuthStore } from '../../../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../../../auth/commerceHubVendorIdentityAuthority'
+import {
+    AuthoringActionBar,
+    AuthoringEmptyState,
+    AuthoringDialog,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringStatusBadge,
+} from '../authoringPlatform'
 
 export function VersionHistoryPage() {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const { showSuccess, showError } = useToast()
     const currentUser = useAuthStore((state) => state.user)
+    const navigate = useNavigate()
 
     // State
     const [isLoading, setIsLoading] = useState(true)
@@ -164,51 +174,22 @@ export function VersionHistoryPage() {
 
     // Loading state
     if (isLoading) {
-        return (
-            <div className="flex items-center justify-center h-96">
-                <div className="text-center">
-                    <Loader2 size={48} className="animate-spin text-indigo-600 mx-auto mb-4" />
-                    <p className="text-gray-500">{isRTL ? 'جاري تحميل السجل...' : 'Loading history...'}</p>
-                </div>
-            </div>
-        )
+        return <AuthoringLoadingState label="Loading StoreConfig History…" />
     }
 
     // Error state
     if (error) {
-        return (
-            <div className="max-w-4xl mx-auto">
-                <div className="p-6 bg-red-50 border border-red-200 rounded-xl flex items-center gap-4">
-                    <AlertCircle size={24} className="text-red-500 flex-shrink-0" />
-                    <div>
-                        <p className="font-medium text-red-800">{error}</p>
-                        <button
-                            onClick={loadVersions}
-                            className="text-sm text-red-600 hover:underline mt-1"
-                        >
-                            {isRTL ? 'إعادة المحاولة' : 'Try again'}
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )
+        return <AuthoringFeedback kind="error" title="StoreConfig History unavailable" message={error} action={{ label: 'Retry', onClick: loadVersions }} />
     }
 
     return (
         <div className="max-w-4xl mx-auto">
-            {/* Header */}
-            <div className="mb-8">
-                <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                    <History className="text-indigo-600" />
-                    {isRTL ? 'سجل الإصدارات' : 'Version History'}
-                </h1>
-                <p className="text-gray-500 mt-1">
-                    {isRTL
-                        ? 'عرض واستعادة الإصدارات السابقة لمتجرك'
-                        : 'View and restore previous versions of your store'
-                    }
-                </p>
-            </div>
+            <AuthoringActionBar
+                title="StoreConfig History"
+                subtitle="View and roll back StoreConfig publication snapshots. CMS Page History and Theme catalog revisions are excluded."
+                backAction={{ label: 'Back', onClick: () => navigate('/storefront') }}
+                status={<AuthoringStatusBadge state="published">{versions.length} snapshots</AuthoringStatusBadge>}
+            />
 
             {/* Warning Banner */}
             <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl flex gap-3">
@@ -228,18 +209,7 @@ export function VersionHistoryPage() {
 
             {/* Empty State */}
             {versions.length === 0 ? (
-                <div className="text-center py-16 bg-gray-50 rounded-xl border border-gray-200">
-                    <History size={48} className="text-gray-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">
-                        {isRTL ? 'لا توجد إصدارات' : 'No versions yet'}
-                    </h3>
-                    <p className="text-gray-500">
-                        {isRTL
-                            ? 'قم بنشر تغييراتك لإنشاء أول إصدار'
-                            : 'Publish your changes to create your first version'
-                        }
-                    </p>
-                </div>
+                <AuthoringEmptyState title="No StoreConfig History" description="No StoreConfig publication snapshot is available yet. CMS Page versions and Theme catalog revisions are intentionally not shown here." />
             ) : (
                 /* Version List */
                 <div className="space-y-4">
@@ -310,36 +280,14 @@ export function VersionHistoryPage() {
                 </div>
             )}
 
-            {/* Rollback Modal */}
-            {rollbackModal.isOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                    <div className="bg-white rounded-2xl w-full max-w-md mx-4 shadow-2xl">
-                        {/* Header */}
-                        <div className="p-6 border-b border-gray-200 flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
-                                    <RotateCcw size={20} className="text-orange-600" />
-                                </div>
-                                <div>
-                                    <h2 className="text-lg font-semibold text-gray-900">
-                                        {isRTL ? 'تأكيد الاستعادة' : 'Confirm Rollback'}
-                                    </h2>
-                                    <p className="text-sm text-gray-500">
-                                        {isRTL ? 'معرّف الإصدار' : 'Version ID'} v{rollbackModal.version?.version}
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                onClick={closeRollbackModal}
-                                disabled={rollbackModal.isRollingBack}
-                                className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-                            >
-                                <X size={20} className="text-gray-500" />
-                            </button>
-                        </div>
-
-                        {/* Content */}
-                        <div className="p-6 space-y-4">
+            <AuthoringDialog
+                open={rollbackModal.isOpen}
+                title={isRTL ? 'تأكيد الاستعادة' : 'Confirm Rollback'}
+                description={`${isRTL ? 'معرّف الإصدار' : 'Version ID'} v${rollbackModal.version?.version || ''}`}
+                onClose={rollbackModal.isRollingBack ? undefined : closeRollbackModal}
+                panelClassName="!max-w-md"
+            >
+                        <div className="mt-6 space-y-4">
                             {/* Warning */}
                             <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                                 <div className="flex gap-3">
@@ -391,8 +339,7 @@ export function VersionHistoryPage() {
                             </label>
                         </div>
 
-                        {/* Actions */}
-                        <div className="p-6 border-t border-gray-200 flex justify-end gap-3">
+                        <div className="mt-6 flex justify-end gap-3 border-t border-gray-200 pt-6">
                             <button
                                 onClick={closeRollbackModal}
                                 disabled={rollbackModal.isRollingBack}
@@ -416,9 +363,7 @@ export function VersionHistoryPage() {
                                 }
                             </button>
                         </div>
-                    </div>
-                </div>
-            )}
+            </AuthoringDialog>
         </div>
     )
 }

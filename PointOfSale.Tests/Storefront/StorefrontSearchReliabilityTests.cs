@@ -12,7 +12,6 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
-using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Storefront;
@@ -87,7 +86,7 @@ public sealed class StorefrontSearchReliabilityTests
             Mock.Of<IStorefrontProductService>(),
             searchService.Object,
             Mock.Of<IProductDiscoveryService>(),
-            Mock.Of<ICategoryReadRepository>(),
+            Mock.Of<IStorefrontCategoryService>(),
             CreateDbContext(),
             telemetry,
             NullLogger<StorefrontProductsController>.Instance)

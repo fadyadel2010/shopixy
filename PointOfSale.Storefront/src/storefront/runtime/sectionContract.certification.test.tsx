@@ -25,7 +25,14 @@ vi.mock('@/hooks/useAffiliateNavigation', () => ({
     useBuildAffiliateUrl: () => (path: string) => path,
 }));
 
+vi.mock('@/utils/htmlSanitizer', () => ({
+    sanitizeRichTextHtml: (value?: string) => value || '',
+}));
+
 import FeaturedProducts from '@/components/sections/defaults/featured-products';
+import ImageBlock from '@/components/sections/defaults/image-block';
+import TextBlock from '@/components/sections/defaults/text-block';
+import VideoBlock from '@/components/sections/defaults/video-block';
 
 const productGridModel: ProductGridPresentationModel = {
     title: 'Featured Products',
@@ -170,6 +177,57 @@ describe('storefront runtime section contract certification', () => {
         expect(gridMarkup).not.toContain('overflow-x-auto pb-2');
         expect(carouselMarkup).toContain('flex gap-6 overflow-x-auto pb-2');
         expect(carouselMarkup).toContain('min-width:240px');
+    });
+
+    it('maps every editorial media contract field to visible presentation', () => {
+        const textMarkup = renderToStaticMarkup(
+            <TextBlock heading="Editorial heading" body="<strong>Editorial body</strong>" alignment="right" maxWidth="narrow" />
+        );
+        const imageMarkup = renderToStaticMarkup(
+            <ImageBlock
+                imageUrl="/media/editorial.jpg"
+                altText="Editorial alt"
+                caption="Editorial caption"
+                aspectRatio="21:9"
+                maxWidth="full"
+            />
+        );
+        const videoMarkup = renderToStaticMarkup(
+            <VideoBlock
+                title="Editorial video"
+                videoUrl="/media/editorial.mp4"
+                autoplay={false}
+                showControls
+                aspectRatio="4:3"
+            />
+        );
+
+        expect(textMarkup).toContain('Editorial heading');
+        expect(textMarkup).toContain('<strong>Editorial body</strong>');
+        expect(textMarkup).toContain('text-align:right');
+        expect(textMarkup).toContain('max-w-2xl');
+        expect(imageMarkup).toContain('src="/media/editorial.jpg"');
+        expect(imageMarkup).toContain('alt="Editorial alt"');
+        expect(imageMarkup).toContain('Editorial caption');
+        expect(imageMarkup).toContain('aspect-ratio:21/9');
+        expect(imageMarkup).toContain('max-w-none');
+        expect(videoMarkup).toContain('Editorial video');
+        expect(videoMarkup).toContain('src="/media/editorial.mp4"');
+        expect(videoMarkup).toContain('aspect-ratio:4/3');
+        expect(videoMarkup).toContain('controls=""');
+        expect(videoMarkup).not.toContain('autoplay=""');
+    });
+
+    it('rejects malformed colors and whitespace-bearing media URLs', () => {
+        expect(() => validateSectionSettingsStrict('hero-banner', {
+            ...getSectionDefaultSettings('hero-banner'),
+            backgroundColor: 'red',
+        })).toThrow(/hex color/);
+
+        expect(() => validateSectionSettingsStrict('video-block', {
+            ...getSectionDefaultSettings('video-block'),
+            videoUrl: 'https://example.com/not encoded.mp4',
+        })).toThrow(/safe URL/);
     });
 
     it('suppresses product shelf View All when the runtime model omits a catalog href', () => {

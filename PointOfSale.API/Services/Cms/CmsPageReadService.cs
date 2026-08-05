@@ -40,17 +40,14 @@ public sealed class CmsPageReadService : ICmsPageReadService
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private readonly ApplicationDbContext _dbContext;
-    private readonly ICmsPageCacheService _cacheService;
     private readonly ILogger<CmsPageReadService> _logger;
 
     public CmsPageReadService(
         ApplicationDbContext dbContext,
         IMongoDatabase mongoDatabase,
-        ICmsPageCacheService cacheService,
         ILogger<CmsPageReadService> logger)
     {
         _dbContext = dbContext;
-        _cacheService = cacheService;
         _logger = logger;
     }
 
@@ -139,16 +136,6 @@ public sealed class CmsPageReadService : ICmsPageReadService
             .OrderByDescending(item => item.Version)
             .ThenByDescending(item => item.PublishedAt)
             .FirstOrDefaultAsync(cancellationToken);
-    }
-
-    private async Task<IReadOnlyList<CmsPageDto>> GetPublishedScopePagesAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken)
-    {
-        var pages = await LoadCurrentPublishedPagesAsync(tenantId, cancellationToken);
-        var mapped = pages.Select(MapPageWithSafeFallback).ToList();
-        await _cacheService.SetPublishedScopeAsync(tenantId, mapped, cancellationToken);
-        return mapped;
     }
 
     private async Task<IReadOnlyList<CmsPage>> LoadCurrentPublishedPagesAsync(

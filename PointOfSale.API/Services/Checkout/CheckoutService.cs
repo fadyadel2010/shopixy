@@ -44,9 +44,6 @@ using PointOfSale.API.Services.Payments;
 using PointOfSale.Infrastructure.Payments;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
-using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.API.Services.Coupons;
 using PointOfSale.API.Services.Promotions;
@@ -238,8 +235,7 @@ public class CheckoutService : ICheckoutService
     private readonly IProductVariantStockRepository _variantStockRepository;
     
     // Infrastructure
-    private readonly RedisConnectionFactory _redisFactory;
-    private readonly RedisSettings _redisSettings;
+    private readonly ICartService _cartService;
     private readonly IEventPublisher _eventPublisher;
     private readonly ICouponValidationService _couponValidationService;
     private readonly IPromotionEngine _promotionEngine;
@@ -304,8 +300,6 @@ public class CheckoutService : ICheckoutService
         IPaymentMethodReadRepository paymentRead,
         IProductVariantStockRepository variantStockRepository,
         IMongoDatabase mongoDatabase,
-        RedisConnectionFactory redisFactory,
-        IOptions<RedisSettings> redisSettings,
         IEventPublisher eventPublisher,
         ICouponValidationService couponValidationService,
         IPromotionEngine promotionEngine,
@@ -325,6 +319,7 @@ public class CheckoutService : ICheckoutService
         IOptions<PaymentLifecycleSettings> paymentLifecycleSettings,
         ILogger<CheckoutService> logger,
         IHttpContextAccessor httpContextAccessor,
+        ICartService cartService,
         IWhatsAppFeatureGateService? whatsAppFeatureGate = null,
         IStorefrontPhoneVerificationService? phoneVerificationService = null,
         CommerceReliabilityTelemetry? reliabilityTelemetry = null,
@@ -340,8 +335,7 @@ public class CheckoutService : ICheckoutService
         _shippingRead = shippingRead;
         _paymentRead = paymentRead;
         _variantStockRepository = variantStockRepository;
-        _redisFactory = redisFactory;
-        _redisSettings = redisSettings.Value;
+        _cartService = cartService;
         _eventPublisher = eventPublisher;
         _couponValidationService = couponValidationService;
         _promotionEngine = promotionEngine;
@@ -3430,26 +3424,12 @@ public class CheckoutService : ICheckoutService
     {
         try
         {
-            var db = _redisFactory.GetDatabase();
-            if (db == null)
-            {
-                throw new CheckoutCartInvalidException(cartId, "Cart service unavailable");
-            }
-
-            // Build cart key matching CartService pattern
-            var cacheKey = CacheKeyBuilder.CartKey(_redisSettings.InstanceName, tenantId, ownerType, ownerId);
-            var json = await db.StringGetAsync(cacheKey);
-
-            if (json.IsNullOrEmpty)
-            {
-                throw new CheckoutCartNotFoundException(cartId);
-            }
-
-            var cart = JsonSerializer.Deserialize<CartDto>(json!, _jsonOptions);
-            if (cart == null)
-            {
-                throw new CheckoutCartNotFoundException(cartId);
-            }
+            var owner = new CartOwner { OwnerType = ownerType, OwnerId = ownerId };
+            var cart = await _cartService.GetCartAsync(
+                tenantId,
+                owner,
+                correlationId,
+                cancellationToken);
 
             // Validate cart
             if (cart.CartId != cartId)
@@ -3561,41 +3541,14 @@ public class CheckoutService : ICheckoutService
     {
         try
         {
-            var db = _redisFactory.GetDatabase();
-            if (db == null)
-            {
-                throw new CheckoutCartInvalidException(cartId, "Cart service unavailable");
-            }
-
-            var cacheKey = CacheKeyBuilder.CartKey(_redisSettings.InstanceName, tenantId, ownerType, ownerId);
-            var json = await db.StringGetAsync(cacheKey);
-
-            if (json.IsNullOrEmpty)
-            {
-                throw new CheckoutCartNotFoundException(cartId);
-            }
-
-            var cart = JsonSerializer.Deserialize<CartDto>(json!, _jsonOptions);
-            if (cart == null ||
-                cart.CartId != cartId ||
-                cart.TenantId != tenantId ||
-                !string.Equals(cart.OwnerType, ownerType, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(cart.OwnerId, ownerId, StringComparison.Ordinal))
-            {
-                throw new CheckoutCartOwnershipException(cartId);
-            }
-
-            cart.ActiveCheckoutIdempotencyKey = checkoutIdempotencyKey;
-            cart.ActiveCheckoutSnapshotHash = snapshotHash;
-
-            var ttl = cart.ExpiresAtUtc > DateTime.UtcNow
-                ? cart.ExpiresAtUtc - DateTime.UtcNow
-                : TimeSpan.FromHours(24);
-
-            await db.StringSetAsync(
-                cacheKey,
-                JsonSerializer.Serialize(cart, _jsonOptions),
-                ttl);
+            await _cartService.SetActiveCheckoutIdempotencyAsync(
+                tenantId,
+                new CartOwner { OwnerType = ownerType, OwnerId = ownerId },
+                cartId,
+                checkoutIdempotencyKey,
+                snapshotHash,
+                correlationId,
+                cancellationToken);
 
             _logger.LogDebug(
                 "Persisted active checkout idempotency key on cart | TenantId: {TenantId} | CartId: {CartId} | CheckoutId: {CheckoutId} | CorrelationId: {CorrelationId}",
@@ -5198,36 +5151,6 @@ public class CheckoutService : ICheckoutService
 
         if (emitExternalReservationSideEffects)
         {
-            // Store reservation in Redis with TTL (for tracking/debugging)
-            try
-            {
-                var db = _redisFactory.GetDatabase();
-                if (db != null)
-                {
-                    var reservationKey = $"reservation:{tenantId:N}:{reservationId:N}";
-                    var reservationData = JsonSerializer.Serialize(new
-                    {
-                        ReservationId = reservationId,
-                        CartId = snapshot.CartId,
-                        TenantId = tenantId,
-                        Items = reservedItems,
-                        CreatedAtUtc = DateTime.UtcNow,
-                        ExpiresAtUtc = reservationExpiresAtUtc
-                    }, _jsonOptions);
-
-                    await db.StringSetAsync(
-                        reservationKey,
-                        reservationData,
-                        TimeSpan.FromMinutes(InventoryReservationTtlMinutes));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to store reservation in Redis (non-fatal) | ReservationId: {ReservationId} | CorrelationId: {CorrelationId}",
-                    reservationId, correlationId);
-            }
-
             await EmitInventoryReservedEventAsync(
                 tenantId, orderId, snapshot.CartId, reservationId, reservedItems,
                 reservationExpiresAtUtc,
@@ -5279,28 +5202,6 @@ public class CheckoutService : ICheckoutService
         // Only proceed with cleanup and success signals if stock release succeeded
         if (stockReleaseSucceeded)
         {
-            var db = _redisFactory.GetDatabase();
-            if (db != null)
-            {
-                try
-                {
-                    var reservationKey = $"reservation:{tenantId:N}:{reservationId:N}";
-                    await db.KeyDeleteAsync(reservationKey);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "Failed to delete reservation cache entry after stock release | ReservationId: {ReservationId} | OriginalExceptionPresent: {HasOriginalException} | CorrelationId: {CorrelationId}",
-                        reservationId, originalException != null, correlationId);
-                    
-                    // Only rethrow if there's no original exception to preserve
-                    if (originalException == null)
-                    {
-                        throw;
-                    }
-                }
-            }
-
             try
             {
                 await EmitInventoryReleasedEventAsync(
@@ -6117,35 +6018,6 @@ public class CheckoutService : ICheckoutService
                 // Don't rethrow - order is already committed, and this is a best-effort operation
             }
 
-            // Redis reservation tracking (non-critical, best-effort)
-            try
-            {
-                var db = _redisFactory.GetDatabase();
-                if (db != null)
-                {
-                    var reservationKey = $"reservation:{tenantId:N}:{inventoryReservation.ReservationId:N}";
-                    var reservationData = JsonSerializer.Serialize(new
-                    {
-                        ReservationId = inventoryReservation.ReservationId,
-                        CartId = snapshot.CartId,
-                        TenantId = tenantId,
-                        Items = inventoryReservation.ReservedItems,
-                        CreatedAtUtc = DateTime.UtcNow,
-                        ExpiresAtUtc = inventoryReservation.ExpiresAtUtc
-                    }, _jsonOptions);
-
-                    await db.StringSetAsync(
-                        reservationKey,
-                        reservationData,
-                        TimeSpan.FromMinutes(InventoryReservationTtlMinutes));
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to store reservation in Redis post-commit (non-fatal) | ReservationId: {ReservationId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
-                    inventoryReservation.ReservationId, order.Id, correlationId);
-            }
         }
 
         _logger.LogInformation(

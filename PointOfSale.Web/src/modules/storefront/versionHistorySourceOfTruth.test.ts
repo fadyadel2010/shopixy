@@ -22,11 +22,12 @@ describe('storefront version history source of truth', () => {
         expect(historySource).not.toContain('publishedBy: \'Admin\'')
     })
 
-    it('loads rollback choices from the real backend versions endpoint', () => {
+    it('keeps rollback choices on the StoreConfig History surface', () => {
         const builderSource = readSource(builderPagePath)
         const historySource = readSource(versionHistoryPagePath)
 
-        expect(builderSource).toContain('storeConfigService.getVersionHistory()')
+        expect(builderSource).not.toContain('storeConfigService.getVersionHistory()')
+        expect(builderSource).toContain("requestNavigation('/storefront/storeconfig-version-history')")
         expect(historySource).toContain('storeConfigService.getVersionHistory()')
     })
 
@@ -34,8 +35,7 @@ describe('storefront version history source of truth', () => {
         const builderSource = readSource(builderPagePath)
         const historySource = readSource(versionHistoryPagePath)
 
-        expect(builderSource).toContain('buildIfMatchOptions(rowVersion)')
-        expect(builderSource).toContain('storeConfigService.rollback(')
+        expect(builderSource).not.toContain('storeConfigService.rollback(')
         expect(historySource).toContain('deriveCurrentStoreIdentityPresentation(')
         expect(historySource).toContain('await storeConfigService.getStoreConfig()')
         expect(historySource).toContain('Rollback requires current backend RowVersion authority.')

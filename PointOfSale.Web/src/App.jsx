@@ -82,9 +82,11 @@ import Orders from './pages/Orders'
 import { OnlineCustomersPage } from './modules/onlineCustomers'
 // Storefront Builder
 import StorefrontDashboard from './pages/StorefrontDashboard'
+import StorefrontSettings from './pages/StorefrontSettings'
 import { StorefrontBuilderPage, ThemeMarketplacePage, ThemeEditorPage, VersionHistoryPage, AuthProvidersPage } from './modules/storefront/pages'
 // CMS Pages & Navigation (Phase 9.11)
 import { CmsPagesList, CmsPageEditor, NavigationEditor, StorefrontFooterSettings } from './modules/storefront/cms'
+import { StorefrontAdminFrame } from './modules/storefront/informationArchitecture'
 // Analytics Funnels (Phase 5A)
 import { FunnelsListPage, FunnelDetailsPage } from './modules/analytics'
 // Analytics Attribution (Phase 8A) & Campaign Cost & ROI (Phase 8B)
@@ -326,20 +328,33 @@ function App() {
                                         <Route element={<CommerceHubVendorRouteGuard capability="commercehub.analytics.view" />}>
                                             <Route path="ecommerce/pixel-tracking" element={<PixelTrackingConfigPage />} />
                                         </Route>
-                                        {/* Storefront Builder Routes */}
+                                        {/* Storefront administration: canonical IA routes plus legacy aliases */}
                                         <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
-                                            <Route path="storefront" element={<StorefrontDashboard />} />
                                             <Route path="storefront/builder" element={<StorefrontBuilderPage />} />
-                                            <Route path="storefront/themes" element={<ThemeMarketplacePage />} />
-                                            <Route path="storefront/theme" element={<ThemeEditorPage />} />
-                                            <Route path="storefront/versions" element={<VersionHistoryPage />} />
-                                        </Route>
-                                        {/* CMS Pages & Navigation (Phase 9.11) */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
-                                            <Route path="storefront/cms/pages" element={<CmsPagesList />} />
-                                            <Route path="storefront/cms/pages/:pageId" element={<CmsPageEditor />} />
-                                            <Route path="storefront/cms/navigation" element={<NavigationEditor />} />
-                                            <Route path="storefront/cms/footer" element={<StorefrontFooterSettings />} />
+                                            <Route path="storefront/homepage" element={<StorefrontBuilderPage />} />
+                                            <Route path="storefront/catalog/product-template" element={<StorefrontBuilderPage />} />
+
+                                            <Route element={<StorefrontAdminFrame />}>
+                                                <Route path="storefront" element={<StorefrontDashboard />} />
+                                                <Route path="storefront/overview" element={<StorefrontDashboard />} />
+                                                <Route path="storefront/status" element={<StorefrontSettings />} />
+
+                                                <Route path="storefront/themes" element={<ThemeMarketplacePage />} />
+                                                <Route path="storefront/appearance/themes" element={<ThemeMarketplacePage />} />
+                                                <Route path="storefront/theme" element={<ThemeEditorPage />} />
+                                                <Route path="storefront/appearance/colors-typography" element={<ThemeEditorPage />} />
+                                                <Route path="storefront/versions" element={<VersionHistoryPage />} />
+                                                <Route path="storefront/storeconfig-version-history" element={<VersionHistoryPage />} />
+
+                                                <Route path="storefront/cms/pages" element={<CmsPagesList />} />
+                                                <Route path="storefront/cms/pages/:pageId" element={<CmsPageEditor />} />
+                                                <Route path="storefront/content/pages" element={<CmsPagesList />} />
+                                                <Route path="storefront/content/pages/:pageId" element={<CmsPageEditor />} />
+                                                <Route path="storefront/cms/navigation" element={<NavigationEditor />} />
+                                                <Route path="storefront/navigation" element={<NavigationEditor />} />
+                                                <Route path="storefront/cms/footer" element={<StorefrontFooterSettings />} />
+                                                <Route path="storefront/footer-content" element={<StorefrontFooterSettings />} />
+                                            </Route>
                                         </Route>
                                         {/* Storefront Auth Providers (Phase P2 - Provider Management) */}
                                         <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>

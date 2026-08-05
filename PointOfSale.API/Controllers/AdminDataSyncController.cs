@@ -131,18 +131,13 @@ public class AdminDataSyncController : ControllerBase
                 syncedCount,
                 staleDeletedCount);
 
-            // Step 4: Invalidate category cache to ensure fresh data is served
-            var invalidatedKeys = await _categoryService.InvalidateCategoryCacheAsync(tenantId, "sync-categories");
-            _logger.LogInformation("Category cache invalidated after sync | TenantId: {TenantId} | KeysInvalidated: {Count}", 
-                tenantId, invalidatedKeys);
-
             return Ok(new 
             { 
                 message = "Categories synced successfully", 
                 count = syncedCount,
                 tenantId = tenantId,
                 staleDeleted = staleDeletedCount,
-                cacheInvalidated = invalidatedKeys
+                cacheInvalidated = 0
             });
         }
         catch (PartialBulkWriteException ex)
@@ -424,37 +419,21 @@ public class AdminDataSyncController : ControllerBase
     }
 
     /// <summary>
-    /// Invalidates category cache for the current tenant.
-    /// Use this after manual data fixes or when cache needs to be refreshed.
+    /// Compatibility response for the retired category cache endpoint.
     /// </summary>
     [HttpPost("categories/invalidate-cache")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> InvalidateCategoryCache()
+    public IActionResult AcknowledgeRetiredCategoryCache()
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
-        _logger.LogInformation("InvalidateCategoryCache starting | TenantId: {TenantId}", tenantId);
-
-        try
+        return Ok(new
         {
-            var invalidatedKeys = await _categoryService.InvalidateCategoryCacheAsync(tenantId, "manual-invalidation");
-            
-            _logger.LogInformation("InvalidateCategoryCache completed | TenantId: {TenantId} | KeysInvalidated: {Count}", 
-                tenantId, invalidatedKeys);
-
-            return Ok(new 
-            { 
-                message = "Category cache invalidated successfully",
-                tenantId = tenantId,
-                keysInvalidated = invalidatedKeys
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "InvalidateCategoryCache failed | TenantId: {TenantId}", tenantId);
-            return StatusCode(500, new { error = "Cache invalidation failed", message = "An unexpected error occurred" });
-        }
+            message = "Category cache is retired; SQL category authority is read directly.",
+            tenantId,
+            keysInvalidated = 0
+        });
     }
 
     /// <summary>

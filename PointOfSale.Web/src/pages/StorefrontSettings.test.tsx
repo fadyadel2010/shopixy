@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getStoreConfigMock = vi.hoisted(() => vi.fn())
@@ -135,7 +135,7 @@ describe('StorefrontSettings candidate authority', () => {
 
         fireEvent.click(screen.getByRole('radio', { name: /Maintenance/ }))
 
-        expect(screen.getByText('Unsaved storefront settings are candidate-only until the backend accepts them.')).toBeInTheDocument()
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
         expect(screen.getByRole('radio', { name: /Maintenance/ })).toBeChecked()
         expect(screen.getByText('Current Status').nextElementSibling).toHaveTextContent('Live')
     })
@@ -176,10 +176,10 @@ describe('StorefrontSettings candidate authority', () => {
         fireEvent.click(screen.getByRole('radio', { name: /Maintenance/ }))
         expect(screen.getByRole('radio', { name: /Maintenance/ })).toBeChecked()
 
-        fireEvent.click(screen.getByRole('button', { name: 'Reset Changes' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
 
         expect(screen.getByRole('radio', { name: /Live/ })).toBeChecked()
-        expect(screen.queryByText('Unsaved storefront settings are candidate-only until the backend accepts them.')).not.toBeInTheDocument()
+        expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     })
 
     it('does not preserve candidate edits across remount refresh recovery', async () => {
@@ -198,7 +198,7 @@ describe('StorefrontSettings candidate authority', () => {
 
         await waitFor(() => expect(getStoreConfigMock).toHaveBeenCalledTimes(2))
         expect(await screen.findByRole('radio', { name: /Disabled/ })).toBeChecked()
-        expect(screen.queryByText('Unsaved storefront settings are candidate-only until the backend accepts them.')).not.toBeInTheDocument()
+        expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
     })
 
     it('submits candidate intent with backend rowVersion evidence and replaces baseline from accepted response', async () => {
@@ -218,7 +218,8 @@ describe('StorefrontSettings candidate authority', () => {
             target: { value: 'Accepted by backend' },
         })
 
-        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Status' }))
+        fireEvent.click(within(screen.getByRole('dialog', { name: 'Save Storefront Status live?' })).getByRole('button', { name: 'Save live Status' }))
 
         await waitFor(() => expect(updateStorefrontStatusMock).toHaveBeenCalledTimes(1))
         expect(updateStorefrontStatusMock).toHaveBeenCalledWith(expect.objectContaining({
@@ -232,8 +233,8 @@ describe('StorefrontSettings candidate authority', () => {
         expect(updateStoreConfigMock).not.toHaveBeenCalled()
 
         await waitFor(() => expect(screen.getByText('Current Status').nextElementSibling).toHaveTextContent('Maintenance'))
-        expect(screen.queryByText('Unsaved storefront settings are candidate-only until the backend accepts them.')).not.toBeInTheDocument()
-        expect(showSuccessMock).toHaveBeenCalledWith('Storefront settings saved')
+        expect(screen.queryByText('Unsaved changes')).not.toBeInTheDocument()
+        expect(showSuccessMock).toHaveBeenCalledWith('Storefront status saved')
         expect(getStoreConfigMock).toHaveBeenCalledTimes(1)
     })
 
@@ -249,12 +250,13 @@ describe('StorefrontSettings candidate authority', () => {
 
         await screen.findByText('Backend Store')
         fireEvent.click(screen.getByRole('radio', { name: /Maintenance/ }))
-        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Status' }))
+        fireEvent.click(within(screen.getByRole('dialog', { name: 'Save Storefront Status live?' })).getByRole('button', { name: 'Save live Status' }))
 
         await waitFor(() => expect(updateStorefrontStatusMock).toHaveBeenCalledTimes(1))
         expect(screen.getByText('Current Status').nextElementSibling).toHaveTextContent('Live')
-        expect(screen.getByText('Unsaved storefront settings are candidate-only until the backend accepts them.')).toBeInTheDocument()
-        expect(showErrorMock).toHaveBeenCalledWith('Failed to save storefront settings')
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+        expect(showErrorMock).toHaveBeenCalledWith('Failed to save Storefront Status')
         expect(showSuccessMock).not.toHaveBeenCalled()
     })
 
@@ -269,8 +271,11 @@ describe('StorefrontSettings candidate authority', () => {
 
         await screen.findByText('Backend Store')
         fireEvent.click(screen.getByRole('radio', { name: /Maintenance/ }))
-        fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-        fireEvent.click(screen.getByRole('button', { name: 'Saving...' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Save live Status' }))
+        const saveDialog = screen.getByRole('dialog', { name: 'Save Storefront Status live?' })
+        const confirmSave = within(saveDialog).getByRole('button', { name: 'Save live Status' })
+        fireEvent.click(confirmSave)
+        fireEvent.click(confirmSave)
 
         expect(updateStorefrontStatusMock).toHaveBeenCalledTimes(1)
 

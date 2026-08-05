@@ -46,6 +46,7 @@ export function MarketplaceCmsPagesPage() {
             setPages(data)
         } catch (err) {
             console.error('Failed to load marketplace CMS pages', err)
+            setPages([])
             setError(err?.message || 'Unable to load marketplace CMS pages.')
         } finally {
             setIsLoading(false)
@@ -59,10 +60,15 @@ export function MarketplaceCmsPagesPage() {
 
         setBusyPageId(page.id)
         try {
-            await marketplaceCmsService.publishPage(page.id)
-            await loadPages()
+            const published = await marketplaceCmsService.publishPage(page.id, page.draftVersion)
+            setPages((current) => current.map((item) => (
+                item.id === published.id ? adoptPageResponse(item, published) : item
+            )))
         } catch (err) {
             console.error('Failed to publish marketplace CMS page', err)
+            if (marketplaceCmsService.isConcurrencyConflict(err)) {
+                await loadPages()
+            }
             alert(err?.message || 'Failed to publish marketplace page.')
         } finally {
             setBusyPageId(null)
@@ -76,10 +82,16 @@ export function MarketplaceCmsPagesPage() {
 
         setBusyPageId(page.id)
         try {
-            await marketplaceCmsService.deletePage(page.id)
-            await loadPages()
+            const deleted = await marketplaceCmsService.deletePage(
+                page.id,
+                marketplaceCmsService.getListItemVersion(page),
+            )
+            setPages((current) => current.filter((item) => item.id !== deleted.id))
         } catch (err) {
             console.error('Failed to delete marketplace CMS page', err)
+            if (marketplaceCmsService.isConcurrencyConflict(err)) {
+                await loadPages()
+            }
             alert(err?.message || 'Failed to delete marketplace page.')
         } finally {
             setBusyPageId(null)
@@ -246,7 +258,7 @@ export function MarketplaceCmsPagesPage() {
                                         </button>
                                         <button
                                             onClick={() => handlePublish(page)}
-                                            disabled={isBusy}
+                                            disabled={isBusy || !page.hasDraft}
                                             className="rounded-xl border border-emerald-200 p-2 text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-60"
                                             title="Publish"
                                         >
@@ -269,6 +281,28 @@ export function MarketplaceCmsPagesPage() {
             )}
         </div>
     )
+}
+
+function adoptPageResponse(current, response) {
+    const hasDraft = Boolean(response.draft)
+    const hasPublished = Boolean(response.published)
+
+    return {
+        ...current,
+        id: response.id,
+        slug: response.slug,
+        title: response.title,
+        titleLocalized: response.titleLocalized,
+        contentType: response.contentType,
+        hasDraft,
+        hasPublished,
+        hasPendingChanges: response.hasPendingChanges,
+        status: hasDraft ? (hasPublished ? 'UnpublishedChanges' : 'Draft') : 'Published',
+        draftVersion: response.draft?.version ?? null,
+        publishedVersion: response.published?.version ?? null,
+        updatedAtUtc: response.updatedAtUtc,
+        publishedAtUtc: response.publishedAtUtc,
+    }
 }
 
 export default MarketplaceCmsPagesPage

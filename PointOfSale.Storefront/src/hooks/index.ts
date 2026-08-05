@@ -4,10 +4,19 @@
  * Exports all custom React hooks.
  */
 
-export { useCategories, clearCategoryCache, type UseCategoriesState } from './useCategories';
+export {
+    useCategories,
+    clearCategoryCache,
+    invalidateCategoryCache,
+    refreshCategoryCache,
+    type UseCategoriesState,
+} from './useCategories';
 export {
     useHomepageSectionProducts,
     clearHomepageSectionProductsCache,
+    invalidateHomepageSectionProductsCache,
+    refreshHomepageSectionProductsCache,
+    type HomepageSectionProductsRefreshOptions,
     type UseHomepageSectionProductsOptions,
     type UseHomepageSectionProductsState,
 } from './useHomepageSectionProducts';

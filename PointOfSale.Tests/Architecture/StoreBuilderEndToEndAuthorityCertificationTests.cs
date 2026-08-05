@@ -62,6 +62,7 @@ public sealed class StoreBuilderEndToEndAuthorityCertificationTests
     {
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminStoreConfigController.cs");
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/AdminStoreConfigService.cs");
+        var contract = CertificationSource.ReadRepoFile("PointOfSale.Core/Constants/StorefrontSectionContracts.cs");
         var preview = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontPreviewService.cs");
         var mapper = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontDraftConfigMapper.cs");
         var projection = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Consumers/StorefrontConfigProjectionConsumer.cs");
@@ -78,7 +79,9 @@ public sealed class StoreBuilderEndToEndAuthorityCertificationTests
         Assert.Contains("ApplyExpectedRowVersion(config, expectedRowVersion)", service, StringComparison.Ordinal);
         Assert.Contains("NormalizeBuilderPageComposition(", service, StringComparison.Ordinal);
         Assert.Contains("NormalizeSectionSettings(sectionObject, sectionType)", service, StringComparison.Ordinal);
-        Assert.Contains("SafeRichTextSanitizer.Sanitize", service, StringComparison.Ordinal);
+        Assert.Contains("StorefrontSectionContracts.TryValidateSettingsStrict", service, StringComparison.Ordinal);
+        Assert.Contains("ValidateNestedList", contract, StringComparison.Ordinal);
+        Assert.Contains("IsSafeAuthoredUrl", contract, StringComparison.Ordinal);
         Assert.Contains("_publishLockService.TryAcquireAsync(tenantId, $\"page:{pageId}\")", service, StringComparison.Ordinal);
         Assert.Contains("CreateAndAppendVersionSnapshot(config, \"Page Published\", actor);", service, StringComparison.Ordinal);
         Assert.Contains("_publishLockService.TryAcquireAsync(tenantId, \"rollback\")", service, StringComparison.Ordinal);

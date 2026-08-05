@@ -76,14 +76,12 @@ public class StorefrontShippingQuotesController : ControllerBase
 
         if (request == null)
         {
-            SetNoStoreHeaders();
             return BadRequest(new { error = "Shipping quote request is required." });
         }
 
         var dtoValidationError = request.Validate();
         if (dtoValidationError != null)
         {
-            SetNoStoreHeaders();
             return BadRequest(new { error = dtoValidationError });
         }
         
@@ -115,11 +113,9 @@ public class StorefrontShippingQuotesController : ControllerBase
         
         if (!result.Success)
         {
-            SetNoStoreHeaders();
             return StatusCode(500, new { error = result.ErrorMessage });
         }
 
-        SetNoStoreHeaders();
         return Ok(new ShippingQuotesResponseDto
         {
             Success = true,
@@ -140,13 +136,6 @@ public class StorefrontShippingQuotesController : ControllerBase
                 QuoteId = o.QuoteId
             }).ToList()
         });
-    }
-
-    private void SetNoStoreHeaders()
-    {
-        Response.Headers.CacheControl = "no-store, no-cache, max-age=0";
-        Response.Headers.Pragma = "no-cache";
-        Response.Headers.Expires = "0";
     }
 
     private async Task<string?> ResolveTenantCountryCodeAsync(Guid tenantId, CancellationToken cancellationToken)

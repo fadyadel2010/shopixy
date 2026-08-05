@@ -2,16 +2,16 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
-using PointOfSale.API.SuperAdmin.Services;
+using PointOfSale.API.Services.Admin;
 
 namespace PointOfSale.API.SuperAdmin.Controllers;
 
 [Route("api/super-admin/storefront/footer")]
 public sealed class SuperAdminStorefrontFooterController : SuperAdminBaseController
 {
-    private readonly ISuperAdminStorefrontFooterService _footerService;
+    private readonly IFooterAuthoringService _footerService;
 
-    public SuperAdminStorefrontFooterController(ISuperAdminStorefrontFooterService footerService)
+    public SuperAdminStorefrontFooterController(IFooterAuthoringService footerService)
     {
         _footerService = footerService;
     }
@@ -20,7 +20,9 @@ public sealed class SuperAdminStorefrontFooterController : SuperAdminBaseControl
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> GetConfiguration(CancellationToken cancellationToken)
     {
-        var response = await _footerService.GetGlobalConfigurationAsync(cancellationToken);
+        var response = await _footerService.GetConfigurationAsync(
+            FooterAuthoringScope.Global,
+            cancellationToken: cancellationToken);
         return OkResponse(response);
     }
 
@@ -39,16 +41,19 @@ public sealed class SuperAdminStorefrontFooterController : SuperAdminBaseControl
 
         try
         {
-            var response = await _footerService.ReplaceGlobalConfigurationAsync(request, cancellationToken);
+            var response = await _footerService.SaveConfigurationAsync(
+                FooterAuthoringScope.Global,
+                tenantId: null,
+                request,
+                cancellationToken);
             return OkResponse(response);
         }
-        catch (ConcurrencyConflictException)
+        catch (FooterAuthoringException ex)
         {
-            return ErrorResponse(StatusCodes.Status409Conflict, "STOREFRONT_GLOBAL_FOOTER_CONCURRENCY_CONFLICT", "Footer configuration was modified by another admin.");
-        }
-        catch (InvalidOperationException ex)
-        {
-            return ErrorResponse(StatusCodes.Status400BadRequest, "STOREFRONT_GLOBAL_FOOTER_VALIDATION_ERROR", ex.Message);
+            return ErrorResponse(ex.StatusCode, ex.Code, ex.Message, new Dictionary<string, object?>
+            {
+                ["field"] = ex.Field
+            });
         }
     }
 }

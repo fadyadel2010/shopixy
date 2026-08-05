@@ -3,7 +3,6 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
@@ -13,10 +12,7 @@ using PointOfSale.Infrastructure.Consumers;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Tests.Infrastructure;
-using StackExchange.Redis;
 
 namespace PointOfSale.Tests.Storefront;
 
@@ -25,7 +21,7 @@ public sealed class StorefrontConfigProjectionConsumerTests
     private static readonly ConcurrentDictionary<string, InMemoryDatabaseRoot> DatabaseRoots = new(StringComparer.Ordinal);
 
     [Fact]
-    public async Task ConsumePublishedEvent_ProjectsLiveConfigAndInvalidatesVersionedStoreConfigCache()
+    public async Task ConsumePublishedEvent_ProjectsLiveConfig()
     {
         var databaseName = Guid.NewGuid().ToString("N");
         var tenantId = Guid.NewGuid();
@@ -150,24 +146,10 @@ public sealed class StorefrontConfigProjectionConsumerTests
                 return result.Object;
             });
 
-        var deletedKeys = Array.Empty<RedisKey>();
-        var database = new Mock<StackExchange.Redis.IDatabase>();
-        database
-            .Setup(redis => redis.KeyDeleteAsync(It.IsAny<RedisKey[]>(), CommandFlags.None))
-            .Callback<RedisKey[], CommandFlags>((keys, _) => deletedKeys = keys)
-            .ReturnsAsync(1L);
-
-        var redis = new Mock<IConnectionMultiplexer>();
-        redis
-            .Setup(connection => connection.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-            .Returns(database.Object);
-
         await using var testContext = CreateDbContext(databaseName, tenantId);
         var consumer = new StorefrontConfigProjectionConsumer(
             testContext,
             mongoDatabase.Object,
-            redis.Object,
-            Options.Create(new RedisSettings { InstanceName = "pos" }),
             new StorefrontPublishTelemetry(),
             new CommerceReliabilityTelemetry(),
             NullLogger<StorefrontConfigProjectionConsumer>.Instance);
@@ -193,7 +175,6 @@ public sealed class StorefrontConfigProjectionConsumerTests
         Assert.Single(capturedDocument.Pages.Home.Sections);
         Assert.Equal("live-home", capturedDocument.Pages.Home.Sections[0].Id);
         Assert.DoesNotContain(capturedDocument.Pages.Home.Sections, section => section.Id == "draft-home");
-        Assert.Contains(CacheKeyBuilder.StoreConfigKey("pos", tenantId), deletedKeys.Select(key => (string)key));
     }
 
     [Fact]
@@ -236,17 +217,10 @@ public sealed class StorefrontConfigProjectionConsumerTests
             .Setup(database => database.GetCollection<StorefrontConfigDocument>(It.IsAny<string>(), It.IsAny<MongoCollectionSettings>()))
             .Returns(mongoCollection.Object);
 
-        var redis = new Mock<IConnectionMultiplexer>();
-        redis
-            .Setup(connection => connection.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-            .Returns(Mock.Of<StackExchange.Redis.IDatabase>());
-
         await using var testContext = CreateDbContext(databaseName, tenantId);
         var consumer = new StorefrontConfigProjectionConsumer(
             testContext,
             mongoDatabase.Object,
-            redis.Object,
-            Options.Create(new RedisSettings { InstanceName = "pos" }),
             new StorefrontPublishTelemetry(),
             new CommerceReliabilityTelemetry(),
             NullLogger<StorefrontConfigProjectionConsumer>.Instance);
@@ -312,24 +286,10 @@ public sealed class StorefrontConfigProjectionConsumerTests
             .Setup(database => database.GetCollection<StorefrontConfigDocument>(It.IsAny<string>(), It.IsAny<MongoCollectionSettings>()))
             .Returns(mongoCollection.Object);
 
-        var deletedKeys = Array.Empty<RedisKey>();
-        var database = new Mock<StackExchange.Redis.IDatabase>();
-        database
-            .Setup(redis => redis.KeyDeleteAsync(It.IsAny<RedisKey[]>(), CommandFlags.None))
-            .Callback<RedisKey[], CommandFlags>((keys, _) => deletedKeys = keys)
-            .ReturnsAsync(1L);
-
-        var redis = new Mock<IConnectionMultiplexer>();
-        redis
-            .Setup(connection => connection.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-            .Returns(database.Object);
-
         await using var testContext = CreateDbContext(databaseName, tenantId);
         var consumer = new StorefrontConfigProjectionConsumer(
             testContext,
             mongoDatabase.Object,
-            redis.Object,
-            Options.Create(new RedisSettings { InstanceName = "pos" }),
             new StorefrontPublishTelemetry(),
             new CommerceReliabilityTelemetry(),
             NullLogger<StorefrontConfigProjectionConsumer>.Instance);
@@ -361,7 +321,6 @@ public sealed class StorefrontConfigProjectionConsumerTests
                 It.IsAny<FilterDefinition<StorefrontConfigDocument>>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
-        Assert.Contains(CacheKeyBuilder.StoreConfigKey("pos", tenantId), deletedKeys.Select(key => (string)key));
     }
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)

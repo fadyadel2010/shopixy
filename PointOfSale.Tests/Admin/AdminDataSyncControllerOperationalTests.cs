@@ -35,9 +35,6 @@ public sealed class AdminDataSyncControllerOperationalTests
         await dbContext.SaveChangesAsync();
 
         var categoryService = new Mock<IStorefrontCategoryService>();
-        categoryService
-            .Setup(service => service.InvalidateCategoryCacheAsync(tenantId, "sync-categories"))
-            .ReturnsAsync(2);
 
         var categoryCollection = new Mock<IMongoCollection<CategoryDocument>>();
         FilterDefinition<CategoryDocument>? capturedDeleteFilter = null;
@@ -71,13 +68,13 @@ public sealed class AdminDataSyncControllerOperationalTests
 
         Assert.Equal(1, payload.RootElement.GetProperty("count").GetInt32());
         Assert.Equal(1, payload.RootElement.GetProperty("staleDeleted").GetInt32());
-        Assert.Equal(2, payload.RootElement.GetProperty("cacheInvalidated").GetInt32());
-        categoryService.Verify(service => service.InvalidateCategoryCacheAsync(tenantId, "sync-categories"), Times.Once);
+        Assert.Equal(0, payload.RootElement.GetProperty("cacheInvalidated").GetInt32());
 
         var renderedFilter = RenderFilter(capturedDeleteFilter!);
         Assert.Contains(tenantId.ToString(), renderedFilter, StringComparison.OrdinalIgnoreCase);
         Assert.Contains(categoryId.ToString(), renderedFilter, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("$nin", renderedFilter, StringComparison.Ordinal);
+        categoryService.VerifyNoOtherCalls();
     }
 
     [Fact]

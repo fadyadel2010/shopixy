@@ -21,6 +21,14 @@ interface SectionRendererProps {
     onSectionSelect?: (sectionId: string) => void;
 }
 
+const PRODUCT_DETAILS_RUNTIME_SECTIONS = new Set([
+    'product-hero',
+    'product-gallery',
+    'product-specs',
+    'product-video',
+    'related-products',
+]);
+
 function RenderedSectionItem({
     section,
     sectionProps,
@@ -44,6 +52,16 @@ function RenderedSectionItem({
         const fallbackComponent = getDefaultSectionComponent(section.type);
         setComponent(() => fallbackComponent);
         setResolutionFailed(false);
+
+        // Product Details behavior belongs exclusively to the Product Details runtime.
+        // Themes style the default components through presentation primitives and tokens,
+        // but cannot replace their executable implementation.
+        if (PRODUCT_DETAILS_RUNTIME_SECTIONS.has(section.type.trim().toLowerCase())) {
+            setResolutionFailed(fallbackComponent === null);
+            return () => {
+                cancelled = true;
+            };
+        }
 
         resolveSectionComponent(section.type, themeId)
             .then((resolvedComponent) => {

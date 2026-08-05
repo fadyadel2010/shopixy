@@ -7,9 +7,12 @@ using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using StackExchange.Redis;
-using System.Text.Json;
 using PointOfSale.Core.Interfaces;
+using Microsoft.Extensions.Options;
+using PointOfSale.Infrastructure.Redis;
+using PointOfSale.Infrastructure.Redis.Configuration;
+using PointOfSale.Infrastructure.Redis.Models;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.API.Services.Storefront;
 
@@ -177,25 +180,26 @@ public class StorefrontWishlistService : IStorefrontWishlistService
     private readonly ApplicationDbContext _dbContext;
     private readonly IMongoCollection<OnlineCustomerWishlistDocument> _wishlistCollection;
     private readonly IMongoCollection<ProductDocument> _productCollection;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IRedisJsonCacheService _cache;
+    private readonly RedisSettings _redisSettings;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<StorefrontWishlistService> _logger;
 
-    private const string CacheKeyPrefix = "storefront:tenant:{0}:wishlist:{1}";
-    private const string CountCacheKeyPrefix = "storefront:tenant:{0}:wishlist:count:{1}";
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
     public StorefrontWishlistService(
         ApplicationDbContext dbContext,
         IMongoDatabase mongoDatabase,
-        IConnectionMultiplexer redis,
+        IRedisJsonCacheService cache,
+        IOptions<RedisSettings> redisSettings,
         IEventPublisher eventPublisher,
         ILogger<StorefrontWishlistService> logger)
     {
         _dbContext = dbContext;
         _wishlistCollection = mongoDatabase.GetCollection<OnlineCustomerWishlistDocument>("online_customer_wishlists");
         _productCollection = mongoDatabase.GetCollection<ProductDocument>("products");
-        _redis = redis;
+        _cache = cache;
+        _redisSettings = redisSettings.Value;
         _eventPublisher = eventPublisher;
         _logger = logger;
     }
@@ -333,10 +337,6 @@ public class StorefrontWishlistService : IStorefrontWishlistService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache after successful write
-        // The projection consumer will update MongoDB, but we invalidate cache proactively
-        await InvalidateWishlistCacheAsync(tenantId, customerId);
-
         var newCount = await GetWishlistCountFromDbAsync(tenantId, customerId, cancellationToken);
 
         _logger.LogInformation(
@@ -399,9 +399,6 @@ public class StorefrontWishlistService : IStorefrontWishlistService
         }, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
-
-        // Invalidate cache after successful write
-        await InvalidateWishlistCacheAsync(tenantId, customerId);
 
         var newCount = await GetWishlistCountFromDbAsync(tenantId, customerId, cancellationToken);
 
@@ -467,9 +464,6 @@ public class StorefrontWishlistService : IStorefrontWishlistService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        // Invalidate cache after successful write
-        await InvalidateWishlistCacheAsync(tenantId, customerId);
-
         _logger.LogInformation(
             "[Wishlist] Cleared wishlist | TenantId: {TenantId} | CustomerId: {CustomerId} | ItemsCleared: {ItemsCleared}",
             tenantId, customerId, itemsCount);
@@ -486,90 +480,66 @@ public class StorefrontWishlistService : IStorefrontWishlistService
         Guid customerId,
         CancellationToken cancellationToken)
     {
-        // Try Redis cache first
-        var db = _redis.GetDatabase();
-        var cacheKey = string.Format(CacheKeyPrefix, tenantId, customerId);
+        var cacheKey = CacheKeyBuilder.StorefrontWishlistKey(
+            _redisSettings.InstanceName,
+            tenantId,
+            customerId);
+        var generationKey = CacheKeyBuilder.StorefrontWishlistInvalidationGenerationKey(
+            _redisSettings.InstanceName,
+            tenantId,
+            customerId);
 
-        try
-        {
-            var cached = await db.StringGetAsync(cacheKey);
-            if (cached.HasValue)
+        return await _cache.GetOrCreateOwnedAsync(
+            cacheKey,
+            "storefront-wishlist",
+            generationKey,
+            CacheTtl,
+            async ct =>
             {
-                var cachedDto = JsonSerializer.Deserialize<WishlistDto>(cached!);
-                if (cachedDto != null)
+                var doc = await _wishlistCollection
+                    .Find(w => w.TenantId == tenantId && w.CustomerId == customerId)
+                    .FirstOrDefaultAsync(ct);
+
+                if (doc != null)
                 {
-                    _logger.LogDebug("[Wishlist] Cache hit | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customerId);
-                    return cachedDto;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Wishlist] Cache read failed | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customerId);
-        }
-
-        // Check MongoDB first
-        var doc = await _wishlistCollection
-            .Find(w => w.TenantId == tenantId && w.CustomerId == customerId)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        WishlistDto result;
-
-        if (doc != null)
-        {
-            // MongoDB hit
-            result = new WishlistDto
-            {
-                Items = doc.Items
-                    .Where(i => !i.IsRemoved)
-                    .Select(i => new WishlistItemDto
+                    return CachePopulationResult<WishlistDto>.FromValue(new WishlistDto
                     {
-                        ProductId = i.ProductId,
-                        AddedAtUtc = i.AddedAtUtc
+                        Items = doc.Items
+                            .Where(i => !i.IsRemoved)
+                            .Select(i => new WishlistItemDto
+                            {
+                                ProductId = i.ProductId,
+                                AddedAtUtc = i.AddedAtUtc
+                            })
+                            .ToList(),
+                        TotalCount = doc.Items.Count(i => !i.IsRemoved)
+                    });
+                }
+
+                _logger.LogInformation(
+                    "[Wishlist] MongoDB miss - falling back to SQL | TenantId: {TenantId} | CustomerId: {CustomerId}",
+                    tenantId,
+                    customerId);
+
+                var sqlItems = await _dbContext.OnlineCustomerWishlistItems
+                    .IgnoreQueryFilters()
+                    .Where(w => w.TenantId == tenantId && w.OnlineCustomerId == customerId && !w.IsRemoved)
+                    .OrderByDescending(w => w.CreatedAtUtc)
+                    .Select(w => new WishlistItemDto
+                    {
+                        ProductId = w.ProductId,
+                        AddedAtUtc = w.CreatedAtUtc
                     })
-                    .ToList(),
-                TotalCount = doc.Items.Count(i => !i.IsRemoved)
-            };
-        }
-        else
-        {
-            // MongoDB miss - fallback to SQL (Write Model)
-            // This handles projection lag and ensures "Read Your Own Writes"
-            _logger.LogInformation("[Wishlist] MongoDB miss - falling back to SQL | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customerId);
+                    .ToListAsync(ct);
 
-            // SECURITY: IgnoreQueryFilters is intentional so SQL fallback reads
-            // can tolerate soft-deleted rows, while TenantId and
-            // OnlineCustomerId are explicitly reapplied.
-            var sqlItems = await _dbContext.OnlineCustomerWishlistItems
-                .IgnoreQueryFilters()
-                .Where(w => w.TenantId == tenantId && w.OnlineCustomerId == customerId && !w.IsRemoved)
-                .OrderByDescending(w => w.CreatedAtUtc)
-                .Select(w => new WishlistItemDto 
-                { 
-                    ProductId = w.ProductId, 
-                    AddedAtUtc = w.CreatedAtUtc 
-                })
-                .ToListAsync(cancellationToken);
-
-            result = new WishlistDto
-            {
-                Items = sqlItems,
-                TotalCount = sqlItems.Count
-            };
-        }
-
-        // Cache the result
-        try
-        {
-            var json = JsonSerializer.Serialize(result);
-            await db.StringSetAsync(cacheKey, json, CacheTtl);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Wishlist] Cache write failed | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customerId);
-        }
-
-        return result;
+                return CachePopulationResult<WishlistDto>.FromValue(new WishlistDto
+                {
+                    Items = sqlItems,
+                    TotalCount = sqlItems.Count
+                });
+            },
+            cancellationToken: cancellationToken)
+            ?? new WishlistDto();
     }
 
     public async Task<int> GetWishlistCountAsync(
@@ -577,50 +547,30 @@ public class StorefrontWishlistService : IStorefrontWishlistService
         Guid customerId,
         CancellationToken cancellationToken)
     {
-        // Try Redis cache first
-        var db = _redis.GetDatabase();
-        var cacheKey = string.Format(CountCacheKeyPrefix, tenantId, customerId);
-
-        try
-        {
-            var cached = await db.StringGetAsync(cacheKey);
-            if (cached.HasValue && int.TryParse(cached, out var cachedCount))
+        var entry = await _cache.GetOrCreateOwnedAsync(
+            CacheKeyBuilder.StorefrontWishlistCountKey(_redisSettings.InstanceName, tenantId, customerId),
+            "storefront-wishlist-count",
+            CacheKeyBuilder.StorefrontWishlistInvalidationGenerationKey(
+                _redisSettings.InstanceName,
+                tenantId,
+                customerId),
+            CacheTtl,
+            async ct =>
             {
-                return cachedCount;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Wishlist] Count cache read failed | TenantId: {TenantId} | CustomerId: {CustomerId}", tenantId, customerId);
-        }
+                var doc = await _wishlistCollection
+                    .Find(w => w.TenantId == tenantId && w.CustomerId == customerId)
+                    .FirstOrDefaultAsync(ct);
 
-        // Fallback to MongoDB
-        var doc = await _wishlistCollection
-            .Find(w => w.TenantId == tenantId && w.CustomerId == customerId)
-            .FirstOrDefaultAsync(cancellationToken);
+                var count = doc != null
+                    ? doc.Items.Count(i => !i.IsRemoved)
+                    : await GetWishlistCountFromDbAsync(tenantId, customerId, ct);
 
-        int count;
-        if (doc != null)
-        {
-            // PHASE 10.3.6 FIX: Recalculate count from active items only
-            // This ensures consistency with GetWishlistAsync and prevents stale counts
-            // when removed items haven't been filtered from the projection
-            count = doc.Items.Count(i => !i.IsRemoved);
-        }
-        else
-        {
-            // MongoDB miss - fallback to SQL
-            count = await GetWishlistCountFromDbAsync(tenantId, customerId, cancellationToken);
-        }
+                return CachePopulationResult<WishlistCountCacheEntry>.FromValue(
+                    new WishlistCountCacheEntry { Count = count });
+            },
+            cancellationToken: cancellationToken);
 
-        // Cache the result
-        try
-        {
-            await db.StringSetAsync(cacheKey, count.ToString(), CacheTtl);
-        }
-        catch { /* Non-critical */ }
-
-        return count;
+        return entry?.Count ?? 0;
     }
 
     public async Task<bool> IsInWishlistAsync(
@@ -953,31 +903,8 @@ public class StorefrontWishlistService : IStorefrontWishlistService
             cancellationToken);
     }
 
-    #region Cache Helpers
-
-    /// <summary>
-    /// Invalidate Redis cache for wishlist.
-    /// 
-    /// PHASE 10.3.6 - ARCHITECTURAL NOTE:
-    /// Direct MongoDB writes are FORBIDDEN in this service.
-    /// MongoDB is updated ONLY via event-driven projection (OnlineCustomerWishlistProjectionConsumer).
-    /// This cache invalidation is safe because it only clears Redis, not MongoDB.
-    /// </summary>
-    private async Task InvalidateWishlistCacheAsync(Guid tenantId, Guid customerId)
+    private sealed class WishlistCountCacheEntry
     {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var cacheKey = string.Format(CacheKeyPrefix, tenantId, customerId);
-            var countCacheKey = string.Format(CountCacheKeyPrefix, tenantId, customerId);
-            await db.KeyDeleteAsync(new RedisKey[] { cacheKey, countCacheKey });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Wishlist] Redis cache invalidation failed | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-        }
+        public int Count { get; init; }
     }
-
-    #endregion
 }

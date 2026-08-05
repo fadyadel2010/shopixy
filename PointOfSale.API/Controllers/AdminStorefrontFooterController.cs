@@ -14,13 +14,13 @@ namespace PointOfSale.API.Controllers;
 [Route("api/admin/footer")]
 public sealed class AdminStorefrontFooterController : ControllerBase
 {
-    private readonly IAdminStorefrontFooterService _footerService;
+    private readonly IFooterAuthoringService _footerService;
     private readonly ITenantContext _tenantContext;
     private readonly CommerceReliabilityTelemetry _telemetry;
     private readonly ILogger<AdminStorefrontFooterController> _logger;
 
     public AdminStorefrontFooterController(
-        IAdminStorefrontFooterService footerService,
+        IFooterAuthoringService footerService,
         ITenantContext tenantContext,
         CommerceReliabilityTelemetry telemetry,
         ILogger<AdminStorefrontFooterController> logger)
@@ -41,7 +41,10 @@ public sealed class AdminStorefrontFooterController : ControllerBase
 
         try
         {
-            var response = await _footerService.GetConfigurationAsync(tenantId, cancellationToken);
+            var response = await _footerService.GetConfigurationAsync(
+                FooterAuthoringScope.Tenant,
+                tenantId,
+                cancellationToken);
             return Ok(response);
         }
         catch (Exception ex)
@@ -56,53 +59,57 @@ public sealed class AdminStorefrontFooterController : ControllerBase
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status409Conflict)]
     public async Task<IActionResult> ReplaceConfiguration(
-        [FromBody] AdminStorefrontFooterConfigurationRequest request,
+        [FromBody] AdminStorefrontFooterConfigurationRequest? request,
         CancellationToken cancellationToken = default)
     {
         var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
         var tenantId = _tenantContext.RequiredTenantId;
 
-        if (!request.ExpectedUpdatedAtUtc.HasValue)
+        if (request == null)
         {
-            return StatusCode(
-                StatusCodes.Status428PreconditionRequired,
-                new AdminCmsApiErrorResponse(
-                    "PRECONDITION_REQUIRED",
-                    "The current footer version is required.",
-                    traceId));
+            return BadRequest(new AdminCmsApiErrorResponse(
+                "FOOTER_REQUEST_INVALID",
+                "Request body is required.",
+                traceId));
         }
 
         try
         {
-            var response = await _footerService.ReplaceConfigurationAsync(tenantId, request, cancellationToken);
+            var response = await _footerService.SaveConfigurationAsync(
+                FooterAuthoringScope.Tenant,
+                tenantId,
+                request,
+                cancellationToken);
             return Ok(response);
         }
-        catch (ConcurrencyConflictException ex)
+        catch (FooterAuthoringException ex)
         {
-            _logger.LogWarning(ex, "Storefront footer configuration concurrency conflict | TenantId: {TenantId}", tenantId);
-            _telemetry.RecordCmsConflictDetected("storefront_footer");
-            
+            if (ex.StatusCode == StatusCodes.Status409Conflict && ex.Code == "FOOTER_CONCURRENCY_CONFLICT")
+            {
+                _logger.LogWarning(ex, "Storefront footer configuration concurrency conflict | TenantId: {TenantId}", tenantId);
+                _telemetry.RecordCmsConflictDetected("storefront_footer");
+            }
+
             object? latestVersion = null;
-            try
+            if (ex.Code == "FOOTER_CONCURRENCY_CONFLICT")
             {
-                latestVersion = await _footerService.GetConfigurationAsync(tenantId, cancellationToken);
+                try
+                {
+                    latestVersion = await _footerService.GetConfigurationAsync(
+                        FooterAuthoringScope.Tenant,
+                        tenantId,
+                        cancellationToken);
+                }
+                catch (Exception getEx)
+                {
+                    _logger.LogWarning(getEx, "Failed to fetch latest footer configuration for conflict response | TenantId: {TenantId}", tenantId);
+                }
             }
-            catch (Exception getEx)
-            {
-                _logger.LogWarning(getEx, "Failed to fetch latest footer configuration for conflict response | TenantId: {TenantId}", tenantId);
-            }
-            
-            return Conflict(new AdminCmsApiErrorResponse(
-                "CONCURRENCY_CONFLICT",
-                "Footer configuration was updated by another admin. Reload the latest version before saving again.",
-                traceId)
+
+            return StatusCode(ex.StatusCode, new AdminCmsApiErrorResponse(ex.Code, ex.Message, traceId)
             {
                 LatestVersion = latestVersion,
             });
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(AdminCmsApiErrorResponse.ValidationError(ex.Message, traceId));
         }
         catch (Exception ex)
         {

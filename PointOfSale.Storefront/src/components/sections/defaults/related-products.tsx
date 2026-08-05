@@ -11,8 +11,6 @@ interface RelatedProductsProps {
     product?: ProductReadDto | null;
     title?: string;
     limit?: number;
-    showPrice?: boolean;
-    showRating?: boolean;
     layoutVariant?: string;
     productGridModel?: ProductGridPresentationModel;
     renderProductCard?: RenderProductCard;

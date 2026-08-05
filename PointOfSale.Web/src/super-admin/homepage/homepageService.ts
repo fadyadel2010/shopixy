@@ -42,7 +42,8 @@ export interface HomepageSectionSchema {
 
 export interface HomepageSectionsResult {
     sections: HomepageSectionRecord[]
-    meta?: SuperAdminApiMeta
+    workspaceVersion: string
+    meta?: SuperAdminApiMeta & { workspaceVersion?: string }
 }
 
 export interface HomepageSectionPayload {
@@ -131,16 +132,38 @@ function buildSectionsUrl(tenantId?: string | null, mode: HomepageViewMode = 'pr
     return `/homepage/sections?${query}`
 }
 
+function requireWorkspaceVersion(version: string | null | undefined): string {
+    const normalized = version?.trim()
+    if (!normalized) {
+        throw new Error('The current Homepage workspace version is unavailable. Refresh and try again.')
+    }
+
+    return normalized
+}
+
+function buildMutationUrl(path: string, workspaceVersion: string | null | undefined): string {
+    const params = new URLSearchParams({ expectedVersion: requireWorkspaceVersion(workspaceVersion) })
+    return `${path}?${params.toString()}`
+}
+
+function admitHomepageResult(
+    sections: HomepageSectionRecord[],
+    meta?: SuperAdminApiMeta & { workspaceVersion?: string },
+): HomepageSectionsResult {
+    return {
+        sections,
+        workspaceVersion: requireWorkspaceVersion(meta?.workspaceVersion),
+        meta,
+    }
+}
+
 export async function getHomepageSections(
     tenantId?: string | null,
     mode: HomepageViewMode = 'preview',
 ): Promise<HomepageSectionsResult> {
     const response = await superAdminApiClient.get<HomepageSectionRecord[]>(buildSectionsUrl(tenantId, mode))
 
-    return {
-        sections: response.data,
-        meta: response.meta,
-    }
+    return admitHomepageResult(response.data, response.meta)
 }
 
 export async function getHomepageSchemas(): Promise<HomepageSectionSchema[]> {
@@ -148,61 +171,26 @@ export async function getHomepageSchemas(): Promise<HomepageSectionSchema[]> {
     return response.data
 }
 
-export async function createHomepageSection(payload: HomepageSectionPayload): Promise<HomepageSectionRecord> {
-    const response = await superAdminApiClient.post<HomepageSectionRecord, HomepageSectionPayload>(
-        '/homepage/sections',
-        payload,
-    )
-
-    return response.data
-}
-
-export async function updateHomepageSection(
-    id: string,
-    payload: HomepageSectionPayload,
-): Promise<HomepageSectionRecord> {
-    const response = await superAdminApiClient.put<HomepageSectionRecord, HomepageSectionPayload>(
-        `/homepage/sections/${id}`,
-        payload,
-    )
-
-    return response.data
-}
-
-export async function deleteHomepageSection(id: string): Promise<HomepageSectionRecord> {
-    const response = await superAdminApiClient.delete<HomepageSectionRecord>(`/homepage/sections/${id}`)
-    return response.data
-}
-
-export async function reorderHomepageSections(
-    sectionIds: string[],
-    tenantId?: string | null,
-): Promise<HomepageSectionRecord[]> {
-    const response = await superAdminApiClient.post<HomepageSectionRecord[], { tenantId?: string | null; sectionIds: string[] }>(
-        '/homepage/sections/reorder',
-        {
-            tenantId: tenantId ?? null,
-            sectionIds,
-        },
-    )
-
-    return response.data
-}
-
-export async function publishHomepageSections(tenantId?: string | null): Promise<HomepageSectionRecord[]> {
+export async function publishHomepageSections(
+    tenantId: string | null | undefined,
+    workspaceVersion: string | null | undefined,
+): Promise<HomepageSectionsResult> {
     const response = await superAdminApiClient.post<HomepageSectionRecord[], { tenantId?: string | null }>(
-        '/homepage/sections/publish',
+        buildMutationUrl('/homepage/sections/publish', workspaceVersion),
         {
             tenantId: tenantId ?? null,
         },
     )
 
-    return response.data
+    return admitHomepageResult(response.data, response.meta)
 }
 
-export async function saveHomepageDraft(payload: SaveHomepageDraftPayload): Promise<HomepageSectionRecord[]> {
+export async function saveHomepageDraft(
+    payload: SaveHomepageDraftPayload,
+    workspaceVersion: string | null | undefined,
+): Promise<HomepageSectionsResult> {
     const response = await superAdminApiClient.put<HomepageSectionRecord[], SaveHomepageDraftPayload>(
-        '/homepage/sections/draft',
+        buildMutationUrl('/homepage/sections/draft', workspaceVersion),
         {
             tenantId: payload.tenantId ?? null,
             sections: payload.sections.map((section) => ({
@@ -216,21 +204,27 @@ export async function saveHomepageDraft(payload: SaveHomepageDraftPayload): Prom
         },
     )
 
-    return response.data
+    return admitHomepageResult(response.data, response.meta)
 }
 
 export async function generateHomepageStarterTemplate(
     payload: GenerateHomepageTemplatePayload,
-): Promise<HomepageSectionRecord[]> {
+    workspaceVersion: string | null | undefined,
+): Promise<HomepageSectionsResult> {
     const response = await superAdminApiClient.post<HomepageSectionRecord[], GenerateHomepageTemplatePayload>(
-        '/homepage/sections/template',
+        buildMutationUrl('/homepage/sections/template', workspaceVersion),
         {
             tenantId: payload.tenantId ?? null,
             overwriteExisting: payload.overwriteExisting,
         },
     )
 
-    return response.data
+    return admitHomepageResult(response.data, response.meta)
+}
+
+export function isHomepageWorkspaceConflict(error: unknown): boolean {
+    const candidate = error as { status?: number; code?: string } | null
+    return candidate?.status === 409 && candidate.code === 'HOMEPAGE_WORKSPACE_CONFLICT'
 }
 
 export async function getHomepageTenants(): Promise<TenantOption[]> {

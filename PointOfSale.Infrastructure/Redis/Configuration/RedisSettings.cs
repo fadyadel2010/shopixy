@@ -47,11 +47,6 @@ public class RedisSettings
     public int FooterCacheTtlMinutes { get; set; } = 15;
 
     /// <summary>
-    /// Default TTL for CMS page caches in minutes.
-    /// </summary>
-    public int CmsPageCacheTtlMinutes { get; set; } = 15;
-
-    /// <summary>
     /// Default TTL for marketplace read API caches in minutes.
     /// </summary>
     public int MarketplaceReadCacheTtlMinutes { get; set; } = 5;

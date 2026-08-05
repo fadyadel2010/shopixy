@@ -46,9 +46,8 @@ public class PromotionProjectionConsumer :
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly IMongoCollection<CategoryDocument> _categoryCollection;
     private readonly ApplicationDbContext _dbContext;
-    private readonly IPromotionCacheService _cacheService;
-    private readonly IProductCacheService _productCacheService;
-    private readonly IProductSearchIndexService _searchIndexService;
+    private readonly IStorefrontProductCacheInvalidator _productCacheInvalidator;
+    private readonly IUnifiedSearchIndexService _searchIndexService;
     private readonly ILogger<PromotionProjectionConsumer> _logger;
 
     private const string CollectionName = "promotions";
@@ -59,17 +58,15 @@ public class PromotionProjectionConsumer :
     public PromotionProjectionConsumer(
         IMongoDatabase database,
         ApplicationDbContext dbContext,
-        IPromotionCacheService cacheService,
-        IProductCacheService productCacheService,
-        IProductSearchIndexService searchIndexService,
+        IStorefrontProductCacheInvalidator productCacheInvalidator,
+        IUnifiedSearchIndexService searchIndexService,
         ILogger<PromotionProjectionConsumer> logger)
     {
         _collection = database.GetCollection<PromotionDocument>(CollectionName);
         _productCollection = database.GetCollection<ProductDocument>(ProductsCollectionName);
         _categoryCollection = database.GetCollection<CategoryDocument>(CategoriesCollectionName);
         _dbContext = dbContext;
-        _cacheService = cacheService;
-        _productCacheService = productCacheService;
+        _productCacheInvalidator = productCacheInvalidator;
         _searchIndexService = searchIndexService;
         _logger = logger;
         EnsureIndexes();
@@ -288,7 +285,9 @@ public class PromotionProjectionConsumer :
                             context.CancellationToken);
                     }
 
-                    await _cacheService.InvalidatePromotionCacheAsync(@event.TenantId.Value, context.CancellationToken);
+                    await _productCacheInvalidator.InvalidateTenantAsync(
+                        @event.TenantId.Value,
+                        cancellationToken: context.CancellationToken);
                 },
                 context.CancellationToken);
 
@@ -503,7 +502,9 @@ public class PromotionProjectionConsumer :
                             context.CancellationToken);
                     }
 
-                    await _cacheService.InvalidatePromotionCacheAsync(@event.TenantId.Value, context.CancellationToken);
+                    await _productCacheInvalidator.InvalidateTenantAsync(
+                        @event.TenantId.Value,
+                        cancellationToken: context.CancellationToken);
                 },
                 context.CancellationToken);
 
@@ -880,7 +881,9 @@ public class PromotionProjectionConsumer :
                 cancellationToken);
         }
 
-        await _cacheService.InvalidatePromotionCacheAsync(tenantId, cancellationToken);
+        await _productCacheInvalidator.InvalidateTenantAsync(
+            tenantId,
+            cancellationToken: cancellationToken);
     }
 
     private static IReadOnlyList<Guid> ResolveAffectedProductIds(
@@ -1075,21 +1078,11 @@ public class PromotionProjectionConsumer :
             return;
         }
 
-        try
-        {
-            await _productCacheService.InvalidateProductAsync(
-                tenantId,
-                product.ProductId,
-                product.Slug,
-                cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Failed to invalidate product cache after promotion projection refresh | ProductId: {ProductId}",
-                productId);
-        }
+        await _productCacheInvalidator.InvalidateProductAsync(
+            tenantId,
+            product.ProductId,
+            product.Slug,
+            cancellationToken: cancellationToken);
 
         await SyncProductToElasticsearchAsync(tenantId, productId, cancellationToken);
     }
@@ -1252,7 +1245,7 @@ public class PromotionProjectionConsumer :
 
             if (product == null || !product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
-                var deleted = await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                var deleted = await _searchIndexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                 if (!deleted)
                 {
                     throw new InvalidOperationException(
@@ -1269,7 +1262,7 @@ public class PromotionProjectionConsumer :
             // Map to ES document
             var document = ProductSearchDocumentMapper.MapFromProductDocument(product);
 
-            var success = await _searchIndexService.IndexAsync(document, cancellationToken);
+            var success = await _searchIndexService.IndexProductAsync(document, cancellationToken);
             
             if (success)
             {

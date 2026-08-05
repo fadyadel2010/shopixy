@@ -87,7 +87,6 @@ public sealed class StorefrontPagesController : ControllerBase
                 }
 
                 Response.Headers["X-Preview-Mode"] = "true";
-                Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
                 return Ok(previewPage);
             }
 

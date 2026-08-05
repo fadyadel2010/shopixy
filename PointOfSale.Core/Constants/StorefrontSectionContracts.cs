@@ -15,13 +15,30 @@ public sealed record StorefrontSectionContractField(
     object? DefaultValue,
     int? Min,
     int? Max,
+    int? MaxItems,
     IReadOnlyList<string> Options,
+    string? ItemLabel,
+    StorefrontSectionContractItemSchema? ItemSchema,
     string RendererConsumer,
     string VisualEffect);
+
+public sealed record StorefrontSectionContractItemSchema(
+    IReadOnlyDictionary<string, object?> DefaultValue,
+    IReadOnlyList<StorefrontSectionContractItemField> Fields);
+
+public sealed record StorefrontSectionContractItemField(
+    string Key,
+    string Type,
+    object? DefaultValue,
+    int? MaxLength,
+    bool AllowEmpty);
 
 public static class StorefrontSectionContracts
 {
     private const string ThemeAuthorityResourceName = "shopixy-theme-authority.json";
+    private const int DefaultTextMaxLength = 500;
+    private const int DefaultLongTextMaxLength = 5000;
+    private const int DefaultUrlMaxLength = 2048;
     private static readonly Regex HexColorRegex = new(@"^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$", RegexOptions.Compiled);
 
     private static readonly SectionContractAuthorityDocument Authority = LoadAuthority();
@@ -160,18 +177,55 @@ public static class StorefrontSectionContracts
                 }
                 break;
             case "guid-list":
-                if (value is not IEnumerable<object?> guidList || value is string ||
-                    guidList.Any(item => item is not string))
+                if (!TryReadList(value, out var guidList))
                 {
                     errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must be a string array.");
+                    break;
+                }
+
+                ValidateListSize(sectionType, field, guidList, errors);
+                var guidValues = new List<string>();
+                foreach (var item in guidList)
+                {
+                    if (item is not string stringItem || !Guid.TryParse(stringItem, out _))
+                    {
+                        errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must contain valid GUID values.");
+                        continue;
+                    }
+
+                    guidValues.Add(stringItem);
+                }
+
+                if (guidValues.Count != guidValues.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+                {
+                    errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must not contain duplicate GUID values.");
                 }
                 break;
             case "image-list":
-            case "list":
-                if (value is not IEnumerable<object?> || value is string)
+                if (!TryReadList(value, out var images))
                 {
                     errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must be an array.");
+                    break;
                 }
+
+                ValidateListSize(sectionType, field, images, errors);
+                foreach (var image in images)
+                {
+                    if (image is not string imageUrl || !IsSafeAuthoredUrl(imageUrl, field.Type))
+                    {
+                        errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must contain safe image URLs.");
+                    }
+                }
+                break;
+            case "list":
+                if (!TryReadList(value, out var items))
+                {
+                    errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must be an array.");
+                    break;
+                }
+
+                ValidateListSize(sectionType, field, items, errors);
+                ValidateNestedList(sectionType, field, items, errors);
                 break;
             default:
                 if (value is not string stringValue)
@@ -186,6 +240,21 @@ public static class StorefrontSectionContracts
                     errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must be a hex color.");
                 }
 
+                var maxLength = field.Type.Equals("textarea", StringComparison.OrdinalIgnoreCase)
+                    ? DefaultLongTextMaxLength
+                    : field.Type is "url" or "image" or "video"
+                        ? DefaultUrlMaxLength
+                        : DefaultTextMaxLength;
+                if (stringValue.Length > maxLength)
+                {
+                    errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' exceeds maximum length {maxLength}.");
+                }
+
+                if (field.Type is "url" or "image" or "video" && !IsSafeAuthoredUrl(stringValue, field.Type))
+                {
+                    errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' must be a safe URL or relative path.");
+                }
+
                 if (field.Options.Count > 0 &&
                     !field.Options.Contains(stringValue, StringComparer.OrdinalIgnoreCase))
                 {
@@ -193,6 +262,130 @@ public static class StorefrontSectionContracts
                 }
                 break;
         }
+    }
+
+    private static bool TryReadList(object value, out IReadOnlyList<object?> items)
+    {
+        if (value is string || value is not IEnumerable<object?> enumerable)
+        {
+            items = Array.Empty<object?>();
+            return false;
+        }
+
+        items = enumerable.ToArray();
+        return true;
+    }
+
+    private static void ValidateListSize(
+        string sectionType,
+        StorefrontSectionContractField field,
+        IReadOnlyCollection<object?> items,
+        ICollection<string> errors)
+    {
+        if (field.MaxItems.HasValue && items.Count > field.MaxItems.Value)
+        {
+            errors.Add(
+                $"Section setting '{field.Key}' for section type '{sectionType}' exceeds maximum item count {field.MaxItems.Value}.");
+        }
+    }
+
+    private static void ValidateNestedList(
+        string sectionType,
+        StorefrontSectionContractField field,
+        IReadOnlyList<object?> items,
+        ICollection<string> errors)
+    {
+        if (field.ItemSchema == null)
+        {
+            errors.Add($"Section setting '{field.Key}' for section type '{sectionType}' has no semantic item schema.");
+            return;
+        }
+
+        var fieldsByKey = field.ItemSchema.Fields.ToDictionary(itemField => itemField.Key, StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < items.Count; index++)
+        {
+            if (items[index] is not IReadOnlyDictionary<string, object?> item)
+            {
+                errors.Add($"Section setting '{field.Key}' item {index} for section type '{sectionType}' must be an object.");
+                continue;
+            }
+
+            foreach (var key in item.Keys)
+            {
+                if (!fieldsByKey.ContainsKey(key))
+                {
+                    errors.Add(
+                        $"Section setting '{field.Key}' item {index} for section type '{sectionType}' contains unsupported property '{key}'.");
+                }
+            }
+
+            foreach (var itemField in field.ItemSchema.Fields)
+            {
+                if (!item.TryGetValue(itemField.Key, out var itemValue) || itemValue is not string stringValue)
+                {
+                    errors.Add(
+                        $"Section setting '{field.Key}' item {index} property '{itemField.Key}' for section type '{sectionType}' must be string.");
+                    continue;
+                }
+
+                if (!itemField.AllowEmpty && string.IsNullOrWhiteSpace(stringValue))
+                {
+                    errors.Add(
+                        $"Section setting '{field.Key}' item {index} property '{itemField.Key}' for section type '{sectionType}' must not be empty.");
+                }
+
+                if (itemField.MaxLength.HasValue && stringValue.Length > itemField.MaxLength.Value)
+                {
+                    errors.Add(
+                        $"Section setting '{field.Key}' item {index} property '{itemField.Key}' for section type '{sectionType}' exceeds maximum length {itemField.MaxLength.Value}.");
+                }
+
+                if (itemField.Type is "url" or "image" or "video" && !IsSafeAuthoredUrl(stringValue, itemField.Type))
+                {
+                    errors.Add(
+                        $"Section setting '{field.Key}' item {index} property '{itemField.Key}' for section type '{sectionType}' must be a safe URL or relative path.");
+                }
+            }
+        }
+    }
+
+    private static bool IsSafeAuthoredUrl(string value, string fieldType)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        if (value.Length > DefaultUrlMaxLength || value.Any(character => char.IsControl(character) || char.IsWhiteSpace(character)) || value.Contains('\\'))
+        {
+            return false;
+        }
+
+        if (value.StartsWith("//", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (value.StartsWith("/", StringComparison.Ordinal) ||
+            value.StartsWith("#", StringComparison.Ordinal) ||
+            value.StartsWith("?", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var absoluteUri))
+        {
+            return Uri.TryCreate(value, UriKind.Relative, out _) &&
+                   !value.Contains(':', StringComparison.Ordinal);
+        }
+
+        if (absoluteUri.Scheme is "http" or "https")
+        {
+            return string.IsNullOrEmpty(absoluteUri.UserInfo);
+        }
+
+        return fieldType.Equals("url", StringComparison.OrdinalIgnoreCase) &&
+               absoluteUri.Scheme is "mailto" or "tel";
     }
 
     private static bool TryReadNumber(object value, out double number)
@@ -238,7 +431,19 @@ public static class StorefrontSectionContracts
                     ConvertJsonValue(field.DefaultValue),
                     field.Min,
                     field.Max,
+                    field.MaxItems,
                     field.Options ?? Array.Empty<string>(),
+                    field.ItemLabel,
+                    field.ItemSchema == null
+                        ? null
+                        : new StorefrontSectionContractItemSchema(
+                            ConvertObjectMap(field.ItemSchema.DefaultValue),
+                            field.ItemSchema.Fields.Select(itemField => new StorefrontSectionContractItemField(
+                                itemField.Key,
+                                itemField.Type,
+                                ConvertJsonValue(itemField.DefaultValue),
+                                itemField.MaxLength,
+                                itemField.AllowEmpty)).ToArray()),
                     field.RendererConsumer,
                     field.VisualEffect)).ToArray()))
             .ToArray();
@@ -332,7 +537,21 @@ public static class StorefrontSectionContracts
         JsonElement DefaultValue,
         int? Min,
         int? Max,
+        int? MaxItems,
         IReadOnlyList<string>? Options,
+        string? ItemLabel,
+        SectionContractItemSchemaManifest? ItemSchema,
         string RendererConsumer,
         string VisualEffect);
+
+    private sealed record SectionContractItemSchemaManifest(
+        IReadOnlyDictionary<string, JsonElement> DefaultValue,
+        IReadOnlyList<SectionContractItemFieldManifest> Fields);
+
+    private sealed record SectionContractItemFieldManifest(
+        string Key,
+        string Type,
+        JsonElement DefaultValue,
+        int? MaxLength,
+        bool AllowEmpty);
 }

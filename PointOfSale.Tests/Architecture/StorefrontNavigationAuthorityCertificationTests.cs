@@ -24,13 +24,21 @@ public sealed class StorefrontNavigationAuthorityCertificationTests
     public void NavigationWritesAndPublicationAreVersionAndTargetBound()
     {
         var service = ReadRepoFile("PointOfSale.API/Services/Admin/AdminCmsService.cs");
+        var admission = ReadRepoFile("PointOfSale.API/Services/Admin/NavigationAdmissionService.cs");
+        var storage = ReadRepoFile("PointOfSale.API/Services/Admin/NavigationStorageAdapter.cs");
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminCmsPagesController.cs");
 
         Assert.Contains("ApplyExpectedRowVersion", service, StringComparison.Ordinal);
-        Assert.Contains("GetPublishedCmsPageSlugsAsync", service, StringComparison.Ordinal);
-        Assert.Contains("ValidateNavigationMenu", service, StringComparison.Ordinal);
+        Assert.Contains("NavigationAdmissionMode.Draft", service, StringComparison.Ordinal);
+        Assert.Contains("NavigationAdmissionMode.Publish", service, StringComparison.Ordinal);
+        Assert.Contains("public async Task<AdminNavigationRequest> AdmitAsync(", admission, StringComparison.Ordinal);
+        Assert.Contains("ResolveCategory(", admission, StringComparison.Ordinal);
+        Assert.Contains("ResolveProduct(", admission, StringComparison.Ordinal);
+        Assert.Contains("ResolveCmsPage(", admission, StringComparison.Ordinal);
+        Assert.Contains("public static Dictionary<string, object> ToStorage(", storage, StringComparison.Ordinal);
         Assert.Contains("JsonElement.DeepEquals", service, StringComparison.Ordinal);
         Assert.Contains("Status428PreconditionRequired", controller, StringComparison.Ordinal);
+        Assert.Contains("NavigationAdmissionException", controller, StringComparison.Ordinal);
         Assert.Contains("If-Match", controller, StringComparison.Ordinal);
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", controller, StringComparison.Ordinal);
     }
@@ -39,17 +47,20 @@ public sealed class StorefrontNavigationAuthorityCertificationTests
     public void FooterNavigationIsCurrentSqlOnlyAndReplayProtected()
     {
         var readService = ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontFooterReadService.cs");
-        var writeService = ReadRepoFile("PointOfSale.API/Services/Admin/AdminStorefrontFooterService.cs");
+        var writeService = ReadRepoFile("PointOfSale.API/Services/Admin/FooterAuthoringService.cs");
+        var validator = ReadRepoFile("PointOfSale.API/Services/Admin/FooterAuthoringValidator.cs");
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminStorefrontFooterController.cs");
 
         Assert.Contains("_dbContext.StorefrontFooterSections", readService, StringComparison.Ordinal);
         Assert.Contains("page.IsPublished && !page.IsDraft", readService, StringComparison.Ordinal);
         Assert.Contains("page.PublishedAt != null", readService, StringComparison.Ordinal);
         Assert.DoesNotContain("IMongoCollection", readService, StringComparison.Ordinal);
-        Assert.Contains("ExpectedUpdatedAtUtc", writeService, StringComparison.Ordinal);
-        Assert.Contains("ConcurrencyConflictException", writeService, StringComparison.Ordinal);
+        Assert.Contains("ExpectedRevision", writeService, StringComparison.Ordinal);
+        Assert.Contains("FOOTER_CONCURRENCY_CONFLICT", writeService, StringComparison.Ordinal);
+        Assert.Contains("BeginTransactionAsync(IsolationLevel.Serializable", writeService, StringComparison.Ordinal);
         Assert.Contains("page.IsPublished && !page.IsDraft", writeService, StringComparison.Ordinal);
-        Assert.Contains("Status428PreconditionRequired", controller, StringComparison.Ordinal);
+        Assert.Contains("FooterAuthoringValidator", validator, StringComparison.Ordinal);
+        Assert.Contains("FooterAuthoringException", controller, StringComparison.Ordinal);
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", controller, StringComparison.Ordinal);
     }
 

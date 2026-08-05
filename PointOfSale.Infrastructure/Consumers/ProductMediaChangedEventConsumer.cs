@@ -17,13 +17,13 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
     private const string ConsumerName = nameof(ProductMediaChangedEventConsumer);
 
     private readonly IMongoCollection<ProductDocument> _collection;
-    private readonly IProductSearchIndexService _searchIndexService;
+    private readonly IUnifiedSearchIndexService _searchIndexService;
     private readonly ILogger<ProductMediaChangedEventConsumer> _logger;
     private readonly ApplicationDbContext? _dbContext;
 
     public ProductMediaChangedEventConsumer(
         IMongoDatabase database,
-        IProductSearchIndexService searchIndexService,
+        IUnifiedSearchIndexService searchIndexService,
         ILogger<ProductMediaChangedEventConsumer> logger,
         ApplicationDbContext? dbContext = null)
     {
@@ -199,7 +199,7 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                             @event.EventId,
                             @event.ProductId,
                             @event.TenantId);
-                        var deleted = await _searchIndexService.DeleteAsync(
+                        var deleted = await _searchIndexService.DeleteProductAsync(
                             @event.TenantId.Value,
                             @event.ProductId,
                             context.CancellationToken);
@@ -216,7 +216,7 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                 if (product != null && !skipSearchIndex)
                 {
                     var searchDocument = ProductSearchDocumentMapper.MapFromProductDocument(product, @event.EventId);
-                    var indexed = await _searchIndexService.IndexAsync(searchDocument, context.CancellationToken);
+                    var indexed = await _searchIndexService.IndexProductAsync(searchDocument, context.CancellationToken);
                     if (!indexed)
                     {
                         throw new InvalidOperationException(

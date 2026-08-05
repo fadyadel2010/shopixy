@@ -1319,7 +1319,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     {
         var consumer = File.ReadAllText(InfrastructurePath("Consumers", "ProductStockPriceSearchIndexConsumer.cs"));
 
-        Assert.Contains("_indexService.DeleteAsync(tenantId, productId", consumer, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", consumer, StringComparison.Ordinal);
         Assert.Contains("SearchIndexSyncException", consumer, StringComparison.Ordinal);
         Assert.Contains("Elasticsearch index failed", consumer, StringComparison.Ordinal);
         Assert.Contains("Elasticsearch delete failed", consumer, StringComparison.Ordinal);

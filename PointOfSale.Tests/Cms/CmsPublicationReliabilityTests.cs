@@ -128,7 +128,6 @@ public sealed class CmsPublicationReliabilityTests
         return new CmsPageService(
             dbContext,
             new CmsPageContentValidator(),
-            new InMemoryCmsPageCacheService(),
             publisher,
             NullLogger<CmsPageService>.Instance);
     }
@@ -235,25 +234,6 @@ public sealed class CmsPublicationReliabilityTests
                 CreatedAt = now.AddMinutes(-2),
                 UpdatedAt = now.AddMinutes(-1)
             });
-    }
-
-    private sealed class InMemoryCmsPageCacheService : ICmsPageCacheService
-    {
-        public Task<IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto>?> GetPublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default) =>
-            Task.FromResult<IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto>?>(null);
-
-        public Task SetPublishedScopeAsync(
-            Guid tenantId,
-            IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto> pages,
-            CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
-
-        public Task InvalidatePublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
     }
 
     private sealed class InMemoryMarketplaceCmsPageCacheService : IMarketplaceCmsPageCacheService

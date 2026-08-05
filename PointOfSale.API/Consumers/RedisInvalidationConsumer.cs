@@ -1,10 +1,7 @@
 using MassTransit;
 using Microsoft.Extensions.Options;
-using PointOfSale.API.Services.Cms;
-using PointOfSale.API.Services.Homepage;
 using PointOfSale.API.Services.MarketplaceCms;
 using PointOfSale.API.Services.MarketplaceFooter;
-using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Events.Marketplace;
 using PointOfSale.Infrastructure.Data;
@@ -18,11 +15,8 @@ namespace PointOfSale.API.Consumers;
 
 public sealed class RedisInvalidationConsumer :
     IConsumer<HomepageSectionsPublishedEvent>,
-    IConsumer<StorefrontCmsPagePublishedEvent>,
-    IConsumer<StorefrontCmsPageDeletedEvent>,
     IConsumer<MarketplaceCmsPagePublishedEvent>,
     IConsumer<MarketplaceCmsPageDeletedEvent>,
-    IConsumer<StorefrontFooterUpdatedEvent>,
     IConsumer<MarketplaceFooterUpdatedEvent>,
     IConsumer<MarketplaceEvents.ProductUpdatedEvent>,
     IConsumer<MarketplaceEvents.OrderCreatedEvent>,
@@ -34,10 +28,7 @@ public sealed class RedisInvalidationConsumer :
     IConsumer<MarketplaceEvents.ReviewRejectedEvent>,
     IConsumer<MarketplaceEvents.ReviewDeletedEvent>
 {
-    private readonly IHomepageSectionCacheService _homepageSectionCacheService;
-    private readonly ICmsPageCacheService _cmsPageCacheService;
     private readonly IMarketplaceCmsPageCacheService _marketplaceCmsPageCacheService;
-    private readonly IStorefrontFooterCacheService _storefrontFooterCacheService;
     private readonly IMarketplaceFooterCacheService _marketplaceFooterCacheService;
     private readonly IRedisJsonCacheService _cacheService;
     private readonly ApplicationDbContext _dbContext;
@@ -45,11 +36,8 @@ public sealed class RedisInvalidationConsumer :
     private readonly ILogger<RedisInvalidationConsumer> _logger;
 
     private const string HomepageConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(HomepageSectionsPublishedEvent);
-    private const string StorefrontCmsPublishedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(StorefrontCmsPagePublishedEvent);
-    private const string StorefrontCmsDeletedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(StorefrontCmsPageDeletedEvent);
     private const string MarketplaceCmsPublishedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceCmsPagePublishedEvent);
     private const string MarketplaceCmsDeletedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceCmsPageDeletedEvent);
-    private const string StorefrontFooterConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(StorefrontFooterUpdatedEvent);
     private const string MarketplaceFooterConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceFooterUpdatedEvent);
     private const string MarketplaceProductConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceEvents.ProductUpdatedEvent);
     private const string MarketplaceOrderCreatedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceEvents.OrderCreatedEvent);
@@ -62,20 +50,14 @@ public sealed class RedisInvalidationConsumer :
     private const string MarketplaceReviewDeletedConsumerName = nameof(RedisInvalidationConsumer) + ":" + nameof(MarketplaceEvents.ReviewDeletedEvent);
 
     public RedisInvalidationConsumer(
-        IHomepageSectionCacheService homepageSectionCacheService,
-        ICmsPageCacheService cmsPageCacheService,
         IMarketplaceCmsPageCacheService marketplaceCmsPageCacheService,
-        IStorefrontFooterCacheService storefrontFooterCacheService,
         IMarketplaceFooterCacheService marketplaceFooterCacheService,
         IRedisJsonCacheService cacheService,
         ApplicationDbContext dbContext,
         IOptions<RedisSettings> redisSettings,
         ILogger<RedisInvalidationConsumer> logger)
     {
-        _homepageSectionCacheService = homepageSectionCacheService;
-        _cmsPageCacheService = cmsPageCacheService;
         _marketplaceCmsPageCacheService = marketplaceCmsPageCacheService;
-        _storefrontFooterCacheService = storefrontFooterCacheService;
         _marketplaceFooterCacheService = marketplaceFooterCacheService;
         _cacheService = cacheService;
         _dbContext = dbContext;
@@ -91,7 +73,6 @@ public sealed class RedisInvalidationConsumer :
             context.Message.TenantId ?? context.Message.EventId,
             async ct =>
             {
-                await _homepageSectionCacheService.InvalidatePublishedScopeAsync(context.Message.TenantId, ct);
                 await _cacheService.RemoveByPatternAsync(
                     $"{_redisSettings.InstanceName}:marketplace:homepage:{(context.Message.TenantId?.ToString("N") ?? "global")}:*",
                     ct);
@@ -103,22 +84,6 @@ public sealed class RedisInvalidationConsumer :
             context.Message.TenantId,
             context.Message.EventId);
     }
-
-    public Task Consume(ConsumeContext<StorefrontCmsPagePublishedEvent> context)
-        => RunIntegrationInvalidationWithFenceAsync(
-            context.Message,
-            StorefrontCmsPublishedConsumerName,
-            context.Message.PageGroupId,
-            ct => InvalidateStorefrontCmsCachesAsync(context.Message.TenantId, ct),
-            context.CancellationToken);
-
-    public Task Consume(ConsumeContext<StorefrontCmsPageDeletedEvent> context)
-        => RunIntegrationInvalidationWithFenceAsync(
-            context.Message,
-            StorefrontCmsDeletedConsumerName,
-            context.Message.PageGroupId,
-            ct => InvalidateStorefrontCmsCachesAsync(context.Message.TenantId, ct),
-            context.CancellationToken);
 
     public Task Consume(ConsumeContext<MarketplaceCmsPagePublishedEvent> context)
         => RunIntegrationInvalidationWithFenceAsync(
@@ -134,14 +99,6 @@ public sealed class RedisInvalidationConsumer :
             MarketplaceCmsDeletedConsumerName,
             context.Message.PageGroupId,
             InvalidateMarketplaceCmsCachesAsync,
-            context.CancellationToken);
-
-    public Task Consume(ConsumeContext<StorefrontFooterUpdatedEvent> context)
-        => RunIntegrationInvalidationWithFenceAsync(
-            context.Message,
-            StorefrontFooterConsumerName,
-            context.Message.TenantId ?? context.Message.EventId,
-            ct => InvalidateStorefrontFooterCachesAsync(context.Message, ct),
             context.CancellationToken);
 
     public Task Consume(ConsumeContext<MarketplaceFooterUpdatedEvent> context)
@@ -303,46 +260,10 @@ public sealed class RedisInvalidationConsumer :
             cancellationToken);
     }
 
-    private async Task InvalidateStorefrontCmsCachesAsync(Guid? tenantId, CancellationToken cancellationToken)
-    {
-        if (!tenantId.HasValue)
-        {
-            return;
-        }
-
-        await _cmsPageCacheService.InvalidatePublishedScopeAsync(tenantId.Value, cancellationToken);
-        await _storefrontFooterCacheService.InvalidateAsync(tenantId.Value, cancellationToken);
-    }
-
     private async Task InvalidateMarketplaceCmsCachesAsync(CancellationToken cancellationToken)
     {
         await _marketplaceCmsPageCacheService.InvalidatePublishedPagesAsync(cancellationToken);
         await _marketplaceFooterCacheService.InvalidateAsync(cancellationToken);
-    }
-
-    private async Task InvalidateStorefrontFooterCachesAsync(
-        StorefrontFooterUpdatedEvent @event,
-        CancellationToken cancellationToken)
-    {
-        if (@event.TenantId.HasValue)
-        {
-            await _storefrontFooterCacheService.InvalidateAsync(@event.TenantId.Value, cancellationToken);
-
-            _logger.LogInformation(
-                "Storefront footer cache invalidated (tenant-scoped) | TenantId: {TenantId}",
-                @event.TenantId.Value);
-            return;
-        }
-
-        // Fallback: invalidate all tenant footers when no specific tenantId is provided.
-        // This uses SCAN and should be rare; log for monitoring.
-        _logger.LogWarning(
-            "Storefront footer cache invalidated (ALL tenants) - no TenantId provided | EventId: {EventId}",
-            @event.EventId);
-
-        await _cacheService.RemoveByPatternAsync(
-            CacheKeyBuilder.StorefrontFooterPatternKey(_redisSettings.InstanceName),
-            cancellationToken);
     }
 
     private async Task InvalidateMarketplaceOrderCachesAsync(Guid? tenantId, CancellationToken cancellationToken)

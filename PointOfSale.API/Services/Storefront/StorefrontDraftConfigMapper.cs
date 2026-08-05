@@ -490,6 +490,9 @@ internal static class StorefrontDraftConfigMapper
             }
 
             var canonicalSectionType = StorefrontSectionContracts.NormalizeSectionType(section.Type);
+            (canonicalSectionType, normalizedSettings) = CanonicalizeLegacyBuilderSection(
+                canonicalSectionType,
+                normalizedSettings);
             if (!StorefrontSectionContracts.TryValidateSettingsStrict(
                     canonicalSectionType,
                     normalizedSettings,
@@ -513,6 +516,120 @@ internal static class StorefrontDraftConfigMapper
         return normalizedSections
             .OrderBy(section => section.Order)
             .ToList();
+    }
+
+    private static (string SectionType, Dictionary<string, object?> Settings) CanonicalizeLegacyBuilderSection(
+        string sectionType,
+        Dictionary<string, object?> settings)
+    {
+        var migrated = false;
+
+        if (sectionType.Equals("customer-reviews", StringComparison.OrdinalIgnoreCase))
+        {
+            sectionType = "testimonials";
+            settings = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["title"] = ReadLegacyString(settings, "title", "Customer Testimonials"),
+                ["subtitle"] = string.Empty,
+                ["testimonials"] = ConvertLegacyReviewsToTestimonials(settings)
+            };
+            migrated = true;
+        }
+
+        if (sectionType.Equals("featured-products", StringComparison.OrdinalIgnoreCase) &&
+            !settings.ContainsKey("maxItems") && settings.Remove("limit", out var legacyLimit))
+        {
+            settings["maxItems"] = legacyLimit;
+            migrated = true;
+        }
+
+        if (sectionType.Equals("testimonials", StringComparison.OrdinalIgnoreCase) &&
+            !settings.ContainsKey("title") && settings.Remove("heading", out var legacyHeading))
+        {
+            settings["title"] = legacyHeading;
+            migrated = true;
+        }
+
+        if (sectionType.Equals("testimonials", StringComparison.OrdinalIgnoreCase) &&
+            settings.TryGetValue("testimonials", out var testimonialsValue) &&
+            testimonialsValue is IEnumerable<object?> testimonials &&
+            testimonialsValue is not string &&
+            testimonials.OfType<IReadOnlyDictionary<string, object?>>().Any(item => item.ContainsKey("rating")))
+        {
+            settings["testimonials"] = testimonials
+                .OfType<IReadOnlyDictionary<string, object?>>()
+                .Select(item => (object?)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["name"] = ReadLegacyString(item, "name", string.Empty),
+                    ["avatar"] = ReadLegacyString(item, "avatar", string.Empty),
+                    ["text"] = ReadLegacyString(item, "text", string.Empty)
+                })
+                .ToArray();
+            migrated = true;
+        }
+
+        var obsoleteKeys = sectionType switch
+        {
+            "product-grid" => new[] { "columns", "rows", "showPrice", "showRating", "showAddToCart" },
+            "featured-products" => new[] { "showPrice", "showRating" },
+            "category-grid" or "subcategory-grid" => new[] { "showProductCount", "cardStyle" },
+            "testimonials" => new[] { "layout", "showRating", "autoplay" },
+            "product-hero" => new[] { "showDescription", "showMediaGallery", "showVariantSelector", "showAddToCart", "showSku", "showStockStatus" },
+            "product-gallery" => new[] { "showThumbnails", "maxImages" },
+            "product-specs" => new[] { "useDescription", "items" },
+            "product-video" => new[] { "videoUrl", "autoplay", "showControls" },
+            "related-products" => new[] { "showPrice", "showRating" },
+            _ => Array.Empty<string>()
+        };
+
+        foreach (var obsoleteKey in obsoleteKeys)
+        {
+            migrated |= settings.Remove(obsoleteKey);
+        }
+
+        if (migrated)
+        {
+            var definition = StorefrontSectionContracts.All.FirstOrDefault(candidate =>
+                candidate.Type.Equals(sectionType, StringComparison.OrdinalIgnoreCase));
+            if (definition != null)
+            {
+                foreach (var (key, defaultValue) in definition.DefaultSettings)
+                {
+                    settings.TryAdd(key, defaultValue);
+                }
+            }
+        }
+
+        return (sectionType, settings);
+    }
+
+    private static string ReadLegacyString(
+        IReadOnlyDictionary<string, object?> settings,
+        string key,
+        string fallback) =>
+        settings.TryGetValue(key, out var value) && value is string stringValue
+            ? stringValue
+            : fallback;
+
+    private static IReadOnlyList<object?> ConvertLegacyReviewsToTestimonials(
+        IReadOnlyDictionary<string, object?> settings)
+    {
+        if (!settings.TryGetValue("reviews", out var reviewsValue) ||
+            reviewsValue is string ||
+            reviewsValue is not IEnumerable<object?> reviews)
+        {
+            return Array.Empty<object?>();
+        }
+
+        return reviews
+            .OfType<IReadOnlyDictionary<string, object?>>()
+            .Select(review => (object?)new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["name"] = ReadLegacyString(review, "name", string.Empty),
+                ["avatar"] = ReadLegacyString(review, "avatar", string.Empty),
+                ["text"] = ReadLegacyString(review, "text", string.Empty)
+            })
+            .ToArray();
     }
 
     private static bool TryGetRoot(string? customizationJson, out JsonElement root, Action<Exception, string>? errorCallback = null)

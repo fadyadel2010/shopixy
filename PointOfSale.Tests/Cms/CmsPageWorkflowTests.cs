@@ -157,37 +157,6 @@ public sealed class CmsPageWorkflowTests
     }
 
     [Fact]
-    public async Task GetPublishedPageAsync_DoesNotLetCacheResurrectUnpublishedSqlPage()
-    {
-        await using var dbContext = CreateDbContext();
-        var tenantId = await SeedTenantAsync(dbContext, "Cache Tenant");
-        var cache = new InMemoryCmsPageCacheService();
-        await cache.SetPublishedScopeAsync(
-            tenantId,
-            new[]
-            {
-                new CmsPageDto
-                {
-                    Slug = "removed",
-                    Title = "Removed",
-                    ContentType = CmsPageContentType.RichText,
-                    Content = JsonSerializer.SerializeToElement("<p>stale</p>"),
-                    Seo = new CmsPageSeoDto(),
-                    UpdatedAtUtc = DateTime.UtcNow,
-                    PublishedAtUtc = DateTime.UtcNow
-                }
-            });
-
-        var readService = CreateReadService(dbContext, cache);
-
-        var page = await readService.GetPublishedPageAsync(tenantId, "removed");
-        var pages = await readService.ListPublishedPagesAsync(tenantId);
-
-        Assert.Null(page);
-        Assert.Empty(pages);
-    }
-
-    [Fact]
     public async Task UpdatePageAsync_CreatesImmutableDraftVersionAndRejectsStaleReplay()
     {
         await using var dbContext = CreateDbContext();
@@ -437,19 +406,15 @@ public sealed class CmsPageWorkflowTests
         return new CmsPageService(
             dbContext,
             new CmsPageContentValidator(),
-            new InMemoryCmsPageCacheService(),
             new NoOpEventPublisher(),
             NullLogger<CmsPageService>.Instance);
     }
 
-    private static CmsPageReadService CreateReadService(
-        ApplicationDbContext dbContext,
-        ICmsPageCacheService? cacheService = null)
+    private static CmsPageReadService CreateReadService(ApplicationDbContext dbContext)
     {
         return new CmsPageReadService(
             dbContext,
             StorefrontReadModelMongoTestHelper.CreateDatabase(dbContext),
-            cacheService ?? new InMemoryCmsPageCacheService(),
             NullLogger<CmsPageReadService>.Instance);
     }
 
@@ -505,36 +470,6 @@ public sealed class CmsPageWorkflowTests
             CreatedAt = now,
             UpdatedAt = now
         };
-    }
-
-    private sealed class InMemoryCmsPageCacheService : ICmsPageCacheService
-    {
-        private readonly Dictionary<Guid, IReadOnlyList<CmsPageDto>> _publishedPages = new();
-
-        public Task<IReadOnlyList<CmsPageDto>?> GetPublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages.TryGetValue(tenantId, out var pages);
-            return Task.FromResult(pages);
-        }
-
-        public Task SetPublishedScopeAsync(
-            Guid tenantId,
-            IReadOnlyList<CmsPageDto> pages,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages[tenantId] = pages;
-            return Task.CompletedTask;
-        }
-
-        public Task InvalidatePublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages.Remove(tenantId);
-            return Task.CompletedTask;
-        }
     }
 
     private sealed class NoOpEventPublisher : IEventPublisher

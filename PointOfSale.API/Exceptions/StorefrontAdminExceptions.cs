@@ -68,20 +68,52 @@ public class SlugConflictException : Exception
 }
 
 /// <summary>
-/// Exception thrown when navigation link validation fails.
-/// Phase: Storefront Admin Hardening - P2
+/// Structured failure emitted only by the canonical Navigation admission pipeline.
 /// </summary>
-public class InvalidNavigationLinkException : Exception
+public sealed class NavigationAdmissionException : Exception
 {
+    public string Code { get; }
     public string LinkType { get; }
-    public string LinkTarget { get; }
-    public string Reason { get; }
-    
-    public InvalidNavigationLinkException(string linkType, string linkTarget, string reason)
-        : base($"Invalid navigation link: {reason}")
+    public string Menu { get; }
+    public int? Index { get; }
+    public string? Field { get; }
+    public Guid? TargetId { get; }
+
+    public NavigationAdmissionException(
+        string code,
+        string message,
+        string linkType = "",
+        string menu = "",
+        int? index = null,
+        string? field = null,
+        Guid? targetId = null)
+        : base(message)
     {
+        Code = code;
         LinkType = linkType;
-        LinkTarget = linkTarget;
-        Reason = reason;
+        Menu = menu;
+        Index = index;
+        Field = field;
+        TargetId = targetId;
+    }
+}
+
+public sealed class FooterAuthoringException : Exception
+{
+    public int StatusCode { get; }
+    public string Code { get; }
+    public string? Field { get; }
+
+    public FooterAuthoringException(
+        int statusCode,
+        string code,
+        string message,
+        string? field = null,
+        Exception? innerException = null)
+        : base(message, innerException)
+    {
+        StatusCode = statusCode;
+        Code = code;
+        Field = field;
     }
 }

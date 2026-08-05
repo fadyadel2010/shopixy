@@ -32,10 +32,13 @@ import {
     isNetworkError,
     type BootstrapError
 } from './bootstrapErrors';
-import { fetchStoreConfig } from '@/services/api';
 import { useStoreConfigStore } from '@/store';
 import { resolveActiveTheme } from '@/storefront/themes/ThemeResolver';
-import { applyTheme, logLayoutVariants } from '@/theme';
+import {
+    invalidateStoreConfigRuntimeCache,
+    refreshStoreConfig,
+} from '@/storefront/runtime/cache';
+import { applyTheme } from '@/theme';
 import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig';
 import type { AxiosError } from 'axios';
 import type { ApiErrorResponse } from '@/types';
@@ -75,6 +78,9 @@ const bootstrapState: BootstrapState = {
     error: null,
 };
 
+let bootstrapCompletion: Promise<void> | null = null;
+let completeBootstrap: (() => void) | null = null;
+
 /**
  * Get current bootstrap state
  */
@@ -102,15 +108,8 @@ export async function bootstrap(): Promise<BootstrapResult> {
         if (import.meta.env.DEV) {
             console.warn('[Bootstrap] Bootstrap already in progress');
         }
-        // Wait for current bootstrap to complete
-        await new Promise<void>((resolve) => {
-            const checkInterval = setInterval(() => {
-                if (!bootstrapState.isBootstrapping) {
-                    clearInterval(checkInterval);
-                    resolve();
-                }
-            }, 50);
-        });
+        // Share completion without polling or starting a duplicate bootstrap.
+        await bootstrapCompletion;
 
         return bootstrapState.error
             ? { success: false, error: bootstrapState.error }
@@ -119,6 +118,9 @@ export async function bootstrap(): Promise<BootstrapResult> {
 
     bootstrapState.isBootstrapping = true;
     bootstrapState.error = null;
+    bootstrapCompletion = new Promise<void>((resolve) => {
+        completeBootstrap = resolve;
+    });
 
     if (import.meta.env.DEV) {
         console.log('[Bootstrap] Starting bootstrap flow...');
@@ -166,7 +168,7 @@ export async function bootstrap(): Promise<BootstrapResult> {
         store.setLoading(true);
 
         try {
-            const config = await fetchStoreConfig();
+            const config = await refreshStoreConfig();
 
             if (themePreviewToken) {
                 if (!config.tenantId) {
@@ -195,19 +197,6 @@ export async function bootstrap(): Promise<BootstrapResult> {
                     commerceAiEnabled: config.commerceAiEnabled, // PHASE 6: Debug logging
                 });
             }
-
-            // Step 4: Apply Theme
-            applyTheme(config.theme);
-
-            if (import.meta.env.DEV) {
-                console.log('[Bootstrap] Theme applied');
-            }
-
-            // Log layout variants (dev only)
-            logLayoutVariants(config.theme.layout);
-
-            // Store config in Zustand
-            store.setConfig(config);
 
         } catch (error) {
             // Handle store config fetch error
@@ -265,6 +254,9 @@ export async function bootstrap(): Promise<BootstrapResult> {
 
     } finally {
         bootstrapState.isBootstrapping = false;
+        completeBootstrap?.();
+        completeBootstrap = null;
+        bootstrapCompletion = null;
     }
 }
 
@@ -275,6 +267,7 @@ export function resetBootstrap(): void {
     bootstrapState.isBootstrapped = false;
     bootstrapState.isBootstrapping = false;
     bootstrapState.error = null;
+    invalidateStoreConfigRuntimeCache();
 
     if (import.meta.env.DEV) {
         console.log('[Bootstrap] Bootstrap state reset');

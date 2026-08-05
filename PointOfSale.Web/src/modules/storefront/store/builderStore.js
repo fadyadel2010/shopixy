@@ -8,6 +8,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { materializeContractSettings } from '../builder/sectionContractRegistry'
+import { isRuntimeOwnedSection } from '../builder/pageSectionAvailability'
 
 /**
  * Generate unique section ID
@@ -45,8 +46,9 @@ export const useBuilderStore = create(
             // Sections
             setSections: (sections) => {
                 const state = get()
+                const supplementalSections = sections.filter((section) => !isRuntimeOwnedSection(section.type))
                 set({
-                    sections,
+                    sections: supplementalSections,
                     isDirty: true,
                     undoStack: [...state.undoStack, state.sections].slice(-50),
                     redoStack: [],
@@ -56,13 +58,14 @@ export const useBuilderStore = create(
             admitSections: (sections, options = {}) => {
                 const state = get()
                 const resetHistory = options.resetHistory !== false
-                const acceptedSectionIds = new Set(sections.map((section) => section.id))
+                const supplementalSections = sections.filter((section) => !isRuntimeOwnedSection(section.type))
+                const acceptedSectionIds = new Set(supplementalSections.map((section) => section.id))
                 const selectedSectionId = options.preserveSelection === true && acceptedSectionIds.has(state.selectedSectionId)
                     ? state.selectedSectionId
                     : null
 
                 set({
-                    sections,
+                    sections: supplementalSections,
                     selectedSectionId,
                     isDirty: false,
                     undoStack: resetHistory ? [] : state.undoStack,
@@ -74,6 +77,10 @@ export const useBuilderStore = create(
 
             addSection: (sectionType, insertAtIndex, registry) => {
                 const state = get()
+                if (isRuntimeOwnedSection(sectionType)) {
+                    return
+                }
+
                 const definition = registry?.get(sectionType)
 
                 if (!definition) {
@@ -114,6 +121,11 @@ export const useBuilderStore = create(
 
             removeSection: (sectionId) => {
                 const state = get()
+                const section = state.sections.find((candidate) => candidate.id === sectionId)
+                if (section && isRuntimeOwnedSection(section.type)) {
+                    return
+                }
+
                 const newSections = state.sections
                     .filter((s) => s.id !== sectionId)
                     .map((s, i) => ({ ...s, order: i }))
@@ -134,6 +146,8 @@ export const useBuilderStore = create(
                 if (sectionIndex === -1) return
 
                 const section = state.sections[sectionIndex]
+                if (isRuntimeOwnedSection(section.type)) return
+
                 const newSection = {
                     ...section,
                     id: generateSectionId(),
@@ -157,6 +171,10 @@ export const useBuilderStore = create(
 
             reorderSections: (oldIndex, newIndex) => {
                 const state = get()
+                if (isRuntimeOwnedSection(state.sections[oldIndex]?.type) || isRuntimeOwnedSection(state.sections[newIndex]?.type)) {
+                    return
+                }
+
                 const sections = [...state.sections]
                 const [removed] = sections.splice(oldIndex, 1)
                 sections.splice(newIndex, 0, removed)
@@ -173,6 +191,11 @@ export const useBuilderStore = create(
 
             updateSectionSettings: (sectionId, newSettings) => {
                 const state = get()
+                const section = state.sections.find((candidate) => candidate.id === sectionId)
+                if (section && isRuntimeOwnedSection(section.type)) {
+                    return
+                }
+
                 const newSections = state.sections.map((s) =>
                     s.id === sectionId
                         ? { ...s, settings: { ...s.settings, ...newSettings } }
@@ -189,6 +212,11 @@ export const useBuilderStore = create(
 
             toggleSection: (sectionId) => {
                 const state = get()
+                const section = state.sections.find((candidate) => candidate.id === sectionId)
+                if (section && isRuntimeOwnedSection(section.type)) {
+                    return
+                }
+
                 const newSections = state.sections.map((s) =>
                     s.id === sectionId ? { ...s, enabled: !s.enabled } : s
                 )

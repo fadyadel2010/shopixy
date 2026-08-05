@@ -1,6 +1,139 @@
 import type React from 'react';
 import type { ProductReadDto } from '@/types';
 
+export interface HeaderNavigationLinkPresentationModel {
+    key: string;
+    index: number;
+    label: string;
+    href: string;
+    openInNewTab: boolean;
+    isActive: boolean;
+}
+
+export interface HeaderPresentationModel {
+    storeName: string;
+    headerVariant: 'standard' | 'centered' | 'minimal';
+    isHome: boolean;
+    navigation: {
+        links: HeaderNavigationLinkPresentationModel[];
+        isLoading: boolean;
+        error: string | null;
+    };
+    labels: {
+        account: string;
+        announcement: string;
+        closeMenu: string;
+        mainNavigation: string;
+        menu: string;
+        next: string;
+        previous: string;
+        search: string;
+        searchProducts: string;
+        viewCart: string;
+    };
+}
+
+export interface NavigationSlotProps {
+    className?: string;
+    ariaLabel?: string;
+    beforeLinks?: React.ReactNode;
+    afterLinks?: React.ReactNode;
+    linkClassName?: string | ((link: HeaderNavigationLinkPresentationModel) => string);
+    onLinkClick?: (link: HeaderNavigationLinkPresentationModel) => void;
+    renderLinkContent?: (link: HeaderNavigationLinkPresentationModel) => React.ReactNode;
+}
+
+export interface SearchSlotProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+    children?: React.ReactNode;
+}
+
+export interface AuthenticationSlotProps {
+    variant?: 'desktop' | 'mobile';
+    className?: string;
+    onLogout?: () => void;
+    onLinkClick?: () => void;
+}
+
+export interface WishlistSlotProps {
+    className?: string;
+    showTooltip?: boolean;
+}
+
+export interface CartSlotProps {
+    className?: string;
+    showTooltip?: boolean;
+}
+
+export interface LanguageSlotProps {
+    variant?: 'icon' | 'text' | 'full';
+    className?: string;
+    size?: 'sm' | 'md' | 'lg';
+}
+
+export interface HeaderRuntimeSlots {
+    NavigationSlot: React.ComponentType<NavigationSlotProps>;
+    SearchSlot: React.ComponentType<SearchSlotProps>;
+    AuthenticationSlot: React.ComponentType<AuthenticationSlotProps>;
+    WishlistSlot: React.ComponentType<WishlistSlotProps>;
+    CartSlot: React.ComponentType<CartSlotProps>;
+    LanguageSlot: React.ComponentType<LanguageSlotProps>;
+}
+
+export interface HeaderPresentationProps {
+    model: HeaderPresentationModel;
+    slots: HeaderRuntimeSlots;
+}
+
+export interface FooterLinkPresentationModel {
+    key: string;
+    label: string;
+    href: string;
+    openInNewTab: boolean;
+}
+
+export interface FooterNavigationPresentationModel {
+    links: FooterLinkPresentationModel[];
+    isLoading: boolean;
+    error: string | null;
+}
+
+export interface FooterSectionPresentationModel {
+    key: string;
+    title: string;
+    sortOrder: number;
+    links: FooterLinkPresentationModel[];
+}
+
+export interface FooterSocialLinkPresentationModel {
+    key: string;
+    platform: string;
+    href: string;
+    icon?: string | null;
+}
+
+export interface FooterPresentationModel {
+    storeName: string;
+    currentYear: number;
+    copyright: string;
+    navigation: FooterNavigationPresentationModel;
+    sections: FooterSectionPresentationModel[];
+    socialLinks: FooterSocialLinkPresentationModel[];
+    isLoading: boolean;
+    error: string | null;
+    labels: {
+        contact: string;
+        customerService: string;
+        followUs: string;
+        loading: string;
+        paymentMethods: string;
+        quickLinks: string;
+    };
+}
+
+export interface FooterPresentationProps {
+    model: FooterPresentationModel;
+}
+
 export interface ProductPresentationModel {
     id: string;
 }

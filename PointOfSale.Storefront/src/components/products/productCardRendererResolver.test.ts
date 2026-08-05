@@ -12,23 +12,23 @@ const renderersSrc = read('ProductCardRenderers.tsx');
 
 describe('product card renderer resolver', () => {
     it('maps resolved storefront themes to theme-specific product-card renderers', () => {
-        expect(resolveProductCardRenderer('modern', 'default')).toBe('modern');
-        expect(resolveProductCardRenderer('minimal', 'compact')).toBe('minimal');
-        expect(resolveProductCardRenderer('fashion', 'detailed')).toBe('fashion');
-        expect(resolveProductCardRenderer('pearl', 'compact')).toBe('pearl');
-        expect(resolveProductCardRenderer('phoenix', 'compact')).toBe('phoenix');
-        expect(resolveProductCardRenderer('hype', 'compact')).toBe('hype');
-        expect(resolveProductCardRenderer('alizon', 'compact')).toBe('alizon');
+        expect(resolveProductCardRenderer('modern')).toBe('modern');
+        expect(resolveProductCardRenderer('minimal')).toBe('minimal');
+        expect(resolveProductCardRenderer('fashion')).toBe('fashion');
+        expect(resolveProductCardRenderer('pearl')).toBe('pearl');
+        expect(resolveProductCardRenderer('phoenix')).toBe('phoenix');
+        expect(resolveProductCardRenderer('hype')).toBe('hype');
+        expect(resolveProductCardRenderer('alizon')).toBe('alizon');
     });
 
-    it('preserves explicit product-level specialized layouts', () => {
-        expect(resolveProductCardRenderer('fashion', 'fashion')).toBe('fashion');
-        expect(resolveProductCardRenderer('electronics', 'electronics')).toBe('electronics');
+    it('does not accept product or Builder layout overrides', () => {
+        expect(resolveProductCardRenderer('fashion')).toBe('fashion');
+        expect(resolveProductCardRenderer('electronics')).toBe('modern');
     });
 
     it('falls back deterministically without changing theme resolver or registry', () => {
-        expect(resolveProductCardRenderer('unknown-theme', 'default')).toBe('modern');
-        expect(resolveProductCardRenderer(null, 'compact')).toBe('modern');
+        expect(resolveProductCardRenderer('unknown-theme')).toBe('modern');
+        expect(resolveProductCardRenderer(null)).toBe('modern');
     });
 });
 
@@ -42,6 +42,7 @@ describe('product card runtime architecture', () => {
         expect(productCardSrc).toContain("from '@/storefront/themes/ThemeContext'");
         expect(productCardSrc).toContain('useProductCardRuntime');
         expect(productCardSrc).toContain('resolveProductCardRenderer');
+        expect(productCardSrc).toContain('ProductCardInteractionLayer');
         expect(productCardSrc).not.toContain('ProductCardDefault,');
         expect(productCardSrc).not.toContain('ProductCardCompact,');
         expect(productCardSrc).not.toContain('ProductCardDetailed,');
@@ -56,6 +57,7 @@ describe('product card runtime architecture', () => {
         expect(runtimeSrc).toContain('product.pricing.compareAtPrice');
         expect(runtimeSrc).toContain('ThemePrice');
         expect(runtimeSrc).toContain('ThemeAddToCartButton');
+        expect(runtimeSrc).toContain('data-product-card-control-owner="ProductCardRuntime"');
     });
 
     it('keeps theme renderers presentation-only', () => {
@@ -64,6 +66,9 @@ describe('product card runtime architecture', () => {
         expect(renderersSrc).not.toContain('useCartStore');
         expect(renderersSrc).not.toContain('useWishlist');
         expect(renderersSrc).not.toContain('product.pricing');
+        expect(renderersSrc).not.toContain('ProductCardWishlist');
+        expect(renderersSrc).not.toContain('ProductCardQuickAddButton');
+        expect(renderersSrc).not.toContain('runtime.inStock');
     });
 
     it('defines distinct visual contracts for every current theme', () => {
@@ -79,6 +84,6 @@ describe('product card runtime architecture', () => {
         expect(renderersSrc).toContain('ThemeSurface');
         expect(renderersSrc).toContain('ThemeProductTitle');
         expect(renderersSrc).toContain('ThemeProductMeta');
-        expect(renderersSrc).toContain('ThemeLabel');
+        expect(runtimeSrc).toContain('ThemeLabel');
     });
 });

@@ -26,20 +26,20 @@ public class AdminSyncController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IProductSqlAuthorityProjectionWriter _productProjectionWriter;
-    private readonly IProductCacheService _productCacheService;
+    private readonly IStorefrontProductCacheInvalidator _productCacheInvalidator;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<AdminSyncController> _logger;
 
     public AdminSyncController(
         ApplicationDbContext context,
         IProductSqlAuthorityProjectionWriter productProjectionWriter,
-        IProductCacheService productCacheService,
+        IStorefrontProductCacheInvalidator productCacheInvalidator,
         ITenantContext tenantContext,
         ILogger<AdminSyncController> logger)
     {
         _context = context;
         _productProjectionWriter = productProjectionWriter;
-        _productCacheService = productCacheService;
+        _productCacheInvalidator = productCacheInvalidator;
         _tenantContext = tenantContext;
         _logger = logger;
     }
@@ -316,12 +316,9 @@ public class AdminSyncController : ControllerBase
     /// </summary>
     private async Task ClearProductCacheAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        if (!await _productCacheService.InvalidateAllProductsAsync(tenantId, cancellationToken))
-        {
-            _logger.LogWarning(
-                "Product rebuild completed but reviewed cache invalidation did not succeed | TenantId: {TenantId}",
-                tenantId);
-        }
+        await _productCacheInvalidator.InvalidateTenantAsync(
+            tenantId,
+            cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -333,17 +330,11 @@ public class AdminSyncController : ControllerBase
         string? slug,
         CancellationToken cancellationToken)
     {
-        if (!await _productCacheService.InvalidateProductAsync(
-                tenantId,
-                productId,
-                slug,
-                cancellationToken))
-        {
-            _logger.LogWarning(
-                "Single-product rebuild completed but reviewed cache invalidation did not succeed | ProductId: {ProductId} | TenantId: {TenantId}",
-                productId,
-                tenantId);
-        }
+        await _productCacheInvalidator.InvalidateProductAsync(
+            tenantId,
+            productId,
+            slug,
+            cancellationToken: cancellationToken);
     }
 }
 

@@ -43,8 +43,8 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                     "Mode must be either 'published' or 'preview'.");
             }
 
-            var sections = await _homepageSectionManagementService.GetSectionsAsync(tenantId, readMode, cancellationToken);
-            return OkResponse(sections);
+            var result = await _homepageSectionManagementService.GetSectionsAsync(tenantId, readMode, cancellationToken);
+            return OkResponse(result.Data, WorkspaceMeta(result.WorkspaceVersion));
         }
         catch (HomepageSectionManagementException exception)
         {
@@ -62,7 +62,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Create(
+    public IActionResult Create(
         [FromBody] HomepageSectionWriteRequest? request,
         CancellationToken cancellationToken)
     {
@@ -74,40 +74,14 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 "Request body is required.");
         }
 
-        try
-        {
-            var section = await _homepageSectionManagementService.CreateSectionAsync(request, CurrentSuperAdminId, cancellationToken);
-
-            await _auditService.LogActionAsync(
-                action: "HOMEPAGE_SECTION_CREATED",
-                entityType: "HomepageSection",
-                entityId: section.Id.ToString(),
-                description: "Super Admin created a homepage section.",
-                success: true,
-                details: section,
-                actorId: CurrentSuperAdminId,
-                actorEmail: CurrentSuperAdminEmail,
-                cancellationToken: cancellationToken);
-
-            _logger.LogInformation(
-                "SuperAdmin homepage section created | SectionId: {SectionId} | Type: {Type} | TenantId: {TenantId}",
-                section.Id,
-                section.Type,
-                section.TenantId);
-
-            return OkResponse(section);
-        }
-        catch (HomepageSectionManagementException exception)
-        {
-            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
-        }
+        return RetiredGranularMutation();
     }
 
     [HttpPut("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Update(
+    public IActionResult Update(
         Guid id,
         [FromBody] HomepageSectionWriteRequest? request,
         CancellationToken cancellationToken)
@@ -120,67 +94,21 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 "Request body is required.");
         }
 
-        try
-        {
-            var section = await _homepageSectionManagementService.UpdateSectionAsync(id, request, CurrentSuperAdminId, cancellationToken);
-
-            await _auditService.LogActionAsync(
-                action: "HOMEPAGE_SECTION_UPDATED",
-                entityType: "HomepageSection",
-                entityId: section.Id.ToString(),
-                description: "Super Admin updated a homepage section.",
-                success: true,
-                details: section,
-                actorId: CurrentSuperAdminId,
-                actorEmail: CurrentSuperAdminEmail,
-                cancellationToken: cancellationToken);
-
-            _logger.LogInformation(
-                "SuperAdmin homepage section updated | SectionId: {SectionId} | Type: {Type} | TenantId: {TenantId}",
-                section.Id,
-                section.Type,
-                section.TenantId);
-
-            return OkResponse(section);
-        }
-        catch (HomepageSectionManagementException exception)
-        {
-            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
-        }
+        return RetiredGranularMutation();
     }
 
     [HttpDelete("{id:guid}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
+    public IActionResult Delete(Guid id, CancellationToken cancellationToken)
     {
-        try
-        {
-            var section = await _homepageSectionManagementService.DeleteSectionAsync(id, CurrentSuperAdminId, cancellationToken);
-
-            await _auditService.LogActionAsync(
-                action: "HOMEPAGE_SECTION_DELETED",
-                entityType: "HomepageSection",
-                entityId: section.Id.ToString(),
-                description: "Super Admin deleted a homepage section.",
-                success: true,
-                details: section,
-                actorId: CurrentSuperAdminId,
-                actorEmail: CurrentSuperAdminEmail,
-                cancellationToken: cancellationToken);
-
-            return OkResponse(section);
-        }
-        catch (HomepageSectionManagementException exception)
-        {
-            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
-        }
+        return RetiredGranularMutation();
     }
 
     [HttpPost("reorder")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<IActionResult> Reorder(
+    public IActionResult Reorder(
         [FromBody] ReorderHomepageSectionsRequest? request,
         CancellationToken cancellationToken)
     {
@@ -192,27 +120,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 "Request body is required.");
         }
 
-        try
-        {
-            var sections = await _homepageSectionManagementService.ReorderSectionsAsync(request, CurrentSuperAdminId, cancellationToken);
-
-            await _auditService.LogActionAsync(
-                action: "HOMEPAGE_SECTION_REORDERED",
-                entityType: "HomepageSection",
-                entityId: request.TenantId?.ToString() ?? "global",
-                description: "Super Admin reordered homepage sections.",
-                success: true,
-                details: sections,
-                actorId: CurrentSuperAdminId,
-                actorEmail: CurrentSuperAdminEmail,
-                cancellationToken: cancellationToken);
-
-            return OkResponse(sections);
-        }
-        catch (HomepageSectionManagementException exception)
-        {
-            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
-        }
+        return RetiredGranularMutation();
     }
 
     [HttpPost("publish")]
@@ -220,6 +128,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Publish(
         [FromBody] PublishHomepageSectionsRequest? request,
+        [FromQuery] string? expectedVersion,
         CancellationToken cancellationToken)
     {
         if (request == null)
@@ -232,8 +141,9 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
 
         try
         {
-            var sections = await _homepageSectionManagementService.PublishSectionsAsync(
+            var result = await _homepageSectionManagementService.PublishSectionsAsync(
                 request,
+                expectedVersion,
                 CurrentSuperAdminId,
                 cancellationToken);
 
@@ -243,7 +153,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 entityId: request.TenantId?.ToString() ?? "global",
                 description: "Super Admin published homepage draft changes.",
                 success: true,
-                details: sections,
+                details: result.Data,
                 actorId: CurrentSuperAdminId,
                 actorEmail: CurrentSuperAdminEmail,
                 cancellationToken: cancellationToken);
@@ -251,9 +161,9 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
             _logger.LogInformation(
                 "SuperAdmin homepage sections published | TenantId: {TenantId} | Count: {Count}",
                 request.TenantId,
-                sections.Count);
+                result.Data.Count);
 
-            return OkResponse(sections);
+            return OkResponse(result.Data, WorkspaceMeta(result.WorkspaceVersion));
         }
         catch (HomepageSectionManagementException exception)
         {
@@ -267,6 +177,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> SaveDraft(
         [FromBody] SaveHomepageDraftRequest? request,
+        [FromQuery] string? expectedVersion,
         CancellationToken cancellationToken)
     {
         if (request == null)
@@ -279,8 +190,9 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
 
         try
         {
-            var sections = await _homepageSectionManagementService.SaveDraftAsync(
+            var result = await _homepageSectionManagementService.SaveDraftAsync(
                 request,
+                expectedVersion,
                 CurrentSuperAdminId,
                 cancellationToken);
 
@@ -290,7 +202,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 entityId: request.TenantId?.ToString() ?? "global",
                 description: "Super Admin saved homepage draft changes.",
                 success: true,
-                details: sections,
+                details: result.Data,
                 actorId: CurrentSuperAdminId,
                 actorEmail: CurrentSuperAdminEmail,
                 cancellationToken: cancellationToken);
@@ -298,9 +210,9 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
             _logger.LogInformation(
                 "SuperAdmin homepage draft saved | TenantId: {TenantId} | Count: {Count}",
                 request.TenantId,
-                sections.Count);
+                result.Data.Count);
 
-            return OkResponse(sections);
+            return OkResponse(result.Data, WorkspaceMeta(result.WorkspaceVersion));
         }
         catch (HomepageSectionManagementException exception)
         {
@@ -314,6 +226,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
     [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> GenerateStarterTemplate(
         [FromBody] GenerateHomepageTemplateRequest? request,
+        [FromQuery] string? expectedVersion,
         CancellationToken cancellationToken)
     {
         if (request == null)
@@ -326,9 +239,10 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
 
         try
         {
-            var sections = await _homepageTemplateSeeder.GenerateDraftTemplateAsync(
+            var result = await _homepageTemplateSeeder.GenerateDraftTemplateAsync(
                 request.TenantId,
                 request.OverwriteExisting,
+                expectedVersion,
                 CurrentSuperAdminId,
                 cancellationToken);
 
@@ -340,7 +254,7 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                     ? "Super Admin reset the homepage draft to the starter template."
                     : "Super Admin generated the homepage starter template.",
                 success: true,
-                details: sections,
+                details: result.Data,
                 actorId: CurrentSuperAdminId,
                 actorEmail: CurrentSuperAdminEmail,
                 cancellationToken: cancellationToken);
@@ -349,9 +263,9 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
                 "SuperAdmin homepage starter template generated | TenantId: {TenantId} | OverwriteExisting: {OverwriteExisting} | Count: {Count}",
                 request.TenantId,
                 request.OverwriteExisting,
-                sections.Count);
+                result.Data.Count);
 
-            return OkResponse(sections);
+            return OkResponse(result.Data, WorkspaceMeta(result.WorkspaceVersion));
         }
         catch (HomepageSectionManagementException exception)
         {
@@ -376,5 +290,21 @@ public sealed class SuperAdminHomepageSectionsController : SuperAdminBaseControl
 
         readMode = HomepageSectionReadMode.Preview;
         return false;
+    }
+
+    private IActionResult RetiredGranularMutation()
+    {
+        return ErrorResponse(
+            StatusCodes.Status409Conflict,
+            "HOMEPAGE_AUTHORING_OWNER_RETIRED",
+            "Homepage draft changes must be saved through the canonical draft workspace endpoint.");
+    }
+
+    private static IReadOnlyDictionary<string, object?> WorkspaceMeta(string workspaceVersion)
+    {
+        return new Dictionary<string, object?>
+        {
+            ["workspaceVersion"] = workspaceVersion
+        };
     }
 }

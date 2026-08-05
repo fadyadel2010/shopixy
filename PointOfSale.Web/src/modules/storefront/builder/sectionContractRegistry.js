@@ -9,25 +9,19 @@ const FIELD_LABEL_OVERRIDES = {
     textColor: 'Text Color',
     maxWidth: 'Max Width',
     aspectRatio: 'Aspect Ratio',
-    showProductCount: 'Show Product Count',
-    showAddToCart: 'Add to Cart Button',
-    showPrice: 'Show Price',
-    showRating: 'Show Rating',
     showBadge: 'Show Badge',
     badgeText: 'Badge Text',
-    showName: 'Show Name',
     videoUrl: 'Video URL',
     showControls: 'Show Controls',
-    showDescription: 'Show Description',
-    showVariantSelector: 'Show Variant Selector',
-    showSku: 'Show SKU',
-    showStockStatus: 'Show Stock Status',
-    showThumbnails: 'Show Thumbnails',
-    maxImages: 'Max Images',
-    useDescription: 'Use Product Description',
     productIds: 'Product IDs',
     categoryIds: 'Category IDs',
 }
+
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const HEX_COLOR_PATTERN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+const DEFAULT_TEXT_MAX_LENGTH = 500
+const DEFAULT_LONG_TEXT_MAX_LENGTH = 5000
+const DEFAULT_URL_MAX_LENGTH = 2048
 
 function toTitleCase(value) {
     return value
@@ -58,6 +52,10 @@ function toBuilderField(field) {
         builderField.max = field.max
     }
 
+    if (typeof field.maxItems === 'number') {
+        builderField.maxItems = field.maxItems
+    }
+
     if (typeof field.rows === 'number') {
         builderField.rows = field.rows
     }
@@ -67,6 +65,12 @@ function toBuilderField(field) {
             value: option,
             label: createOptionLabel(option),
         }))
+    }
+
+    if (field.itemSchema && Array.isArray(field.itemSchema.fields)) {
+        builderField.itemLabel = field.itemLabel || 'Item'
+        builderField.defaultItem = JSON.parse(JSON.stringify(field.itemSchema.defaultValue || {}))
+        builderField.fields = field.itemSchema.fields.map(toBuilderField)
     }
 
     return builderField
@@ -156,20 +160,131 @@ function validateFieldValue(sectionType, field, value) {
         }
     }
 
-    if (['text', 'textarea', 'url', 'image', 'video', 'color', 'select'].includes(field.type) && typeof value !== 'string') {
-        throwTypeError(sectionType, field, 'string')
+    if (['text', 'textarea', 'url', 'image', 'video', 'color', 'select'].includes(field.type)) {
+        if (typeof value !== 'string') {
+            throwTypeError(sectionType, field, 'string')
+        }
+
+        const maxLength = field.type === 'textarea'
+            ? DEFAULT_LONG_TEXT_MAX_LENGTH
+            : ['url', 'image', 'video'].includes(field.type)
+                ? DEFAULT_URL_MAX_LENGTH
+                : DEFAULT_TEXT_MAX_LENGTH
+        if (value.length > maxLength) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" exceeds maximum length ${maxLength}.`)
+        }
+
+        if (field.type === 'color' && !HEX_COLOR_PATTERN.test(value)) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" must be a hex color.`)
+        }
+
+        if (['url', 'image', 'video'].includes(field.type) && !isSafeAuthoredUrl(value, field.type)) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" must be a safe URL or relative path.`)
+        }
     }
 
-    if (field.type === 'guid-list' && (!Array.isArray(value) || value.some((item) => typeof item !== 'string'))) {
-        throwTypeError(sectionType, field, 'string array')
+    if (field.type === 'guid-list') {
+        if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+            throwTypeError(sectionType, field, 'string array')
+        }
+
+        validateListSize(sectionType, field, value)
+        if (value.some((item) => !GUID_PATTERN.test(item))) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" must contain valid GUID values.`)
+        }
+
+        if (new Set(value.map((item) => item.toLowerCase())).size !== value.length) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" must not contain duplicate GUID values.`)
+        }
     }
 
-    if ((field.type === 'image-list' || field.type === 'list') && !Array.isArray(value)) {
-        throwTypeError(sectionType, field, 'array')
+    if (field.type === 'image-list' || field.type === 'list') {
+        if (!Array.isArray(value)) {
+            throwTypeError(sectionType, field, 'array')
+        }
+
+        validateListSize(sectionType, field, value)
+        if (field.type === 'image-list' && value.some((item) => typeof item !== 'string' || !isSafeAuthoredUrl(item, 'image'))) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" must contain safe image URLs.`)
+        }
+
+        if (field.type === 'list') {
+            validateNestedList(sectionType, field, value)
+        }
     }
 
     if (Array.isArray(field.options) && field.options.length > 0 && typeof value === 'string' && !field.options.includes(value)) {
         throw new Error(`Section "${sectionType}" setting "${field.key}" has invalid value "${value}".`)
+    }
+}
+
+function validateListSize(sectionType, field, value) {
+    if (typeof field.maxItems === 'number' && value.length > field.maxItems) {
+        throw new Error(`Section "${sectionType}" setting "${field.key}" exceeds maximum item count ${field.maxItems}.`)
+    }
+}
+
+function validateNestedList(sectionType, field, value) {
+    const itemFields = field.itemSchema?.fields
+    if (!Array.isArray(itemFields)) {
+        throw new Error(`Section "${sectionType}" setting "${field.key}" has no semantic item schema.`)
+    }
+
+    const fieldsByKey = new Map(itemFields.map((itemField) => [itemField.key, itemField]))
+    value.forEach((item, index) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} must be an object.`)
+        }
+
+        Object.keys(item).forEach((key) => {
+            if (!fieldsByKey.has(key)) {
+                throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} contains unsupported property "${key}".`)
+            }
+        })
+
+        itemFields.forEach((itemField) => {
+            const itemValue = item[itemField.key]
+            if (typeof itemValue !== 'string') {
+                throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} property "${itemField.key}" must be string.`)
+            }
+
+            if (itemField.allowEmpty === false && itemValue.trim().length === 0) {
+                throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} property "${itemField.key}" must not be empty.`)
+            }
+
+            if (typeof itemField.maxLength === 'number' && itemValue.length > itemField.maxLength) {
+                throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} property "${itemField.key}" exceeds maximum length ${itemField.maxLength}.`)
+            }
+
+            if (['url', 'image', 'video'].includes(itemField.type) && !isSafeAuthoredUrl(itemValue, itemField.type)) {
+                throw new Error(`Section "${sectionType}" setting "${field.key}" item ${index} property "${itemField.key}" must be a safe URL or relative path.`)
+            }
+        })
+    })
+}
+
+function isSafeAuthoredUrl(value, fieldType) {
+    if (!value.trim()) {
+        return true
+    }
+
+    if (value.length > DEFAULT_URL_MAX_LENGTH || /[\s\u0000-\u001f\u007f\\]/.test(value) || value.startsWith('//')) {
+        return false
+    }
+
+    if (value.startsWith('/') || value.startsWith('#') || value.startsWith('?')) {
+        return true
+    }
+
+    try {
+        const parsed = new URL(value)
+        if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+            return !parsed.username && !parsed.password
+        }
+
+        return fieldType === 'url' && (parsed.protocol === 'mailto:' || parsed.protocol === 'tel:')
+    } catch {
+        return !value.includes(':')
     }
 }
 

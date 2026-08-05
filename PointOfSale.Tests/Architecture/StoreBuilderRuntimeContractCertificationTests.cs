@@ -50,8 +50,9 @@ public sealed class StoreBuilderRuntimeContractCertificationTests
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/AdminStoreConfigService.cs");
 
         Assert.Contains("StorefrontSectionContracts.SupportedTypes", service, StringComparison.Ordinal);
-        Assert.Contains("StorefrontSectionContracts.GetAllowedSettingKeysBySectionType()", service, StringComparison.Ordinal);
-        Assert.Contains("ReadContractAllowedString(sectionType, key, value)", service, StringComparison.Ordinal);
+        Assert.Contains("StorefrontSectionContracts.TryValidateSettingsStrict", service, StringComparison.Ordinal);
+        Assert.Contains("StorefrontSectionContracts.GetFields(sectionType)", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("NormalizeSectionSettingValue", service, StringComparison.Ordinal);
         Assert.DoesNotContain("productSource", service, StringComparison.Ordinal);
     }
 
@@ -61,6 +62,15 @@ public sealed class StoreBuilderRuntimeContractCertificationTests
         var normalized = NormalizePage(BuildPage(BuildFeaturedProductsSettings()));
 
         Assert.Equal("grid", normalized.RootElement
+            .GetProperty("sections")[0]
+            .GetProperty("settings")
+            .GetProperty("displayStyle")
+            .GetString());
+
+        var canonicalizedEnum = BuildFeaturedProductsSettings();
+        canonicalizedEnum["displayStyle"] = "GRID";
+        using var normalizedEnum = NormalizePage(BuildPage(canonicalizedEnum));
+        Assert.Equal("grid", normalizedEnum.RootElement
             .GetProperty("sections")[0]
             .GetProperty("settings")
             .GetProperty("displayStyle")
@@ -79,11 +89,11 @@ public sealed class StoreBuilderRuntimeContractCertificationTests
         AssertContractFailure(BuildPage(enumMismatch), "displayStyle");
 
         var typeMismatch = BuildFeaturedProductsSettings();
-        typeMismatch["limit"] = "8";
+        typeMismatch["maxItems"] = "8";
         AssertContractFailure(BuildPage(typeMismatch), "must be number");
 
         var rangeMismatch = BuildFeaturedProductsSettings();
-        rangeMismatch["limit"] = 99;
+        rangeMismatch["maxItems"] = 99;
         AssertContractFailure(BuildPage(rangeMismatch), "above maximum");
     }
 
@@ -103,34 +113,30 @@ public sealed class StoreBuilderRuntimeContractCertificationTests
                     ["enabled"] = true,
                     ["settings"] = new Dictionary<string, object?>
                     {
-                        ["layoutVariant"] = "fashion",
-                        ["showDescription"] = true,
-                        ["showMediaGallery"] = false,
-                        ["showVariantSelector"] = true,
-                        ["showAddToCart"] = true,
-                        ["showSku"] = false,
-                        ["showStockStatus"] = true
+                        ["layoutVariant"] = "fashion"
                     }
                 }
             }
-        });
+        }, authoritativeTemplateId: "default");
 
         var settings = normalized.RootElement
             .GetProperty("sections")[0]
             .GetProperty("settings");
 
         Assert.Equal("fashion", settings.GetProperty("layoutVariant").GetString());
-        Assert.False(settings.GetProperty("showMediaGallery").GetBoolean());
+        Assert.Equal(1, settings.EnumerateObject().Count());
     }
 
-    private static JsonDocument NormalizePage(Dictionary<string, object> page)
+    private static JsonDocument NormalizePage(
+        Dictionary<string, object> page,
+        string? authoritativeTemplateId = null)
     {
         var method = typeof(AdminStoreConfigService).GetMethod(
             "NormalizeBuilderPageComposition",
             BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("NormalizeBuilderPageComposition was not found.");
 
-        var result = method.Invoke(null, new object?[] { page, null, null })
+        var result = method.Invoke(null, new object?[] { page, null, authoritativeTemplateId })
             ?? throw new InvalidOperationException("NormalizeBuilderPageComposition returned null.");
 
         return JsonDocument.Parse(JsonSerializer.Serialize(result));
@@ -170,11 +176,10 @@ public sealed class StoreBuilderRuntimeContractCertificationTests
         new(StringComparer.Ordinal)
         {
             ["title"] = "Featured Products",
+            ["subtitle"] = string.Empty,
             ["source"] = "all",
             ["productIds"] = Array.Empty<string>(),
-            ["limit"] = 8,
-            ["showPrice"] = true,
-            ["showRating"] = true,
+            ["maxItems"] = 8,
             ["displayStyle"] = "grid",
             ["showBadge"] = true,
             ["badgeText"] = "Featured"

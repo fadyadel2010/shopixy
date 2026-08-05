@@ -149,7 +149,7 @@ describe('theme component system architecture', () => {
         expect(runtimeSectionContainerSrc).toContain('ProductHeroPresentationModel');
         expect(runtimeSectionContainerSrc).toContain('renderProductCard');
         expect(runtimeSectionContainerSrc).toContain('<ProductCard');
-        expect(runtimeSectionContainerSrc).toContain('ElectronicsProductCardRenderer');
+        expect(runtimeSectionContainerSrc).not.toContain('ElectronicsProductCardRenderer');
     });
 
     it('publishes presentation models for runtime-to-theme boundaries', () => {

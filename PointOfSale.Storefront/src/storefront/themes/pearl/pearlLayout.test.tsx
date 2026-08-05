@@ -89,7 +89,7 @@ describe('Pearl layout — Announcement Marquee (reusable primitive)', () => {
 describe('Pearl layout — Header rendering contract', () => {
     it('renders a banner landmark, centered nav, and marquee above', () => {
         expect(headerSrc).toContain('role="banner"');
-        expect(headerSrc).toContain("t('accessibility.mainNavigation')");
+        expect(headerSrc).toContain('ariaLabel={labels.mainNavigation}');
         // Marquee is mounted above the header (copy lives in i18n, not hardcoded).
         expect(headerSrc).toContain('<AnnouncementMarquee');
         expect(headerSrc).toContain('AnnouncementMarquee');
@@ -111,22 +111,21 @@ describe('Pearl layout — Header rendering contract', () => {
         expect(PEARL_FONT_BODY).toContain('Jost');
     });
 
-    it('reuses platform navigation/header infrastructure (no logic duplication)', () => {
-        expect(headerSrc).toContain("from '@/components/common/CartBadge'");
-        expect(headerSrc).toContain("from '@/components/common/WishlistBadge'");
-        expect(headerSrc).toContain("from '@/stores/navigationStore'");
+    it('consumes the runtime presentation contract and capability slots', () => {
+        expect(headerSrc).toContain('HeaderPresentationProps');
+        expect(headerSrc).toContain('NavigationSlot');
+        expect(headerSrc).toContain('AuthenticationSlot');
+        expect(headerSrc).not.toContain("from '@/stores/navigationStore'");
         expect(headerSrc).toContain("from '@/hooks/useScrollPosition'");
-        expect(headerSrc).toContain("from '@/components/common/LanguageSwitcher'");
-        expect(headerSrc).toContain("from '@/auth/components'");
     });
 });
 
 describe('Pearl layout — Footer rendering contract', () => {
     it('renders footer landmark with shop links, social, payment area', () => {
         expect(footerSrc).toContain('<footer');
-        expect(footerSrc).toContain("t('footer.paymentMethods')");
-        expect(footerSrc).toContain("t('footer.followUs')");
-        expect(footerSrc).toContain("t('footer.customerService')");
+        expect(footerSrc).toContain('labels.paymentMethods');
+        expect(footerSrc).toContain('labels.followUs');
+        expect(footerSrc).toContain('labels.customerService');
     });
 
     it('uses the black/gold luxury palette', () => {
@@ -135,7 +134,8 @@ describe('Pearl layout — Footer rendering contract', () => {
     });
 
     it('reuses platform footer infrastructure', () => {
-        expect(footerSrc).toContain("from '@/stores/footerStore'");
+        expect(footerSrc).toContain('FooterPresentationProps');
+        expect(footerSrc).not.toContain("from '@/stores/footerStore'");
         expect(footerSrc).toContain("from '@/components/layout/FooterSocialIcon'");
         expect(footerSrc).toContain("from '@/components/common/AffiliateLink'");
     });
@@ -143,7 +143,7 @@ describe('Pearl layout — Footer rendering contract', () => {
 
 describe('Pearl layout — Responsive behavior', () => {
     it('header degrades gracefully: mobile toggle + desktop-only nav', () => {
-        expect(headerSrc).toContain('aria-label={t(\'header.menu\')}');
+        expect(headerSrc).toContain('aria-label={labels.menu}');
         expect(headerSrc).toContain('md:hidden');
         expect(headerSrc).toContain('md:flex');
     });
@@ -156,7 +156,7 @@ describe('Pearl layout — Responsive behavior', () => {
 describe('Pearl layout — Accessibility (structural)', () => {
     it('header exposes banner + labelled nav + menu button aria', () => {
         expect(headerSrc).toContain('role="banner"');
-        expect(headerSrc).toContain('aria-label={t(\'accessibility.mainNavigation\')}');
+        expect(headerSrc).toContain('ariaLabel={labels.mainNavigation}');
         expect(headerSrc).toContain('aria-expanded={mobileOpen}');
     });
 

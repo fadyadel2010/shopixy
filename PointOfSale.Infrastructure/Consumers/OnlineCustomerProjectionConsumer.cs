@@ -5,7 +5,7 @@ using MongoDB.Driver;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using StackExchange.Redis;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -17,7 +17,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// - Idempotent projections (safe to replay)
 /// - Tenant isolation enforced - Guid.Empty rejected
 /// - NO sensitive data in MongoDB (no password hash)
-/// - Invalidates Redis cache on changes
+/// - Invalidates the owned wishlist cache on deactivation
 /// - MIRRORS data from events - NEVER generates source-of-truth values
 /// 
 /// SECURITY NOTES:
@@ -39,22 +39,16 @@ public class OnlineCustomerProjectionConsumer :
     IConsumer<OnlineCustomerPasswordChangedEvent>
 {
     private readonly IMongoCollection<OnlineCustomerDocument> _collection;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IStorefrontWishlistCacheInvalidator _wishlistCacheInvalidator;
     private readonly ILogger<OnlineCustomerProjectionConsumer> _logger;
-
-    private const string CacheKeyPrefix = "storefront:tenant:{0}:online-customer:{1}";
-
-    // HARDENING: Wishlist cache keys for complete cache hygiene on deactivation
-    private const string WishlistCacheKeyPrefix = "storefront:tenant:{0}:wishlist:{1}";
-    private const string WishlistCountCacheKeyPrefix = "storefront:tenant:{0}:wishlist:count:{1}";
 
     public OnlineCustomerProjectionConsumer(
         IMongoDatabase mongoDatabase,
-        IConnectionMultiplexer redis,
+        IStorefrontWishlistCacheInvalidator wishlistCacheInvalidator,
         ILogger<OnlineCustomerProjectionConsumer> logger)
     {
         _collection = mongoDatabase.GetCollection<OnlineCustomerDocument>("online_customers");
-        _redis = redis;
+        _wishlistCacheInvalidator = wishlistCacheInvalidator;
         _logger = logger;
 
         // Ensure indexes exist
@@ -163,8 +157,6 @@ public class OnlineCustomerProjectionConsumer :
                 return;
             }
 
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
-
             _logger.LogInformation(
                 "[OnlineCustomer] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId}",
                 "REGISTRATION",
@@ -227,8 +219,6 @@ public class OnlineCustomerProjectionConsumer :
                     @event.EventId);
                 return;
             }
-
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
 
             _logger.LogInformation(
                 "[OnlineCustomer] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId}",
@@ -294,12 +284,12 @@ public class OnlineCustomerProjectionConsumer :
                 return;
             }
             
-            // CRITICAL: Cache invalidation ensures deactivated customers cannot use stale cached data
-            // TODO (Phase 10.3.2): JWT middleware must also check IsActive and reject tokens for deactivated customers
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
-
-            // HARDENING FIX: Also invalidate wishlist cache for complete cache hygiene
-            await InvalidateWishlistCacheAsync(@event.TenantId!.Value, @event.CustomerId);
+            // Customer profile reads are uncached. The wishlist cache remains live and
+            // is invalidated exclusively through its semantic owner.
+            await _wishlistCacheInvalidator.InvalidateAsync(
+                @event.TenantId!.Value,
+                @event.CustomerId,
+                context.CancellationToken);
 
             _logger.LogWarning(
                 "[OnlineCustomer] {Action} projected successfully - customer can no longer authenticate | TenantId: {TenantId} | CustomerId: {CustomerId}",
@@ -363,8 +353,6 @@ public class OnlineCustomerProjectionConsumer :
                     @event.EventId);
                 return;
             }
-
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
 
             _logger.LogInformation(
                 "[OnlineCustomer] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId}",
@@ -432,8 +420,6 @@ public class OnlineCustomerProjectionConsumer :
                     @event.EventId);
                 return;
             }
-
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
 
             _logger.LogInformation(
                 "[OnlineCustomer] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId} | LoginAtUtc: {LoginAtUtc}",
@@ -509,8 +495,6 @@ public class OnlineCustomerProjectionConsumer :
                 return;
             }
 
-            await InvalidateCacheAsync(@event.TenantId, @event.CustomerId);
-
             _logger.LogInformation(
                 "[OnlineCustomer] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId}",
                 "PROFILE_UPDATE",
@@ -531,7 +515,7 @@ public class OnlineCustomerProjectionConsumer :
     /// <summary>
     /// Handles password change events.
     /// Note: We don't update anything password-related in MongoDB (no password hash stored).
-    /// This event is primarily for cache invalidation and audit trail.
+    /// This event is retained for security audit trail processing.
     /// 
     /// Phase F2: Account Area
     /// </summary>
@@ -564,12 +548,8 @@ public class OnlineCustomerProjectionConsumer :
                 isUpsert: false,
                 context.CancellationToken);
 
-            // SECURITY: Invalidate cache to ensure any cached customer data is refreshed
-            // No MongoDB update needed - we don't store password hash in MongoDB
-            await InvalidateCacheAsync(@event.TenantId, @event.CustomerId);
-
             _logger.LogWarning(
-                "[OnlineCustomer] {Action} processed - cache invalidated | TenantId: {TenantId} | CustomerId: {CustomerId}",
+                "[OnlineCustomer] {Action} processed | TenantId: {TenantId} | CustomerId: {CustomerId}",
                 "PASSWORD_CHANGED",
                 @event.TenantId,
                 @event.CustomerId);
@@ -701,64 +681,6 @@ public class OnlineCustomerProjectionConsumer :
             return false;
         }
         return true;
-    }
-
-    /// <summary>
-    /// Invalidates Redis cache for the customer.
-    /// This ensures deactivated customers cannot use stale cached data.
-    /// </summary>
-    private async Task InvalidateCacheAsync(Guid tenantId, Guid customerId)
-    {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var cacheKey = string.Format(CacheKeyPrefix, tenantId, customerId);
-            await db.KeyDeleteAsync(cacheKey);
-
-            _logger.LogDebug(
-                "[OnlineCustomer] Cache invalidated | TenantId: {TenantId} | CustomerId: {CustomerId} | Key: {CacheKey}",
-                tenantId, customerId, cacheKey);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "[OnlineCustomer] Cache invalidation failed (non-critical) | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-            // Don't throw - cache invalidation failure shouldn't fail the projection
-        }
-    }
-
-    /// <summary>
-    /// Invalidates Redis wishlist cache for the customer.
-    /// Called during customer deactivation for complete cache hygiene.
-    /// 
-    /// HARDENING FIX (Phase 10.3.6): Ensures no stale wishlist data remains
-    /// after customer deactivation.
-    /// </summary>
-    private async Task InvalidateWishlistCacheAsync(Guid tenantId, Guid customerId)
-    {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var wishlistKey = string.Format(WishlistCacheKeyPrefix, tenantId, customerId);
-            var countKey = string.Format(WishlistCountCacheKeyPrefix, tenantId, customerId);
-            
-            await Task.WhenAll(
-                db.KeyDeleteAsync(wishlistKey),
-                db.KeyDeleteAsync(countKey)
-            );
-
-            _logger.LogDebug(
-                "[OnlineCustomer] Wishlist cache invalidated | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "[OnlineCustomer] Wishlist cache invalidation failed (non-critical) | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-            // Don't throw - cache invalidation failure shouldn't fail the projection
-        }
     }
 
     /// <summary>

@@ -223,10 +223,6 @@ _ = Microsoft.Extensions.Primitives.ChangeToken.OnChange(
             .Get<PointOfSale.Core.Pricing.CommerceHubPriceOverrideRolloutOptions>()));
 builder.Services.Configure<PointOfSale.API.Configuration.CommerceHubVendorDebtOptions>(
     builder.Configuration.GetSection("CommerceHub:Finance:VendorDebt"));
-builder.Services.Configure<PointOfSale.API.Configuration.HomepageSectionCacheOptions>(
-    builder.Configuration.GetSection(PointOfSale.API.Configuration.HomepageSectionCacheOptions.SectionName));
-builder.Services.Configure<PointOfSale.API.Configuration.CmsPageCacheOptions>(
-    builder.Configuration.GetSection(PointOfSale.API.Configuration.CmsPageCacheOptions.SectionName));
 builder.Services.Configure<PointOfSale.API.Configuration.MarketplaceCmsPageCacheOptions>(
     builder.Configuration.GetSection(PointOfSale.API.Configuration.MarketplaceCmsPageCacheOptions.SectionName));
 builder.Services.AddOptions<PointOfSale.API.Configuration.OperationalAlertThresholdsOptions>()
@@ -431,16 +427,13 @@ builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontOrderP
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubOrderProjectionRepairService, PointOfSale.API.Services.CommerceHub.CommerceHubOrderProjectionRepairService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ISeoService, PointOfSale.API.Services.Storefront.SeoService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageSectionSchemaRegistry, PointOfSale.API.Services.Homepage.HomepageSectionSchemaRegistry>();
-builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageSectionCacheService, PointOfSale.API.Services.Homepage.HomepageSectionCacheService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageSectionReadService, PointOfSale.API.Services.Homepage.HomepageSectionReadService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageTemplateSeeder, PointOfSale.API.Services.Homepage.HomepageTemplateSeeder>();
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageContentValidator, PointOfSale.API.Services.Cms.CmsPageContentValidator>();
-builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageCacheService, PointOfSale.API.Services.Cms.CmsPageCacheService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageReadService, PointOfSale.API.Services.Cms.CmsPageReadService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageService, PointOfSale.API.Services.Cms.CmsPageService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPagePreviewTokenService, PointOfSale.API.Services.Cms.CmsPagePreviewTokenService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontFooterReadService, PointOfSale.API.Services.Storefront.StorefrontFooterReadService>();
-builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontFooterCacheService, PointOfSale.API.Services.Storefront.StorefrontFooterCacheService>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageContentValidator, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageContentValidator>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageCacheService, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageCacheService>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageReadService, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageReadService>();
@@ -844,8 +837,12 @@ builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminThemeActivationS
 // - Draft / Live separation enforced
 // PostgreSQL is the ONLY source of truth. MongoDB projection via events.
 // =============================================================================
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.NavigationAdmissionService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminCmsService, PointOfSale.API.Services.Admin.AdminCmsService>();
-builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminStorefrontFooterService, PointOfSale.API.Services.Admin.AdminStorefrontFooterService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.ICmsSeedService, PointOfSale.API.Services.Admin.CmsSeedService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.FooterAuthoringValidator>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.FooterAuthoringMapper>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.IFooterAuthoringService, PointOfSale.API.Services.Admin.FooterAuthoringService>();
 
 // =============================================================================
 // STOREFRONT ADMIN HARDENING - P3 SERVICES
@@ -932,8 +929,6 @@ builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminPromoC
 builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminHomepageSectionManagementService, PointOfSale.API.SuperAdmin.Services.SuperAdminHomepageSectionManagementService>();
 builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminOrdersService, PointOfSale.API.SuperAdmin.Services.SuperAdminOrdersService>();
 builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminRefundsService, PointOfSale.API.SuperAdmin.Services.SuperAdminRefundsService>();
-builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminStorefrontFooterService, PointOfSale.API.SuperAdmin.Services.SuperAdminStorefrontFooterService>();
-builder.Services.AddScoped<PointOfSale.API.SuperAdmin.Services.ISuperAdminMarketplaceFooterService, PointOfSale.API.SuperAdmin.Services.SuperAdminMarketplaceFooterService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IPaymentProviderAdministrationService, PointOfSale.API.Services.Admin.PaymentProviderAdministrationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IPaymentProviderDashboardService, PointOfSale.API.Services.Admin.PaymentProviderDashboardService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IPaymentProviderActionService, PointOfSale.API.Services.Admin.PaymentProviderActionService>();
@@ -3287,6 +3282,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseMiddleware<PointOfSale.API.Middleware.CorrelationIdMiddleware>();
+app.UseMiddleware<PointOfSale.API.Middleware.StorefrontHttpCachePolicyMiddleware>();
 app.UseMiddleware<PointOfSale.API.SuperAdmin.Infrastructure.SuperAdminRequestLoggingMiddleware>();
 
 app.UseWhen(

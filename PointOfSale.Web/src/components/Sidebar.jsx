@@ -1,10 +1,34 @@
 import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import {
+    Activity,
+    FileText,
+    Files,
+    History,
+    Home,
+    LayoutDashboard,
+    LayoutTemplate,
+    Navigation as NavigationIcon,
+    Paintbrush,
+    Palette,
+    PanelBottom,
+    PanelBottomDashed,
+    PanelsTopLeft,
+    PanelTop,
+    ShoppingBag,
+    Store,
+} from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useRTL } from '../hooks/useRTL'
 import { isServiceMarketplaceWorkflowActor } from '../marketplace/authority'
 import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
+import {
+    STOREFRONT_NAVIGATION,
+    STOREFRONT_SIDEBAR_STATE_KEY,
+    isStorefrontNodeActive,
+    resolveStorefrontScreen,
+} from '../modules/storefront/informationArchitecture'
 
 const STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH = new Map([
     ['/ecommerce/blocked-phones', 'commercehub.orders.view'],
@@ -18,11 +42,40 @@ const STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH = new Map([
     ['/ecommerce/commerce-ai', 'commercehub.storefront.manage'],
 ])
 
+const STOREFRONT_ICONS = {
+    Activity,
+    FileText,
+    Files,
+    History,
+    Home,
+    LayoutDashboard,
+    LayoutTemplate,
+    Navigation: NavigationIcon,
+    Paintbrush,
+    Palette,
+    PanelBottom,
+    PanelBottomDashed,
+    PanelsTopLeft,
+    PanelTop,
+    ShoppingBag,
+    Store,
+}
+
+const readExpandedMenus = () => {
+    try {
+        const storedValue = window.localStorage.getItem(STOREFRONT_SIDEBAR_STATE_KEY)
+        const parsedValue = storedValue ? JSON.parse(storedValue) : null
+        return parsedValue && typeof parsedValue === 'object' && !Array.isArray(parsedValue) ? parsedValue : {}
+    } catch {
+        return {}
+    }
+}
+
 export default function Sidebar({ isOpen, onClose }) {
     const { t } = useTranslation()
     const { user } = useAuthStore()
     const location = useLocation()
-    const [expandedMenus, setExpandedMenus] = useState({})
+    const [expandedMenus, setExpandedMenus] = useState(readExpandedMenus)
     const { dir, isRTL } = useRTL()
 
     const toggleMenu = (menuKey) => {
@@ -40,6 +93,22 @@ export default function Sidebar({ isOpen, onClose }) {
         }
         return location.pathname === path;
     };
+
+    const activeStorefrontScreenId = resolveStorefrontScreen(location.pathname, location.search)?.id || null
+
+    const renderIcon = (icon, size = 20) => {
+        const Icon = STOREFRONT_ICONS[icon]
+        return Icon
+            ? <Icon aria-hidden="true" size={size} />
+            : <span aria-hidden="true">{icon}</span>
+    }
+
+    const localizeStorefrontNode = (node) => ({
+        ...node,
+        label: t(node.labelKey, node.fallbackLabel),
+        requiredRoles: ['Owner', 'Admin'],
+        children: node.children?.map(localizeStorefrontNode),
+    })
 
     // New navigation structure with renamed items and proper order
     const menuItems = [
@@ -213,24 +282,8 @@ export default function Sidebar({ isOpen, onClose }) {
             path: '/admin/affiliates',
             requiredRoles: ['Owner', 'Admin'],
         },
-        // 11) Storefront Builder (Owner/Admin only)
-        {
-            key: 'storefront',
-            label: t('nav.storefront', 'Storefront'),
-            icon: '🎨',
-            children: [
-                { path: '/storefront', label: t('storefront.settings', 'Settings'), icon: '⚙️', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/builder?page=home', label: t('storefront.homepageBuilder', 'Homepage Builder'), icon: '🏠', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/builder?page=product', label: t('storefront.productPage', 'Product Page'), icon: '📦', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/builder?page=category', label: t('storefront.categoryPage', 'Category Page'), icon: '📂', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/themes', label: t('storefront.themeLibrary', 'Themes'), icon: '🛍️', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/theme', label: t('storefront.theme', 'Theme Editor'), icon: '🎨', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/cms/navigation', label: t('storefront.navigation', 'Navigation'), icon: '🔗', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/cms/pages', label: t('storefront.pages', 'Pages'), icon: '📄', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/cms/footer', label: t('storefront.footer', 'Footer'), icon: '🔻', requiredRoles: ['Owner', 'Admin'] },
-                { path: '/storefront/versions', label: t('storefront.versions', 'Version History'), icon: '📜', requiredRoles: ['Owner', 'Admin'] }
-            ]
-        },
+        // Storefront administration information architecture (Owner/Admin only)
+        localizeStorefrontNode(STOREFRONT_NAVIGATION),
         // 10) Reports
         {
             key: 'reports',
@@ -300,48 +353,114 @@ export default function Sidebar({ isOpen, onClose }) {
     // Filter menu items based on user roles
     // Backend returns single 'role' string (e.g., "Owner", "Admin")
     const userRole = user?.role
-    const filteredMenuItems = menuItems.map((item) => ({
-        ...item,
-        children: item.children?.filter((child) => {
-            if (child.requiredRoles && !child.requiredRoles.includes(userRole)) {
-                return false
-            }
-
-            const capability = child.capability || STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH.get(child.path)
-            return !capability || canAccessCommerceHubVendorNavigationCapability(user, capability)
-        }),
-    })).filter((item) => {
+    const filterMenuNode = (item) => {
         if (item.requiresMarketplaceActor && !isServiceMarketplaceWorkflowActor(user, true)) {
-            return false
+            return null
         }
 
-        if (item.children && item.children.length === 0) {
-            return false
+        if (item.requiredRoles?.length && !item.requiredRoles.includes(userRole)) {
+            return null
         }
 
-        if (!item.requiredRoles || item.requiredRoles.length === 0) {
+        const capability = item.capability || STORE_ADMIN_NAVIGATION_CAPABILITY_BY_PATH.get(item.path)
+        if (capability && !canAccessCommerceHubVendorNavigationCapability(user, capability)) {
+            return null
+        }
+
+        const children = item.children?.map(filterMenuNode).filter(Boolean)
+        if (item.children && children.length === 0) {
+            return null
+        }
+
+        return { ...item, children }
+    }
+
+    const filteredMenuItems = menuItems.map(filterMenuNode).filter(Boolean)
+
+    const isMenuNodeActive = (node) => {
+        if (node.screenIds) {
+            return isStorefrontNodeActive(node, activeStorefrontScreenId)
+        }
+        if (node.path && isActive(node.path)) {
             return true
         }
-        // Check if the user's single role matches any of the required roles
-        return item.requiredRoles.includes(userRole)
-    })
-    const hasActiveChild = (children = []) => children.some((child) => isActive(child.path))
+        return node.children?.some(isMenuNodeActive) || false
+    }
+
+    useEffect(() => {
+        try {
+            window.localStorage.setItem(STOREFRONT_SIDEBAR_STATE_KEY, JSON.stringify(expandedMenus))
+        } catch {
+            // Navigation remains functional when browser storage is unavailable.
+        }
+    }, [expandedMenus])
 
     useEffect(() => {
         setExpandedMenus((previous) => {
             let hasChanges = false
             const nextValue = { ...previous }
 
-            filteredMenuItems.forEach((item) => {
-                if (item.children && hasActiveChild(item.children) && !nextValue[item.key]) {
-                    nextValue[item.key] = true
-                    hasChanges = true
-                }
-            })
+            const expandActiveNodes = (items) => {
+                items.forEach((item) => {
+                    if (!item.children) return
+                    if (isMenuNodeActive(item) && !nextValue[item.key]) {
+                        nextValue[item.key] = true
+                        hasChanges = true
+                    }
+                    expandActiveNodes(item.children)
+                })
+            }
+
+            expandActiveNodes(filteredMenuItems)
 
             return hasChanges ? nextValue : previous
         })
     }, [location.pathname, location.search, userRole])
+
+    const renderNestedNode = (node, depth = 1) => {
+        const active = isMenuNodeActive(node)
+
+        if (node.children) {
+            const submenuId = `sidebar-submenu-${node.key}`
+            return (
+                <div key={node.key}>
+                    <button
+                        type="button"
+                        aria-controls={submenuId}
+                        aria-expanded={Boolean(expandedMenus[node.key])}
+                        onClick={() => toggleMenu(node.key)}
+                        className={`flex w-full items-center justify-between rounded-lg px-4 py-2.5 text-sm transition-all duration-200 ${active ? 'bg-white/15 text-white' : 'text-indigo-50 hover:bg-indigo-500/30'}`}
+                    >
+                        <span className="flex items-center gap-3">
+                            {renderIcon(node.icon, 18)}
+                            <span className="font-medium">{node.label}</span>
+                        </span>
+                        <svg aria-hidden="true" className={`h-4 w-4 transition-transform ${expandedMenus[node.key] ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+                    <div id={submenuId} className={`overflow-hidden transition-all duration-300 ${expandedMenus[node.key] ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                        <div className={`mt-1 space-y-1 ${isRTL ? 'pr-4' : 'pl-4'}`}>
+                            {node.children.map((child) => renderNestedNode(child, depth + 1))}
+                        </div>
+                    </div>
+                </div>
+            )
+        }
+
+        return (
+            <Link
+                key={node.path}
+                to={node.path}
+                aria-current={active ? 'page' : undefined}
+                onClick={onClose}
+                className={`flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm transition-all duration-200 ${active ? 'bg-white font-medium text-indigo-700 shadow-md' : 'text-indigo-50 hover:bg-indigo-500/30'}`}
+            >
+                {renderIcon(node.icon, depth > 1 ? 16 : 18)}
+                <span>{node.label}</span>
+            </Link>
+        )
+    }
 
     return (
         <>
@@ -372,6 +491,8 @@ export default function Sidebar({ isOpen, onClose }) {
                             </div>
                         </div>
                         <button
+                            type="button"
+                            aria-label={t('common.close', 'Close navigation')}
                             onClick={onClose}
                             className="lg:hidden text-white hover:bg-indigo-500/30 rounded-lg p-2 transition-colors"
                         >
@@ -383,21 +504,24 @@ export default function Sidebar({ isOpen, onClose }) {
                 </div>
 
                 {/* Navigation Menu */}
-                <nav className="p-4 space-y-1">
+                <nav aria-label={t('nav.mainNavigation', 'Main navigation')} className="p-4 space-y-1">
                     {filteredMenuItems.map((item) => (
                         <div key={item.key}>
                             {item.children ? (
                                 // Menu with children (expandable)
                                 <div>
                                     <button
+                                        type="button"
+                                        aria-controls={`sidebar-submenu-${item.key}`}
+                                        aria-expanded={Boolean(expandedMenus[item.key])}
                                         onClick={() => toggleMenu(item.key)}
-                                        className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 group ${hasActiveChild(item.children)
+                                        className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 group ${isMenuNodeActive(item)
                                             ? 'bg-white/15 text-white'
                                             : 'hover:bg-indigo-500/30'
                                             }`}
                                     >
                                         <div className="flex items-center gap-3">
-                                            <span className="text-xl">{item.icon}</span>
+                                            <span className="text-xl">{renderIcon(item.icon)}</span>
                                             <span className="font-medium">{item.label}</span>
                                         </div>
                                         <svg
@@ -413,24 +537,12 @@ export default function Sidebar({ isOpen, onClose }) {
 
                                     {/* Submenu */}
                                     <div
+                                        id={`sidebar-submenu-${item.key}`}
                                         className={`overflow-hidden transition-all duration-300 ${expandedMenus[item.key] ? 'max-h-[1200px] opacity-100 mt-1' : 'max-h-0 opacity-0'
                                             }`}
                                     >
                                         <div className={`space-y-1 ${isRTL ? 'pr-4' : 'pl-4'}`}>
-                                            {item.children.map((child) => (
-                                                <Link
-                                                    key={child.path}
-                                                    to={child.path}
-                                                    onClick={onClose}
-                                                    className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-all duration-200 ${isActive(child.path)
-                                                        ? 'bg-white text-indigo-700 shadow-md font-medium'
-                                                        : 'hover:bg-indigo-500/30 text-indigo-50'
-                                                        }`}
-                                                >
-                                                    <span className="text-lg">{child.icon}</span>
-                                                    <span className="text-sm">{child.label}</span>
-                                                </Link>
-                                            ))}
+                                            {item.children.map((child) => renderNestedNode(child))}
                                         </div>
                                     </div>
                                 </div>
@@ -438,13 +550,14 @@ export default function Sidebar({ isOpen, onClose }) {
                                 // Single menu item (no children)
                                 <Link
                                     to={item.path}
+                                    aria-current={isMenuNodeActive(item) ? 'page' : undefined}
                                     onClick={onClose}
-                                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${isActive(item.path)
+                                    className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${isMenuNodeActive(item)
                                         ? 'bg-white text-indigo-700 shadow-md font-medium'
                                         : 'hover:bg-indigo-500/30'
                                         }`}
                                 >
-                                    <span className="text-xl">{item.icon}</span>
+                                    <span className="text-xl">{renderIcon(item.icon)}</span>
                                     <span className="font-medium">{item.label}</span>
                                 </Link>
                             )}

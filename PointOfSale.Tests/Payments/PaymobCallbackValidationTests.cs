@@ -229,8 +229,7 @@ public sealed class PaymobCallbackValidationTests
         return new StorefrontUrlResolver(
             configuration,
             NullLogger<StorefrontUrlResolver>.Instance,
-            services.GetRequiredService<IServiceScopeFactory>(),
-            new MemoryCache(new MemoryCacheOptions()));
+            services.GetRequiredService<IServiceScopeFactory>());
     }
 
     private static Dictionary<string, string> CreateSignedCallbackParams(string paymobOrderId, string hmacSecret)

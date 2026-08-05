@@ -10,7 +10,6 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
-using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Admin;
@@ -50,7 +49,7 @@ public sealed class AdminCmsPublishReliabilityTests
             Mock.Of<ICmsPageService>(),
             Mock.Of<ICmsPageReadService>(),
             Mock.Of<ICmsPagePreviewTokenService>(),
-            Mock.Of<IStoreConfigCacheService>(),
+            new NavigationAdmissionService(testContext),
             publisher.Object,
             NullLogger<AdminCmsService>.Instance);
 
@@ -97,7 +96,7 @@ public sealed class AdminCmsPublishReliabilityTests
             Mock.Of<ICmsPageService>(),
             Mock.Of<ICmsPageReadService>(),
             Mock.Of<ICmsPagePreviewTokenService>(),
-            Mock.Of<IStoreConfigCacheService>(),
+            new NavigationAdmissionService(testContext),
             Mock.Of<IEventPublisher>(),
             NullLogger<AdminCmsService>.Instance);
 

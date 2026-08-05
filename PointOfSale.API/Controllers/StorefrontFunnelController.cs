@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -75,14 +74,12 @@ public class StorefrontFunnelController : ControllerBase
     private readonly ICartService _cartService;
     private readonly TenantContext _tenantContext;
     private readonly IFunnelRateLimiter _rateLimiter;
+    private readonly IFunnelFraudSignalStore _fraudSignalStore;
     private readonly ILogger<StorefrontFunnelController> _logger;
 
     // AF-27B §4: Funnel conversion metric counters (in-memory, non-blocking)
     private static long _funnelStartedTotal;
     private static long _funnelConvertedTotal; // Incremented by CheckoutService (future)
-
-    // AF-27B §5: Fraud signal tracking (non-blocking, observability only)
-    private static readonly ConcurrentDictionary<string, FraudSignalTracker> _fraudSignalStore = new();
 
     private const string SessionIdHeader = "X-Session-Id";
     private const string CustomerIdHeader = "X-Customer-Id";
@@ -91,11 +88,13 @@ public class StorefrontFunnelController : ControllerBase
         ICartService cartService,
         TenantContext tenantContext,
         IFunnelRateLimiter rateLimiter,
+        IFunnelFraudSignalStore fraudSignalStore,
         ILogger<StorefrontFunnelController> logger)
     {
         _cartService = cartService;
         _tenantContext = tenantContext;
         _rateLimiter = rateLimiter;
+        _fraudSignalStore = fraudSignalStore;
         _logger = logger;
     }
 
@@ -363,11 +362,11 @@ public class StorefrontFunnelController : ControllerBase
             {
                 try
                 {
-                    var fraudKey = $"{clientIp}:{resolvedAffiliateAccountId.Value}";
-                    var tracker = _fraudSignalStore.GetOrAdd(fraudKey, _ => new FraudSignalTracker());
-                    tracker.RecordClick();
+                    var clickCount = _fraudSignalStore.RecordClick(
+                        clientIp,
+                        resolvedAffiliateAccountId.Value);
 
-                    if (tracker.ClickCount > 10 && tracker.ClickCount % 10 == 0)
+                    if (clickCount > 10 && clickCount % 10 == 0)
                     {
                         _logger.LogWarning(
                             "[AF-27D:Validation] FraudSignalDetected | TenantSlug: {TenantSlug} | ReferralCode: {ReferralCode} | ProductSlug: {ProductSlug} | TemplateType: {TemplateType} | TraceId: {TraceId} | IP: {ClientIp}",
@@ -551,18 +550,6 @@ public class StorefrontFunnelController : ControllerBase
     /// <summary>
     /// Thread-safe fraud signal tracker for a single IP×Affiliate pair.
     /// </summary>
-    private class FraudSignalTracker
-    {
-        private long _clickCount;
-
-        public long ClickCount => Interlocked.Read(ref _clickCount);
-
-        public void RecordClick()
-        {
-            Interlocked.Increment(ref _clickCount);
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════════
     // AF-27B §4: FUNNEL METRICS ACCESS (for internal monitoring)
     // ═══════════════════════════════════════════════════════════════════

@@ -1,7 +1,8 @@
 import type { ComponentType } from 'react';
+import type { FooterPresentationProps, HeaderPresentationProps } from '@/storefront/presentation/models';
 
 type LayoutComponentModule = {
-    default?: ComponentType;
+    default?: ComponentType<any>;
 };
 
 type LayoutSlot = 'header' | 'footer';
@@ -11,14 +12,14 @@ const defaultLayoutModules = import.meta.glob<LayoutComponentModule>('../../comp
     eager: true,
 });
 
-const layoutCache = new Map<string, ComponentType | null>();
+const layoutCache = new Map<string, ComponentType<any> | null>();
 
-function getDefaultLayoutComponent(slot: LayoutSlot): ComponentType | null {
+function getDefaultLayoutComponent(slot: LayoutSlot): ComponentType<any> | null {
     const module = defaultLayoutModules[`../../components/layout/default/${slot}.tsx`];
     return module?.default ?? null;
 }
 
-async function resolveLayoutComponent(slot: LayoutSlot, themeId: string): Promise<ComponentType | null> {
+async function resolveLayoutComponent(slot: LayoutSlot, themeId: string): Promise<ComponentType<any> | null> {
     const cacheKey = `${themeId}:${slot}`;
 
     if (layoutCache.has(cacheKey)) {
@@ -49,18 +50,18 @@ async function resolveLayoutComponent(slot: LayoutSlot, themeId: string): Promis
     }
 }
 
-export function getDefaultHeaderComponent(): ComponentType | null {
+export function getDefaultHeaderComponent(): ComponentType<HeaderPresentationProps> | null {
     return getDefaultLayoutComponent('header');
 }
 
-export function getDefaultFooterComponent(): ComponentType | null {
+export function getDefaultFooterComponent(): ComponentType<FooterPresentationProps> | null {
     return getDefaultLayoutComponent('footer');
 }
 
-export function resolveHeaderComponent(themeId: string): Promise<ComponentType | null> {
+export function resolveHeaderComponent(themeId: string): Promise<ComponentType<HeaderPresentationProps> | null> {
     return resolveLayoutComponent('header', themeId);
 }
 
-export function resolveFooterComponent(themeId: string): Promise<ComponentType | null> {
+export function resolveFooterComponent(themeId: string): Promise<ComponentType<FooterPresentationProps> | null> {
     return resolveLayoutComponent('footer', themeId);
 }

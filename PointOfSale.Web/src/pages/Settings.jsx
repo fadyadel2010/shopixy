@@ -9,6 +9,7 @@ import { useRTL } from '../hooks/useRTL'
 import { formatCurrency } from '../utils/dateFormat'
 import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { useAuthStore } from '../store/authStore'
+import { StorefrontBreadcrumbs } from '../modules/storefront/informationArchitecture'
 
 export default function Settings() {
     const { t } = useTranslation()
@@ -19,6 +20,7 @@ export default function Settings() {
     const requestedTab = searchParams.get('tab')
     const [loading, setLoading] = useState(true)
     const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
+    const [storefrontStatusDirty, setStorefrontStatusDirty] = useState(false)
     const [activeTab, setActiveTab] = useState(() => requestedTab === 'storefront' ? 'storefront' : 'company')
     const [settings, setSettings] = useState(null)
     const [defaultCountry, setDefaultCountry] = useState({
@@ -169,6 +171,9 @@ export default function Settings() {
     useEffect(() => {
         if (activeTab === 'storefront' && !canManageStorefront) {
             setActiveTab('company')
+        }
+        if (activeTab !== 'storefront') {
+            setStorefrontStatusDirty(false)
         }
     }, [activeTab, canManageStorefront])
 
@@ -651,6 +656,15 @@ export default function Settings() {
 
     return (
         <div dir={dir} className="space-y-6">
+            {activeTab === 'storefront' ? (
+                <StorefrontBreadcrumbs
+                    onNavigate={() => (
+                        !storefrontStatusDirty || window.confirm(
+                            isRTL ? 'لديك تغييرات غير محفوظة. هل أنت متأكد من الخروج؟' : 'You have unsaved changes. Are you sure you want to exit?',
+                        )
+                    )}
+                />
+            ) : null}
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-gray-900">{t('settings.settings')}</h1>
                 <button onClick={handleSubmit} disabled={loading} className="btn-primary">
@@ -735,7 +749,7 @@ export default function Settings() {
                     {activeTab === 'messaging' && renderMessagingTab()}
                     {activeTab === 'storefront' && canManageStorefront && (
                         <div className="max-w-4xl">
-                            <StorefrontSettings />
+                            <StorefrontSettings onDirtyChange={setStorefrontStatusDirty} />
                         </div>
                     )}
                     {activeTab === 'danger' && (

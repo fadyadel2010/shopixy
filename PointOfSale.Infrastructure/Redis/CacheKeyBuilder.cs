@@ -29,24 +29,6 @@ public static class CacheKeyBuilder
     }
 
     /// <summary>
-    /// Builds a cache key for a single product
-    /// Pattern: {instance}:tenant:{tenantId}:product:{productId}
-    /// </summary>
-    public static string ProductKey(string instanceName, Guid tenantId, Guid productId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:product:{productId:N}");
-    }
-
-    /// <summary>
-    /// Builds a cache key for all products list for a tenant
-    /// Pattern: {instance}:tenant:{tenantId}:products:all
-    /// </summary>
-    public static string ProductsAllKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:products:all");
-    }
-
-    /// <summary>
     /// Builds a pattern for all product-related keys for a tenant (for bulk invalidation)
     /// Pattern: {instance}:tenant:{tenantId}:product*
     /// </summary>
@@ -56,12 +38,12 @@ public static class CacheKeyBuilder
     }
 
     /// <summary>
-    /// Builds a cache key for products by category
-    /// Pattern: {instance}:tenant:{tenantId}:products:category:{categoryId}
+    /// Monotonic invalidation generation for all live Storefront product and
+    /// homepage-product cache entries owned by the tenant.
     /// </summary>
-    public static string ProductsByCategoryKey(string instanceName, Guid tenantId, Guid categoryId)
+    public static string StorefrontProductsInvalidationGenerationKey(string instanceName, Guid tenantId)
     {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:products:category:{categoryId:N}");
+        return $"{instanceName}:tenant:{tenantId:N}:cache-generation:storefront-products";
     }
 
     /// <summary>
@@ -92,26 +74,6 @@ public static class CacheKeyBuilder
     public static string ProductsListKey(string instanceName, Guid tenantId, string queryHash)
     {
         return Versioned($"{instanceName}:tenant:{tenantId:N}:products:list:{queryHash}");
-    }
-
-    /// <summary>
-    /// Builds a cache key for category tree (all categories)
-    /// Pattern: {instance}:tenant:{tenantId}:categories:tree
-    /// TTL: 30 minutes (categories are structural, low volatility)
-    /// </summary>
-    public static string CategoriesTreeKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:categories:tree");
-    }
-
-    /// <summary>
-    /// Builds a cache key for a single category by slug
-    /// Pattern: {instance}:tenant:{tenantId}:category:slug:{slug}
-    /// TTL: 30 minutes (categories are structural, low volatility)
-    /// </summary>
-    public static string CategoryBySlugKey(string instanceName, Guid tenantId, string slug)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:category:slug:{slug.ToLowerInvariant()}");
     }
 
     // =============================================================================
@@ -151,16 +113,6 @@ public static class CacheKeyBuilder
     }
 
     /// <summary>
-    /// Builds a cache key for homepage navigation categories.
-    /// Pattern: {instance}:tenant:{tenantId}:home:categories
-    /// TTL: 60 minutes (categories are structural, very low volatility)
-    /// </summary>
-    public static string HomeCategoriesKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:home:categories");
-    }
-
-    /// <summary>
     /// Builds a pattern for all homepage-related keys for a tenant (for bulk invalidation).
     /// Pattern: {instance}:tenant:{tenantId}:home:*
     /// 
@@ -172,45 +124,11 @@ public static class CacheKeyBuilder
         return $"{instanceName}:tenant:{tenantId:N}:home:*";
     }
 
-    /// <summary>
-    /// Builds a pattern for all category-related keys for a tenant (for bulk invalidation).
-    /// Pattern: {instance}:tenant:{tenantId}:categor*
-    /// 
-    /// RESERVED FOR FUTURE USE:
-    /// - This pattern key is NOT used in Phase 2.4 (Read-Only)
-    /// - Intended for future cache invalidation scenarios (e.g., when CategoryUpdatedEvent is implemented)
-    /// - Do NOT use in storefront-facing code until cache invalidation feature is implemented
-    /// </summary>
-    public static string CategoriesPatternKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:categor*";
-    }
-
     // =============================================================================
     // SEO & METADATA CACHE KEYS (Phase 3.0 - SEO APIs)
     // These keys are for SEO-specific cached data.
     // All SEO keys use the tenant:{tenantId}:seo:{type}:{identifier} pattern.
     // =============================================================================
-
-    /// <summary>
-    /// Builds a cache key for SEO metadata by type and slug.
-    /// Pattern: {instance}:tenant:{tenantId}:seo:meta:{type}:{slug}
-    /// TTL: 30 minutes
-    /// </summary>
-    public static string SeoMetadataKey(string instanceName, Guid tenantId, string type, string slug)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:seo:meta:{type.ToLowerInvariant()}:{slug.ToLowerInvariant()}";
-    }
-
-    /// <summary>
-    /// Builds a cache key for breadcrumbs by type and slug.
-    /// Pattern: {instance}:tenant:{tenantId}:seo:breadcrumbs:{type}:{slug}
-    /// TTL: 60 minutes
-    /// </summary>
-    public static string SeoBreadcrumbsKey(string instanceName, Guid tenantId, string type, string slug)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:seo:breadcrumbs:{type.ToLowerInvariant()}:{slug.ToLowerInvariant()}";
-    }
 
     /// <summary>
     /// Builds a cache key for slug resolution.
@@ -223,16 +141,6 @@ public static class CacheKeyBuilder
     }
 
     /// <summary>
-    /// Builds a cache key for sitemap.
-    /// Pattern: {instance}:tenant:{tenantId}:seo:sitemap
-    /// TTL: 6 hours
-    /// </summary>
-    public static string SeoSitemapKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:seo:sitemap";
-    }
-
-    /// <summary>
     /// Builds a cache key for robots.txt.
     /// Pattern: {instance}:tenant:{tenantId}:seo:robots
     /// TTL: 12 hours
@@ -240,15 +148,6 @@ public static class CacheKeyBuilder
     public static string SeoRobotsKey(string instanceName, Guid tenantId)
     {
         return $"{instanceName}:tenant:{tenantId:N}:seo:robots";
-    }
-
-    /// <summary>
-    /// Builds a pattern for all SEO-related keys for a tenant (for bulk invalidation).
-    /// Pattern: {instance}:tenant:{tenantId}:seo:*
-    /// </summary>
-    public static string SeoPatternKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:seo:*";
     }
 
     // =============================================================================
@@ -299,6 +198,32 @@ public static class CacheKeyBuilder
     }
 
     /// <summary>
+    /// Monotonic invalidation generation for the tenant shipping-method cache.
+    /// </summary>
+    public static string ShippingMethodsInvalidationGenerationKey(string instanceName, Guid tenantId)
+    {
+        return $"{instanceName}:tenant:{tenantId:N}:cache-generation:shipping-methods";
+    }
+
+    public static string StorefrontWishlistKey(string instanceName, Guid tenantId, Guid customerId)
+    {
+        return $"{instanceName}:tenant:{tenantId:N}:storefront:wishlist:{customerId:N}";
+    }
+
+    public static string StorefrontWishlistCountKey(string instanceName, Guid tenantId, Guid customerId)
+    {
+        return $"{instanceName}:tenant:{tenantId:N}:storefront:wishlist-count:{customerId:N}";
+    }
+
+    public static string StorefrontWishlistInvalidationGenerationKey(
+        string instanceName,
+        Guid tenantId,
+        Guid customerId)
+    {
+        return $"{instanceName}:tenant:{tenantId:N}:cache-generation:storefront-wishlist:{customerId:N}";
+    }
+
+    /// <summary>
     /// Builds a pattern for all shipping-related keys for a tenant (for invalidation).
     /// Pattern: {instance}:tenant:{tenantId}:shipping*
     /// </summary>
@@ -342,134 +267,15 @@ public static class CacheKeyBuilder
         return $"{instanceName}:tenant:{tenantId:N}:notification:*";
     }
 
-    // =============================================================================
-    // STORE CONFIG KEYS (Phase 7.1 - Theme & Store Config System)
-    // These keys are for store configuration cached data.
-    // Store config uses the tenant:{tenantId}:store:config pattern.
-    // TTL: 30 minutes (config changes are infrequent)
-    // =============================================================================
-
-    /// <summary>
-    /// Builds a cache key for store configuration.
-    /// Pattern: {instance}:tenant:{tenantId}:store:config
-    /// TTL: 30 minutes
-    /// </summary>
-    /// <param name="instanceName">Redis instance name</param>
-    /// <param name="tenantId">Tenant identifier</param>
-    public static string StoreConfigKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:store:config");
-    }
-
-    /// <summary>
-    /// Builds a pattern for all store-related keys for a tenant (for bulk invalidation).
-    /// Pattern: {instance}:tenant:{tenantId}:store:*
-    /// </summary>
-    public static string StorePatternKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:store:*";
-    }
-
-    // =============================================================================
-    // PROMOTION CACHE KEYS (Promotions Engine)
-    // These keys are for caching active promotions.
-    // Promotions use the tenant:{tenantId}:promotions:{type} pattern.
-    // TTL: 90 seconds (promotions need quick expiration for accuracy)
-    // =============================================================================
-
-    /// <summary>
-    /// Builds a cache key for all active promotions for a tenant.
-    /// Pattern: {instance}:tenant:{tenantId}:promotions:active
-    /// TTL: 90 seconds
-    /// </summary>
-    /// <param name="instanceName">Redis instance name</param>
-    /// <param name="tenantId">Tenant identifier</param>
-    public static string PromotionsActiveKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:promotions:active");
-    }
-
-    /// <summary>
-    /// Builds a cache key for product-specific promotions.
-    /// Pattern: {instance}:tenant:{tenantId}:promotions:product:{productId}
-    /// TTL: 90 seconds
-    /// </summary>
-    public static string PromotionsByProductKey(string instanceName, Guid tenantId, Guid productId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:promotions:product:{productId:N}");
-    }
-
-    /// <summary>
-    /// Builds a cache key for category-specific promotions.
-    /// Pattern: {instance}:tenant:{tenantId}:promotions:category:{categoryId}
-    /// TTL: 90 seconds
-    /// </summary>
-    public static string PromotionsByCategoryKey(string instanceName, Guid tenantId, Guid categoryId)
-    {
-        return Versioned($"{instanceName}:tenant:{tenantId:N}:promotions:category:{categoryId:N}");
-    }
-
-    /// <summary>
-    /// Builds a pattern for all promotion-related keys for a tenant (for bulk invalidation).
-    /// Pattern: {instance}:tenant:{tenantId}:promotions:*
-    /// Used for cache invalidation when promotions are created/updated/deleted.
-    /// </summary>
-    public static string PromotionsPatternKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:tenant:{tenantId:N}:promotions:*";
-    }
-
-    public static string HomepagePublishedScopeKey(string instanceName, Guid? tenantId)
-    {
-        return Versioned($"{instanceName}:homepage:{ScopeToken(tenantId)}:published");
-    }
-
-    public static string CmsPagesScopeKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:cms:{tenantId:N}:scope");
-    }
-
     public static string MarketplaceCmsPagesKey(string instanceName)
     {
         return Versioned($"{instanceName}:marketplace:cms:scope");
     }
 
-    public static string StorefrontFooterKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:footer:{tenantId:N}");
-    }
-
-    public static string StorefrontFooterPatternKey(string instanceName)
-    {
-        return $"{instanceName}:footer:*";
-    }
-
-    /// <summary>
-    /// Builds a tenant-scoped pattern for footer keys (for targeted invalidation).
-    /// Pattern: {instance}:footer:{tenantId}*
-    /// Prefer this over the global overload to avoid cross-tenant invalidation.
-    /// </summary>
-    public static string StorefrontFooterPatternKey(string instanceName, Guid tenantId)
-    {
-        return $"{instanceName}:footer:{tenantId:N}*";
-    }
-
-
     public static string MarketplaceFooterKey(string instanceName)
     {
         return Versioned($"{instanceName}:marketplace:footer");
     }
-
-    /// <summary>
-    /// Builds a cache key for storefront homepage (requires tenantId — compile-time safety).
-    /// Pattern: {instance}:homepage:{tenantId}:published:v1
-    /// Use this for storefront-scoped homepage requests.
-    /// </summary>
-    public static string StorefrontHomepageKey(string instanceName, Guid tenantId)
-    {
-        return Versioned($"{instanceName}:homepage:{tenantId:N}:published");
-    }
-
 
     public static string MarketplaceProductsListKey(string instanceName, Guid? tenantId, string filtersHash)
     {

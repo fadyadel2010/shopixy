@@ -36,17 +36,19 @@ function getYoutubeEmbedUrl(url: string, autoplay: boolean, showControls: boolea
     }
 }
 
-const VideoBlock: React.FC<any> = ({ videoUrl, autoplay, showControls }) => {
+const VideoBlock: React.FC<any> = ({ title, videoUrl, autoplay, showControls, aspectRatio = '16:9' }) => {
     const embedUrl = getYoutubeEmbedUrl(videoUrl, Boolean(autoplay), showControls !== false);
+    const frameStyle = { aspectRatio: String(aspectRatio).replace(':', '/') };
 
     return (
         <section className="py-12 px-4 container mx-auto">
+            {title ? <h2 className="mb-6 text-2xl font-bold text-text">{title}</h2> : null}
             {embedUrl ? (
                 <div className="overflow-hidden rounded-2xl border border-muted/20 bg-black shadow-sm">
-                    <div className="aspect-video">
+                    <div style={frameStyle}>
                         <iframe
                             src={embedUrl}
-                            title="Storefront video"
+                            title={title || 'Storefront video'}
                             className="h-full w-full"
                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                             allowFullScreen
@@ -57,7 +59,8 @@ const VideoBlock: React.FC<any> = ({ videoUrl, autoplay, showControls }) => {
                 <div className="overflow-hidden rounded-2xl border border-muted/20 bg-black shadow-sm">
                     <video
                         src={videoUrl}
-                        className="aspect-video h-full w-full"
+                        className="h-full w-full"
+                        style={frameStyle}
                         autoPlay={Boolean(autoplay)}
                         controls={showControls !== false}
                         muted={Boolean(autoplay)}

@@ -27,13 +27,9 @@ namespace PointOfSale.API.Services.Storefront;
 /// - Is fully self-contained within the Read Side
 /// - Uses ONLY read-only repository interfaces
 /// 
-/// Read Flow (strict order for all sections):
-/// 1. Build Redis cache key
-/// 2. Try Redis cache FIRST (cache-first mindset)
-/// 3. Cache HIT → Return cached data
-/// 4. Cache MISS → Query data source (MongoDB or Elasticsearch)
-/// 5. Populate Redis cache (best-effort, fire-and-forget)
-/// 6. Return mapped DTOs
+/// Product shelf flow uses generation-fenced Redis read-through entries over
+/// MongoDB/Elasticsearch candidates and current SQL recomposition. Homepage
+/// categories read current SQL authority directly and are not cached.
 /// 
 /// Error Semantics:
 /// - Redis failures → Log as WARNING, continue to data source (never return 503)
@@ -42,7 +38,7 @@ namespace PointOfSale.API.Services.Storefront;
 /// - 503 SERVICE_UNAVAILABLE is returned ONLY when candidate retrieval or SQL revalidation fails
 /// 
 /// Design Principles:
-/// - Cache-first mindset (Redis is the primary data source for performance)
+/// - Redis is an optimization owned by the product shelf read paths
 /// - MongoDB is a projection candidate store; PostgreSQL remains business truth
 /// - All operations are tenant-scoped
 /// - Cache failures never break the request
@@ -96,12 +92,6 @@ public class StorefrontHomeService : IStorefrontHomeService
     /// </summary>
     private const int BestSellersCacheTtlMinutes = 15;
     
-    /// <summary>
-    /// TTL for Homepage Categories cache (60 minutes).
-    /// Categories are structural and change very infrequently.
-    /// </summary>
-    private const int HomepageCategoriesCacheTtlMinutes = 60;
-
     public StorefrontHomeService(
         IProductReadRepository productRepository,
         ICategoryReadRepository categoryRepository,
@@ -131,14 +121,19 @@ public class StorefrontHomeService : IStorefrontHomeService
     {
         const string sectionName = "FeaturedProducts";
         var cacheKey = CacheKeyBuilder.HomeFeaturedProductsKey(_redisSettings.InstanceName, tenantId);
+        if (affiliateModeOnly)
+        {
+            cacheKey += ":affiliate";
+        }
 
         _logger.LogDebug(
             "{SectionName} starting | TenantId: {TenantId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
             sectionName, tenantId, affiliateModeOnly, cacheKey, correlationId);
 
-        var cached = await _cacheService.GetOrCreateAsync(
+        var cached = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-home-featured",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(FeaturedProductsCacheTtlMinutes),
             async ct =>
             {
@@ -162,12 +157,17 @@ public class StorefrontHomeService : IStorefrontHomeService
                 }
 
                 var dtos = documents.Select(MapToListItemDto).ToList();
-                var lastSyncedAtUtc = documents.Count == 0
-                    ? (DateTime?)null
-                    : documents.Max(document => document.SyncedAtUtc);
+                var latestDocument = documents
+                    .OrderByDescending(document => document.SyncedAtUtc)
+                    .FirstOrDefault();
 
-                return CachePopulationResult<List<ProductListItemDto>>.FromValue(dtos, lastSyncedAtUtc);
+                return CachePopulationResult<List<ProductListItemDto>>.FromValue(
+                    dtos,
+                    latestDocument?.SyncedAtUtc,
+                    latestDocument?.LastEventOccurredAtUtc,
+                    skipCache: latestDocument?.LastEventOccurredAtUtc == null);
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken)
             ?? new List<ProductListItemDto>();
 
@@ -193,14 +193,19 @@ public class StorefrontHomeService : IStorefrontHomeService
     {
         const string sectionName = "NewArrivals";
         var cacheKey = CacheKeyBuilder.HomeNewArrivalsKey(_redisSettings.InstanceName, tenantId);
+        if (affiliateModeOnly)
+        {
+            cacheKey += ":affiliate";
+        }
 
         _logger.LogDebug(
             "{SectionName} starting | TenantId: {TenantId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
             sectionName, tenantId, affiliateModeOnly, cacheKey, correlationId);
 
-        var cached = await _cacheService.GetOrCreateAsync(
+        var cached = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-home-new-arrivals",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(NewArrivalsCacheTtlMinutes),
             async ct =>
             {
@@ -224,12 +229,17 @@ public class StorefrontHomeService : IStorefrontHomeService
                 }
 
                 var dtos = documents.Select(MapToListItemDto).ToList();
-                var lastSyncedAtUtc = documents.Count == 0
-                    ? (DateTime?)null
-                    : documents.Max(document => document.SyncedAtUtc);
+                var latestDocument = documents
+                    .OrderByDescending(document => document.SyncedAtUtc)
+                    .FirstOrDefault();
 
-                return CachePopulationResult<List<ProductListItemDto>>.FromValue(dtos, lastSyncedAtUtc);
+                return CachePopulationResult<List<ProductListItemDto>>.FromValue(
+                    dtos,
+                    latestDocument?.SyncedAtUtc,
+                    latestDocument?.LastEventOccurredAtUtc,
+                    skipCache: latestDocument?.LastEventOccurredAtUtc == null);
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken)
             ?? new List<ProductListItemDto>();
 
@@ -255,14 +265,19 @@ public class StorefrontHomeService : IStorefrontHomeService
     {
         const string sectionName = "BestSellers";
         var cacheKey = CacheKeyBuilder.HomeBestSellersKey(_redisSettings.InstanceName, tenantId);
+        if (affiliateModeOnly)
+        {
+            cacheKey += ":affiliate";
+        }
 
         _logger.LogDebug(
             "{SectionName} starting | TenantId: {TenantId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
             sectionName, tenantId, affiliateModeOnly, cacheKey, correlationId);
 
-        var cached = await _cacheService.GetOrCreateAsync(
+        var cached = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-home-best-sellers",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(BestSellersCacheTtlMinutes),
             async ct =>
             {
@@ -316,12 +331,17 @@ public class StorefrontHomeService : IStorefrontHomeService
                     .Select(MapToListItemDto)
                     .ToList();
 
-                var lastSyncedAtUtc = filteredDocuments.Count == 0
-                    ? (DateTime?)null
-                    : filteredDocuments.Max(document => document.SyncedAtUtc);
+                var latestDocument = filteredDocuments
+                    .OrderByDescending(document => document.SyncedAtUtc)
+                    .FirstOrDefault();
 
-                return CachePopulationResult<List<ProductListItemDto>>.FromValue(dtos, lastSyncedAtUtc);
+                return CachePopulationResult<List<ProductListItemDto>>.FromValue(
+                    dtos,
+                    latestDocument?.SyncedAtUtc,
+                    latestDocument?.LastEventOccurredAtUtc,
+                    skipCache: latestDocument?.LastEventOccurredAtUtc == null);
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken)
             ?? new List<ProductListItemDto>();
 
@@ -424,46 +444,19 @@ public class StorefrontHomeService : IStorefrontHomeService
         CancellationToken cancellationToken = default)
     {
         const string sectionName = "HomepageCategories";
-        var cacheKey = CacheKeyBuilder.HomeCategoriesKey(_redisSettings.InstanceName, tenantId);
 
         _logger.LogDebug(
-            "{SectionName} starting | TenantId: {TenantId} | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
-            sectionName, tenantId, cacheKey, correlationId);
+            "{SectionName} starting | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+            sectionName, tenantId, correlationId);
 
-        var cached = await _cacheService.GetOrCreateAsync(
-            cacheKey,
-            "storefront-home-categories",
-            TimeSpan.FromMinutes(HomepageCategoriesCacheTtlMinutes),
-            async ct =>
-            {
-                List<CategoryDocument> documents;
-                try
-                {
-                    documents = await _categoryRepository.GetTopLevelCategoriesAsync(tenantId, ct);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex,
-                        "MongoDB query failed | Section: {SectionName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                        sectionName,
-                        tenantId,
-                        correlationId);
-                    throw;
-                }
-
-                var dtos = documents.Select(MapToCategoryDto).ToList();
-                var lastSyncedAtUtc = documents.Count == 0
-                    ? (DateTime?)null
-                    : documents.Max(document => document.SyncedAtUtc);
-
-                return CachePopulationResult<List<CategoryReadDto>>.FromValue(dtos, lastSyncedAtUtc);
-            },
-            cancellationToken: cancellationToken)
-            ?? new List<CategoryReadDto>();
+        var documents = await _categoryRepository.GetTopLevelCategoriesAsync(
+            tenantId,
+            cancellationToken);
+        var categories = documents.Select(MapToCategoryDto).ToList();
 
         return await RecomposeHomepageCategoriesFromSqlAuthorityAsync(
             tenantId,
-            cached,
+            categories,
             sectionName,
             correlationId,
             cancellationToken);
@@ -640,7 +633,7 @@ public class StorefrontHomeService : IStorefrontHomeService
         if (!await TenantLineageAuthority.IsActiveTenantAsync(_dbContext, tenantId, cancellationToken))
         {
             _logger.LogWarning(
-                "Homepage category cache suppressed because tenant SQL lineage is inactive or missing | Section: {SectionName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+                "Homepage categories suppressed because tenant SQL lineage is inactive or missing | Section: {SectionName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
                 sectionName,
                 tenantId,
                 correlationId);
@@ -688,7 +681,7 @@ public class StorefrontHomeService : IStorefrontHomeService
         if (recomposed.Count != projectedCategories.Count)
         {
             _logger.LogWarning(
-                "Homepage category cache converged from SQL tenant/category authority | Section: {SectionName} | TenantId: {TenantId} | ProjectedCount: {ProjectedCount} | SqlVisibleCount: {SqlVisibleCount} | CorrelationId: {CorrelationId}",
+                "Homepage categories composed from SQL tenant/category authority | Section: {SectionName} | TenantId: {TenantId} | ProjectedCount: {ProjectedCount} | SqlVisibleCount: {SqlVisibleCount} | CorrelationId: {CorrelationId}",
                 sectionName,
                 tenantId,
                 projectedCategories.Count,

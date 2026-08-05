@@ -6,11 +6,9 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
-using PointOfSale.Infrastructure.Redis;
 using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Utilities;
-using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -34,7 +32,7 @@ public class ShippingMethodProjectionConsumer :
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IShippingMethodReadRepository _repository;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IShippingMethodCacheService _cache;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<ShippingMethodProjectionConsumer> _logger;
     private const string ConsumerName = nameof(ShippingMethodProjectionConsumer);
@@ -42,13 +40,13 @@ public class ShippingMethodProjectionConsumer :
     public ShippingMethodProjectionConsumer(
         ApplicationDbContext dbContext,
         IShippingMethodReadRepository repository,
-        IConnectionMultiplexer redis,
+        IShippingMethodCacheService cache,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<ShippingMethodProjectionConsumer> logger)
     {
         _dbContext = dbContext;
         _repository = repository;
-        _redis = redis;
+        _cache = cache;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
     }
@@ -175,7 +173,7 @@ public class ShippingMethodProjectionConsumer :
             }
 
             // Step 4: Invalidate Redis cache
-            await InvalidateCacheAsync(@event.TenantId.Value, correlationId);
+            await InvalidateCacheAsync(@event.TenantId.Value, correlationId, context.CancellationToken);
             await fence.CompleteAsync(@event, key, context.CancellationToken);
         }
         catch (Exception ex)
@@ -294,34 +292,20 @@ public class ShippingMethodProjectionConsumer :
             shippingMethodId,
             applied);
 
-        await InvalidateCacheAsync(tenantId, correlationId);
+        await InvalidateCacheAsync(tenantId, correlationId, cancellationToken);
     }
 
-    private async Task InvalidateCacheAsync(Guid tenantId, string correlationId)
+    private async Task InvalidateCacheAsync(
+        Guid tenantId,
+        string correlationId,
+        CancellationToken cancellationToken)
     {
-        try
-        {
-            var db = _redis.GetDatabase();
-            // Use the standard cache key pattern from CacheKeyBuilder
-            var cacheKey = $"pos:tenant:{tenantId:N}:shipping-methods";
-            
-            var deleted = await db.KeyDeleteAsync(cacheKey);
-            
-            _logger.LogInformation(
-                "Redis cache invalidated | Key: {Key} | TenantId: {TenantId} | Deleted: {Deleted} | CorrelationId: {CorrelationId}",
-                cacheKey,
-                tenantId,
-                deleted,
-                correlationId);
-        }
-        catch (Exception ex)
-        {
-            // Cache invalidation failure is non-fatal
-            _logger.LogWarning(ex,
-                "Failed to invalidate Redis cache (non-fatal) | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                tenantId,
-                correlationId);
-        }
+        await _cache.InvalidateAsync(tenantId, cancellationToken);
+
+        _logger.LogInformation(
+            "Shipping-method cache invalidated through canonical owner | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+            tenantId,
+            correlationId);
     }
 
     private async Task<string> ResolveTenantCurrencyAsync(Guid tenantId, CancellationToken cancellationToken)

@@ -41,6 +41,7 @@ using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Documents.Affiliate;
 using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Infrastructure.Redis.Configuration;
+using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Infrastructure.Treasury;
 using PointOfSale.Tests.Infrastructure;
 using StackExchange.Redis;
@@ -2149,9 +2150,8 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
 
         var variantProjectionConsumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings { InstanceName = "stock-con-06-test" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
         var productStockConsumer = new ProductStockChangedConsumer(
             mongoDatabase,
@@ -2475,16 +2475,16 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
         return multiplexer;
     }
 
-    private static Mock<IProductSearchIndexService> CreateProductSearchIndexServiceMock()
+    private static Mock<IUnifiedSearchIndexService> CreateProductSearchIndexServiceMock()
     {
-        var service = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var service = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         service
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         service
-            .Setup(entry => entry.DeleteAsync(
+            .Setup(entry => entry.DeleteProductAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))

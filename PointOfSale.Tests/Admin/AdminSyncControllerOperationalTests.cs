@@ -20,10 +20,13 @@ public sealed class AdminSyncControllerOperationalTests
         var tenantId = Guid.NewGuid();
         await using var dbContext = CreateDbContext(tenantId);
         var projectionWriter = new Mock<IProductSqlAuthorityProjectionWriter>(MockBehavior.Strict);
-        var cacheService = new Mock<IProductCacheService>(MockBehavior.Strict);
+        var cacheService = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Strict);
         cacheService
-            .Setup(service => service.InvalidateAllProductsAsync(tenantId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Setup(service => service.InvalidateTenantAsync(
+                tenantId,
+                true,
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var controller = CreateController(dbContext, projectionWriter.Object, cacheService.Object, tenantId);
 
@@ -31,7 +34,10 @@ public sealed class AdminSyncControllerOperationalTests
 
         Assert.IsType<OkObjectResult>(result);
         cacheService.Verify(
-            service => service.InvalidateAllProductsAsync(tenantId, It.IsAny<CancellationToken>()),
+            service => service.InvalidateTenantAsync(
+                tenantId,
+                true,
+                It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -64,14 +70,15 @@ public sealed class AdminSyncControllerOperationalTests
             .ReturnsAsync(new ProductSqlAuthorityProjectionWriteResult(
                 ProductSqlAuthorityProjectionWriteDisposition.Upserted));
 
-        var cacheService = new Mock<IProductCacheService>(MockBehavior.Strict);
+        var cacheService = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Strict);
         cacheService
             .Setup(service => service.InvalidateProductAsync(
                 tenantId,
                 productId,
                 "repair-product",
+                true,
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Returns(Task.CompletedTask);
 
         var controller = CreateController(dbContext, projectionWriter.Object, cacheService.Object, tenantId);
 
@@ -94,7 +101,7 @@ public sealed class AdminSyncControllerOperationalTests
     private static AdminSyncController CreateController(
         ApplicationDbContext dbContext,
         IProductSqlAuthorityProjectionWriter projectionWriter,
-        IProductCacheService cacheService,
+        IStorefrontProductCacheInvalidator cacheService,
         Guid tenantId) =>
         new(
             dbContext,

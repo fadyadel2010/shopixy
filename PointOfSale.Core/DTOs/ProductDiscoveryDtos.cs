@@ -75,6 +75,12 @@ public class ProductDiscoveryQuery
     public bool? HasVariants { get; set; }
 
     /// <summary>
+    /// Variant attribute filters encoded as canonical name=value pairs.
+    /// Multiple values are ANDed by Catalog Runtime.
+    /// </summary>
+    public List<string>? Attribute { get; set; }
+
+    /// <summary>
     /// Sort mode. 
     /// Default: relevance (uses _score for search, createdAt for browse)
     /// </summary>
@@ -126,6 +132,14 @@ public class ProductDiscoveryQuery
         // Validate language
         if (!string.IsNullOrEmpty(Lang) && Lang != "en" && Lang != "ar")
             return ("INVALID_LANGUAGE", "Language must be 'en' or 'ar'");
+
+        if (Attribute?.Any(value =>
+                string.IsNullOrWhiteSpace(value) ||
+                value.IndexOf('=') <= 0 ||
+                value.EndsWith('=')) == true)
+        {
+            return ("INVALID_ATTRIBUTE_FILTER", "Attribute filters must use the name=value format");
+        }
 
         return (null, null);
     }

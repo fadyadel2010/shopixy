@@ -248,6 +248,52 @@ public sealed class MarketplaceCmsPageWorkflowTests
     }
 
     [Fact]
+    public async Task VersionContract_CreateUpdateUpdatePublishDelete_AdoptsEveryMutationVersion()
+    {
+        await using var dbContext = CreateDbContext();
+        var service = CreateMarketplaceService(dbContext);
+
+        var created = await service.CreatePageAsync(
+            BuildMarketplaceRichTextRequest("lifecycle", "Lifecycle", "<p>v1</p>"));
+        Assert.Equal(1, created.Draft!.Version);
+
+        var firstUpdate = await service.UpdatePageAsync(
+            created.Id,
+            WithExpectedVersion(
+                BuildMarketplaceRichTextRequest("lifecycle", "Lifecycle", "<p>v2</p>"),
+                created.Draft.Version));
+        Assert.Equal(2, firstUpdate.Draft!.Version);
+
+        var secondUpdate = await service.UpdatePageAsync(
+            created.Id,
+            WithExpectedVersion(
+                BuildMarketplaceRichTextRequest("lifecycle", "Lifecycle", "<p>v3</p>"),
+                firstUpdate.Draft.Version));
+        Assert.Equal(3, secondUpdate.Draft!.Version);
+
+        await Assert.ThrowsAsync<ConcurrencyConflictException>(() => service.UpdatePageAsync(
+            created.Id,
+            WithExpectedVersion(
+                BuildMarketplaceRichTextRequest("lifecycle", "Lifecycle", "<p>stale</p>"),
+                firstUpdate.Draft.Version)));
+
+        var current = await service.GetPageAsync(created.Id);
+        Assert.Equal(3, current!.Draft!.Version);
+        Assert.Equal("<p>v3</p>", current.Draft.Content.GetString());
+        Assert.Equal(3, await dbContext.MarketplaceCmsPages.CountAsync(page => page.PageGroupId == created.Id));
+
+        var published = await service.PublishPageAsync(created.Id, current.Draft.Version);
+        Assert.Null(published.Draft);
+        Assert.Equal(3, published.Published!.Version);
+
+        await service.DeletePageAsync(created.Id, published.Published.Version);
+
+        Assert.Null(await service.GetPageAsync(created.Id));
+        Assert.False(await dbContext.MarketplaceCmsPages.AnyAsync(page =>
+            page.PageGroupId == created.Id && (page.IsDraft || page.IsPublished)));
+    }
+
+    [Fact]
     public async Task PublishPageAsync_RequiresExactDraftVersion()
     {
         await using var dbContext = CreateDbContext();
@@ -315,7 +361,6 @@ public sealed class MarketplaceCmsPageWorkflowTests
         return new CmsPageReadService(
             dbContext,
             StorefrontReadModelMongoTestHelper.CreateDatabase(dbContext),
-            new InMemoryStoreCmsPageCacheService(),
             NullLogger<CmsPageReadService>.Instance);
     }
 
@@ -419,36 +464,6 @@ public sealed class MarketplaceCmsPageWorkflowTests
         public Task InvalidatePublishedPagesAsync(CancellationToken cancellationToken = default)
         {
             _publishedPages = null;
-            return Task.CompletedTask;
-        }
-    }
-
-    private sealed class InMemoryStoreCmsPageCacheService : ICmsPageCacheService
-    {
-        private readonly Dictionary<Guid, IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto>> _publishedPages = new();
-
-        public Task<IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto>?> GetPublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages.TryGetValue(tenantId, out var pages);
-            return Task.FromResult(pages);
-        }
-
-        public Task SetPublishedScopeAsync(
-            Guid tenantId,
-            IReadOnlyList<PointOfSale.API.DTOs.Storefront.CmsPageDto> pages,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages[tenantId] = pages;
-            return Task.CompletedTask;
-        }
-
-        public Task InvalidatePublishedScopeAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _publishedPages.Remove(tenantId);
             return Task.CompletedTask;
         }
     }

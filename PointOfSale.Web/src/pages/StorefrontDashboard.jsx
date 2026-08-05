@@ -2,7 +2,7 @@
  * Storefront Dashboard
  * Phase 9.8: POS Integration - Unified Admin Experience
  *
- * Overview page for storefront settings and quick actions
+ * Read-only Storefront administration overview and navigation
  */
 
 import { useNavigate } from 'react-router-dom'
@@ -10,13 +10,12 @@ import { useTranslation } from 'react-i18next'
 import {
     ArrowRight,
     FileText,
-    Grid,
     History,
     Home,
     Link2,
     Palette,
+    PanelsTopLeft,
     Share2,
-    ShoppingBag,
 } from 'lucide-react'
 import StorefrontStatusCard from '../components/StorefrontStatusCard'
 import WishlistAnalyticsCard from '../components/WishlistAnalyticsCard'
@@ -27,30 +26,21 @@ import { useAuthStore } from '../store/authStore'
 const PAGE_CARDS = [
     {
         key: 'home',
-        route: '/storefront/builder?page=home',
+        route: '/storefront/homepage',
         icon: Home,
-        labelEn: 'Home Page',
+        labelEn: 'Homepage',
         labelAr: '\u0627\u0644\u0635\u0641\u062D\u0629 \u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629',
         descEn: 'Customize your storefront homepage with hero banners, featured products, and more.',
         descAr: '\u062E\u0635\u0635 \u0627\u0644\u0635\u0641\u062D\u0629 \u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629 \u0644\u0645\u062A\u062C\u0631\u0643 \u0628\u0627\u0644\u0628\u0627\u0646\u0631\u0627\u062A \u0648\u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A \u0627\u0644\u0645\u0645\u064A\u0632\u0629 \u0648\u0627\u0644\u0645\u0632\u064A\u062F.',
     },
     {
-        key: 'product',
-        route: '/storefront/builder?page=product',
-        icon: ShoppingBag,
-        labelEn: 'Product Page',
-        labelAr: '\u0635\u0641\u062D\u0629 \u0627\u0644\u0645\u0646\u062A\u062C',
-        descEn: 'Design how individual products are displayed to customers.',
-        descAr: '\u0635\u0645\u0645 \u0637\u0631\u064A\u0642\u0629 \u0639\u0631\u0636 \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A \u0627\u0644\u0641\u0631\u062F\u064A\u0629 \u0644\u0644\u0639\u0645\u0644\u0627\u0621.',
-    },
-    {
-        key: 'category',
-        route: '/storefront/builder?page=category',
-        icon: Grid,
-        labelEn: 'Category Page',
-        labelAr: '\u0635\u0641\u062D\u0629 \u0627\u0644\u062A\u0635\u0646\u064A\u0641',
-        descEn: 'Customize category listings and product grids.',
-        descAr: '\u062E\u0635\u0635 \u0642\u0648\u0627\u0626\u0645 \u0627\u0644\u062A\u0635\u0646\u064A\u0641\u0627\u062A \u0648\u0634\u0628\u0643\u0627\u062A \u0627\u0644\u0645\u0646\u062A\u062C\u0627\u062A.',
+        key: 'product-template',
+        route: '/storefront/catalog/product-template',
+        icon: PanelsTopLeft,
+        labelEn: 'Product Template',
+        labelAr: '\u0642\u0627\u0644\u0628 \u0627\u0644\u0645\u0646\u062A\u062C',
+        descEn: 'Manage the supplemental layout used by Product Details.',
+        descAr: '\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u062A\u062E\u0637\u064A\u0637 \u0627\u0644\u0625\u0636\u0627\u0641\u064A \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645 \u0641\u064A \u062A\u0641\u0627\u0635\u064A\u0644 \u0627\u0644\u0645\u0646\u062A\u062C.',
     },
 ]
 
@@ -66,12 +56,12 @@ export default function StorefrontDashboard() {
         <div className="mx-auto max-w-6xl">
             <div className="mb-8">
                 <h1 className="text-2xl font-bold text-gray-900">
-                    {isRTL ? '\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0645\u062A\u062C\u0631 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A' : 'Storefront Settings'}
+                    {isRTL ? '\u0646\u0638\u0631\u0629 \u0639\u0627\u0645\u0629' : 'Overview'}
                 </h1>
                 <p className="mt-1 text-gray-600">
                     {isRTL
                         ? '\u062A\u062E\u0635\u064A\u0635 \u0645\u0638\u0647\u0631 \u0648\u062A\u0635\u0645\u064A\u0645 \u0645\u062A\u062C\u0631\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A'
-                        : 'Customize the appearance and design of your online store'}
+                        : 'Review Storefront status and open each owning administration screen.'}
                 </p>
             </div>
 
@@ -89,7 +79,7 @@ export default function StorefrontDashboard() {
 
             <div className="mb-8">
                 <h2 className="mb-4 text-lg font-semibold text-gray-900">
-                    {isRTL ? '\u062A\u062E\u0635\u064A\u0635 \u0627\u0644\u0635\u0641\u062D\u0627\u062A' : 'Customize Pages'}
+                    {isRTL ? '\u062A\u0631\u0643\u064A\u0628 \u0627\u0644\u0645\u062A\u062C\u0631' : 'Storefront Composition'}
                 </h2>
                 <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
                     {PAGE_CARDS.map((page) => {
@@ -124,7 +114,7 @@ export default function StorefrontDashboard() {
                         </div>
                         <div>
                             <h3 className="text-lg font-semibold text-gray-900">
-                                {isRTL ? '\u0627\u0644\u0623\u0644\u0648\u0627\u0646 \u0648\u0627\u0644\u062E\u0637\u0648\u0637' : 'Theme & Colors'}
+                                {isRTL ? '\u0627\u0644\u0645\u0638\u0647\u0631' : 'Appearance'}
                             </h3>
                             <p className="text-sm text-gray-500">
                                 {isRTL ? '\u062A\u062E\u0635\u064A\u0635 \u0623\u0644\u0648\u0627\u0646 \u0648\u062E\u0637\u0648\u0637 \u0627\u0644\u0645\u062A\u062C\u0631' : 'Customize store colors and fonts'}
@@ -132,10 +122,10 @@ export default function StorefrontDashboard() {
                         </div>
                     </div>
                     <button
-                        onClick={() => navigate('/storefront/themes')}
+                        onClick={() => navigate('/storefront/appearance/themes')}
                         className="w-full rounded-lg border border-purple-200 py-2 text-sm font-medium text-purple-600 transition-colors hover:bg-purple-50"
                     >
-                        {isRTL ? '\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0645\u0638\u0647\u0631' : 'Edit Theme'}
+                        {isRTL ? '\u0639\u0631\u0636 \u0627\u0644\u0642\u0648\u0627\u0644\u0628' : 'Open Themes'}
                     </button>
                 </div>
 
@@ -146,7 +136,7 @@ export default function StorefrontDashboard() {
                         </div>
                         <div>
                             <h3 className="text-lg font-semibold text-gray-900">
-                                {isRTL ? '\u0633\u062C\u0644 \u0627\u0644\u0625\u0635\u062F\u0627\u0631\u0627\u062A' : 'Version History'}
+                                {isRTL ? '\u0633\u062C\u0644 \u0625\u0635\u062F\u0627\u0631\u0627\u062A StoreConfig' : 'StoreConfig Version History'}
                             </h3>
                             <p className="text-sm text-gray-500">
                                 {isRTL ? '\u0639\u0631\u0636 \u0648\u0627\u0633\u062A\u0639\u0627\u062F\u0629 \u0627\u0644\u0625\u0635\u062F\u0627\u0631\u0627\u062A \u0627\u0644\u0633\u0627\u0628\u0642\u0629' : 'View and restore previous versions'}
@@ -154,7 +144,7 @@ export default function StorefrontDashboard() {
                         </div>
                     </div>
                     <button
-                        onClick={() => navigate('/storefront/versions')}
+                        onClick={() => navigate('/storefront/storeconfig-version-history')}
                         className="w-full rounded-lg border border-orange-200 py-2 text-sm font-medium text-orange-600 transition-colors hover:bg-orange-50"
                     >
                         {isRTL ? '\u0639\u0631\u0636 \u0627\u0644\u0633\u062C\u0644' : 'View History'}
@@ -175,7 +165,7 @@ export default function StorefrontDashboard() {
                             </div>
                             <div>
                                 <h3 className="text-lg font-semibold text-gray-900">
-                                    {isRTL ? '\u0635\u0641\u062D\u0627\u062A \u0627\u0644\u0645\u062D\u062A\u0648\u0649' : 'CMS Pages'}
+                                    {isRTL ? '\u0627\u0644\u0635\u0641\u062D\u0627\u062A' : 'Pages'}
                                 </h3>
                                 <p className="text-sm text-gray-500">
                                     {isRTL ? '\u0625\u062F\u0627\u0631\u0629 \u0635\u0641\u062D\u0627\u062A \u0645\u0646 \u0646\u062D\u0646\u060C \u0627\u062A\u0635\u0644 \u0628\u0646\u0627\u060C \u0627\u0644\u062E\u0635\u0648\u0635\u064A\u0629' : 'Manage About, Contact, Privacy pages'}
@@ -183,7 +173,7 @@ export default function StorefrontDashboard() {
                             </div>
                         </div>
                         <button
-                            onClick={() => navigate('/storefront/cms/pages')}
+                            onClick={() => navigate('/storefront/content/pages')}
                             className="w-full rounded-lg border border-emerald-200 py-2 text-sm font-medium text-emerald-600 transition-colors hover:bg-emerald-50"
                         >
                             {isRTL ? '\u0625\u062F\u0627\u0631\u0629 \u0627\u0644\u0635\u0641\u062D\u0627\u062A' : 'Manage Pages'}
@@ -205,7 +195,7 @@ export default function StorefrontDashboard() {
                             </div>
                         </div>
                         <button
-                            onClick={() => navigate('/storefront/cms/navigation')}
+                            onClick={() => navigate('/storefront/navigation?view=header')}
                             className="w-full rounded-lg border border-sky-200 py-2 text-sm font-medium text-sky-600 transition-colors hover:bg-sky-50"
                         >
                             {isRTL ? '\u062A\u0639\u062F\u064A\u0644 \u0627\u0644\u0642\u0648\u0627\u0626\u0645' : 'Edit Navigation'}
@@ -219,7 +209,7 @@ export default function StorefrontDashboard() {
                             </div>
                             <div>
                                 <h3 className="text-lg font-semibold text-gray-900">
-                                    {isRTL ? '\u0627\u0644\u0641\u0648\u062A\u0631 \u0648\u0627\u0644\u062A\u0648\u0627\u0635\u0644' : 'Footer & Social'}
+                                    {isRTL ? '\u0645\u062D\u062A\u0648\u0649 \u0627\u0644\u062A\u0630\u064A\u064A\u0644' : 'Footer Content'}
                                 </h3>
                                 <p className="text-sm text-gray-500">
                                     {isRTL ? '\u0625\u062F\u0627\u0631\u0629 \u0623\u0642\u0633\u0627\u0645 \u0627\u0644\u0641\u0648\u062A\u0631 \u0648\u0631\u0648\u0627\u0628\u0637 \u0635\u0641\u062D\u0627\u062A \u0627\u0644\u0645\u062D\u062A\u0648\u0649 \u0648\u062D\u0633\u0627\u0628\u0627\u062A \u0627\u0644\u062A\u0648\u0627\u0635\u0644' : 'Manage footer sections, CMS links, and social profiles'}
@@ -227,10 +217,10 @@ export default function StorefrontDashboard() {
                             </div>
                         </div>
                         <button
-                            onClick={() => navigate('/storefront/cms/footer')}
+                            onClick={() => navigate('/storefront/footer-content')}
                             className="w-full rounded-lg border border-violet-200 py-2 text-sm font-medium text-violet-600 transition-colors hover:bg-violet-50"
                         >
-                            {isRTL ? '\u062A\u062D\u0631\u064A\u0631 \u0627\u0644\u0641\u0648\u062A\u0631' : 'Edit Footer'}
+                            {isRTL ? '\u062A\u062D\u0631\u064A\u0631 \u0645\u062D\u062A\u0648\u0649 \u0627\u0644\u062A\u0630\u064A\u064A\u0644' : 'Edit Footer Content'}
                         </button>
                     </div>
                 </div>

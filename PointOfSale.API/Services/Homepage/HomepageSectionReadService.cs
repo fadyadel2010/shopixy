@@ -21,20 +21,17 @@ public sealed class HomepageSectionReadService : IHomepageSectionReadService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IHomepageSectionSchemaRegistry _schemaRegistry;
-    private readonly IHomepageSectionCacheService _cacheService;
     private readonly ICommerceHubPublicVendorVisibilityService _publicVendorVisibilityService;
     private readonly ILogger<HomepageSectionReadService> _logger;
 
     public HomepageSectionReadService(
         ApplicationDbContext dbContext,
         IHomepageSectionSchemaRegistry schemaRegistry,
-        IHomepageSectionCacheService cacheService,
         ICommerceHubPublicVendorVisibilityService publicVendorVisibilityService,
         ILogger<HomepageSectionReadService> logger)
     {
         _dbContext = dbContext;
         _schemaRegistry = schemaRegistry;
-        _cacheService = cacheService;
         _publicVendorVisibilityService = publicVendorVisibilityService;
         _logger = logger;
     }
@@ -110,20 +107,11 @@ public sealed class HomepageSectionReadService : IHomepageSectionReadService
         Guid? tenantId,
         CancellationToken cancellationToken)
     {
-        var cached = await _cacheService.GetPublishedScopeAsync(tenantId, cancellationToken);
-        if (cached != null)
-        {
-            return cached;
-        }
-
-        var fresh = await LoadScopeSectionsAsync(
+        return await LoadScopeSectionsAsync(
             tenantId,
             isDraft: false,
             activeOnly: true,
             cancellationToken);
-
-        await _cacheService.SetPublishedScopeAsync(tenantId, fresh, cancellationToken);
-        return fresh;
     }
 
     private async Task<IReadOnlyList<HomepageSectionDto>?> TryGetDraftScopeSectionsAsync(

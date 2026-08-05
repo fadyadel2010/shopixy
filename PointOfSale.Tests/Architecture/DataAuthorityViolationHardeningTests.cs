@@ -359,8 +359,8 @@ public sealed class DataAuthorityViolationHardeningTests
 
         Assert.DoesNotContain("using event data only", updated, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fallbackDocument", updated, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteAsync", created, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteAsync", stockPrice, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync", created, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync", stockPrice, StringComparison.Ordinal);
     }
 
     [Fact]

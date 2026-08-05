@@ -49,15 +49,14 @@ describe('Affiliate checkout frontend certification', () => {
 
     it('routes affiliate entry through the certified checkout route without a duplicate checkout page', () => {
         const router = readStorefront('app/router.tsx');
-        const themeCheckout = readStorefront('storefront/pages/default/checkout.tsx');
         const funnelHook = readStorefront('hooks/useAffiliateFunnel.ts');
         const endpoints = readStorefront('services/api/endpoints.ts');
 
         expect(router).toContain("path: '/p/:referralCode/:slug'");
         expect(router).toContain('<AffiliateLandingPage />');
         expect(router).toContain("path: '/checkout'");
-        expect(router).toContain('<ThemePageRoute pageName="checkout" />');
-        expect(themeCheckout).toContain("export { CheckoutPage as default } from '../../../pages/CheckoutPage'");
+        expect(router).toContain('<CheckoutPage />');
+        expect(router).not.toContain('ThemePageRoute');
         expect(funnelHook).toContain('startAffiliateFunnel(request');
         expect(funnelHook).toContain('navigate(response.checkoutUrl)');
         expect(endpoints).toContain("FUNNEL_START: '/api/storefront/funnel/start'");

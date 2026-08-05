@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Memory;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
@@ -16,8 +15,6 @@ namespace PointOfSale.API.Services;
 ///
 /// PRODUCTION HARDENING:
 /// - URL normalization: No double-slashes in generated URLs
-/// - Caching: ResolveByTenantIdAsync uses IMemoryCache (5 min TTL)
-/// - Cache eviction: EvictCache(tenantId) when tenant settings change
 ///
 /// ARCHITECTURAL INVARIANTS:
 /// - ALL storefront links MUST use this resolver (recovery, product, cart, email, WhatsApp)
@@ -34,25 +31,15 @@ public class StorefrontUrlResolver
     private readonly string? _urlTemplate;
     private readonly ILogger<StorefrontUrlResolver> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IMemoryCache _cache;
-
-    /// <summary>
-    /// Cache TTL for resolved storefront URLs.
-    /// 5 minutes balances freshness vs. DB pressure.
-    /// </summary>
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(5);
-    private const string CacheKeyPrefix = "storefront-url:";
 
     public StorefrontUrlResolver(
         IConfiguration configuration,
         ILogger<StorefrontUrlResolver> logger,
-        IServiceScopeFactory scopeFactory,
-        IMemoryCache cache)
+        IServiceScopeFactory scopeFactory)
     {
         _urlTemplate = configuration["Storefront:UrlTemplate"];
         _logger = logger;
         _scopeFactory = scopeFactory;
-        _cache = cache;
     }
 
     // =========================================================================
@@ -92,13 +79,10 @@ public class StorefrontUrlResolver
 
     /// <summary>
     /// Resolve the storefront base URL by tenant ID.
-    /// Uses IMemoryCache (5 min TTL) → single DB query per tenant per cache window.
-    /// Safe for list endpoints that process 100+ items per request.
+    /// Reads the current tenant authority.
     /// </summary>
     public async Task<string> ResolveByTenantIdAsync(Guid tenantId)
     {
-        var cacheKey = $"{CacheKeyPrefix}{tenantId}";
-
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -113,26 +97,7 @@ public class StorefrontUrlResolver
         if (tenant == null)
             throw new InvalidOperationException($"Tenant {tenantId} not found.");
 
-        var resolvedUrl = Resolve(tenant);
-
-        _cache.Set(cacheKey, resolvedUrl, CacheTtl);
-
-        _logger.LogDebug(
-            "[StorefrontUrl] Cached URL for tenant {TenantId}: {Url} (TTL: {Ttl}s)",
-            tenantId, resolvedUrl, CacheTtl.TotalSeconds);
-
-        return resolvedUrl;
-    }
-
-    /// <summary>
-    /// Evict cached URL for a tenant.
-    /// Call when StorefrontBaseUrl or Slug changes in tenant settings.
-    /// </summary>
-    public void EvictCache(Guid tenantId)
-    {
-        var cacheKey = $"{CacheKeyPrefix}{tenantId}";
-        _cache.Remove(cacheKey);
-        _logger.LogInformation("[StorefrontUrl] Cache evicted for tenant {TenantId}", tenantId);
+        return Resolve(tenant);
     }
 
     // =========================================================================
@@ -150,7 +115,7 @@ public class StorefrontUrlResolver
     }
 
     /// <summary>
-    /// Build checkout recovery URL by tenant ID (cached async DB lookup).
+    /// Build checkout recovery URL by tenant ID using the current SQL tenant record.
     /// </summary>
     public async Task<string> BuildRecoveryUrlAsync(Guid tenantId, string recoveryToken)
     {

@@ -20,8 +20,15 @@ export interface StoreConfigState {
     // Error state
     error: string | null;
 
+    // Runtime-fetched configuration and controlled preview candidates have
+    // different refresh authority.
+    configSource: 'runtime' | 'preview' | null;
+
     // Actions
+    /** Commit a controlled editor/preview candidate. */
     setConfig: (config: StoreConfig) => void;
+    /** Commit configuration loaded by the canonical Runtime refresh owner. */
+    setRuntimeConfig: (config: StoreConfig) => void;
     setLoading: (loading: boolean) => void;
     setError: (error: string | null) => void;
     reset: () => void;
@@ -33,6 +40,7 @@ export const useStoreConfigStore = create<StoreConfigState>((set) => ({
     isLoading: true,
     isLoaded: false,
     error: null,
+    configSource: null,
 
     // Actions
     setConfig: (config) => {
@@ -48,9 +56,18 @@ export const useStoreConfigStore = create<StoreConfigState>((set) => ({
             config,
             isLoading: false,
             isLoaded: true,
-            error: null
+            error: null,
+            configSource: 'preview'
         });
     },
+
+    setRuntimeConfig: (config) => set({
+        config,
+        isLoading: false,
+        isLoaded: true,
+        error: null,
+        configSource: 'runtime'
+    }),
 
     setLoading: (isLoading) => set({ isLoading }),
 
@@ -63,7 +80,8 @@ export const useStoreConfigStore = create<StoreConfigState>((set) => ({
         config: DEFAULT_STORE_CONFIG,
         isLoading: true,
         isLoaded: false,
-        error: null
+        error: null,
+        configSource: null
     }),
 }));
 

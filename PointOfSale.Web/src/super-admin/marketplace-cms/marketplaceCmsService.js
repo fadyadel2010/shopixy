@@ -1,5 +1,13 @@
 import { superAdminApiClient } from '../core/superAdminApiClient'
 
+function requireExpectedVersion(expectedVersion) {
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
+        throw new Error('The current marketplace CMS page version is unavailable. Refresh and try again.')
+    }
+
+    return expectedVersion
+}
+
 export const marketplaceCmsService = {
     async listPages() {
         const response = await superAdminApiClient.get('/marketplace/pages')
@@ -16,13 +24,17 @@ export const marketplaceCmsService = {
         return response.data
     },
 
-    async updatePage(pageId, pageData) {
-        const response = await superAdminApiClient.put(`/marketplace/pages/${pageId}`, pageData)
+    async updatePage(pageId, pageData, expectedVersion) {
+        const response = await superAdminApiClient.put(`/marketplace/pages/${pageId}`, {
+            ...pageData,
+            expectedVersion: requireExpectedVersion(expectedVersion),
+        })
         return response.data
     },
 
-    async publishPage(pageId) {
-        const response = await superAdminApiClient.post(`/marketplace/pages/${pageId}/publish`)
+    async publishPage(pageId, expectedVersion) {
+        const version = requireExpectedVersion(expectedVersion)
+        const response = await superAdminApiClient.post(`/marketplace/pages/${pageId}/publish?expectedVersion=${version}`)
         return response.data
     },
 
@@ -31,18 +43,24 @@ export const marketplaceCmsService = {
         return response.data
     },
 
-    async deletePage(pageId) {
-        await superAdminApiClient.delete(`/marketplace/pages/${pageId}`)
-    },
-
-    async getFooterConfiguration() {
-        const response = await superAdminApiClient.get('/marketplace/footer')
+    async deletePage(pageId, expectedVersion) {
+        const version = requireExpectedVersion(expectedVersion)
+        const response = await superAdminApiClient.delete(`/marketplace/pages/${pageId}?expectedVersion=${version}`)
         return response.data
     },
 
-    async updateFooterConfiguration(configuration) {
-        const response = await superAdminApiClient.put('/marketplace/footer', configuration)
-        return response.data
+    getPageVersion(page) {
+        const version = page?.draft?.version ?? page?.published?.version
+        return Number.isInteger(version) && version > 0 ? version : null
+    },
+
+    getListItemVersion(page) {
+        const version = page?.draftVersion ?? page?.publishedVersion
+        return Number.isInteger(version) && version > 0 ? version : null
+    },
+
+    isConcurrencyConflict(error) {
+        return error?.status === 409 && error?.code === 'MARKETPLACE_CMS_CONCURRENCY_CONFLICT'
     },
 
     async translateContent(content, from = 'en', to = 'ar') {

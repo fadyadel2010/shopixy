@@ -226,6 +226,20 @@ public interface ICartService
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Persists the checkout reservation fields on the authoritative Redis cart.
+    /// Checkout is a client of this operation and may not read or rewrite the cart
+    /// document directly.
+    /// </summary>
+    Task SetActiveCheckoutIdempotencyAsync(
+        Guid tenantId,
+        CartOwner owner,
+        Guid cartId,
+        string checkoutIdempotencyKey,
+        string snapshotHash,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Applies an order draft to the cart (adds items).
     /// </summary>
     Task<CartDto> ApplyDraftAsync(

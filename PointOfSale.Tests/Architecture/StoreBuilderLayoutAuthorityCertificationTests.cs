@@ -10,12 +10,10 @@ public sealed class StoreBuilderLayoutAuthorityCertificationTests
         var store = ReadRepoFile("PointOfSale.Web/src/modules/storefront/store/builderStore.js");
 
         Assert.Contains("ReservedBuilderLayoutAuthorityKeys", service, StringComparison.Ordinal);
-        Assert.Contains("AllowedBuilderSectionSettingKeys", service, StringComparison.Ordinal);
         Assert.Contains("NormalizeSectionSettings(sectionObject, sectionType)", service, StringComparison.Ordinal);
-        Assert.Contains("NormalizeSectionSettingValue", service, StringComparison.Ordinal);
-        Assert.Contains("SanitizeBuilderSettingNode", service, StringComparison.Ordinal);
-        Assert.Contains("IsLayoutIntegerSetting", service, StringComparison.Ordinal);
-        Assert.Contains("ReadAllowedString", service, StringComparison.Ordinal);
+        Assert.Contains("StorefrontSectionContracts.TryValidateSettingsStrict", service, StringComparison.Ordinal);
+        Assert.Contains("ReservedBuilderLayoutAuthorityKeys.Contains(setting.Key)", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("NormalizeSectionSettingValue", service, StringComparison.Ordinal);
         Assert.Contains("pageContent[\"draft\"] = NormalizeBuilderPageComposition(pageConfig, pageContent)", service, StringComparison.Ordinal);
         Assert.Contains("templateContent[\"draft\"] = NormalizeBuilderPageComposition(templateConfig, templateContent, authoritativeTemplateId: templateId)", service, StringComparison.Ordinal);
         Assert.Contains("Property(x => x.RowVersion)", service, StringComparison.Ordinal);

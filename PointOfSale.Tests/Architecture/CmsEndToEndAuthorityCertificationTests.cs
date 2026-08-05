@@ -39,7 +39,8 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         var projection = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Consumers/CmsPageProjectionConsumer.cs");
         var seo = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/SeoService.cs");
         var searchSync = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminSearchSyncController.cs");
-        var navigation = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/AdminCmsService.cs");
+        var navigationAdmission = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/NavigationAdmissionService.cs");
+        var navigationService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/AdminCmsService.cs");
 
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", controller, StringComparison.Ordinal);
         Assert.Contains("_tenantContext.RequiredTenantId", controller, StringComparison.Ordinal);
@@ -75,8 +76,10 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         Assert.Contains("Sitemap recomposition starting", seo, StringComparison.Ordinal);
         Assert.Contains("SqlAuthorityOverlayKind.StorefrontCms", searchSync, StringComparison.Ordinal);
         Assert.Contains("DeleteStaleCmsPagesAsync", searchSync, StringComparison.Ordinal);
-        Assert.Contains("GetPublishedCmsPageSlugsAsync", navigation, StringComparison.Ordinal);
-        Assert.Contains("ValidateNavigationMenu(draft.Header, publishedCmsSlugs", navigation, StringComparison.Ordinal);
+        Assert.Contains("public async Task<AdminNavigationRequest> AdmitAsync(", navigationAdmission, StringComparison.Ordinal);
+        Assert.Contains("NavigationAdmissionMode.Publish", navigationService, StringComparison.Ordinal);
+        Assert.Contains("ResolveCmsPage(", navigationAdmission, StringComparison.Ordinal);
+        Assert.Contains("NAVIGATION_CMS_PAGE_UNPUBLISHED", navigationAdmission, StringComparison.Ordinal);
     }
 
     [Fact]

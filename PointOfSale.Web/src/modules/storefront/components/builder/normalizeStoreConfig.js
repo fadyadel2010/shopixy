@@ -1,12 +1,10 @@
 /**
  * normalizeStoreConfig — ARCH-1.4R Gate E closure.
  *
- * Extracted from BuilderThemeProvider so the theme-native canvas has ZERO
- * imports from the legacy synthetic canvas stack. Pure function: fills the
+ * Shared preview normalizer. Pure function: fills the
  * frozen StoreConfig shape from DEFAULT_STORE_CONFIG without mutating input.
  *
- * Consumers: ThemeNativeCanvas (native), BuilderThemeProvider + PreviewModal
- * (legacy, until decommission).
+ * Consumers: BuilderThemeProvider and PreviewModal.
  */
 
 import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig'

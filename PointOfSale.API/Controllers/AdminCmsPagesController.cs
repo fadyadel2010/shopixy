@@ -1,11 +1,9 @@
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.Admin;
-using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Instrumentation;
 
@@ -17,17 +15,20 @@ namespace PointOfSale.API.Controllers;
 public sealed class AdminCmsPagesController : ControllerBase
 {
     private readonly IAdminCmsService _cmsService;
+    private readonly ICmsSeedService _cmsSeedService;
     private readonly CommerceReliabilityTelemetry _telemetry;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<AdminCmsPagesController> _logger;
 
     public AdminCmsPagesController(
         IAdminCmsService cmsService,
+        ICmsSeedService cmsSeedService,
         CommerceReliabilityTelemetry telemetry,
         ITenantContext tenantContext,
         ILogger<AdminCmsPagesController> logger)
     {
         _cmsService = cmsService;
+        _cmsSeedService = cmsSeedService;
         _telemetry = telemetry;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -529,8 +530,11 @@ public sealed class AdminCmsPagesController : ControllerBase
     }
 
     [HttpPost("seed")]
-    [ProducesResponseType(typeof(object), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AdminCmsSeedResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> SeedDefaultPages(CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -540,80 +544,27 @@ public sealed class AdminCmsPagesController : ControllerBase
             return validation.Error;
         }
 
-        var tenantId = validation.TenantId!.Value;
-        var seededPages = new List<string>();
-
         try
         {
-            foreach (var request in BuildDefaultPages())
-            {
-                var existing = await _cmsService.GetCmsPageBySlugAsync(
-                    tenantId,
-                    request.Slug,
-                    traceId,
-                    cancellationToken);
-
-                AdminCmsPageResponse page;
-                if (existing == null)
-                {
-                    page = await _cmsService.CreateCmsPageAsync(tenantId, request, traceId, cancellationToken);
-                }
-                else
-                {
-                    request.ExpectedVersion = existing.Draft?.Version ?? existing.Published?.Version;
-                    page = await _cmsService.UpdateCmsPageAsync(tenantId, existing.Id, request, traceId, cancellationToken);
-                }
-
-                var draftVersion = page.Draft?.Version
-                    ?? throw new InvalidOperationException("Seeded CMS page is missing a draft version.");
-                await _cmsService.PublishCmsPageAsync(
-                    tenantId,
-                    page.Id,
-                    draftVersion,
-                    traceId,
-                    cancellationToken);
-                seededPages.Add(request.Slug);
-            }
-
-            var navigationRequest = new AdminNavigationRequest
-            {
-                Header =
-                [
-                    new AdminNavigationLinkRequest { Label = "Home", Type = "internal", Path = "/", Order = 0, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Shop", Type = "internal", Path = "/products", Order = 1, Enabled = true }
-                ],
-                Footer =
-                [
-                    new AdminNavigationLinkRequest { Label = "About Us", Type = "cms", Slug = "about", Order = 0, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Contact", Type = "cms", Slug = "contact", Order = 1, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Privacy Policy", Type = "cms", Slug = "privacy", Order = 2, Enabled = true },
-                    new AdminNavigationLinkRequest { Label = "Terms & Conditions", Type = "cms", Slug = "terms", Order = 3, Enabled = true }
-                ]
-            };
-
-            var navigation = await _cmsService.GetNavigationAsync(tenantId, traceId, cancellationToken);
-            navigation = await _cmsService.UpdateNavigationAsync(
-                tenantId,
-                navigationRequest,
-                uint.Parse(navigation.RowVersion, System.Globalization.CultureInfo.InvariantCulture),
+            var result = await _cmsSeedService.SeedAsync(
+                validation.TenantId!.Value,
                 traceId,
                 cancellationToken);
-            await _cmsService.PublishNavigationAsync(
-                tenantId,
-                uint.Parse(navigation.RowVersion, System.Globalization.CultureInfo.InvariantCulture),
-                traceId,
-                cancellationToken);
-
-            return Ok(new
-            {
-                success = true,
-                seededPages,
-                message = $"Successfully seeded {seededPages.Count} CMS pages."
-            });
+            return Ok(result);
+        }
+        catch (CmsSeedException ex)
+        {
+            return StatusCode(
+                ex.StatusCode,
+                new AdminCmsApiErrorResponse(ex.Code, ex.Message, traceId));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SeedDefaultPages failed | TenantId: {TenantId}", tenantId);
+            _logger.LogError(ex, "SeedDefaultPages failed | TenantId: {TenantId}", validation.TenantId);
             return StatusCode(StatusCodes.Status500InternalServerError, AdminCmsApiErrorResponse.InternalError(traceId));
         }
     }
@@ -621,6 +572,7 @@ public sealed class AdminCmsPagesController : ControllerBase
     [HttpGet("navigation")]
     [ProducesResponseType(typeof(AdminNavigationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> GetNavigation(CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -640,6 +592,10 @@ public sealed class AdminCmsPagesController : ControllerBase
             ApplyNavigationConcurrencyHeaders(result.RowVersion);
             return Ok(result);
         }
+        catch (NavigationAdmissionException ex)
+        {
+            return BuildNavigationAdmissionResponse(ex, traceId);
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "GetNavigation failed | TenantId: {TenantId}", validation.TenantId);
@@ -647,11 +603,39 @@ public sealed class AdminCmsPagesController : ControllerBase
         }
     }
 
+    [HttpGet("navigation/targets")]
+    [ProducesResponseType(typeof(AdminNavigationTargetsResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> GetNavigationTargets(CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var result = await _cmsService.GetNavigationTargetsAsync(
+                validation.TenantId!.Value,
+                traceId,
+                cancellationToken);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "GetNavigationTargets failed | TenantId: {TenantId}", validation.TenantId);
+            return StatusCode(StatusCodes.Status500InternalServerError, AdminCmsApiErrorResponse.InternalError(traceId));
+        }
+    }
+
     [HttpPut("navigation")]
     [ProducesResponseType(typeof(AdminNavigationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> UpdateNavigation(
-        [FromBody] AdminNavigationRequest request,
+        [FromBody] AdminNavigationRequest? request,
         CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -661,7 +645,7 @@ public sealed class AdminCmsPagesController : ControllerBase
             return validation.Error;
         }
 
-        var precondition = RequireNavigationRowVersion(traceId, request.RowVersion);
+        var precondition = RequireNavigationRowVersion(traceId, request?.RowVersion);
         if (precondition.Error != null)
         {
             return precondition.Error;
@@ -679,9 +663,9 @@ public sealed class AdminCmsPagesController : ControllerBase
             ApplyNavigationConcurrencyHeaders(result.RowVersion);
             return Ok(result);
         }
-        catch (InvalidNavigationLinkException ex)
+        catch (NavigationAdmissionException ex)
         {
-            return BadRequest(new AdminCmsApiErrorResponse("INVALID_NAVIGATION_LINK", ex.Message, traceId));
+            return BuildNavigationAdmissionResponse(ex, traceId);
         }
         catch (ConcurrencyConflictException ex)
         {
@@ -706,6 +690,7 @@ public sealed class AdminCmsPagesController : ControllerBase
     [HttpPost("navigation/publish")]
     [ProducesResponseType(typeof(AdminNavigationResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(AdminCmsApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> PublishNavigation(CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
@@ -732,6 +717,10 @@ public sealed class AdminCmsPagesController : ControllerBase
             ApplyNavigationConcurrencyHeaders(result.RowVersion);
             return Ok(result);
         }
+        catch (NavigationAdmissionException ex)
+        {
+            return BuildNavigationAdmissionResponse(ex, traceId);
+        }
         catch (ConcurrencyConflictException ex)
         {
             _logger.LogWarning(ex, "Concurrency conflict publishing navigation | TenantId: {TenantId}", validation.TenantId);
@@ -750,98 +739,6 @@ public sealed class AdminCmsPagesController : ControllerBase
             _logger.LogError(ex, "PublishNavigation failed | TenantId: {TenantId}", validation.TenantId);
             return StatusCode(StatusCodes.Status500InternalServerError, AdminCmsApiErrorResponse.InternalError(traceId));
         }
-    }
-
-    private static IReadOnlyList<AdminCmsPageRequest> BuildDefaultPages()
-    {
-        return
-        [
-            new AdminCmsPageRequest
-            {
-                Slug = "about",
-                Title = "About Us",
-                ContentType = CmsPageContentType.RichText,
-                Content = JsonSerializer.SerializeToElement("""
-                    <h2>About Shopixy</h2>
-                    <p>We build modern storefront experiences for ambitious marketplace brands.</p>
-                    <p>Our team focuses on curated products, dependable fulfillment, and customer-first support.</p>
-                    """),
-                Seo = new AdminCmsPageSeoRequest
-                {
-                    MetaTitle = "About Us",
-                    MetaDescription = "Learn more about our company, values, and what makes Shopixy different."
-                }
-            },
-            new AdminCmsPageRequest
-            {
-                Slug = "contact",
-                Title = "Contact Us",
-                ContentType = CmsPageContentType.Blocks,
-                Content = JsonSerializer.SerializeToElement(new object[]
-                {
-                    new
-                    {
-                        type = "text",
-                        data = new
-                        {
-                            text = "Need help with an order, wholesale inquiry, or partnership request? Reach our team and we will get back to you quickly.",
-                            alignment = "left"
-                        }
-                    },
-                    new
-                    {
-                        type = "faq",
-                        data = new
-                        {
-                            items = new[]
-                            {
-                                new { question = "Support email", answer = "support@shopixy.com" },
-                                new { question = "Business hours", answer = "Sunday to Thursday, 9 AM to 6 PM" }
-                            }
-                        }
-                    }
-                }),
-                Seo = new AdminCmsPageSeoRequest
-                {
-                    MetaTitle = "Contact Us",
-                    MetaDescription = "Contact Shopixy support, sales, and partnership teams."
-                }
-            },
-            new AdminCmsPageRequest
-            {
-                Slug = "privacy",
-                Title = "Privacy Policy",
-                ContentType = CmsPageContentType.RichText,
-                Content = JsonSerializer.SerializeToElement("""
-                    <h2>Privacy Policy</h2>
-                    <p>We collect only the information needed to operate the marketplace, fulfill orders, and improve our services.</p>
-                    <p>Personal data is never sold, and access is limited to authorized operational workflows.</p>
-                    <p>If you need a copy of your stored information or want us to delete it, contact our privacy team.</p>
-                    """),
-                Seo = new AdminCmsPageSeoRequest
-                {
-                    MetaTitle = "Privacy Policy",
-                    MetaDescription = "Understand how Shopixy collects, uses, and protects your information."
-                }
-            },
-            new AdminCmsPageRequest
-            {
-                Slug = "terms",
-                Title = "Terms & Conditions",
-                ContentType = CmsPageContentType.RichText,
-                Content = JsonSerializer.SerializeToElement("""
-                    <h2>Terms &amp; Conditions</h2>
-                    <p>By using this storefront, you agree to our ordering, payment, fulfillment, and return terms.</p>
-                    <p>All orders are subject to availability, fraud screening, and final operational approval.</p>
-                    <p>Delivery estimates are best-effort timelines and may shift during exceptional demand or carrier disruption.</p>
-                    """),
-                Seo = new AdminCmsPageSeoRequest
-                {
-                    MetaTitle = "Terms & Conditions",
-                    MetaDescription = "Read the terms that govern purchases and use of the Shopixy storefront."
-                }
-            }
-        ];
     }
 
     private (Guid? TenantId, IActionResult? Error) ValidateTenantHeader(string traceId)
@@ -948,6 +845,26 @@ public sealed class AdminCmsPagesController : ControllerBase
         });
     }
 
+    private UnprocessableEntityObjectResult BuildNavigationAdmissionResponse(
+        NavigationAdmissionException exception,
+        string traceId)
+    {
+        return UnprocessableEntity(new AdminCmsApiErrorResponse(
+            exception.Code,
+            exception.Message,
+            traceId)
+        {
+            Navigation = new AdminNavigationAdmissionErrorDetails
+            {
+                LinkType = exception.LinkType,
+                Menu = exception.Menu,
+                Index = exception.Index,
+                Field = exception.Field,
+                TargetId = exception.TargetId
+            }
+        });
+    }
+
     private (uint? RowVersion, IActionResult? Error) RequireNavigationRowVersion(
         string traceId,
         string? requestRowVersion = null)
@@ -992,6 +909,6 @@ public sealed class AdminCmsPagesController : ControllerBase
             normalized = normalized[1..^1];
         }
 
-        return uint.TryParse(normalized, out rowVersion);
+        return uint.TryParse(normalized, out rowVersion) && rowVersion > 0;
     }
 }

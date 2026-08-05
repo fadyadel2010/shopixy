@@ -28,7 +28,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// </summary>
 public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly ILogger<ProductUpdatedSearchIndexConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
@@ -37,7 +37,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
     private const string ConsumerName = nameof(ProductUpdatedSearchIndexConsumer);
 
     public ProductUpdatedSearchIndexConsumer(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         IMongoDatabase database,
         ILogger<ProductUpdatedSearchIndexConsumer> logger,
         ApplicationDbContext dbContext)
@@ -159,7 +159,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
 
             if (product == null)
             {
-                var deleted = await _indexService.DeleteAsync(
+                var deleted = await _indexService.DeleteProductAsync(
                     @event.TenantId.Value,
                     @event.ProductId,
                     context.CancellationToken);
@@ -180,7 +180,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
                     @event.ProductId,
                     @event.TenantId);
 
-                var deleted = await _indexService.DeleteAsync(
+                var deleted = await _indexService.DeleteProductAsync(
                     @event.TenantId.Value,
                     @event.ProductId,
                     context.CancellationToken);
@@ -197,7 +197,7 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
             // Build ES document from the SQL-recomposed projection.
             var document = MapToSearchDocument(product, @event.EventId);
 
-            var success = await _indexService.IndexAsync(document, context.CancellationToken);
+            var success = await _indexService.IndexProductAsync(document, context.CancellationToken);
 
             if (success)
             {

@@ -11,7 +11,6 @@ using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MultiTenancy;
-using PointOfSale.Infrastructure.Redis.Services;
 using StackExchange.Redis;
 
 namespace PointOfSale.API.Controllers;
@@ -49,7 +48,6 @@ public class SettingsController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly IEventPublisher _eventPublisher;
     private readonly IConnectionMultiplexer? _redis;
-    private readonly IStoreConfigCacheService? _storeConfigCache;
 
     // Redis cache key prefix for tenant country
     private const string TENANT_COUNTRY_CACHE_PREFIX = "tenant:country:";
@@ -59,14 +57,12 @@ public class SettingsController : ControllerBase
         ILogger<SettingsController> logger,
         ITenantContext tenantContext,
         IEventPublisher eventPublisher,
-        IStoreConfigCacheService? storeConfigCache = null,
         IConnectionMultiplexer? redis = null)
     {
         _context = context;
         _logger = logger;
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
-        _storeConfigCache = storeConfigCache;
         _redis = redis;
     }
 
@@ -344,7 +340,6 @@ public class SettingsController : ControllerBase
 
             // Invalidate Redis cache for phone normalizer
             await InvalidateTenantCountryCacheAsync(tenantId);
-            await InvalidateStorefrontConfigCacheAsync(tenantId);
 
             _logger.LogInformation(
                 "[Settings] Default country updated | TenantId: {TenantId} | OldCountry: {OldCountry} | NewCountry: {NewCountry}",
@@ -381,24 +376,6 @@ public class SettingsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[Settings] Failed to invalidate tenant country cache");
-        }
-    }
-
-    private async Task InvalidateStorefrontConfigCacheAsync(Guid tenantId)
-    {
-        if (_storeConfigCache == null)
-        {
-            return;
-        }
-
-        try
-        {
-            await _storeConfigCache.InvalidateStoreConfigAsync(tenantId);
-            _logger.LogDebug("[Settings] Invalidated storefront config cache after country update | TenantId: {TenantId}", tenantId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[Settings] Failed to invalidate storefront config cache after country update");
         }
     }
 

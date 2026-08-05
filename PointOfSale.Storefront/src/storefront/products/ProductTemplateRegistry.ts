@@ -17,422 +17,165 @@ const createSection = (
     },
 });
 
-const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = {
-    default: {
-        templateId: 'default',
-        name: 'Default Template',
-        sections: [
-            createSection('product_hero_default', 'product-hero', 0, {
-                layoutVariant: 'default',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_default', 'product-specs', 1, {
-                layoutVariant: 'default',
-                title: 'Product Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_default', 'customer-reviews', 2, {
-                layoutVariant: 'default',
-                title: 'Customer Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_default', 'related-products', 3, {
-                layoutVariant: 'default',
-                title: 'Recommended Products',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    modern: {
-        templateId: 'modern',
-        name: 'Modern Purchase Template',
-        sections: [
-            createSection('product_hero_modern', 'product-hero', 0, {
-                layoutVariant: 'modern',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_modern', 'product-specs', 1, {
-                layoutVariant: 'modern',
-                title: 'Product Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_modern', 'customer-reviews', 2, {
-                layoutVariant: 'modern',
-                title: 'Customer Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_modern', 'related-products', 3, {
-                layoutVariant: 'modern',
-                title: 'Recommended Products',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    minimal: {
-        templateId: 'minimal',
-        name: 'Minimal Purchase Template',
-        sections: [
-            createSection('product_hero_minimal', 'product-hero', 0, {
-                layoutVariant: 'minimal',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_minimal', 'product-specs', 1, {
-                layoutVariant: 'minimal',
-                title: 'Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_minimal', 'customer-reviews', 2, {
-                layoutVariant: 'minimal',
-                title: 'Customer Notes',
-                reviews: [],
-            }),
-            createSection('related_products_minimal', 'related-products', 3, {
-                layoutVariant: 'minimal',
-                title: 'Curated Selection',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
-    electronics: {
-        templateId: 'electronics',
-        name: 'Electronics Template',
-        sections: [
-            createSection('product_hero_electronics', 'product-hero', 0, {
-                layoutVariant: 'electronics',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_electronics', 'product-specs', 1, {
-                layoutVariant: 'electronics',
-                title: 'Technical Specifications',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('product_video_electronics', 'product-video', 2, {
-                title: 'Watch It In Action',
-                videoUrl: '',
-                autoplay: false,
-                showControls: true,
-            }),
-            createSection('customer_reviews_electronics', 'customer-reviews', 3, {
-                layoutVariant: 'electronics',
-                title: 'Verified Buyer Feedback',
-                reviews: [],
-            }),
-            createSection('related_products_electronics', 'related-products', 4, {
-                layoutVariant: 'electronics',
-                title: 'Compatible Products',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    fashion: {
-        templateId: 'fashion',
-        name: 'Fashion Template',
-        sections: [
-            createSection('product_gallery_fashion', 'product-gallery', 0, {
-                layoutVariant: 'fashion',
-                title: 'Gallery',
-                showThumbnails: true,
-                maxImages: 6,
-            }),
-            createSection('product_hero_fashion', 'product-hero', 1, {
-                layoutVariant: 'fashion',
-                showDescription: true,
-                showMediaGallery: false,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: false,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_fashion', 'product-specs', 2, {
-                layoutVariant: 'fashion',
-                title: 'Style Notes',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_fashion', 'customer-reviews', 3, {
-                layoutVariant: 'fashion',
-                title: 'Style Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_fashion', 'related-products', 4, {
-                layoutVariant: 'fashion',
-                title: 'Complete the Look',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
-    pearl: {
-        templateId: 'pearl',
-        name: 'Pearl Purchase Template',
-        sections: [
-            createSection('product_hero_pearl', 'product-hero', 0, {
-                layoutVariant: 'pearl',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_pearl', 'product-specs', 1, {
-                layoutVariant: 'pearl',
-                title: 'Craftsmanship',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_pearl', 'customer-reviews', 2, {
-                layoutVariant: 'pearl',
-                title: 'Client Impressions',
-                reviews: [],
-            }),
-            createSection('related_products_pearl', 'related-products', 3, {
-                layoutVariant: 'pearl',
-                title: 'Boutique Collection',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
-    phoenix: {
-        templateId: 'phoenix',
-        name: 'Phoenix Sports Purchase Template',
-        sections: [
-            createSection('product_hero_phoenix', 'product-hero', 0, {
-                layoutVariant: 'phoenix',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_phoenix', 'product-specs', 1, {
-                layoutVariant: 'phoenix',
-                title: 'Performance Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_phoenix', 'customer-reviews', 2, {
-                layoutVariant: 'phoenix',
-                title: 'Athlete Notes',
-                reviews: [],
-            }),
-            createSection('related_products_phoenix', 'related-products', 3, {
-                layoutVariant: 'phoenix',
-                title: 'Training Rotation',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
-    hype: {
-        templateId: 'hype',
-        name: 'Hype Electronics Purchase Template',
-        sections: [
-            createSection('product_hero_hype', 'product-hero', 0, {
-                layoutVariant: 'hype',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_hype', 'product-specs', 1, {
-                layoutVariant: 'hype',
-                title: 'Tech Specifications',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('product_video_hype', 'product-video', 2, {
-                title: 'Watch It In Action',
-                videoUrl: '',
-                autoplay: false,
-                showControls: true,
-            }),
-            createSection('customer_reviews_hype', 'customer-reviews', 3, {
-                layoutVariant: 'hype',
-                title: 'Verified Hype Feedback',
-                reviews: [],
-            }),
-            createSection('related_products_hype', 'related-products', 4, {
-                layoutVariant: 'hype',
-                title: 'Compatible Drops',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    alizon: {
-        templateId: 'alizon',
-        name: 'Alizon Superstore Template',
-        sections: [
-            createSection('product_hero_alizon', 'product-hero', 0, {
-                layoutVariant: 'alizon',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_alizon', 'product-specs', 1, {
-                layoutVariant: 'alizon',
-                title: 'Product Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_alizon', 'customer-reviews', 2, {
-                layoutVariant: 'alizon',
-                title: 'Customer Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_alizon', 'related-products', 3, {
-                layoutVariant: 'alizon',
-                title: 'More Like This',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    cosmetics: {
-        templateId: 'cosmetics',
-        name: 'Cosmetics Template',
-        sections: [
-            createSection('product_hero_cosmetics', 'product-hero', 0, {
-                layoutVariant: 'cosmetics',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: false,
-                showAddToCart: true,
-                showSku: false,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_cosmetics', 'product-specs', 1, {
-                layoutVariant: 'cosmetics',
-                title: 'Ingredients & Benefits',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_cosmetics', 'customer-reviews', 2, {
-                layoutVariant: 'cosmetics',
-                title: 'What Customers Say',
-                reviews: [],
-            }),
-            createSection('related_products_cosmetics', 'related-products', 3, {
-                layoutVariant: 'cosmetics',
-                title: 'More To Explore',
-                limit: 4,
-                showPrice: true,
-                showRating: true,
-            }),
-        ],
-    },
-    sharp: {
-        templateId: 'sharp',
-        name: 'Sharp Jewelry Template',
-        sections: [
-            createSection('product_hero_sharp', 'product-hero', 0, {
-                layoutVariant: 'sharp',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_sharp', 'product-specs', 1, {
-                layoutVariant: 'sharp',
-                title: 'Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_sharp', 'customer-reviews', 2, {
-                layoutVariant: 'sharp',
-                title: 'Customer Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_sharp', 'related-products', 3, {
-                layoutVariant: 'sharp',
-                title: 'Complete the Look',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
-    seven: {
-        templateId: 'seven',
-        name: 'Seven Womenwear Purchase Template',
-        sections: [
-            createSection('product_hero_seven', 'product-hero', 0, {
-                layoutVariant: 'fashion',
-                showDescription: true,
-                showMediaGallery: true,
-                showVariantSelector: true,
-                showAddToCart: true,
-                showSku: true,
-                showStockStatus: true,
-            }),
-            createSection('product_specs_seven', 'product-specs', 1, {
-                layoutVariant: 'fashion',
-                title: 'Details',
-                useDescription: true,
-                items: [],
-            }),
-            createSection('customer_reviews_seven', 'customer-reviews', 2, {
-                layoutVariant: 'fashion',
-                title: 'Customer Reviews',
-                reviews: [],
-            }),
-            createSection('related_products_seven', 'related-products', 3, {
-                layoutVariant: 'fashion',
-                title: 'Complete the Look',
-                limit: 4,
-                showPrice: true,
-                showRating: false,
-            }),
-        ],
-    },
+interface BuiltinTemplateDefinition {
+    templateId: string;
+    name: string;
+    layoutVariant: string;
+    specsTitle: string;
+    testimonialTitle: string;
+    relatedTitle: string;
+    includeGallery?: boolean;
+    includeVideo?: boolean;
+}
+
+const createBuiltinTemplate = (definition: BuiltinTemplateDefinition): StorefrontProductTemplate => {
+    const sections: StorefrontSection[] = [
+        createSection(`section_runtime_product_hero_${definition.templateId}`, 'product-hero', 0, {
+            layoutVariant: definition.layoutVariant,
+        }),
+    ];
+
+    if (definition.includeGallery) {
+        sections.push(createSection(`product_gallery_${definition.templateId}`, 'product-gallery', sections.length, {
+            layoutVariant: definition.layoutVariant,
+            title: 'Gallery',
+        }));
+    }
+
+    sections.push(createSection(`product_specs_${definition.templateId}`, 'product-specs', sections.length, {
+        layoutVariant: definition.layoutVariant,
+        title: definition.specsTitle,
+    }));
+
+    if (definition.includeVideo) {
+        sections.push(createSection(`product_video_${definition.templateId}`, 'product-video', sections.length, {
+            title: 'Watch It In Action',
+        }));
+    }
+
+    sections.push(createSection(`testimonials_${definition.templateId}`, 'testimonials', sections.length, {
+        title: definition.testimonialTitle,
+        testimonials: [],
+    }));
+    sections.push(createSection(`related_products_${definition.templateId}`, 'related-products', sections.length, {
+        layoutVariant: definition.layoutVariant,
+        title: definition.relatedTitle,
+        limit: 4,
+    }));
+
+    return {
+        templateId: definition.templateId,
+        name: definition.name,
+        sections,
+    };
 };
+
+const BUILTIN_PRODUCT_TEMPLATES: Record<string, StorefrontProductTemplate> = Object.fromEntries(
+    [
+        {
+            templateId: 'default',
+            name: 'Default Template',
+            layoutVariant: 'default',
+            specsTitle: 'Product Details',
+            testimonialTitle: 'Customer Testimonials',
+            relatedTitle: 'Recommended Products',
+        },
+        {
+            templateId: 'modern',
+            name: 'Modern Purchase Template',
+            layoutVariant: 'modern',
+            specsTitle: 'Product Details',
+            testimonialTitle: 'Customer Testimonials',
+            relatedTitle: 'Recommended Products',
+        },
+        {
+            templateId: 'minimal',
+            name: 'Minimal Purchase Template',
+            layoutVariant: 'minimal',
+            specsTitle: 'Details',
+            testimonialTitle: 'Customer Notes',
+            relatedTitle: 'Curated Selection',
+        },
+        {
+            templateId: 'electronics',
+            name: 'Electronics Template',
+            layoutVariant: 'electronics',
+            specsTitle: 'Technical Specifications',
+            testimonialTitle: 'Customer Testimonials',
+            relatedTitle: 'Compatible Products',
+            includeVideo: true,
+        },
+        {
+            templateId: 'fashion',
+            name: 'Fashion Template',
+            layoutVariant: 'fashion',
+            specsTitle: 'Style Notes',
+            testimonialTitle: 'Style Testimonials',
+            relatedTitle: 'Complete the Look',
+            includeGallery: true,
+        },
+        {
+            templateId: 'pearl',
+            name: 'Pearl Purchase Template',
+            layoutVariant: 'pearl',
+            specsTitle: 'Craftsmanship',
+            testimonialTitle: 'Client Impressions',
+            relatedTitle: 'Boutique Collection',
+        },
+        {
+            templateId: 'phoenix',
+            name: 'Phoenix Sports Purchase Template',
+            layoutVariant: 'phoenix',
+            specsTitle: 'Performance Details',
+            testimonialTitle: 'Athlete Testimonials',
+            relatedTitle: 'Training Rotation',
+        },
+        {
+            templateId: 'hype',
+            name: 'Hype Electronics Purchase Template',
+            layoutVariant: 'hype',
+            specsTitle: 'Tech Specifications',
+            testimonialTitle: 'Community Testimonials',
+            relatedTitle: 'Compatible Drops',
+            includeVideo: true,
+        },
+        {
+            templateId: 'alizon',
+            name: 'Alizon Superstore Template',
+            layoutVariant: 'alizon',
+            specsTitle: 'Product Details',
+            testimonialTitle: 'Customer Testimonials',
+            relatedTitle: 'More Like This',
+        },
+        {
+            templateId: 'cosmetics',
+            name: 'Cosmetics Template',
+            layoutVariant: 'cosmetics',
+            specsTitle: 'Ingredients & Benefits',
+            testimonialTitle: 'What Customers Say',
+            relatedTitle: 'More To Explore',
+        },
+        {
+            templateId: 'sharp',
+            name: 'Sharp Jewelry Template',
+            layoutVariant: 'sharp',
+            specsTitle: 'Details',
+            testimonialTitle: 'Client Testimonials',
+            relatedTitle: 'Complete the Look',
+        },
+        {
+            templateId: 'seven',
+            name: 'Seven Womenwear Purchase Template',
+            layoutVariant: 'fashion',
+            specsTitle: 'Details',
+            testimonialTitle: 'Style Testimonials',
+            relatedTitle: 'Complete the Look',
+        },
+    ].map((definition) => {
+        const template = createBuiltinTemplate(definition);
+        return [template.templateId, template];
+    })
+);
 
 export const getBuiltinProductTemplates = (): StorefrontProductTemplate[] =>
     Object.values(BUILTIN_PRODUCT_TEMPLATES).map((template) => ({
@@ -479,7 +222,7 @@ export const getProductTemplateOptions = (
 export const getProductTemplatePreviewProduct = (): ProductReadDto => ({
     id: 'preview-product',
     name: 'Preview Product',
-    nameAr: 'منتج تجريبي',
+    nameAr: 'Ù…Ù†ØªØ¬ ØªØ¬Ø±ÙŠØ¨ÙŠ',
     description: 'A sample product used to preview product templates inside the builder.',
     sku: 'PREVIEW-001',
     barcode: '1234567890123',

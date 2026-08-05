@@ -41,6 +41,7 @@ using PointOfSale.Infrastructure.MongoDB.Services.Marketplace;
 using PointOfSale.Infrastructure.Observability;
 using PointOfSale.Infrastructure.ReadModels.Marketplace;
 using PointOfSale.Infrastructure.Redis.Configuration;
+using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Tests.Infrastructure;
 using StackExchange.Redis;
 using Xunit.Sdk;
@@ -4763,9 +4764,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         var consumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings { InstanceName = "var-con-05" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(deleteEvent).Object);
@@ -4800,9 +4800,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         var consumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings { InstanceName = "var-con-05" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(stockEvent).Object);
@@ -4840,9 +4839,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         var consumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings { InstanceName = "var-con-05" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(createEvent).Object);
@@ -5238,9 +5236,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
     {
         var consumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings { InstanceName = "var-con-03" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(projectionEvent).Object);
@@ -5333,38 +5330,29 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
         IMongoDatabase mongoDatabase,
         ProductVariantUpdatedEvent projectionEvent)
     {
-        var deletedKeys = new ConcurrentBag<RedisKey>();
+        var invalidationCount = 0;
         var indexedDocuments = new ConcurrentBag<ProductSearchDocument>();
         var deletedSearchDocuments = new ConcurrentBag<(Guid TenantId, Guid ProductId)>();
+        var cacheInvalidator = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Loose);
+        cacheInvalidator
+            .Setup(entry => entry.InvalidateProductAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string?>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .Callback(() => Interlocked.Increment(ref invalidationCount))
+            .Returns(Task.CompletedTask);
 
-        var database = new Mock<IDatabase>(MockBehavior.Loose);
-        database
-            .Setup(entry => entry.KeyDeleteAsync(
-                It.IsAny<RedisKey[]>(),
-                It.IsAny<CommandFlags>()))
-            .Callback<RedisKey[], CommandFlags>((keys, _) =>
-            {
-                foreach (var key in keys)
-                {
-                    deletedKeys.Add(key);
-                }
-            })
-            .ReturnsAsync((RedisKey[] keys, CommandFlags _) => keys.LongLength);
-
-        var multiplexer = new Mock<IConnectionMultiplexer>(MockBehavior.Loose);
-        multiplexer
-            .Setup(entry => entry.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
-            .Returns(database.Object);
-
-        var searchIndexService = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var searchIndexService = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         searchIndexService
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .Callback<ProductSearchDocument, CancellationToken>((document, _) => indexedDocuments.Add(document))
             .ReturnsAsync(true);
         searchIndexService
-            .Setup(entry => entry.DeleteAsync(
+            .Setup(entry => entry.DeleteProductAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))
@@ -5373,15 +5361,14 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         var consumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            multiplexer.Object,
+            cacheInvalidator.Object,
             searchIndexService.Object,
-            Options.Create(new RedisSettings { InstanceName = "var-con-06" }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(projectionEvent).Object);
 
         return new VarCon06ProjectionSideEffects(
-            deletedKeys.Count,
+            invalidationCount,
             indexedDocuments.Count,
             deletedSearchDocuments.Count);
     }
@@ -6364,9 +6351,9 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
         ProductMediaChangedEvent mediaEvent)
     {
         var indexedDocuments = new ConcurrentBag<ProductSearchDocument>();
-        var searchIndexService = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var searchIndexService = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         searchIndexService
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .Callback<ProductSearchDocument, CancellationToken>((document, _) => indexedDocuments.Add(document))
@@ -6390,9 +6377,9 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
     {
         await using var dbContext = scope.CreateDbContext(tenantContext);
         var indexedDocuments = new ConcurrentBag<ProductSearchDocument>();
-        var searchIndexService = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var searchIndexService = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         searchIndexService
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .Callback<ProductSearchDocument, CancellationToken>((document, _) => indexedDocuments.Add(document))
@@ -9763,16 +9750,16 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
         return multiplexer;
     }
 
-    private static Mock<IProductSearchIndexService> CreateProductSearchIndexServiceMock()
+    private static Mock<IUnifiedSearchIndexService> CreateProductSearchIndexServiceMock()
     {
-        var service = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var service = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         service
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         service
-            .Setup(entry => entry.DeleteAsync(
+            .Setup(entry => entry.DeleteProductAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))

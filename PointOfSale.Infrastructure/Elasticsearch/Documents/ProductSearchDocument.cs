@@ -307,6 +307,13 @@ public class ProductSearchDocument : IReadModelEvolutionDocument
     public bool HasVariants { get; set; }
 
     /// <summary>
+    /// Canonical lower-case variant attribute pairs (for example color=red).
+    /// Catalog Runtime owns filtering; this field is a derivative candidate index.
+    /// </summary>
+    [Keyword]
+    public List<string> VariantAttributes { get; set; } = new();
+
+    /// <summary>
     /// Primary image URL for search result display.
     /// </summary>
     [Keyword]

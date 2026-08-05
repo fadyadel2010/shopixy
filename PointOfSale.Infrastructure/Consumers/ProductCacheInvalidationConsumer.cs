@@ -1,11 +1,8 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Infrastructure.Consumers;
@@ -22,16 +19,11 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// - Invalidate tenant's product list cache
 /// - Invalidate specific product detail cache entries (id + slug)
 /// - Invalidate homepage caches (featured products, new arrivals, best sellers)
-/// - Invalidate promotion caches (product-specific promotions)
+/// - Delegate all Storefront product Redis invalidation to its single owner
 /// 
 /// IMPORTANT:
-/// - This consumer does NOT fail on cache errors
-/// - Cache invalidation is best-effort
+/// - Required invalidation failures are rethrown so the event can retry
 /// - MongoDB sync handles read-model projection updates
-/// 
-/// Error Handling:
-/// - All cache failures are logged but swallowed
-/// - Never throw here - cache is an optimization
 /// </summary>
 public class ProductCacheInvalidationConsumer :
     IConsumer<ProductCreatedEvent>,
@@ -41,9 +33,7 @@ public class ProductCacheInvalidationConsumer :
     IConsumer<ProductPriceChangedEvent>,
     IConsumer<ProductPublishStatusChangedEvent>
 {
-    private readonly IProductCacheService _cacheService;
-    private readonly IRedisJsonCacheService _jsonCacheService;
-    private readonly RedisSettings _redisSettings;
+    private readonly IStorefrontProductCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ProductCacheInvalidationConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
 
@@ -55,15 +45,11 @@ public class ProductCacheInvalidationConsumer :
     private const string ProductPublicationConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductPublishStatusChangedEvent);
 
     public ProductCacheInvalidationConsumer(
-        IProductCacheService cacheService,
-        IRedisJsonCacheService jsonCacheService,
-        IOptions<RedisSettings> redisSettings,
+        IStorefrontProductCacheInvalidator cacheInvalidator,
         ILogger<ProductCacheInvalidationConsumer> logger,
         ApplicationDbContext dbContext)
     {
-        _cacheService = cacheService;
-        _jsonCacheService = jsonCacheService;
-        _redisSettings = redisSettings.Value;
+        _cacheInvalidator = cacheInvalidator;
         _logger = logger;
         _dbContext = dbContext;
     }
@@ -262,8 +248,6 @@ public class ProductCacheInvalidationConsumer :
         }
 
         var resolvedTenantId = tenantId.Value;
-        var instanceName = _redisSettings.InstanceName;
-
         _logger.LogInformation(
             "Processing cache invalidation | Event: {Event} | EventId: {EventId} | ProductId: {ProductId} | Slug: {Slug} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
             eventName,
@@ -273,42 +257,20 @@ public class ProductCacheInvalidationConsumer :
             resolvedTenantId,
             correlationId);
 
-        try
-        {
-            // Core product cache invalidation
-            await _cacheService.InvalidateAllProductsAsync(resolvedTenantId, cancellationToken);
-            await _cacheService.InvalidateProductAsync(resolvedTenantId, productId, slug, cancellationToken);
+        await _cacheInvalidator.InvalidateProductAsync(
+            resolvedTenantId,
+            productId,
+            slug,
+            invalidateHomepage,
+            cancellationToken);
 
-            // Promotion cache invalidation (product-specific promotions may reference this product)
-            await _jsonCacheService.RemoveAsync(
-                CacheKeyBuilder.PromotionsByProductKey(instanceName, resolvedTenantId, productId),
-                cancellationToken);
-
-            // Homepage cache invalidation (featured products, new arrivals, best sellers may include this product)
-            if (invalidateHomepage)
-            {
-                await _jsonCacheService.RemoveByPatternAsync(
-                    CacheKeyBuilder.HomePatternKey(instanceName, resolvedTenantId),
-                    cancellationToken);
-            }
-
-            _logger.LogInformation(
-                "Cache invalidation completed | Event: {Event} | EventId: {EventId} | ProductId: {ProductId} | Slug: {Slug} | TenantId: {TenantId} | HomepageInvalidated: {HomepageInvalidated}",
-                eventName,
-                eventId,
-                productId,
-                slug,
-                resolvedTenantId,
-                invalidateHomepage);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Cache invalidation failed (non-fatal) | Event: {Event} | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
-                eventName,
-                eventId,
-                productId,
-                resolvedTenantId);
-        }
+        _logger.LogInformation(
+            "Cache invalidation completed | Event: {Event} | EventId: {EventId} | ProductId: {ProductId} | Slug: {Slug} | TenantId: {TenantId} | HomepageInvalidated: {HomepageInvalidated}",
+            eventName,
+            eventId,
+            productId,
+            slug,
+            resolvedTenantId,
+            invalidateHomepage);
     }
 }

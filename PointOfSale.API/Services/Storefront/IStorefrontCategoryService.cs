@@ -15,7 +15,7 @@ namespace PointOfSale.API.Services.Storefront;
 /// Cache Behavior:
 /// - Redis for categories is optional (low volatility data)
 /// - Redis failures are graceful (logged as Warning, never fail request)
-/// - MongoDB is the read-model source for storefront reads
+/// - SQL category lineage remains the result authority
 /// </summary>
 public interface IStorefrontCategoryService
 {
@@ -23,10 +23,7 @@ public interface IStorefrontCategoryService
     /// Gets all visible categories for a tenant as a hierarchical tree.
     /// 
     /// Flow:
-    /// 1. Check Redis cache
-    /// 2. Fallback to MongoDB
-    /// 3. Build tree in-memory
-    /// 4. Populate cache on miss (best-effort)
+    /// The tree is recomposed from the live SQL category lineage.
     /// </summary>
     /// <param name="tenantId">Tenant identifier</param>
     /// <param name="correlationId">Correlation ID for logging</param>
@@ -41,9 +38,7 @@ public interface IStorefrontCategoryService
     /// Gets a single category by its SEO-friendly slug.
     /// 
     /// Flow:
-    /// 1. Check Redis cache
-    /// 2. Fallback to MongoDB
-    /// 3. Populate cache on miss (best-effort)
+    /// The category is resolved from the live SQL category lineage.
     /// </summary>
     /// <param name="tenantId">Tenant identifier</param>
     /// <param name="slug">SEO-friendly URL slug</param>
@@ -57,22 +52,13 @@ public interface IStorefrontCategoryService
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Invalidates all category-related caches for a tenant.
-    /// 
-    /// This should be called:
-    /// - After category sync operations
-    /// - After structural fixes to category data
-    /// - When category data is updated in MongoDB
-    /// 
-    /// Cache keys invalidated:
-    /// - Category tree cache
-    /// - Individual category by slug caches
-    /// - Homepage categories cache
+    /// Resolves a category ID or slug and returns that live category plus all live descendants.
+    /// PostgreSQL category lineage is the exclusive identity authority for catalog filtering.
     /// </summary>
-    /// <param name="tenantId">Tenant identifier</param>
-    /// <param name="correlationId">Correlation ID for logging</param>
-    /// <returns>Number of cache keys invalidated</returns>
-    Task<int> InvalidateCategoryCacheAsync(
+    Task<List<Guid>> ResolveCategoryTreeIdsAsync(
         Guid tenantId,
-        string correlationId);
+        string categoryIdOrSlug,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
 }

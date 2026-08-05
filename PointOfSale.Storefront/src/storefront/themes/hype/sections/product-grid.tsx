@@ -6,9 +6,10 @@ import type { ProductGridPresentationModel, RenderProductCard } from '@/storefro
 interface ProductGridProps {
     productGridModel?: ProductGridPresentationModel;
     renderProductCard?: RenderProductCard;
+    displayStyle?: 'grid' | 'carousel';
 }
 
-const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, renderProductCard }) => {
+const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, renderProductCard, displayStyle }) => {
     if (!model || !renderProductCard) {
         return null;
     }
@@ -42,7 +43,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                 ) : (
                     <div
                         className={
-                            model.layout === 'carousel'
+                            (displayStyle ?? 'carousel') === 'carousel'
                                 ? 'grid auto-cols-[minmax(15rem,18rem)] grid-flow-col gap-5 overflow-x-auto pb-2'
                                 : 'grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
                         }

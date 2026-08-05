@@ -27,14 +27,9 @@ namespace PointOfSale.API.Services.Storefront;
 /// - Is fully self-contained within the Read Side
 /// - Uses ONLY read-only repository interfaces
 /// 
-/// Read Flow (strict order for all operations):
-/// 1. Build Redis cache key
-/// 2. Try Redis cache FIRST (cache-first mindset)
-/// 3. Cache HIT → Return cached data
-/// 4. Cache MISS → Query MongoDB
-/// 5. Build SEO data with fallback logic
-/// 6. Populate Redis cache (best-effort, fire-and-forget)
-/// 7. Return mapped DTOs
+/// Cache contract:
+/// - Metadata, breadcrumbs, and sitemap are recomposed from current authority.
+/// - Slug resolution and robots.txt retain live read-through Redis entries.
 /// 
 /// Error Semantics:
 /// - Redis failures → Log as WARNING, continue to data source (never return 503)
@@ -42,11 +37,10 @@ namespace PointOfSale.API.Services.Storefront;
 /// - 503 SERVICE_UNAVAILABLE is returned ONLY when MongoDB read fails
 /// 
 /// Design Principles:
-/// - Cache-first mindset (Redis is the primary data source for performance)
-/// - MongoDB is the read-model fallback
+/// - SQL remains public-return authority; MongoDB supplies product candidates.
 /// - All operations are tenant-scoped
 /// - Cache failures never break the request
-/// - SEO data is READ-HEAVY and LOW-VOLATILITY
+/// - Only caches with active return readers are retained
 /// </summary>
 public class SeoService : ISeoService
 {
@@ -64,24 +58,9 @@ public class SeoService : ISeoService
     // =============================================================================
     
     /// <summary>
-    /// TTL for SEO metadata cache (30 minutes).
-    /// </summary>
-    private const int SeoMetadataCacheTtlMinutes = 30;
-    
-    /// <summary>
-    /// TTL for breadcrumbs cache (60 minutes).
-    /// </summary>
-    private const int BreadcrumbsCacheTtlMinutes = 60;
-    
-    /// <summary>
     /// TTL for slug resolution cache (60 minutes).
     /// </summary>
     private const int SlugResolutionCacheTtlMinutes = 60;
-    
-    /// <summary>
-    /// TTL for sitemap cache (6 hours).
-    /// </summary>
-    private const int SitemapCacheTtlMinutes = 360;
     
     /// <summary>
     /// TTL for robots.txt cache (12 hours).
@@ -124,11 +103,10 @@ public class SeoService : ISeoService
     {
         const string operationName = "GetSeoMetadata";
         baseUrl = await _storefrontUrlResolver.ResolveByTenantIdAsync(tenantId);
-        var cacheKey = CacheKeyBuilder.SeoMetadataKey(_redisSettings.InstanceName, tenantId, type, slug);
 
         _logger.LogDebug(
-            "{OperationName} starting | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
-            operationName, tenantId, type, slug, cacheKey, correlationId);
+            "{OperationName} starting | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
+            operationName, tenantId, type, slug, correlationId);
 
         var normalizedType = type.ToLowerInvariant();
         if (normalizedType == "cms")
@@ -136,20 +114,8 @@ public class SeoService : ISeoService
             return await BuildCmsSeoMetadataAsync(tenantId, slug, baseUrl, cancellationToken);
         }
 
-        // Step 1: Redis is only a hint for SEO. Product/category SEO must still prove SQL authority.
-        var cachedData = await TryGetFromCacheAsync<SeoMetadataDto>(
-            tenantId, operationName, cacheKey, correlationId);
-
-        if (cachedData != null)
-        {
-            _logger.LogInformation(
-                "Cache HIT ignored until SQL reauthorization | Operation: {OperationName} | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
-                operationName, tenantId, type, slug, correlationId);
-        }
-
-        // Step 2: Query MongoDB based on type
         _logger.LogDebug(
-            "Cache MISS | Operation: {OperationName} - querying MongoDB | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
+            "Querying authoritative read models | Operation: {OperationName} | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
             operationName, tenantId, type, slug, correlationId);
 
         SeoMetadataDto? metadata = null;
@@ -184,11 +150,6 @@ public class SeoService : ISeoService
         _logger.LogInformation(
             "MongoDB query success | Operation: {OperationName} | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
             operationName, tenantId, type, slug, correlationId);
-
-        // Step 3: Populate cache (fire-and-forget)
-        _ = PopulateCacheAsync(
-            tenantId, operationName, cacheKey, metadata,
-            TimeSpan.FromMinutes(SeoMetadataCacheTtlMinutes), correlationId);
 
         return metadata;
     }
@@ -279,26 +240,13 @@ public class SeoService : ISeoService
     {
         const string operationName = "GetBreadcrumbs";
         baseUrl = await _storefrontUrlResolver.ResolveByTenantIdAsync(tenantId);
-        var cacheKey = CacheKeyBuilder.SeoBreadcrumbsKey(_redisSettings.InstanceName, tenantId, type, slug);
 
         _logger.LogDebug(
             "{OperationName} starting | TenantId: {TenantId} | Type: {Type} | Slug: {Slug} | CorrelationId: {CorrelationId}",
             operationName, tenantId, type, slug, correlationId);
 
-        // Step 1: Redis is only a hint for breadcrumbs. Product/category breadcrumbs must still prove SQL authority.
-        var cachedData = await TryGetFromCacheAsync<BreadcrumbsDto>(
-            tenantId, operationName, cacheKey, correlationId);
-
-        if (cachedData != null)
-        {
-            _logger.LogInformation(
-                "Cache HIT ignored until SQL reauthorization | Operation: {OperationName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                operationName, tenantId, correlationId);
-        }
-
-        // Step 2: Query MongoDB
         _logger.LogDebug(
-            "Cache MISS | Operation: {OperationName} - querying MongoDB | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+            "Querying authoritative read models | Operation: {OperationName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
             operationName, tenantId, correlationId);
 
         BreadcrumbsDto? breadcrumbs = null;
@@ -334,11 +282,6 @@ public class SeoService : ISeoService
         _logger.LogInformation(
             "MongoDB query success | Operation: {OperationName} | TenantId: {TenantId} | ItemCount: {ItemCount} | CorrelationId: {CorrelationId}",
             operationName, tenantId, breadcrumbs.Items.Count, correlationId);
-
-        // Step 3: Populate cache (fire-and-forget)
-        _ = PopulateCacheAsync(
-            tenantId, operationName, cacheKey, breadcrumbs,
-            TimeSpan.FromMinutes(BreadcrumbsCacheTtlMinutes), correlationId);
 
         return breadcrumbs;
     }
@@ -647,7 +590,6 @@ public class SeoService : ISeoService
     {
         const string operationName = "GetSitemap";
         baseUrl = await _storefrontUrlResolver.ResolveByTenantIdAsync(tenantId);
-        var cacheKey = CacheKeyBuilder.SeoSitemapKey(_redisSettings.InstanceName, tenantId);
 
         _logger.LogDebug(
             "{OperationName} starting | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
@@ -760,12 +702,6 @@ public class SeoService : ISeoService
         _logger.LogInformation(
             "Sitemap generated | Operation: {OperationName} | TenantId: {TenantId} | UrlCount: {UrlCount} | CorrelationId: {CorrelationId}",
             operationName, tenantId, urls.Count, correlationId);
-
-        // Step 3: Populate cache (fire-and-forget). Future reads still recompose
-        // before returning, so Redis remains an optimization artifact only.
-        _ = PopulateCacheAsync(
-            tenantId, operationName, cacheKey, sitemap,
-            TimeSpan.FromMinutes(SitemapCacheTtlMinutes), correlationId);
 
         return sitemap;
     }

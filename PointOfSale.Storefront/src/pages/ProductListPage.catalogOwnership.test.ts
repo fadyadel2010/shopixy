@@ -11,9 +11,9 @@ describe('ProductListPage catalog ownership certification', () => {
     it('does not let configured sections replace the canonical catalog runtime', () => {
         expect(productListPageSource).not.toContain('productSections.length > 0 ?');
         expect(productListPageSource).toContain('data-catalog-owner="ProductListPage"');
-        expect(productListPageSource).toContain('renderConfiguredProductSections(topProductSections,');
-        expect(productListPageSource).toContain('renderConfiguredProductSections(bottomProductSections,');
-        expect(productListPageSource).toContain('sectionProps={{ suppressActionHref: PRODUCT_CATALOG_PATH }}');
+        expect(productListPageSource).not.toContain('renderConfiguredProductSections');
+        expect(productListPageSource).not.toContain('splitProductCatalogSections');
+        expect(productListPageSource).not.toContain('config.pages?.product?.sections');
     });
 
     it('keeps every canonical catalog control in ProductListPage', () => {

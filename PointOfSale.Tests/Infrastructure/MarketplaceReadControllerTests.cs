@@ -822,6 +822,26 @@ public sealed class MarketplaceReadControllerTests
             return population.Value;
         }
 
+        public Task<T?> GetOrCreateOwnedAsync<T>(
+            string key,
+            string cacheType,
+            string invalidationGenerationKey,
+            TimeSpan ttl,
+            Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+            TimeSpan? maxProjectionLag = null,
+            CancellationToken cancellationToken = default)
+            where T : class
+        {
+            return GetOrCreateAsync(key, cacheType, ttl, factory, maxProjectionLag, cancellationToken);
+        }
+
+        public Task AdvanceInvalidationGenerationAsync(
+            string invalidationGenerationKey,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.CompletedTask;
+        }
+
         public Task RemoveAsync(string key, CancellationToken cancellationToken = default)
         {
             return Task.CompletedTask;

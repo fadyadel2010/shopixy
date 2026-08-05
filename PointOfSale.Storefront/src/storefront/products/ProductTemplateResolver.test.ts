@@ -16,15 +16,7 @@ describe('ProductTemplateResolver', () => {
                             type: 'product-hero',
                             enabled: true,
                             order: 0,
-                            settings: {
-                                layoutVariant: 'fashion',
-                                showDescription: true,
-                                showMediaGallery: false,
-                                showVariantSelector: true,
-                                showAddToCart: true,
-                                showSku: false,
-                                showStockStatus: true,
-                            },
+                            settings: { layoutVariant: 'fashion' },
                         },
                     ],
                 },
@@ -35,11 +27,12 @@ describe('ProductTemplateResolver', () => {
 
         expect(resolved.name).toBe('Tenant Default');
         expect(resolved.sections).toHaveLength(1);
-        expect(resolved.sections[0].id).toBe('tenant_product_hero');
+        expect(resolved.sections[0].id).toBe('runtime_product_hero_default');
+        expect(resolved.sections[0].enabled).toBe(true);
         expect(resolved.sections[0].settings.layoutVariant).toBe('fashion');
     });
 
-    it('prefers the configured product page before built-ins when it contains product detail sections', () => {
+    it('does not let Product-page Builder sections replace Product Details composition', () => {
         const config = {
             updatedAtUtc: '2026-07-28T00:00:01.000Z',
             pages: {
@@ -53,8 +46,6 @@ describe('ProductTemplateResolver', () => {
                             settings: {
                                 layoutVariant: 'minimal',
                                 title: 'Configured Details',
-                                useDescription: true,
-                                items: [],
                             },
                         },
                     ],
@@ -65,9 +56,8 @@ describe('ProductTemplateResolver', () => {
 
         const resolved = resolveProductTemplate(null, config);
 
-        expect(resolved.sections).toHaveLength(1);
-        expect(resolved.sections[0].id).toBe('configured_product_page_section');
-        expect(resolved.sections[0].settings.title).toBe('Configured Details');
+        expect(resolved.sections[0].type).toBe('product-hero');
+        expect(resolved.sections.map((section) => section.id)).not.toContain('configured_product_page_section');
     });
 
     it('falls back to the canonical product detail template when the configured product page is a listing section set', () => {
@@ -84,12 +74,8 @@ describe('ProductTemplateResolver', () => {
                             settings: {
                                 title: 'All products',
                                 subtitle: '',
-                                source: 'featured',
+                                source: 'all',
                                 maxItems: 12,
-                                columns: 4,
-                                rows: 3,
-                                showPrice: true,
-                                showRating: false,
                                 layout: 'grid',
                                 productIds: [],
                             },
@@ -104,5 +90,55 @@ describe('ProductTemplateResolver', () => {
 
         expect(resolved.sections[0].type).toBe('product-hero');
         expect(resolved.sections.map((section) => section.type)).not.toContain('product-grid');
+    });
+
+    it('keeps the canonical Product Details runtime when a saved layout omits its hero', () => {
+        const config = {
+            updatedAtUtc: '2026-07-28T00:00:03.000Z',
+            productTemplates: {
+                editorial: {
+                    templateId: 'editorial',
+                    name: 'Editorial',
+                    sections: [
+                        {
+                            id: 'editorial_specs',
+                            type: 'product-specs',
+                            enabled: true,
+                            order: 1,
+                            settings: { layoutVariant: 'default', title: 'Details' },
+                        },
+                    ],
+                },
+            },
+        } as unknown as StoreConfig;
+
+        const resolved = resolveProductTemplate('editorial', config);
+
+        expect(resolved.sections[0].type).toBe('product-hero');
+        expect(resolved.sections.map((section) => section.id)).toContain('editorial_specs');
+    });
+
+    it('replaces disabled and duplicate authored heroes with exactly one enabled Runtime hero', () => {
+        const config = {
+            updatedAtUtc: '2026-08-02T00:00:00.000Z',
+            productTemplates: {
+                unsafe: {
+                    templateId: 'unsafe',
+                    name: 'Unsafe legacy template',
+                    sections: [
+                        { id: 'hero_one', type: 'product-hero', enabled: false, order: 0, settings: { layoutVariant: 'minimal' } },
+                        { id: 'hero_two', type: 'product-hero', enabled: true, order: 1, settings: { layoutVariant: 'fashion' } },
+                        { id: 'related', type: 'related-products', enabled: true, order: 2, settings: { layoutVariant: 'default', title: 'Related', limit: 4 } },
+                    ],
+                },
+            },
+        } as unknown as StoreConfig;
+
+        const resolved = resolveProductTemplate('unsafe', config);
+        const heroes = resolved.sections.filter((section) => section.type === 'product-hero');
+
+        expect(heroes).toHaveLength(1);
+        expect(heroes[0]).toMatchObject({ enabled: true, order: 0 });
+        expect(resolved.sections[1]).toMatchObject({ id: 'related', order: 1 });
     });
 });

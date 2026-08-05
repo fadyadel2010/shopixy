@@ -32,11 +32,6 @@ namespace PointOfSale.API.Services.Admin;
 public class AdminStoreConfigService : IAdminStoreConfigService
 {
     private static readonly Regex BuilderSectionIdRegex = new(@"^section_[A-Za-z0-9_-]{8,80}$", RegexOptions.Compiled);
-    private static readonly Regex HexColorRegex = new(@"^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$", RegexOptions.Compiled);
-    private const int BuilderShortTextMaxLength = 160;
-    private const int BuilderLongTextMaxLength = 5000;
-    private const int BuilderUrlMaxLength = 2048;
-    private const int BuilderIdMaxLength = 100;
     private static readonly HashSet<string> ReservedBuilderLayoutAuthorityKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "layoutId",
@@ -58,8 +53,14 @@ public class AdminStoreConfigService : IAdminStoreConfigService
     private static readonly HashSet<string> AllowedBuilderSectionTypes =
         new(StorefrontSectionContracts.SupportedTypes, StringComparer.OrdinalIgnoreCase);
 
-    private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AllowedBuilderSectionSettingKeys =
-        StorefrontSectionContracts.GetAllowedSettingKeysBySectionType();
+    private static readonly HashSet<string> ProductDetailsSectionTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "product-hero",
+        "product-gallery",
+        "product-specs",
+        "product-video",
+        "related-products"
+    };
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IEventPublisher _eventPublisher;
@@ -468,39 +469,88 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         CancellationToken cancellationToken = default,
         uint? expectedRowVersion = null)
     {
-        _logger.LogInformation("DeleteProductTemplate | TenantId: {TenantId} | TemplateId: {TemplateId}", tenantId, templateId);
-
-        var config = await GetRequiredStoreConfigForMutationAsync(
+        _logger.LogInformation(
+            "DeleteProductTemplate (Published) | TenantId: {TenantId} | TemplateId: {TemplateId}",
             tenantId,
-            expectedRowVersion,
-            cancellationToken);
+            templateId);
 
-        var json = config.CustomizationJson ?? "{}";
-        var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json)
-                  ?? new Dictionary<string, object>();
-
-        if (!root.ContainsKey("product_templates"))
+        var pageId = $"product-template:{templateId}";
+        var lockResult = await _publishLockService.TryAcquireAsync(tenantId, $"page:{pageId}");
+        if (!lockResult.Acquired)
         {
-            return await MapToResponseAsync(config, cancellationToken);
+            throw new ConcurrencyConflictException("StoreConfigPublish", tenantId);
         }
 
-        var templates = GetCustomizationNode(root, "product_templates");
-        if (!templates.Remove(templateId))
+        try
         {
+            var config = await GetRequiredStoreConfigForMutationAsync(
+                tenantId,
+                expectedRowVersion,
+                cancellationToken);
+
+            var json = config.CustomizationJson ?? "{}";
+            var root = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json)
+                      ?? new Dictionary<string, object>();
+
+            if (!root.ContainsKey("product_templates"))
+            {
+                return await MapToResponseAsync(config, cancellationToken);
+            }
+
+            var templates = GetCustomizationNode(root, "product_templates");
+            if (!templates.Remove(templateId))
+            {
+                return await MapToResponseAsync(config, cancellationToken);
+            }
+
+            root["product_templates"] = templates;
+            config.CustomizationJson = System.Text.Json.JsonSerializer.Serialize(root);
+            config.UpdatedAtUtc = DateTime.UtcNow;
+
+            var actor = ResolveCurrentActor();
+            CreateAndAppendVersionSnapshot(config, "Product Template Deleted", actor);
+            await PersistStoreConfigChangeAsync(
+                config,
+                StoreConfigPublishAction.Published,
+                traceId,
+                cancellationToken);
+
+            var requestMetadata = GetCurrentRequestMetadata();
+            try
+            {
+                await _auditService.RecordAuditAsync(
+                    tenantId,
+                    AuditActionTypes.PagePublished,
+                    pageId,
+                    beforeSnapshot: null,
+                    afterSnapshot: config.CustomizationJson,
+                    config.LiveVersion,
+                    actor.UserId,
+                    actor.DisplayName,
+                    traceId,
+                    requestMetadata.IpAddress,
+                    requestMetadata.UserAgent,
+                    cancellationToken);
+            }
+            catch (Exception auditEx)
+            {
+                _logger.LogError(
+                    auditEx,
+                    "ProductTemplateDeleteAuditFailed | TenantId: {TenantId} | TemplateId: {TemplateId} | TraceId: {TraceId}",
+                    tenantId,
+                    templateId,
+                    traceId);
+            }
+
             return await MapToResponseAsync(config, cancellationToken);
         }
-
-        root["product_templates"] = templates;
-        config.CustomizationJson = System.Text.Json.JsonSerializer.Serialize(root);
-        config.UpdatedAtUtc = DateTime.UtcNow;
-
-        await PersistStoreConfigChangeAsync(
-            config,
-            StoreConfigPublishAction.Updated,
-            traceId,
-            cancellationToken);
-
-        return await MapToResponseAsync(config, cancellationToken);
+        finally
+        {
+            if (lockResult.LockToken != null)
+            {
+                await _publishLockService.ReleaseAsync(tenantId, lockResult.LockToken);
+            }
+        }
     }
 
     /// <inheritdoc />
@@ -1890,6 +1940,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         string? authoritativeTemplateId = null)
     {
         var normalized = new Dictionary<string, object>(StringComparer.Ordinal);
+        var isProductTemplate = !string.IsNullOrWhiteSpace(authoritativeTemplateId);
 
         if (!string.IsNullOrWhiteSpace(authoritativeTemplateId))
         {
@@ -1925,6 +1976,12 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             }
 
             var sectionType = ReadRequiredSectionType(sectionObject);
+            if (!isProductTemplate && ProductDetailsSectionTypes.Contains(sectionType))
+            {
+                throw new ArgumentException(
+                    $"Product Details section type '{sectionType}' is only admitted for product templates.");
+            }
+
             var candidateId = TryReadString(sectionObject, "id", out var submittedId)
                 ? submittedId
                 : null;
@@ -1944,6 +2001,40 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             });
         }
 
+        if (isProductTemplate)
+        {
+            var productHeroes = normalizedSections
+                .Where(section => string.Equals(
+                    section["type"] as string,
+                    "product-hero",
+                    StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            if (productHeroes.Length == 0)
+            {
+                throw new ArgumentException("Product templates must contain exactly one mandatory Product Hero.");
+            }
+
+            if (productHeroes.Length > 1)
+            {
+                throw new ArgumentException("Product templates cannot contain duplicate Product Hero sections.");
+            }
+
+            if (productHeroes[0]["enabled"] is not true)
+            {
+                throw new ArgumentException("The mandatory Product Hero cannot be disabled.");
+            }
+
+            normalizedSections = productHeroes
+                .Concat(normalizedSections.Where(section => !ReferenceEquals(section, productHeroes[0])))
+                .Select((section, index) =>
+                {
+                    section["order"] = index;
+                    return section;
+                })
+                .ToList();
+        }
+
         normalized["sections"] = normalizedSections;
         return normalized;
     }
@@ -1960,7 +2051,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             throw new ArgumentException($"Section type '{sectionType}' is not supported.");
         }
 
-        return sectionType;
+        return StorefrontSectionContracts.NormalizeSectionType(sectionType);
     }
 
     private static object NormalizeSectionSettings(JsonObject sectionObject, string sectionType)
@@ -1990,7 +2081,10 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         var normalized = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (var field in StorefrontSectionContracts.GetFields(sectionType))
         {
-            normalized[field.Key] = submittedSettings[field.Key];
+            var submittedValue = submittedSettings[field.Key];
+            normalized[field.Key] = submittedValue is string stringValue && field.Options.Count > 0
+                ? field.Options.First(option => option.Equals(stringValue, StringComparison.OrdinalIgnoreCase))
+                : submittedValue;
         }
 
         return normalized;
@@ -2047,435 +2141,6 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         }
 
         return null;
-    }
-
-    private static object? NormalizeSectionSettingValue(string sectionType, string key, JsonNode? value)
-    {
-        if (value == null)
-        {
-            return null;
-        }
-
-        if (IsLayoutIntegerSetting(key))
-        {
-            var fallback = key.Equals("columns", StringComparison.OrdinalIgnoreCase) ? 3 : 1;
-            var max = key.Equals("maxImages", StringComparison.OrdinalIgnoreCase) ? 12 : 6;
-            return Clamp(ReadInteger(value, fallback), 1, max);
-        }
-
-        if (key.Equals("limit", StringComparison.OrdinalIgnoreCase))
-        {
-            return Clamp(ReadInteger(value, 4), 1, 24);
-        }
-
-        if (key.Equals("overlayOpacity", StringComparison.OrdinalIgnoreCase))
-        {
-            return Clamp(ReadInteger(value, 45), 0, 100);
-        }
-
-        if (key.Equals("alignment", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("height", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("maxWidth", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("layout", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("cardStyle", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("source", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (key.Equals("displayStyle", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadContractAllowedString(sectionType, key, value);
-        }
-
-        if (IsBooleanSetting(key))
-        {
-            return ReadBoolean(value, fallback: false);
-        }
-
-        if (IsColorSetting(key))
-        {
-            return ReadColor(value);
-        }
-
-        if (IsUrlSetting(key))
-        {
-            return ReadSafeUrl(value);
-        }
-
-        if (key.Equals("productIds", StringComparison.OrdinalIgnoreCase) ||
-            key.Equals("categoryIds", StringComparison.OrdinalIgnoreCase))
-        {
-            return ReadStringArray(value, maxItems: 50);
-        }
-
-        if (key.Equals("images", StringComparison.OrdinalIgnoreCase))
-        {
-            return NormalizeImageList(value, maxItems: 24);
-        }
-
-        if (key.Equals("testimonials", StringComparison.OrdinalIgnoreCase))
-        {
-            return NormalizeTestimonials(value);
-        }
-
-        if (key.Equals("items", StringComparison.OrdinalIgnoreCase))
-        {
-            return NormalizeSpecItems(value);
-        }
-
-        if (key.Equals("reviews", StringComparison.OrdinalIgnoreCase))
-        {
-            return NormalizeCustomerReviews(value);
-        }
-
-        if (IsRichContentSetting(key))
-        {
-            return ReadSanitizedRichText(value, BuilderLongTextMaxLength);
-        }
-
-        if (IsPlainTextSetting(key))
-        {
-            return ReadPlainText(value, BuilderShortTextMaxLength);
-        }
-
-        var sanitized = SanitizeBuilderSettingNode(value);
-        return sanitized == null
-            ? null
-            : System.Text.Json.JsonSerializer.Deserialize<object>(sanitized.ToJsonString());
-    }
-
-    private static bool IsPlainTextSetting(string key)
-    {
-        return key.Equals("title", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("subtitle", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("heading", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("subheading", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("ctaText", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("buttonText", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("badgeText", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("name", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("label", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("value", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsRichContentSetting(string key)
-    {
-        return key.Equals("content", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("text", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("html", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("markdown", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsBooleanSetting(string key)
-    {
-        return key.StartsWith("show", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("autoplay", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("fullWidth", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("useDescription", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsColorSetting(string key)
-    {
-        return key.EndsWith("Color", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsUrlSetting(string key)
-    {
-        return key.Equals("backgroundImage", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("videoUrl", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("avatar", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("url", StringComparison.OrdinalIgnoreCase)
-            || key.EndsWith("Link", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string? ReadPlainText(JsonNode value, int maxLength)
-    {
-        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
-        {
-            return null;
-        }
-
-        var sanitized = SafeRichTextSanitizer.Sanitize(raw).Trim();
-        return Truncate(sanitized, maxLength);
-    }
-
-    private static string? ReadSanitizedRichText(JsonNode value, int maxLength)
-    {
-        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
-        {
-            return null;
-        }
-
-        return Truncate(SafeRichTextSanitizer.Sanitize(raw), maxLength);
-    }
-
-    private static string? ReadSafeUrl(JsonNode value)
-    {
-        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
-        {
-            return null;
-        }
-
-        var candidate = Truncate(raw.Trim(), BuilderUrlMaxLength);
-        if (string.IsNullOrWhiteSpace(candidate) ||
-            candidate.StartsWith("//", StringComparison.Ordinal) ||
-            candidate.Contains('\r') ||
-            candidate.Contains('\n'))
-        {
-            return string.Empty;
-        }
-
-        if (Uri.TryCreate(candidate, UriKind.Absolute, out var absoluteUri))
-        {
-            return absoluteUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
-                   absoluteUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
-                ? candidate
-                : string.Empty;
-        }
-
-        return Uri.TryCreate(candidate, UriKind.Relative, out _) ? candidate : string.Empty;
-    }
-
-    private static string ReadColor(JsonNode value)
-    {
-        if (value is JsonValue jsonValue &&
-            jsonValue.TryGetValue<string>(out var raw) &&
-            HexColorRegex.IsMatch(raw.Trim()))
-        {
-            return raw.Trim();
-        }
-
-        return "#ffffff";
-    }
-
-    private static bool ReadBoolean(JsonNode value, bool fallback)
-    {
-        return value is JsonValue jsonValue && jsonValue.TryGetValue<bool>(out var result)
-            ? result
-            : fallback;
-    }
-
-    private static List<string> ReadStringArray(JsonNode value, int maxItems)
-    {
-        if (value is not JsonArray array)
-        {
-            return new List<string>();
-        }
-
-        return array
-            .OfType<JsonValue>()
-            .Select(item => item.TryGetValue<string>(out var raw) ? Truncate(raw.Trim(), BuilderIdMaxLength) : string.Empty)
-            .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(maxItems)
-            .ToList();
-    }
-
-    private static List<Dictionary<string, object?>> NormalizeImageList(JsonNode value, int maxItems)
-    {
-        if (value is not JsonArray array)
-        {
-            return new List<Dictionary<string, object?>>();
-        }
-
-        var items = new List<Dictionary<string, object?>>();
-        foreach (var item in array.Take(maxItems))
-        {
-            string? url = null;
-            string? alt = null;
-
-            if (item is JsonValue jsonValue && jsonValue.TryGetValue<string>(out var rawUrl))
-            {
-                url = ReadSafeUrl(JsonValue.Create(rawUrl)!);
-            }
-            else if (item is JsonObject image)
-            {
-                url = ReadSafeUrl(image["url"] ?? JsonValue.Create(string.Empty)!);
-                alt = ReadPlainText(image["alt"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength);
-            }
-
-            if (!string.IsNullOrWhiteSpace(url))
-            {
-                items.Add(new Dictionary<string, object?>
-                {
-                    ["url"] = url,
-                    ["alt"] = alt ?? string.Empty
-                });
-            }
-        }
-
-        return items;
-    }
-
-    private static List<Dictionary<string, object?>> NormalizeTestimonials(JsonNode value)
-    {
-        if (value is not JsonArray array)
-        {
-            return new List<Dictionary<string, object?>>();
-        }
-
-        return array.OfType<JsonObject>().Take(20).Select(item => new Dictionary<string, object?>
-        {
-            ["name"] = ReadPlainText(item["name"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength) ?? string.Empty,
-            ["role"] = ReadPlainText(item["role"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength) ?? string.Empty,
-            ["content"] = ReadSanitizedRichText(item["content"] ?? item["text"] ?? JsonValue.Create(string.Empty)!, 1000) ?? string.Empty,
-            ["rating"] = Clamp(ReadInteger(item["rating"] ?? JsonValue.Create(5)!, 5), 1, 5),
-            ["avatar"] = ReadSafeUrl(item["avatar"] ?? JsonValue.Create(string.Empty)!) ?? string.Empty
-        }).ToList();
-    }
-
-    private static List<Dictionary<string, object?>> NormalizeSpecItems(JsonNode value)
-    {
-        if (value is not JsonArray array)
-        {
-            return new List<Dictionary<string, object?>>();
-        }
-
-        return array.OfType<JsonObject>().Take(50).Select(item => new Dictionary<string, object?>
-        {
-            ["label"] = ReadPlainText(item["label"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength) ?? string.Empty,
-            ["value"] = ReadPlainText(item["value"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength) ?? string.Empty
-        }).ToList();
-    }
-
-    private static List<Dictionary<string, object?>> NormalizeCustomerReviews(JsonNode value)
-    {
-        if (value is not JsonArray array)
-        {
-            return new List<Dictionary<string, object?>>();
-        }
-
-        return array.OfType<JsonObject>().Take(20).Select(item => new Dictionary<string, object?>
-        {
-            ["name"] = ReadPlainText(item["name"] ?? JsonValue.Create(string.Empty)!, BuilderShortTextMaxLength) ?? string.Empty,
-            ["rating"] = Clamp(ReadInteger(item["rating"] ?? JsonValue.Create(5)!, 5), 1, 5),
-            ["text"] = ReadSanitizedRichText(item["text"] ?? JsonValue.Create(string.Empty)!, 1000) ?? string.Empty,
-            ["avatar"] = ReadSafeUrl(item["avatar"] ?? JsonValue.Create(string.Empty)!) ?? string.Empty
-        }).ToList();
-    }
-
-    private static string Truncate(string value, int maxLength)
-    {
-        return value.Length <= maxLength ? value : value[..maxLength];
-    }
-
-    private static JsonNode? SanitizeBuilderSettingNode(JsonNode value, int depth = 0)
-    {
-        if (depth > 8)
-        {
-            return null;
-        }
-
-        if (value is JsonValue)
-        {
-            return value.DeepClone();
-        }
-
-        if (value is JsonArray array)
-        {
-            var sanitizedArray = new JsonArray();
-            foreach (var item in array)
-            {
-                var sanitizedItem = item == null ? null : SanitizeBuilderSettingNode(item, depth + 1);
-                sanitizedArray.Add(sanitizedItem);
-            }
-
-            return sanitizedArray;
-        }
-
-        if (value is JsonObject obj)
-        {
-            var sanitizedObject = new JsonObject();
-            foreach (var property in obj)
-            {
-                if (ReservedBuilderLayoutAuthorityKeys.Contains(property.Key))
-                {
-                    continue;
-                }
-
-                var sanitizedProperty = property.Value == null
-                    ? null
-                    : SanitizeBuilderSettingNode(property.Value, depth + 1);
-                sanitizedObject[property.Key] = sanitizedProperty;
-            }
-
-            return sanitizedObject;
-        }
-
-        return null;
-    }
-
-    private static bool IsLayoutIntegerSetting(string key)
-    {
-        return key.Equals("columns", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("rows", StringComparison.OrdinalIgnoreCase)
-            || key.Equals("maxImages", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int ReadInteger(JsonNode value, int fallback)
-    {
-        return value is JsonValue jsonValue && jsonValue.TryGetValue<int>(out var result)
-            ? result
-            : fallback;
-    }
-
-    private static int Clamp(int value, int min, int max)
-    {
-        return Math.Min(Math.Max(value, min), max);
-    }
-
-    private static string ReadAllowedString(JsonNode value, string fallback, params string[] allowedValues)
-    {
-        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
-        {
-            return fallback;
-        }
-
-        return allowedValues.Contains(raw, StringComparer.OrdinalIgnoreCase)
-            ? raw
-            : fallback;
-    }
-
-    private static string ReadContractAllowedString(string sectionType, string key, JsonNode value)
-    {
-        var allowedValues = StorefrontSectionContracts.GetAllowedStringValues(sectionType, key);
-        var fallback = StorefrontSectionContracts.GetDefaultString(sectionType, key)
-            ?? allowedValues.FirstOrDefault()
-            ?? string.Empty;
-
-        if (value is not JsonValue jsonValue || !jsonValue.TryGetValue<string>(out var raw))
-        {
-            return fallback;
-        }
-
-        if (allowedValues.Contains(raw, StringComparer.OrdinalIgnoreCase))
-        {
-            return raw;
-        }
-
-        throw new ArgumentException(
-            $"Section setting '{key}' for section type '{sectionType}' has unsupported value '{raw}'.");
     }
 
     private static HashSet<string> ExtractAcceptedSectionIds(Dictionary<string, object>? currentContent)

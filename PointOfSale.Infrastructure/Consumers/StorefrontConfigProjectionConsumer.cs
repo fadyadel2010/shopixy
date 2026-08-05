@@ -2,7 +2,6 @@ using System.Text.Json;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Constants;
@@ -10,11 +9,8 @@ using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Utilities;
-using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -26,7 +22,6 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// 1. Fetch latest StoreConfig from SQL.
 /// 2. Transform into StorefrontConfigDocument (MongoDB).
 /// 3. Upsert to MongoDB.
-/// 4. Invalidate Redis Caches.
 /// </summary>
 public class StorefrontConfigProjectionConsumer :
     IConsumer<StoreConfigUpdatedEvent>,
@@ -38,8 +33,6 @@ public class StorefrontConfigProjectionConsumer :
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IMongoCollection<StorefrontConfigDocument> _collection;
-    private readonly IConnectionMultiplexer _redis;
-    private readonly RedisSettings _redisSettings;
     private readonly StorefrontPublishTelemetry _publishTelemetry;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<StorefrontConfigProjectionConsumer> _logger;
@@ -47,16 +40,12 @@ public class StorefrontConfigProjectionConsumer :
     public StorefrontConfigProjectionConsumer(
         ApplicationDbContext dbContext,
         IMongoDatabase mongoDatabase,
-        IConnectionMultiplexer redis,
-        IOptions<RedisSettings> redisSettings,
         StorefrontPublishTelemetry publishTelemetry,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<StorefrontConfigProjectionConsumer> logger)
     {
         _dbContext = dbContext;
         _collection = mongoDatabase.GetCollection<StorefrontConfigDocument>("storefront_configs");
-        _redis = redis;
-        _redisSettings = redisSettings.Value;
         _publishTelemetry = publishTelemetry;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
@@ -156,7 +145,7 @@ public class StorefrontConfigProjectionConsumer :
             if (fence == null)
             {
                 _logger.LogInformation(
-                    "StoreConfig projection duplicate or active replay collapsed before Mongo/Redis side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventType: {EventType} | EventId: {EventId}",
+                    "StoreConfig projection duplicate or active replay collapsed before projection side effects | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventType: {EventType} | EventId: {EventId}",
                     tenantId.Value,
                     storeConfigId,
                     eventType,
@@ -319,7 +308,7 @@ public class StorefrontConfigProjectionConsumer :
                         return;
                     }
 
-                    // Guarded retry succeeded - continue to cache invalidation
+                    // Guarded retry succeeded - continue to fence completion.
                     _logger.LogDebug(
                         "StoreConfig projection succeeded via guarded retry after duplicate key | TenantId: {TenantId} | StoreConfigId: {StoreConfigId} | EventId: {EventId}",
                         tenantId.Value,
@@ -372,22 +361,8 @@ public class StorefrontConfigProjectionConsumer :
 
             _logger.LogInformation("StorefrontConfig projected for Tenant {Slug} with Theme {Theme}", tenant.Slug, themePresetKey);
 
-            var db = _redis.GetDatabase();
-            var configKey = CacheKeyBuilder.StoreConfigKey(_redisSettings.InstanceName, tenantId.Value);
-            RequireReviewedStoreConfigMutation(
-                DangerousProjectionPrimitive.RedisCacheMutation,
-                tenantId.Value,
-                storeConfigId,
-                eventId,
-                occurredAtUtc,
-                eventVersion,
-                "SQL store config projection succeeded before reviewed Redis store config cache invalidation.");
-            await db.KeyDeleteAsync(new RedisKey[] { configKey });
-
             _publishTelemetry.RecordProjectionLag((DateTime.UtcNow - occurredAtUtc).TotalSeconds, eventType);
             _publishTelemetry.RecordPublishSuccess(eventType, "projection");
-
-            _logger.LogInformation("Invalidated Redis store config cache for Tenant {Slug}", tenant.Slug);
         }
         catch (Exception ex)
         {
@@ -432,10 +407,6 @@ public class StorefrontConfigProjectionConsumer :
         await _collection.DeleteOneAsync(
             Builders<StorefrontConfigDocument>.Filter.Eq(document => document.TenantId, tenantId),
             cancellationToken);
-
-        var db = _redis.GetDatabase();
-        var configKey = CacheKeyBuilder.StoreConfigKey(_redisSettings.InstanceName, tenantId);
-        await db.KeyDeleteAsync(new RedisKey[] { configKey });
 
         _publishTelemetry.RecordPublishSuccess(eventType, "projection_fail_closed");
     }

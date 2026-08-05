@@ -6,21 +6,16 @@ public sealed class StoreBuilderSectionContentAuthorityCertificationTests
     public void BackendPageLayoutMutation_MustCanonicalizeSectionContentBeforePersistence()
     {
         var service = ReadRepoFile("PointOfSale.API/Services/Admin/AdminStoreConfigService.cs");
+        var contract = ReadRepoFile("PointOfSale.Core/Constants/StorefrontSectionContracts.cs");
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminStoreConfigController.cs");
 
-        Assert.Contains("AllowedBuilderSectionSettingKeys", service, StringComparison.Ordinal);
         Assert.Contains("NormalizeSectionSettings(sectionObject, sectionType)", service, StringComparison.Ordinal);
-        Assert.Contains("ReadPlainText", service, StringComparison.Ordinal);
-        Assert.Contains("ReadSanitizedRichText", service, StringComparison.Ordinal);
-        Assert.Contains("SafeRichTextSanitizer.Sanitize", service, StringComparison.Ordinal);
-        Assert.Contains("ReadSafeUrl", service, StringComparison.Ordinal);
-        Assert.Contains("NormalizeImageList", service, StringComparison.Ordinal);
-        Assert.Contains("NormalizeTestimonials", service, StringComparison.Ordinal);
-        Assert.Contains("NormalizeSpecItems", service, StringComparison.Ordinal);
-        Assert.Contains("NormalizeCustomerReviews", service, StringComparison.Ordinal);
-        Assert.Contains("ReadStringArray", service, StringComparison.Ordinal);
-        Assert.Contains("BuilderShortTextMaxLength", service, StringComparison.Ordinal);
-        Assert.Contains("BuilderLongTextMaxLength", service, StringComparison.Ordinal);
+        Assert.Contains("StorefrontSectionContracts.TryValidateSettingsStrict", service, StringComparison.Ordinal);
+        Assert.Contains("ValidateNestedList", contract, StringComparison.Ordinal);
+        Assert.Contains("IsSafeAuthoredUrl", contract, StringComparison.Ordinal);
+        Assert.Contains("must contain valid GUID values", contract, StringComparison.Ordinal);
+        Assert.Contains("must not contain duplicate GUID values", contract, StringComparison.Ordinal);
+        Assert.DoesNotContain("NormalizeCustomerReviews", service, StringComparison.Ordinal);
         Assert.Contains("pageContent[\"draft\"] = NormalizeBuilderPageComposition(pageConfig, pageContent)", service, StringComparison.Ordinal);
         Assert.Contains("UnprocessableEntity(AdminStoreConfigApiErrorResponse.InvalidConfig", controller, StringComparison.Ordinal);
     }

@@ -1506,9 +1506,8 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
             CreateMongoDbContext(
                 GetRequiredMongoConnectionString(),
                 mongoScope.Database.DatabaseNamespace.DatabaseName),
-            CreatePromotionCacheServiceMock().Object,
-            CreateProductSearchIndexServiceMock().Object,
-            CreateProductCacheServiceMock().Object,
+            CreateUnifiedSearchIndexServiceMock().Object,
+            CreateProductCacheInvalidatorMock().Object,
             NullLogger<DiscountReadModelRepairService>.Instance);
         await repairService.RebuildPromotionsAsync(TenantId);
 
@@ -1788,9 +1787,8 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
                 CreateMongoDbContext(
                     mongoConnectionString,
                     mongoScope.Database.DatabaseNamespace.DatabaseName),
-                CreatePromotionCacheServiceMock().Object,
-                CreateProductSearchIndexServiceMock().Object,
-                CreateProductCacheServiceMock().Object,
+                CreateUnifiedSearchIndexServiceMock().Object,
+                CreateProductCacheInvalidatorMock().Object,
                 NullLogger<DiscountReadModelRepairService>.Instance);
             await repairService.RebuildPromotionsAsync(TenantId);
         }
@@ -4495,12 +4493,8 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
             NullLogger<ProductUpdatedEventConsumer>.Instance);
         var productProjectionConsumer = new ProductVariantProjectionConsumer(
             mongoDatabase,
-            CreateRedisMultiplexerMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
-            Options.Create(new RedisSettings
-            {
-                InstanceName = "price-con-test"
-            }),
             NullLogger<ProductVariantProjectionConsumer>.Instance);
         var commerceHubProjectionConsumer = new CommerceHubProjectionConsumer(
             mongoDbContext,
@@ -4510,8 +4504,7 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
         var promotionProjectionConsumer = new PromotionProjectionConsumer(
             mongoDatabase,
             projectionDbContext,
-            CreatePromotionCacheServiceMock().Object,
-            CreateProductCacheServiceMock().Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             CreateProductSearchIndexServiceMock().Object,
             NullLogger<PromotionProjectionConsumer>.Instance);
         var affiliateProjectionConsumer = new AffiliateProductIntelligenceProjectionConsumer(
@@ -4849,9 +4842,9 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
     {
         await using var projectionDbContext = CreateDbContext(connectionString, tenantContext);
 
-        var searchIndexService = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var searchIndexService = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         searchIndexService
-            .Setup(service => service.IndexAsync(
+            .Setup(service => service.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .Returns<ProductSearchDocument, CancellationToken>(async (document, cancellationToken) =>
@@ -4863,8 +4856,7 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
         var consumer = new PromotionProjectionConsumer(
             mongoDatabase,
             projectionDbContext,
-            CreatePromotionCacheServiceMock().Object,
-            CreateProductCacheServiceMock().Object,
+            CreateProductCacheInvalidatorMock().Object,
             searchIndexService.Object,
             NullLogger<PromotionProjectionConsumer>.Instance);
 
@@ -4885,9 +4877,8 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
                 CreateMongoDbContext(
                     mongoConnectionString,
                     mongoDatabase.DatabaseNamespace.DatabaseName),
-                CreatePromotionCacheServiceMock().Object,
-                CreateProductSearchIndexServiceMock().Object,
-                CreateProductCacheServiceMock().Object,
+                CreateUnifiedSearchIndexServiceMock().Object,
+                CreateProductCacheInvalidatorMock().Object,
                 NullLogger<DiscountReadModelRepairService>.Instance);
 
             await repairService.RebuildPromotionsAsync(TenantId);
@@ -6757,16 +6748,16 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
         return multiplexer;
     }
 
-    private static Mock<IProductSearchIndexService> CreateProductSearchIndexServiceMock()
+    private static Mock<IUnifiedSearchIndexService> CreateProductSearchIndexServiceMock()
     {
-        var service = new Mock<IProductSearchIndexService>(MockBehavior.Loose);
+        var service = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         service
-            .Setup(entry => entry.IndexAsync(
+            .Setup(entry => entry.IndexProductAsync(
                 It.IsAny<ProductSearchDocument>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
         service
-            .Setup(entry => entry.DeleteAsync(
+            .Setup(entry => entry.DeleteProductAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))
@@ -6774,27 +6765,40 @@ public sealed class ProductVariantPriceDistributedReliabilityIntegrationTests
         return service;
     }
 
-    private static Mock<IPromotionCacheService> CreatePromotionCacheServiceMock()
+    private static Mock<IUnifiedSearchIndexService> CreateUnifiedSearchIndexServiceMock()
     {
-        var service = new Mock<IPromotionCacheService>(MockBehavior.Loose);
+        var service = new Mock<IUnifiedSearchIndexService>(MockBehavior.Loose);
         service
-            .Setup(entry => entry.InvalidatePromotionCacheAsync(
+            .Setup(entry => entry.IndexProductAsync(
+                It.IsAny<ProductSearchDocument>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        service
+            .Setup(entry => entry.DeleteProductAsync(
+                It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         return service;
     }
 
-    private static Mock<IProductCacheService> CreateProductCacheServiceMock()
+    private static Mock<IStorefrontProductCacheInvalidator> CreateProductCacheInvalidatorMock()
     {
-        var service = new Mock<IProductCacheService>(MockBehavior.Loose);
+        var service = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Loose);
         service
             .Setup(entry => entry.InvalidateProductAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<string?>(),
+                It.IsAny<bool>(),
                 It.IsAny<CancellationToken>()))
-            .ReturnsAsync(true);
+            .Returns(Task.CompletedTask);
+        service
+            .Setup(entry => entry.InvalidateTenantAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<bool>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
         return service;
     }
 

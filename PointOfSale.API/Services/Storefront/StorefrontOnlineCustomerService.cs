@@ -3,8 +3,6 @@ using Microsoft.EntityFrameworkCore;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.Data;
-using StackExchange.Redis;
-using System.Text.Json;
 
 namespace PointOfSale.API.Services.Storefront;
 
@@ -31,17 +29,15 @@ public interface IStorefrontOnlineCustomerService
 
 /// <summary>
 /// Storefront service for online customer operations.
-/// Implements SQL-authoritative profile reads with best-effort Redis write-through.
+/// Implements SQL-authoritative profile reads.
 /// 
 /// ARCHITECTURAL RULES:
 /// - Read-only operations only
 /// - PostgreSQL is read on every profile request
-/// - Redis is write-through only and never profile authority
 /// - Emails are normalized using EmailNormalizer.Normalize()
 /// 
 /// SECURITY NOTES:
 /// - IsActive is included in response - caller MUST check it
-/// - Cache invalidation handled by OnlineCustomerProjectionConsumer
 /// 
 /// Phase: 10.3.1 - Online Customer Identity (Core)
 /// Phase: 10.3.1 Hardening - Security & Observability
@@ -49,19 +45,13 @@ public interface IStorefrontOnlineCustomerService
 public class StorefrontOnlineCustomerService : IStorefrontOnlineCustomerService
 {
     private readonly ApplicationDbContext _dbContext;
-    private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<StorefrontOnlineCustomerService> _logger;
-
-    private const string CacheKeyPrefix = "storefront:tenant:{0}:online-customer:{1}";
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(15);
 
     public StorefrontOnlineCustomerService(
         ApplicationDbContext dbContext,
-        IConnectionMultiplexer redis,
         ILogger<StorefrontOnlineCustomerService> logger)
     {
         _dbContext = dbContext;
-        _redis = redis;
         _logger = logger;
     }
 
@@ -76,31 +66,6 @@ public class StorefrontOnlineCustomerService : IStorefrontOnlineCustomerService
                 tenantId,
                 customerId);
             return null;
-        }
-
-        var cacheKey = string.Format(CacheKeyPrefix, tenantId, customerId);
-
-        // SQL is the profile authority. Redis is never trusted for customer activity state.
-        OnlineCustomerProfileDto? profile = null;
-        try
-        {
-            var cached = await _redis.GetDatabase().StringGetAsync(cacheKey);
-            if (cached.HasValue)
-                _logger.LogDebug(
-                    "[StorefrontCustomerService] {Action} - Cache HIT ignored until SQL authority | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                    "GET_PROFILE",
-                    tenantId,
-                    customerId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "[StorefrontCustomerService] {Action} - Redis cache read failed (non-critical) | TenantId: {TenantId} | CustomerId: {CustomerId} | CacheKey: {CacheKey}",
-                "GET_PROFILE",
-                tenantId,
-                customerId,
-                cacheKey);
-            // Continue to SQL authority
         }
 
         var customer = await _dbContext.OnlineCustomers
@@ -121,33 +86,7 @@ public class StorefrontOnlineCustomerService : IStorefrontOnlineCustomerService
             return null;
         }
 
-        profile = MapToProfileDto(customer);
-
-        // Update cache
-        try
-        {
-            var db = _redis.GetDatabase();
-            var serialized = JsonSerializer.Serialize(profile);
-            await db.StringSetAsync(cacheKey, serialized, CacheTtl);
-            
-            _logger.LogDebug(
-                "[StorefrontCustomerService] {Action} - Cache SET | TenantId: {TenantId} | CustomerId: {CustomerId} | TTL: {TTL}",
-                "GET_PROFILE",
-                tenantId,
-                customerId,
-                CacheTtl);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "[StorefrontCustomerService] {Action} - Redis cache write failed (non-critical) | TenantId: {TenantId} | CustomerId: {CustomerId} | CacheKey: {CacheKey}",
-                "GET_PROFILE",
-                tenantId,
-                customerId,
-                cacheKey);
-        }
-
-        return profile;
+        return MapToProfileDto(customer);
     }
 
     public async Task<bool> EmailExistsAsync(Guid tenantId, string email, CancellationToken cancellationToken = default)

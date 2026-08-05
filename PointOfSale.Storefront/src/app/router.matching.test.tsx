@@ -1,8 +1,7 @@
 import { isValidElement } from 'react';
 import { matchRoutes } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
-import { ProductDetailsPage, ProductListPage } from '@/pages';
-import { ThemePageRoute } from '@/storefront/pages/ThemePageRoute';
+import { ProductDetailsPage, ProductListPage, SearchPage } from '@/pages';
 import { storefrontRoutes } from './router';
 
 vi.mock('@/analytics', () => ({
@@ -38,6 +37,6 @@ describe('storefront product routing', () => {
 
     it('keeps category and search routes out of the product details route', () => {
         expect(getMatchedElementType('/category/electronics')).toBe(ProductListPage);
-        expect(getMatchedElementType('/search')).toBe(ThemePageRoute);
+        expect(getMatchedElementType('/search')).toBe(SearchPage);
     });
 });

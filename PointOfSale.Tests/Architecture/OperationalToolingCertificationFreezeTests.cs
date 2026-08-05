@@ -23,8 +23,8 @@ public sealed class OperationalToolingCertificationFreezeTests
         var adminSync = File.ReadAllText(ApiPath("Controllers", "AdminSyncController.cs"));
 
         Assert.Contains("IProductSqlAuthorityProjectionWriter", adminSync, StringComparison.Ordinal);
-        Assert.Contains("IProductCacheService", adminSync, StringComparison.Ordinal);
-        Assert.Contains("InvalidateAllProductsAsync(tenantId, cancellationToken)", adminSync, StringComparison.Ordinal);
+        Assert.Contains("IStorefrontProductCacheInvalidator", adminSync, StringComparison.Ordinal);
+        Assert.Contains("InvalidateTenantAsync(", adminSync, StringComparison.Ordinal);
         Assert.Contains("InvalidateProductAsync(", adminSync, StringComparison.Ordinal);
         Assert.DoesNotContain("IConnectionMultiplexer", adminSync, StringComparison.Ordinal);
         Assert.DoesNotContain("GetServer(", adminSync, StringComparison.Ordinal);

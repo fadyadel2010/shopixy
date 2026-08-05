@@ -94,10 +94,6 @@ public class StorefrontLandingPageController : ControllerBase
     {
         var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
-        // AF-27D §1: Explicit Cache-Control Strategy (Stock-sensitive endpoints must not be cached)
-        Response.Headers.Append("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-        Response.Headers.Append("Pragma", "no-cache");
-
         _logger.LogInformation(
             "[AF-27E:LandingPage] Request | ReferralCode: {ReferralCode} | Slug: {Slug} | TraceId: {TraceId}",
             referralCode, slug, traceId);

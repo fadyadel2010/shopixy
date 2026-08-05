@@ -8,14 +8,13 @@ import {
     resolveHomepageCollectionSource,
     selectHomepageCollectionItems,
 } from '@/components/sections/homepageCollectionUtils';
-import { ElectronicsProductCardRenderer, useProductCardRuntime } from '@/components/products';
 import { useCategories, useCurrency, useHomepageSectionProducts, useProducts, useVariantSelector } from '@/hooks';
 import { useLocalizedContent, useTranslation } from '@/i18n';
 import { useCartStore } from '@/store/cartStore';
 import { useToast } from '@/store/toastStore';
 import { getPurchaseExperienceProfile } from '@/storefront/products/purchaseExperience';
 import { useTheme } from '@/storefront/themes/ThemeContext';
-import type { CategoryTreeDto, ProductListItemDto } from '@/types';
+import type { CategoryTreeDto } from '@/types';
 import { parseProductNarrative } from '@/utils';
 import type {
     CategoryGridPresentationModel,
@@ -61,6 +60,18 @@ function isProductHeroSection(sectionType: string): boolean {
     return sectionType.trim().toLowerCase() === 'product-hero';
 }
 
+function isProductGallerySection(sectionType: string): boolean {
+    return sectionType.trim().toLowerCase() === 'product-gallery';
+}
+
+function isProductSpecsSection(sectionType: string): boolean {
+    return sectionType.trim().toLowerCase() === 'product-specs';
+}
+
+function isProductVideoSection(sectionType: string): boolean {
+    return sectionType.trim().toLowerCase() === 'product-video';
+}
+
 function normalizePath(value: unknown): string | null {
     if (typeof value !== 'string') {
         return null;
@@ -85,23 +96,14 @@ function shouldSuppressActionHref(sectionProps: Record<string, unknown>, href: s
     return suppressedHref !== null && actionHref !== null && suppressedHref === actionHref;
 }
 
-function ElectronicsRuntimeProductCard({ product }: { product: ProductListItemDto }) {
-    const runtime = useProductCardRuntime({ product, layout: 'electronics', themeId: 'electronics' });
-    return <ElectronicsProductCardRenderer runtime={runtime} />;
-}
-
 function ProductGridRuntimeContainer({
     component: Component,
     sectionType,
-    themeId,
     sectionProps,
 }: RuntimeSectionContainerProps) {
     const { t } = useTranslation();
     const title = typeof sectionProps.title === 'string' ? sectionProps.title : undefined;
-    const heading = typeof sectionProps.heading === 'string' ? sectionProps.heading : undefined;
     const subtitle = typeof sectionProps.subtitle === 'string' ? sectionProps.subtitle : undefined;
-    const columns = Number(sectionProps.columns ?? 4);
-    const rows = Number(sectionProps.rows ?? 2);
     const normalizedSectionType = sectionType.trim().toLowerCase();
     const isFeaturedProductsSection = normalizedSectionType === 'featured-products';
     const displayStyle = isFeaturedProductsSection && typeof sectionProps.displayStyle === 'string'
@@ -111,16 +113,10 @@ function ProductGridRuntimeContainer({
         throw new Error('[RuntimeSectionContainer] featured-products.displayStyle is required by the section contract.');
     }
 
-    let layout: string;
-    if (isFeaturedProductsSection) {
-        layout = displayStyle!;
-    } else {
-        layout = themeId === 'hype' ? 'carousel' : 'grid';
-    }
-    const maxItems = isFeaturedProductsSection
-        ? sectionProps.limit
-        : sectionProps.maxItems;
-    const pageSize = normalizeHomepageCollectionLimit(maxItems, columns * rows, 24);
+    const layout = isFeaturedProductsSection
+        ? displayStyle!
+        : sectionProps.layout === 'carousel' ? 'carousel' : 'grid';
+    const pageSize = normalizeHomepageCollectionLimit(sectionProps.maxItems, 8, 24);
     const productIds = normalizeHomepageGuidList(sectionProps.productIds);
     const collectionSource = resolveHomepageCollectionSource(sectionProps.source, sectionProps.productIds);
     const validRequestedIds = productIds?.filter((productId) => GUID_PATTERN.test(productId)) ?? [];
@@ -129,14 +125,14 @@ function ProductGridRuntimeContainer({
         isCuratedConfig &&
         (productIds?.length ?? 0) > 0 &&
         validRequestedIds.length === 0;
-    const seedKey = `${String(sectionProps.sectionId ?? title ?? heading ?? 'products')}:${layout}`;
+    const seedKey = `${String(sectionProps.sectionId ?? title ?? 'products')}:${layout}`;
     const { products, isLoading, error } = useHomepageSectionProducts({
         productIds,
         pageSize,
         source: collectionSource,
         seedKey,
     });
-    const displayTitle = title || heading || (isFeaturedProductsSection
+    const displayTitle = title || (isFeaturedProductsSection
         ? t('home.featuredProducts')
         : t('common.products'));
     const productLookup = useMemo(
@@ -182,10 +178,6 @@ function ProductGridRuntimeContainer({
             return null;
         }
 
-        if (themeId === 'electronics') {
-            return <ElectronicsRuntimeProductCard key={product.id} product={product} />;
-        }
-
         return <ProductCard key={product.id} product={product} />;
     };
 
@@ -200,16 +192,15 @@ function ProductGridRuntimeContainer({
 
 function CategoryGridRuntimeContainer({
     component: Component,
-    themeId,
     sectionProps,
 }: RuntimeSectionContainerProps) {
     const { t, language } = useTranslation();
     const { categories, isLoading, error } = useCategories();
     const title = typeof sectionProps.title === 'string' ? sectionProps.title : undefined;
     const subtitle = typeof sectionProps.subtitle === 'string' ? sectionProps.subtitle : undefined;
-    const columns = Number(sectionProps.columns ?? (themeId === 'electronics' ? 4 : 3));
-    const maxValue = themeId === 'electronics' ? 20 : 18;
-    const fallbackCount = Math.max(columns * 2, themeId === 'electronics' ? 8 : 6);
+    const columns = Number(sectionProps.columns ?? 3);
+    const maxValue = 18;
+    const fallbackCount = Math.max(columns * 2, 6);
     const visibleCount = normalizeHomepageCollectionLimit(sectionProps.maxItems, fallbackCount, maxValue);
     const categoryIds = normalizeHomepageGuidList(sectionProps.categoryIds);
     const collectionSource = resolveHomepageCollectionSource(sectionProps.source, sectionProps.categoryIds);
@@ -263,21 +254,41 @@ function SubcategoryGridRuntimeContainer({ component: Component, sectionProps }:
     const { t, language } = useTranslation();
     const { categories, isLoading, error } = useCategories();
     const title = typeof sectionProps.title === 'string' ? sectionProps.title : undefined;
+    const subtitle = typeof sectionProps.subtitle === 'string' ? sectionProps.subtitle : undefined;
+    const columns = Number(sectionProps.columns ?? 3);
+    const visibleCount = normalizeHomepageCollectionLimit(sectionProps.maxItems, Math.max(columns * 2, 6), 18);
+    const categoryIds = normalizeHomepageGuidList(sectionProps.categoryIds);
+    const collectionSource = resolveHomepageCollectionSource(sectionProps.source, sectionProps.categoryIds);
     const allSubcategories = categories.flatMap((category) => category.children || []);
+    const subcategoryLookup = new Map(allSubcategories.map((category) => [category.id, category]));
+    const hasCuratedSelection = collectionSource === 'curated';
+    const visibleSubcategories = hasCuratedSelection
+        ? (categoryIds || [])
+            .map((categoryId) => subcategoryLookup.get(categoryId))
+            .filter((category): category is CategoryTreeDto => Boolean(category))
+        : selectHomepageCollectionItems(allSubcategories, {
+            limit: visibleCount,
+            source: collectionSource,
+            seedKey: `${String(sectionProps.sectionId ?? title ?? 'subcategories')}:subcategories`,
+            getKey: (category) => category.id,
+        });
     const displayTitle = (!title || title === 'Subcategories') ? t('category.subcategories') : title;
     const categoryGridModel: CategoryGridPresentationModel = {
         title: displayTitle,
-        visibleCount: 6,
-        categories: allSubcategories.slice(0, 6).map((category) => ({
+        subtitle,
+        visibleCount,
+        categories: visibleSubcategories.map((category) => ({
             id: category.id,
             href: `/products?category=${category.id}`,
             title: language === 'ar' && category.nameAr ? category.nameAr : category.name,
         })),
         isLoading,
         error,
-        hasCuratedSelection: false,
-        emptyStateTitle: t('home.noCategoriesYet'),
-        emptyStateMessage: t('home.categoriesWillAppear'),
+        hasCuratedSelection,
+        emptyStateTitle: hasCuratedSelection ? 'No curated subcategories yet' : t('home.noCategoriesYet'),
+        emptyStateMessage: hasCuratedSelection
+            ? 'Pick storefront subcategories to populate this section.'
+            : t('home.categoriesWillAppear'),
         labels: {
             eyebrowCategories: t('category.subcategories'),
             failedToLoadCategories: t('home.failedToLoadCategories'),
@@ -333,12 +344,12 @@ function RelatedProductsRuntimeContainer({ component: Component, sectionProps }:
 
 function ProductHeroRuntimeContainer({ component: Component, sectionProps }: RuntimeSectionContainerProps) {
     const product = sectionProps.product as ProductHeroPresentationModel['product'] | null | undefined;
-    const showDescription = sectionProps.showDescription !== false;
-    const showMediaGallery = sectionProps.showMediaGallery !== false;
-    const showVariantSelector = sectionProps.showVariantSelector !== false;
-    const showAddToCart = sectionProps.showAddToCart !== false;
-    const showSku = sectionProps.showSku !== false;
-    const showStockStatus = sectionProps.showStockStatus !== false;
+    const showDescription = true;
+    const showMediaGallery = true;
+    const showVariantSelector = true;
+    const showAddToCart = true;
+    const showSku = true;
+    const showStockStatus = true;
     const layoutVariant = typeof sectionProps.layoutVariant === 'string' ? sectionProps.layoutVariant : 'default';
     const { themeId } = useTheme();
     const profile = getPurchaseExperienceProfile(layoutVariant, themeId);
@@ -473,6 +484,24 @@ function ProductHeroRuntimeContainer({ component: Component, sectionProps }: Run
     return <Component {...sectionProps} productHeroModel={productHeroModel} />;
 }
 
+function ProductGalleryRuntimeContainer({ component: Component, sectionProps }: RuntimeSectionContainerProps) {
+    return (
+        <Component
+            {...sectionProps}
+            showThumbnails
+            maxImages={12}
+        />
+    );
+}
+
+function ProductSpecsRuntimeContainer({ component: Component, sectionProps }: RuntimeSectionContainerProps) {
+    return <Component {...sectionProps} useDescription />;
+}
+
+function ProductVideoRuntimeContainer({ component: Component, sectionProps }: RuntimeSectionContainerProps) {
+    return <Component {...sectionProps} autoplay={false} showControls />;
+}
+
 export function RuntimeSectionContainer(props: RuntimeSectionContainerProps) {
     if (isProductHeroSection(props.sectionType)) {
         return <ProductHeroRuntimeContainer {...props} />;
@@ -480,6 +509,18 @@ export function RuntimeSectionContainer(props: RuntimeSectionContainerProps) {
 
     if (isRelatedProductSection(props.sectionType)) {
         return <RelatedProductsRuntimeContainer {...props} />;
+    }
+
+    if (isProductGallerySection(props.sectionType)) {
+        return <ProductGalleryRuntimeContainer {...props} />;
+    }
+
+    if (isProductSpecsSection(props.sectionType)) {
+        return <ProductSpecsRuntimeContainer {...props} />;
+    }
+
+    if (isProductVideoSection(props.sectionType)) {
+        return <ProductVideoRuntimeContainer {...props} />;
     }
 
     if (isProductSection(props.sectionType)) {

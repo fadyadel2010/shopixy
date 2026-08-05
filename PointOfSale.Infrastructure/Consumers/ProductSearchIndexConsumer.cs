@@ -34,7 +34,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// </summary>
 public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly ILogger<ProductSearchIndexConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
@@ -42,7 +42,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
     private const string ConsumerName = nameof(ProductSearchIndexConsumer);
 
     public ProductSearchIndexConsumer(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         IMongoDatabase database,
         ILogger<ProductSearchIndexConsumer> logger,
         ApplicationDbContext dbContext)
@@ -177,7 +177,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
 
             if (product == null)
             {
-                var deleted = await _indexService.DeleteAsync(
+                var deleted = await _indexService.DeleteProductAsync(
                     @event.TenantId.Value,
                     @event.ProductId,
                     context.CancellationToken);
@@ -199,7 +199,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
                     @event.ProductId,
                     @event.TenantId);
 
-                var deleted = await _indexService.DeleteAsync(
+                var deleted = await _indexService.DeleteProductAsync(
                     @event.TenantId.Value,
                     @event.ProductId,
                     context.CancellationToken);
@@ -223,7 +223,7 @@ public class ProductSearchIndexConsumer : IConsumer<ProductCreatedEvent>
                 @event.SKU ?? "N/A");
 
             // Perform idempotent index
-            var success = await _indexService.IndexAsync(document, context.CancellationToken);
+            var success = await _indexService.IndexProductAsync(document, context.CancellationToken);
 
             if (success)
             {

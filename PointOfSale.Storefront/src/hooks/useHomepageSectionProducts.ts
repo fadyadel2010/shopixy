@@ -1,5 +1,4 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
-import { getTenantId } from '@/bootstrap';
 import {
     resolveHomepageCollectionSource,
     selectHomepageCollectionItems,
@@ -8,14 +7,26 @@ import {
 import {
     fetchHomepageProductsByIds,
     fetchProductsDiscover,
-} from '@/services/api';
+} from '@/services/api/storefrontApi';
+import { useLanguageStore } from '@/i18n/languageStore';
+import {
+    getRuntimeCacheIdentity,
+    isRuntimeCacheFresh,
+    type RuntimeCacheLoadOptions,
+} from '@/storefront/runtime/cache/runtimeCachePolicy';
 import type { ProductDiscoveryResult, ProductListItemDto } from '@/types';
 
 const GUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const productCache = new Map<string, ProductListItemDto[]>();
-const inFlightProductRequests = new Map<string, Promise<ProductListItemDto[]>>();
+interface HomepageProductCacheEntry {
+    generation: number;
+    inFlight: Promise<ProductListItemDto[]> | null;
+    loadedAt: number | null;
+    products: ProductListItemDto[] | null;
+}
+
+const productCache = new Map<string, HomepageProductCacheEntry>();
 
 export interface UseHomepageSectionProductsOptions {
     productIds?: string[] | null;
@@ -30,6 +41,9 @@ export interface UseHomepageSectionProductsState {
     error: string | null;
     refetch: () => Promise<void>;
 }
+
+export interface HomepageSectionProductsRefreshOptions
+    extends UseHomepageSectionProductsOptions, RuntimeCacheLoadOptions {}
 
 function mapDiscoveryItemToListItem(item: ProductDiscoveryResult['items'][0]): ProductListItemDto {
     const availability = item.availability;
@@ -83,16 +97,36 @@ async function loadProductsForKey(
     source: HomepageCollectionSource,
     productIds: string[] | undefined,
     pageSize: number,
-    seedKey: string
+    seedKey: string,
+    options: RuntimeCacheLoadOptions = {}
 ): Promise<ProductListItemDto[]> {
-    if (productCache.has(cacheKey)) {
-        return productCache.get(cacheKey)!;
+    let entry = productCache.get(cacheKey);
+    if (!entry) {
+        entry = {
+            generation: 0,
+            inFlight: null,
+            loadedAt: null,
+            products: null,
+        };
+        productCache.set(cacheKey, entry);
     }
 
-    if (inFlightProductRequests.has(cacheKey)) {
-        return inFlightProductRequests.get(cacheKey)!;
+    if (entry.inFlight) {
+        return entry.inFlight;
     }
 
+    if (!options.force
+        && entry.products
+        && isRuntimeCacheFresh(entry.loadedAt, cacheKey, cacheKey)) {
+        return entry.products;
+    }
+
+    if (options.force) {
+        entry.generation += 1;
+        entry.loadedAt = null;
+    }
+
+    const requestGeneration = entry.generation;
     const request = (async () => {
         if (source === 'curated') {
             if (!productIds || productIds.length === 0) {
@@ -120,15 +154,89 @@ async function loadProductsForKey(
         return discoveredProducts.slice(0, pageSize);
     })();
 
-    inFlightProductRequests.set(cacheKey, request);
+    entry.inFlight = request;
 
     try {
         const result = await request;
-        productCache.set(cacheKey, result);
+
+        if (productCache.get(cacheKey) === entry && entry.generation === requestGeneration) {
+            entry.products = result;
+            entry.loadedAt = Date.now();
+        }
+
         return result;
     } finally {
-        inFlightProductRequests.delete(cacheKey);
+        if (productCache.get(cacheKey) === entry && entry.inFlight === request) {
+            entry.inFlight = null;
+        }
     }
+}
+
+function createHomepageProductCacheKey(
+    runtimeIdentity: string,
+    source: HomepageCollectionSource,
+    normalizedProductIds: string[] | undefined,
+    validProductIds: string[] | undefined,
+    pageSize: number,
+    seedKey: string
+): string {
+    if (source !== 'curated') {
+        return `${runtimeIdentity}:homepage:${source}:${pageSize}:${seedKey}`;
+    }
+
+    if (validProductIds && validProductIds.length > 0) {
+        return `${runtimeIdentity}:homepage:curated:${validProductIds.join(',')}`;
+    }
+
+    if (normalizedProductIds?.length === 0) {
+        return `${runtimeIdentity}:homepage:curated-empty`;
+    }
+
+    return `${runtimeIdentity}:homepage:curated-invalid`;
+}
+
+export function refreshHomepageSectionProductsCache({
+    productIds,
+    pageSize = 8,
+    source,
+    seedKey = 'homepage-products',
+    force = true,
+}: HomepageSectionProductsRefreshOptions = {}): Promise<ProductListItemDto[]> {
+    const normalizedProductIds = normalizeProductIds(productIds);
+    const validProductIds = normalizedProductIds
+        ? getValidProductIds(normalizedProductIds)
+        : undefined;
+    const normalizedSource = resolveHomepageCollectionSource(source, productIds);
+    const runtimeIdentity = getRuntimeCacheIdentity('homepage-products', {
+        includeAffiliate: true,
+        includeLanguage: true,
+    });
+    const cacheKey = createHomepageProductCacheKey(
+        runtimeIdentity,
+        normalizedSource,
+        normalizedProductIds,
+        validProductIds,
+        pageSize,
+        seedKey
+    );
+
+    if (cacheKey.endsWith(':homepage:curated-invalid')
+        || cacheKey.endsWith(':homepage:curated-empty')) {
+        return Promise.resolve([]);
+    }
+
+    return loadProductsForKey(
+        cacheKey,
+        normalizedSource,
+        validProductIds,
+        pageSize,
+        seedKey,
+        { force }
+    );
+}
+
+export function invalidateHomepageSectionProductsCache(): void {
+    productCache.clear();
 }
 
 export function useHomepageSectionProducts({
@@ -138,13 +246,11 @@ export function useHomepageSectionProducts({
     seedKey = 'homepage-products',
 }: UseHomepageSectionProductsOptions = {}): UseHomepageSectionProductsState {
     const mountedRef = useRef(true);
-    const tenantCacheKey = (() => {
-        try {
-            return getTenantId();
-        } catch {
-            return 'unresolved';
-        }
-    })();
+    const language = useLanguageStore((state) => state.language);
+    const runtimeIdentity = getRuntimeCacheIdentity('homepage-products', {
+        includeAffiliate: true,
+        includeLanguage: true,
+    });
     const normalizedSource = useMemo(
         () => resolveHomepageCollectionSource(source, productIds),
         [productIds, source]
@@ -156,27 +262,25 @@ export function useHomepageSectionProducts({
     );
 
     const cacheKey = useMemo(() => {
-        if (normalizedSource !== 'curated') {
-            return `${tenantCacheKey}:homepage:${normalizedSource}:${pageSize}:${seedKey}`;
-        }
-
-        if (validProductIds && validProductIds.length > 0) {
-            return `${tenantCacheKey}:homepage:${validProductIds.join(',')}`;
-        }
-
-        if (normalizedProductIds?.length === 0) {
-            return `${tenantCacheKey}:homepage:curated-empty`;
-        }
-
-        return `${tenantCacheKey}:homepage:curated-invalid`;
-    }, [normalizedProductIds, normalizedSource, pageSize, seedKey, tenantCacheKey, validProductIds]);
+        return createHomepageProductCacheKey(
+            runtimeIdentity,
+            normalizedSource,
+            normalizedProductIds,
+            validProductIds,
+            pageSize,
+            seedKey
+        );
+    }, [language, normalizedProductIds, normalizedSource, pageSize, runtimeIdentity, seedKey, validProductIds]);
 
     const deferredCacheKey = useDeferredValue(cacheKey);
     const [products, setProducts] = useState<ProductListItemDto[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const requestSequenceRef = useRef(0);
 
     const loadProducts = useCallback(async (forceRefresh = false) => {
+        const requestSequence = ++requestSequenceRef.current;
+
         if (
             deferredCacheKey.endsWith(':homepage:curated-invalid') ||
             deferredCacheKey.endsWith(':homepage:curated-empty')
@@ -189,10 +293,6 @@ export function useHomepageSectionProducts({
             return;
         }
 
-        if (forceRefresh) {
-            productCache.delete(deferredCacheKey);
-        }
-
         setIsLoading(true);
         setError(null);
 
@@ -202,21 +302,22 @@ export function useHomepageSectionProducts({
                 normalizedSource,
                 validProductIds,
                 pageSize,
-                seedKey
+                seedKey,
+                { force: forceRefresh }
             );
 
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setProducts(result);
                 setError(null);
             }
         } catch (err) {
             console.error('[useHomepageSectionProducts] Failed to fetch homepage products:', err);
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setProducts([]);
                 setError('Failed to load homepage products');
             }
         } finally {
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setIsLoading(false);
             }
         }
@@ -244,6 +345,5 @@ export function useHomepageSectionProducts({
 }
 
 export function clearHomepageSectionProductsCache(): void {
-    productCache.clear();
-    inFlightProductRequests.clear();
+    invalidateHomepageSectionProductsCache();
 }

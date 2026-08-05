@@ -24,14 +24,14 @@ public class ProductDeletedSearchIndexConsumer :
     IConsumer<ProductArchivedEvent>,
     IConsumer<ProductPublishStatusChangedEvent>
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<ProductDeletedSearchIndexConsumer> _logger;
 
     private const string ConsumerName = nameof(ProductDeletedSearchIndexConsumer);
 
     public ProductDeletedSearchIndexConsumer(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         ApplicationDbContext dbContext,
         ILogger<ProductDeletedSearchIndexConsumer> logger)
     {
@@ -159,7 +159,7 @@ public class ProductDeletedSearchIndexConsumer :
                 var document = ProductSearchDocumentMapper.MapFromProductDocument(
                     sqlProjection,
                     @event.EventId);
-                success = await _indexService.IndexAsync(document, cancellationToken);
+                success = await _indexService.IndexProductAsync(document, cancellationToken);
 
                 _logger.LogInformation(
                     "Product lifecycle search event recomposed visible product from SQL authority | EventType: {EventType} | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId} | Success: {Success}",
@@ -171,7 +171,7 @@ public class ProductDeletedSearchIndexConsumer :
             }
             else
             {
-                success = await _indexService.DeleteAsync(
+                success = await _indexService.DeleteProductAsync(
                     tenantId,
                     productId,
                     cancellationToken);

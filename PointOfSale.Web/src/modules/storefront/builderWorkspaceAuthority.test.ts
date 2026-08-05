@@ -20,7 +20,7 @@ describe('storefront builder workspace authority', () => {
         expect(source).toContain('if (!storeConfig)')
         expect(source).toContain('Workspace admission failed')
         expect(source).toContain('Checking the current store and draft with backend authority.')
-        expect(source).toContain('<BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} />')
+        expect(source).toContain('<BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} templateId={templateIdFromUrl} />')
         expect(source).toContain('<SectionPalette pageKey={targetPage} />')
     })
 
@@ -31,7 +31,7 @@ describe('storefront builder workspace authority', () => {
         expect(source).toContain('getAcceptedWorkspaceRowVersion')
         expect(source).toContain('buildIfMatchOptions(rowVersion')
         expect(source).toContain('storeConfigService.updatePageLayout(')
-        expect(source).toContain('admitWorkspaceConfig(response, storeConfig)')
+        expect(source).toContain('const acceptedConfig = admitWorkspaceConfig(response)')
     })
 
     it('hydrates section composition from accepted backend DTOs after bootstrap and save', () => {

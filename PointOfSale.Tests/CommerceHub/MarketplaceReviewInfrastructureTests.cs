@@ -58,10 +58,7 @@ public sealed class MarketplaceReviewInfrastructureTests
         await using var dbContext = CreateDbContext();
         var cacheService = new Mock<IRedisJsonCacheService>();
         var consumer = new RedisInvalidationConsumer(
-            Mock.Of<IHomepageSectionCacheService>(),
-            Mock.Of<ICmsPageCacheService>(),
             Mock.Of<IMarketplaceCmsPageCacheService>(),
-            Mock.Of<IStorefrontFooterCacheService>(),
             Mock.Of<IMarketplaceFooterCacheService>(),
             cacheService.Object,
             dbContext,
@@ -102,10 +99,7 @@ public sealed class MarketplaceReviewInfrastructureTests
         await using var dbContext = CreateDbContext();
         var cacheService = new Mock<IRedisJsonCacheService>();
         var consumer = new RedisInvalidationConsumer(
-            Mock.Of<IHomepageSectionCacheService>(),
-            Mock.Of<ICmsPageCacheService>(),
             Mock.Of<IMarketplaceCmsPageCacheService>(),
-            Mock.Of<IStorefrontFooterCacheService>(),
             Mock.Of<IMarketplaceFooterCacheService>(),
             cacheService.Object,
             dbContext,

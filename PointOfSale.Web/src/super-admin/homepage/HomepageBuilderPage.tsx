@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
     closestCenter,
     DndContext,
@@ -42,17 +41,17 @@ import {
     getHomepagePreviewStoreConfig,
     getHomepageSections,
     getHomepageTenants,
+    isHomepageWorkspaceConflict,
     publishHomepageSections,
-    reorderHomepageSections,
     saveHomepageDraft,
     translateMarketplaceContent,
+    type HomepageSectionsResult,
     type HomepageSectionFieldSchema,
     type HomepageSectionSchema,
     type HomepageSectionType,
 } from './homepageService'
 import {
     buildSaveHomepageDraftPayload,
-    canAutoPersistReorder,
     createBuilderSection,
     createBuilderSectionsFingerprint,
     formatSectionType,
@@ -107,11 +106,13 @@ function getLatestPublishedTimestamp(sections: Array<{ publishedAt?: string | nu
 }
 
 function ScopeButton({
+    disabled,
     isActive,
     label,
     description,
     onClick,
 }: {
+    disabled?: boolean
     isActive: boolean
     label: string
     description: string
@@ -121,11 +122,13 @@ function ScopeButton({
         <button
             type="button"
             onClick={onClick}
+            disabled={disabled}
             className={[
                 'rounded-2xl border px-4 py-3 text-left transition',
                 isActive
                     ? 'border-sky-400/40 bg-sky-500/[0.12] text-slate-950 shadow-[0_24px_50px_-36px_rgba(14,165,233,0.75)]'
                     : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                disabled ? 'cursor-not-allowed opacity-60' : '',
             ].join(' ')}
         >
             <p className="text-sm font-semibold">{label}</p>
@@ -135,10 +138,12 @@ function ScopeButton({
 }
 
 function SchemaFieldInput({
+    disabled,
     field,
     value,
     onChange,
 }: {
+    disabled?: boolean
     field: HomepageSectionFieldSchema
     value: string
     onChange: (value: string) => void
@@ -151,6 +156,7 @@ function SchemaFieldInput({
             <textarea
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
+                disabled={disabled}
                 rows={field.kind === 'guid-list' ? 6 : 4}
                 className={`${baseClassName} resize-y`}
                 placeholder={
@@ -164,7 +170,7 @@ function SchemaFieldInput({
 
     if (field.kind === 'select') {
         return (
-            <select value={value} onChange={(event) => onChange(event.target.value)} className={baseClassName}>
+            <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className={baseClassName}>
                 {field.options.map((option) => (
                     <option key={option} value={option}>
                         {option}
@@ -182,6 +188,7 @@ function SchemaFieldInput({
                 step="1"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
+                disabled={disabled}
                 className={baseClassName}
                 placeholder={`Enter ${field.label.toLowerCase()}`}
             />
@@ -193,6 +200,7 @@ function SchemaFieldInput({
             type="text"
             value={value}
             onChange={(event) => onChange(event.target.value)}
+            disabled={disabled}
             className={baseClassName}
             placeholder={`Enter ${field.label.toLowerCase()}`}
         />
@@ -348,6 +356,7 @@ export default function HomepageBuilderPage() {
     const [scopeMode, setScopeMode] = useState<ScopeMode>('global')
     const [selectedTenantId, setSelectedTenantId] = useState('')
     const [hydratedScopeKey, setHydratedScopeKey] = useState<string | null>(null)
+    const [acceptedWorkspaceVersion, setAcceptedWorkspaceVersion] = useState<string | null>(null)
     const [sections, setSections] = useState<HomepageBuilderSection[]>([])
     const [savedSectionsSnapshot, setSavedSectionsSnapshot] = useState<HomepageBuilderSection[]>([])
     const [removedPersistedIds, setRemovedPersistedIds] = useState<string[]>([])
@@ -397,7 +406,9 @@ export default function HomepageBuilderPage() {
 
     const schemas = schemasQuery.data ?? []
     const tenants = tenantsQuery.data ?? []
-    const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId) ?? null
+    const selectedTenant = scopeMode === 'tenant'
+        ? tenants.find((tenant) => tenant.id === selectedTenantId) ?? null
+        : null
     const scopeLabel = selectedTenant ? `${selectedTenant.name} homepage` : 'Global homepage'
     const effectivePreviewTenantId = scopeMode === 'tenant' ? activeTenantId : previewTenantId || null
     const effectivePreviewTenant =
@@ -435,36 +446,44 @@ export default function HomepageBuilderPage() {
     const activeDragSection = sections.find((section) => section.clientId === activeDragId) ?? null
 
     const saveDraftMutation = useMutation({
-        mutationFn: saveHomepageDraft,
-    })
-
-    const reorderMutation = useMutation({
         mutationFn: ({
-            sectionIds,
-            tenantId,
+            payload,
+            workspaceVersion,
         }: {
-            sectionIds: string[]
-            tenantId?: string | null
-        }) => reorderHomepageSections(sectionIds, tenantId),
+            payload: ReturnType<typeof buildSaveHomepageDraftPayload>
+            workspaceVersion: string
+        }) => saveHomepageDraft(payload, workspaceVersion),
     })
 
     const publishMutation = useMutation({
-        mutationFn: (tenantId?: string | null) => publishHomepageSections(tenantId),
+        mutationFn: ({ tenantId, workspaceVersion }: { tenantId?: string | null; workspaceVersion: string }) =>
+            publishHomepageSections(tenantId, workspaceVersion),
     })
 
     const starterTemplateMutation = useMutation({
         mutationFn: ({
             tenantId,
             overwriteExisting,
+            workspaceVersion,
         }: {
             tenantId?: string | null
             overwriteExisting: boolean
+            workspaceVersion: string
         }) =>
             generateHomepageStarterTemplate({
                 tenantId,
                 overwriteExisting,
-            }),
+            }, workspaceVersion),
     })
+
+    const isBusy =
+        saveDraftMutation.isPending ||
+        publishMutation.isPending ||
+        starterTemplateMutation.isPending
+    const isAuthoringReady =
+        canLoadScopedSections &&
+        hydratedScopeKey === scopeKey &&
+        Boolean(acceptedWorkspaceVersion)
 
     useEffect(() => {
         if (!schemas.length) {
@@ -489,17 +508,16 @@ export default function HomepageBuilderPage() {
     }, [previewTenantId, scopeMode, tenants])
 
     useEffect(() => {
-        if (!canLoadScopedSections || !schemas.length || !previewSectionsQuery.data || hydratedScopeKey === scopeKey) {
+        if (!canLoadScopedSections || !schemas.length || !previewSectionsQuery.data) {
             return
         }
 
-        const hydratedSections = hydrateBuilderSections(previewSectionsQuery.data.sections, schemas)
-        setSections(hydratedSections)
-        setSavedSectionsSnapshot(hydratedSections)
-        setRemovedPersistedIds([])
-        setSelectedSectionId(hydratedSections[0]?.clientId ?? null)
-        setHydratedScopeKey(scopeKey)
-    }, [canLoadScopedSections, hydratedScopeKey, previewSectionsQuery.data, schemas, scopeKey])
+        const isInitialHydration = hydratedScopeKey !== scopeKey || !acceptedWorkspaceVersion
+        const hasNewAuthoritativeVersion = previewSectionsQuery.data.workspaceVersion !== acceptedWorkspaceVersion
+        if (isInitialHydration || (!isDirty && !isBusy && hasNewAuthoritativeVersion)) {
+            adoptAuthoritativeSnapshot(previewSectionsQuery.data)
+        }
+    }, [acceptedWorkspaceVersion, canLoadScopedSections, hydratedScopeKey, isBusy, isDirty, previewSectionsQuery.data, schemas, scopeKey])
 
     useEffect(() => {
         if (selectedSectionId && sections.some((section) => section.clientId === selectedSectionId)) {
@@ -533,7 +551,7 @@ export default function HomepageBuilderPage() {
 
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
                 event.preventDefault()
-                if (!saveDraftMutation.isPending && !hasValidationErrors && canLoadScopedSections) {
+                if (!isBusy && isAuthoringReady && isDirty && !hasValidationErrors) {
                     void handleSaveDraft()
                 }
                 return
@@ -552,10 +570,11 @@ export default function HomepageBuilderPage() {
 
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [canLoadScopedSections, hasValidationErrors, saveDraftMutation.isPending, selectedSection])
+    }, [hasValidationErrors, isAuthoringReady, isBusy, isDirty, selectedSection])
 
     function resetBuilderStateForScopeChange() {
         setHydratedScopeKey(null)
+        setAcceptedWorkspaceVersion(null)
         setSections([])
         setSavedSectionsSnapshot([])
         setRemovedPersistedIds([])
@@ -571,6 +590,9 @@ export default function HomepageBuilderPage() {
     }
 
     function handleScopeModeChange(nextScopeMode: ScopeMode) {
+        if (isBusy) {
+            return
+        }
         if (nextScopeMode === scopeMode) {
             return
         }
@@ -584,6 +606,9 @@ export default function HomepageBuilderPage() {
     }
 
     function handleTenantChange(nextTenantId: string) {
+        if (isBusy) {
+            return
+        }
         if (nextTenantId === selectedTenantId) {
             return
         }
@@ -597,7 +622,78 @@ export default function HomepageBuilderPage() {
     }
 
     function applySections(nextSections: HomepageBuilderSection[]) {
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
+
         setSections(normalizeBuilderSectionsOrder(nextSections))
+    }
+
+    function adoptAuthoritativeSnapshot(snapshot: HomepageSectionsResult): boolean {
+        const hasInvalidScope = snapshot.sections.some(
+            (section) => (section.tenantId ?? null) !== activeTenantId,
+        )
+        if (hasInvalidScope || !snapshot.workspaceVersion) {
+            setAcceptedWorkspaceVersion(null)
+            setHydratedScopeKey(null)
+            showError('Homepage authoring state was rejected because its scope or version evidence is invalid.')
+            return false
+        }
+
+        const hydratedSections = hydrateBuilderSections(snapshot.sections, schemas)
+        const nextSelectedSectionId = resolveSelectedSectionIdAfterSync(
+            selectedSectionId,
+            sections,
+            hydratedSections,
+        )
+        setSections(hydratedSections)
+        setSavedSectionsSnapshot(hydratedSections)
+        setRemovedPersistedIds([])
+        setSelectedSectionId(nextSelectedSectionId)
+        setAcceptedWorkspaceVersion(snapshot.workspaceVersion)
+        setHydratedScopeKey(scopeKey)
+        queryClient.setQueryData(homepageSectionsQueryKey(activeTenantId, 'preview'), snapshot)
+        return true
+    }
+
+    async function reloadAuthoritativeSnapshot(): Promise<boolean> {
+        const refreshed = await previewSectionsQuery.refetch()
+        return refreshed.data ? adoptAuthoritativeSnapshot(refreshed.data) : false
+    }
+
+    async function recoverWorkspaceConflict(error: unknown): Promise<boolean> {
+        if (!isHomepageWorkspaceConflict(error)) {
+            return false
+        }
+
+        try {
+            const reloaded = await reloadAuthoritativeSnapshot()
+            if (reloaded) {
+                showInfo('The Homepage changed in another session. The latest authoritative draft has been loaded.')
+            }
+        } catch (refreshError) {
+            setAcceptedWorkspaceVersion(null)
+            setHydratedScopeKey(null)
+            showError(getErrorMessage(refreshError, 'The latest Homepage draft could not be loaded.'))
+        }
+
+        return true
+    }
+
+    async function handleRefresh() {
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
+
+        if (isDirty && !window.confirm('Refresh the Homepage draft and discard unsaved changes?')) {
+            return
+        }
+
+        try {
+            await reloadAuthoritativeSnapshot()
+        } catch (error) {
+            showError(getErrorMessage(error, 'Unable to refresh the Homepage draft.'))
+        }
     }
 
     function handleSelectSection(sectionClientId: string) {
@@ -605,6 +701,9 @@ export default function HomepageBuilderPage() {
     }
 
     function handleAddSection() {
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
         const schema = schemas.find((candidate) => candidate.type === pendingAddType)
         if (!schema) {
             showError('Section schema is unavailable right now.')
@@ -618,6 +717,10 @@ export default function HomepageBuilderPage() {
     }
 
     function handleRemoveSection(sectionClientId: string) {
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
+
         const section = sections.find((candidate) => candidate.clientId === sectionClientId)
         if (!section) {
             return
@@ -641,7 +744,7 @@ export default function HomepageBuilderPage() {
     }
 
     function handleFieldChange(field: HomepageSectionFieldSchema, rawValue: string) {
-        if (!selectedSection) {
+        if (!selectedSection || !isAuthoringReady || isBusy) {
             return
         }
 
@@ -685,7 +788,7 @@ export default function HomepageBuilderPage() {
     }
 
     function handleSectionTypeChange(nextType: HomepageSectionType) {
-        if (!selectedSection) {
+        if (!selectedSection || !isAuthoringReady || isBusy) {
             return
         }
 
@@ -711,7 +814,7 @@ export default function HomepageBuilderPage() {
     }
 
     function handleVisibilityToggle() {
-        if (!selectedSection) {
+        if (!selectedSection || !isAuthoringReady || isBusy) {
             return
         }
 
@@ -728,8 +831,12 @@ export default function HomepageBuilderPage() {
     }
 
     async function handleSaveDraft() {
-        if (!canLoadScopedSections) {
-            showInfo('Select a tenant scope before saving draft changes.')
+        if (!isAuthoringReady || !acceptedWorkspaceVersion) {
+            showInfo('Load the current Homepage draft before saving changes.')
+            return
+        }
+
+        if (!isDirty) {
             return
         }
 
@@ -739,31 +846,22 @@ export default function HomepageBuilderPage() {
         }
 
         try {
-            const previousSections = sections
-            const savedDraftSections = await saveDraftMutation.mutateAsync(
-                buildSaveHomepageDraftPayload(sections, schemas, activeTenantId),
-            )
-            const hydratedSections = hydrateBuilderSections(savedDraftSections, schemas)
-            const nextSelectedSectionId = resolveSelectedSectionIdAfterSync(
-                selectedSectionId,
-                previousSections,
-                hydratedSections,
-            )
-
-            setSections(hydratedSections)
-            setSavedSectionsSnapshot(hydratedSections)
-            setRemovedPersistedIds([])
-            setSelectedSectionId(nextSelectedSectionId)
-            await queryClient.invalidateQueries({ queryKey: ['super-admin', 'homepage'] })
+            const savedDraft = await saveDraftMutation.mutateAsync({
+                payload: buildSaveHomepageDraftPayload(sections, schemas, activeTenantId),
+                workspaceVersion: acceptedWorkspaceVersion,
+            })
+            adoptAuthoritativeSnapshot(savedDraft)
             showSuccess('Homepage draft saved.')
         } catch (error) {
-            showError(getErrorMessage(error, 'Unable to save the homepage draft.'))
+            if (!await recoverWorkspaceConflict(error)) {
+                showError(getErrorMessage(error, 'Unable to save the homepage draft.'))
+            }
         }
     }
 
     async function handlePublish() {
-        if (!canLoadScopedSections) {
-            showInfo('Select a tenant scope before publishing.')
+        if (!isAuthoringReady || !acceptedWorkspaceVersion) {
+            showInfo('Load the current Homepage draft before publishing.')
             return
         }
 
@@ -786,17 +884,23 @@ export default function HomepageBuilderPage() {
         }
 
         try {
-            await publishMutation.mutateAsync(activeTenantId)
-            await queryClient.invalidateQueries({ queryKey: ['super-admin', 'homepage'] })
+            const published = await publishMutation.mutateAsync({
+                tenantId: activeTenantId,
+                workspaceVersion: acceptedWorkspaceVersion,
+            })
+            adoptAuthoritativeSnapshot(published)
+            queryClient.setQueryData(homepageSectionsQueryKey(activeTenantId, 'published'), published)
             showSuccess('Homepage draft published.')
         } catch (error) {
-            showError(getErrorMessage(error, 'Unable to publish the homepage draft.'))
+            if (!await recoverWorkspaceConflict(error)) {
+                showError(getErrorMessage(error, 'Unable to publish the homepage draft.'))
+            }
         }
     }
 
     async function handleGenerateStarterTemplate(overwriteExisting: boolean) {
-        if (!canLoadScopedSections) {
-            showInfo('Select a tenant scope before generating a starter template.')
+        if (!isAuthoringReady || !acceptedWorkspaceVersion) {
+            showInfo('Load the current Homepage draft before generating a starter template.')
             return
         }
 
@@ -811,72 +915,34 @@ export default function HomepageBuilderPage() {
         }
 
         try {
-            const previousSections = sections
             const generatedSections = await starterTemplateMutation.mutateAsync({
                 tenantId: activeTenantId,
                 overwriteExisting,
+                workspaceVersion: acceptedWorkspaceVersion,
             })
-            const hydratedSections = hydrateBuilderSections(generatedSections, schemas)
-            const nextSelectedSectionId = resolveSelectedSectionIdAfterSync(
-                selectedSectionId,
-                previousSections,
-                hydratedSections,
-            )
-
-            setSections(hydratedSections)
-            setSavedSectionsSnapshot(hydratedSections)
-            setRemovedPersistedIds([])
-            setSelectedSectionId(nextSelectedSectionId)
-            await queryClient.invalidateQueries({ queryKey: ['super-admin', 'homepage'] })
+            adoptAuthoritativeSnapshot(generatedSections)
             showSuccess(overwriteExisting ? 'Starter template applied to the draft.' : 'Starter template generated.')
         } catch (error) {
-            showError(getErrorMessage(error, 'Unable to generate the starter homepage template.'))
-        }
-    }
-
-    async function handlePersistReorder(nextSections: HomepageBuilderSection[]) {
-        if (!canAutoPersistReorder(nextSections, removedPersistedIds)) {
-            showInfo('Draft order updated locally. Save the draft to persist new sections or removals.')
-            return
-        }
-
-        try {
-            await reorderMutation.mutateAsync({
-                sectionIds: nextSections.map((section) => section.persistedId!).filter(Boolean),
-                tenantId: activeTenantId,
-            })
-
-            setSavedSectionsSnapshot((currentSections) => {
-                const nextOrderByPersistedId = new Map(
-                    nextSections
-                        .filter((section) => section.persistedId)
-                        .map((section, index) => [section.persistedId!, index] as const),
-                )
-
-                return normalizeBuilderSectionsOrder(
-                    currentSections.map((section) => {
-                        if (!section.persistedId || !nextOrderByPersistedId.has(section.persistedId)) {
-                            return section
-                        }
-
-                        return {
-                            ...section,
-                            order: nextOrderByPersistedId.get(section.persistedId)!,
-                        }
-                    }),
-                )
-            })
-        } catch (error) {
-            showError(getErrorMessage(error, 'Unable to persist the new homepage order.'))
+            if (!await recoverWorkspaceConflict(error)) {
+                showError(getErrorMessage(error, 'Unable to generate the starter homepage template.'))
+            }
         }
     }
 
     function handleDragStart(event: DragStartEvent) {
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
+
         setActiveDragId(String(event.active.id))
     }
 
     function handleDragEnd(event: DragEndEvent) {
         setActiveDragId(null)
+        if (!isAuthoringReady || isBusy) {
+            return
+        }
+
         const { active, over } = event
 
         if (!over || active.id === over.id) {
@@ -892,14 +958,8 @@ export default function HomepageBuilderPage() {
 
         const nextSections = normalizeBuilderSectionsOrder(arrayMove(sections, currentIndex, nextIndex))
         applySections(nextSections)
-        void handlePersistReorder(nextSections)
+        showInfo('Draft order updated locally. Save the draft to persist it.')
     }
-
-    const isBusy =
-        saveDraftMutation.isPending ||
-        publishMutation.isPending ||
-        reorderMutation.isPending ||
-        starterTemplateMutation.isPending
 
     if (schemasQuery.isError) {
         return (
@@ -944,17 +1004,20 @@ export default function HomepageBuilderPage() {
                     </div>
 
                     <div className="flex flex-wrap items-center gap-3">
-                        <Link
-                            to="/super-admin/homepage/manager"
-                            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                        <button
+                            type="button"
+                            onClick={() => void handleRefresh()}
+                            disabled={!isAuthoringReady || isBusy}
+                            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            Legacy Manager
-                        </Link>
+                            <RefreshCw className="h-4 w-4" />
+                            Refresh
+                        </button>
 
                         <button
                             type="button"
                             onClick={() => void handleGenerateStarterTemplate(sections.length > 0)}
-                            disabled={!canLoadScopedSections || isBusy}
+                            disabled={!isAuthoringReady || isBusy}
                             className="inline-flex items-center gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-semibold text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {starterTemplateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -964,7 +1027,7 @@ export default function HomepageBuilderPage() {
                         <button
                             type="button"
                             onClick={() => void handleSaveDraft()}
-                            disabled={!canLoadScopedSections || !isDirty || hasValidationErrors || isBusy}
+                            disabled={!isAuthoringReady || !isDirty || hasValidationErrors || isBusy}
                             className="inline-flex items-center gap-2 rounded-2xl border border-slate-950 bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {saveDraftMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -974,7 +1037,7 @@ export default function HomepageBuilderPage() {
                         <button
                             type="button"
                             onClick={() => void handlePublish()}
-                            disabled={!canLoadScopedSections || isBusy || hasValidationErrors || isDirty}
+                            disabled={!isAuthoringReady || isBusy || hasValidationErrors || isDirty}
                             className="inline-flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {publishMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
@@ -1026,12 +1089,14 @@ export default function HomepageBuilderPage() {
 
             <section className="grid gap-4 md:grid-cols-2">
                 <ScopeButton
+                    disabled={isBusy}
                     isActive={scopeMode === 'global'}
                     label="Global"
                     description="Fallback homepage shared by stores without an override."
                     onClick={() => handleScopeModeChange('global')}
                 />
                 <ScopeButton
+                    disabled={isBusy}
                     isActive={scopeMode === 'tenant'}
                     label="Tenant Override"
                     description="Edit a draft homepage for a specific marketplace tenant."
@@ -1046,6 +1111,7 @@ export default function HomepageBuilderPage() {
                         <select
                             value={selectedTenantId}
                             onChange={(event) => handleTenantChange(event.target.value)}
+                            disabled={isBusy}
                             className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                         >
                             <option value="">Select a tenant override</option>
@@ -1092,6 +1158,13 @@ export default function HomepageBuilderPage() {
                         </button>
                     </div>
                 </section>
+            ) : !isAuthoringReady ? (
+                <section className="grid min-h-[360px] place-items-center rounded-[32px] border border-slate-200 bg-white p-8 text-center shadow-[0_24px_70px_-48px_rgba(15,23,42,0.45)]">
+                    <div>
+                        <Loader2 className="mx-auto h-8 w-8 animate-spin text-sky-600" />
+                        <p className="mt-4 text-sm font-semibold text-slate-900">Loading authoritative Homepage draft</p>
+                    </div>
+                </section>
             ) : (
                 <DndContext
                     sensors={sensors}
@@ -1116,6 +1189,7 @@ export default function HomepageBuilderPage() {
                                     <select
                                         value={pendingAddType}
                                         onChange={(event) => setPendingAddType(event.target.value as HomepageSectionType)}
+                                        disabled={!isAuthoringReady || isBusy}
                                         className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                                     >
                                         {schemas.map((schema) => (
@@ -1129,6 +1203,7 @@ export default function HomepageBuilderPage() {
                                 <button
                                     type="button"
                                     onClick={handleAddSection}
+                                    disabled={!isAuthoringReady || isBusy}
                                     className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
                                 >
                                     <Plus className="h-4 w-4" />
@@ -1149,7 +1224,7 @@ export default function HomepageBuilderPage() {
                                             <button
                                                 type="button"
                                                 onClick={() => void handleGenerateStarterTemplate(false)}
-                                                disabled={isBusy}
+                                                disabled={!isAuthoringReady || isBusy}
                                                 className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                                             >
                                                 {starterTemplateMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -1198,8 +1273,9 @@ export default function HomepageBuilderPage() {
                                                 Preview tenant
                                             </span>
                                             <select
-                                                value={previewTenantId}
-                                                onChange={(event) => setPreviewTenantId(event.target.value)}
+                                                 value={previewTenantId}
+                                                 onChange={(event) => setPreviewTenantId(event.target.value)}
+                                                 disabled={isBusy}
                                                 className="mt-2 block min-w-[15rem] rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                                             >
                                                 <option value="">Choose storefront theme</option>
@@ -1275,6 +1351,7 @@ export default function HomepageBuilderPage() {
                                         <button
                                             type="button"
                                             onClick={handleVisibilityToggle}
+                                            disabled={isBusy}
                                             className={[
                                                 'inline-flex items-center gap-2 rounded-2xl border px-3 py-2 text-sm font-semibold transition',
                                                 selectedSection.isActive
@@ -1291,8 +1368,9 @@ export default function HomepageBuilderPage() {
                                         <label className="space-y-2">
                                             <span className="text-sm font-semibold text-slate-900">Section type</span>
                                             <select
-                                                value={selectedSection.type}
-                                                onChange={(event) => handleSectionTypeChange(event.target.value as HomepageSectionType)}
+                                                 value={selectedSection.type}
+                                                 onChange={(event) => handleSectionTypeChange(event.target.value as HomepageSectionType)}
+                                                 disabled={isBusy}
                                                 className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
                                             >
                                                 {schemas.map((schema) => (
@@ -1374,7 +1452,7 @@ export default function HomepageBuilderPage() {
                                                             <button
                                                                 type="button"
                                                                 onClick={() => void handleTranslateField(field)}
-                                                                disabled={activeLanguage !== 'ar' || translatingFieldKey === field.key}
+                                                                disabled={isBusy || activeLanguage !== 'ar' || translatingFieldKey === field.key}
                                                                 className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
                                                             >
                                                                 {translatingFieldKey === field.key ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -1385,6 +1463,7 @@ export default function HomepageBuilderPage() {
 
                                                     <SchemaFieldInput
                                                         field={field}
+                                                        disabled={isBusy}
                                                         value={field.isLocalized
                                                             ? getLocalizedFieldDisplayValue(selectedSection.data, field, activeLanguage)
                                                             : getFieldDisplayValue(field, selectedSection.data[field.key])}

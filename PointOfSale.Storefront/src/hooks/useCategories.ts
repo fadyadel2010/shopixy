@@ -6,8 +6,12 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getTenantId } from '@/bootstrap';
-import { fetchCategories } from '@/services/api';
+import { fetchCategories } from '@/services/api/storefrontApi';
+import {
+    getRuntimeCacheIdentity,
+    isRuntimeCacheFresh,
+    type RuntimeCacheLoadOptions,
+} from '@/storefront/runtime/cache/runtimeCachePolicy';
 import type { CategoryTreeDto } from '@/types';
 
 /**
@@ -24,74 +28,130 @@ export interface UseCategoriesState {
  * Module-level cache for categories
  * Categories don't change often, so we cache them
  */
-const categoryCache = new Map<string, CategoryTreeDto[]>();
-const categoryPromises = new Map<string, Promise<CategoryTreeDto[]>>();
+interface CategoryCacheEntry {
+    categories: CategoryTreeDto[] | null;
+    generation: number;
+    inFlight: Promise<CategoryTreeDto[]> | null;
+    loadedAt: number | null;
+}
+
+const categoryCache = new Map<string, CategoryCacheEntry>();
+
+function getCategoryCacheEntry(cacheKey: string): CategoryCacheEntry {
+    const existing = categoryCache.get(cacheKey);
+    if (existing) {
+        return existing;
+    }
+
+    const entry: CategoryCacheEntry = {
+        categories: null,
+        generation: 0,
+        inFlight: null,
+        loadedAt: null,
+    };
+    categoryCache.set(cacheKey, entry);
+    return entry;
+}
+
+function getCachedCategories(cacheKey: string): CategoryTreeDto[] | null {
+    return categoryCache.get(cacheKey)?.categories ?? null;
+}
+
+async function loadCategoriesForKey(
+    cacheKey: string,
+    options: RuntimeCacheLoadOptions = {}
+): Promise<CategoryTreeDto[]> {
+    const entry = getCategoryCacheEntry(cacheKey);
+
+    if (entry.inFlight) {
+        return entry.inFlight;
+    }
+
+    if (!options.force
+        && entry.categories
+        && isRuntimeCacheFresh(entry.loadedAt, cacheKey, cacheKey)) {
+        return entry.categories;
+    }
+
+    if (options.force) {
+        entry.generation += 1;
+        entry.loadedAt = null;
+    }
+
+    const requestGeneration = entry.generation;
+    let request!: Promise<CategoryTreeDto[]>;
+    request = (async () => {
+        try {
+            const result = await fetchCategories();
+
+            if (categoryCache.get(cacheKey) === entry && entry.generation === requestGeneration) {
+                entry.categories = result;
+                entry.loadedAt = Date.now();
+            }
+
+            return result;
+        } finally {
+            if (categoryCache.get(cacheKey) === entry && entry.inFlight === request) {
+                entry.inFlight = null;
+            }
+        }
+    })();
+    entry.inFlight = request;
+
+    return request;
+}
+
+export function refreshCategoryCache(
+    options: RuntimeCacheLoadOptions = {}
+): Promise<CategoryTreeDto[]> {
+    return loadCategoriesForKey(
+        getRuntimeCacheIdentity('categories'),
+        { force: options.force ?? true }
+    );
+}
+
+export function invalidateCategoryCache(): void {
+    categoryCache.clear();
+}
 
 /**
  * Hook for fetching categories with caching
  */
 export function useCategories(): UseCategoriesState {
-    const tenantCacheKey = (() => {
-        try {
-            return getTenantId();
-        } catch {
-            return 'unresolved';
-        }
-    })();
+    const tenantCacheKey = getRuntimeCacheIdentity('categories');
+    const initialCategories = getCachedCategories(tenantCacheKey);
 
-    const [categories, setCategories] = useState<CategoryTreeDto[]>(categoryCache.get(tenantCacheKey) || []);
-    const [isLoading, setIsLoading] = useState(!categoryCache.has(tenantCacheKey));
+    const [categories, setCategories] = useState<CategoryTreeDto[]>(initialCategories ?? []);
+    const [isLoading, setIsLoading] = useState(
+        !isRuntimeCacheFresh(
+            categoryCache.get(tenantCacheKey)?.loadedAt ?? null,
+            tenantCacheKey,
+            tenantCacheKey
+        )
+    );
     const [error, setError] = useState<string | null>(null);
     const mountedRef = useRef(true);
+    const requestSequenceRef = useRef(0);
 
     const loadCategories = useCallback(async (forceRefresh = false) => {
-        // Return cached data if available and not forcing refresh
-        const cachedCategories = categoryCache.get(tenantCacheKey);
-        if (cachedCategories && !forceRefresh) {
-            setCategories(cachedCategories);
-            setIsLoading(false);
-            return;
-        }
-
-        // If a fetch is already in progress, wait for it
-        const cachePromise = categoryPromises.get(tenantCacheKey) ?? null;
-        if (cachePromise && !forceRefresh) {
-            try {
-                const result = await cachePromise;
-                if (mountedRef.current) {
-                    setCategories(result);
-                    setIsLoading(false);
-                }
-                return;
-            } catch {
-                // Fall through to fetch again
-            }
-        }
-
+        const requestSequence = ++requestSequenceRef.current;
         setIsLoading(true);
         setError(null);
 
         try {
-            // Create promise and store it for deduplication
-            const nextPromise = fetchCategories();
-            categoryPromises.set(tenantCacheKey, nextPromise);
-            const result = await nextPromise;
+            const result = await loadCategoriesForKey(tenantCacheKey, { force: forceRefresh });
 
-            // Cache the result
-            categoryCache.set(tenantCacheKey, result);
-
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setCategories(result);
                 setError(null);
             }
         } catch (err) {
             console.error('[useCategories] Failed to fetch categories:', err);
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setError('Failed to load categories');
             }
         } finally {
-            categoryPromises.delete(tenantCacheKey);
-            if (mountedRef.current) {
+            if (mountedRef.current && requestSequenceRef.current === requestSequence) {
                 setIsLoading(false);
             }
         }
@@ -119,9 +179,8 @@ export function useCategories(): UseCategoriesState {
 }
 
 /**
- * Clear the category cache (for testing)
+ * Backward-compatible alias for explicit Runtime invalidation.
  */
 export function clearCategoryCache(): void {
-    categoryCache.clear();
-    categoryPromises.clear();
+    invalidateCategoryCache();
 }

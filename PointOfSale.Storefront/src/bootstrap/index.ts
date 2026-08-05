@@ -64,3 +64,12 @@ export {
     isAffiliateRefActive,
     clearAffiliateRef,
 } from './affiliateRefTracker';
+
+// Canonical StoreConfig Runtime cache controls
+export {
+    forceRefreshStoreConfig,
+    getStoreConfigRuntimeCacheState,
+    invalidateStoreConfigRuntimeCache,
+    refreshStoreConfig,
+    type StoreConfigRefreshOptions,
+} from '@/storefront/runtime/cache/storeConfigRuntime';

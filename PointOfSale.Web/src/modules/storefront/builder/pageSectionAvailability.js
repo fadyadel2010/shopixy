@@ -1,23 +1,25 @@
 const PRODUCT_CONTEXT_SECTION_TYPES = new Set([
-    'product-hero',
     'product-gallery',
     'product-specs',
     'product-video',
     'related-products',
 ])
 
-const PRODUCT_PAGE_KEYS = new Set([
-    'product',
-    'product-template',
-])
+export function isRuntimeOwnedSection(sectionType) {
+    return sectionType === 'product-hero'
+}
 
 export function isSectionAvailableForPage(sectionType, pageKey = 'home') {
     if (!sectionType) {
         return false
     }
 
+    if (isRuntimeOwnedSection(sectionType)) {
+        return false
+    }
+
     if (PRODUCT_CONTEXT_SECTION_TYPES.has(sectionType)) {
-        return PRODUCT_PAGE_KEYS.has(pageKey)
+        return pageKey === 'product-template'
     }
 
     return true

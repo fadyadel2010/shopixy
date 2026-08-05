@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -20,29 +21,17 @@ namespace PointOfSale.Tests.SuperAdmin;
 public sealed class SuperAdminHomepageSectionManagementServiceTests
 {
     [Fact]
-    public async Task UpdateSectionAsync_CreatesDraftWithoutAffectingLiveHomepage()
+    public async Task SaveDraftAsync_CreatesDraftWithoutAffectingLiveHomepage()
     {
         using var dbContext = CreateDbContext();
         var liveSection = CreateHeroSection(order: 0, title: "Live Hero");
         dbContext.HomepageSections.Add(liveSection);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
 
-        await managementService.UpdateSectionAsync(
-            liveSection.SectionGroupId,
-            new HomepageSectionWriteRequest
-            {
-                Type = HomepageSectionTypes.Hero,
-                Order = 0,
-                SchemaVersion = 1,
-                Data = CreateHeroData("Draft Hero"),
-                IsActive = true,
-                TenantId = null
-            },
-            actorId: null);
+        await SaveDraftAsync(managementService, BuildHeroDraftRequest(liveSection.SectionGroupId, "Draft Hero"));
 
         var liveSections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
         var previewSections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Preview);
@@ -63,25 +52,16 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.Add(liveSection);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
 
-        await managementService.UpdateSectionAsync(
-            liveSection.SectionGroupId,
-            new HomepageSectionWriteRequest
-            {
-                Type = HomepageSectionTypes.Hero,
-                Order = 0,
-                SchemaVersion = 1,
-                Data = CreateHeroData("Published Draft"),
-                IsActive = true,
-                TenantId = null
-            },
-            actorId: null);
+        var savedDraft = await SaveDraftAsync(
+            managementService,
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Published Draft"));
 
         await managementService.PublishSectionsAsync(
             new PublishHomepageSectionsRequest(),
+            savedDraft.WorkspaceVersion,
             actorId: null);
 
         var liveSections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
@@ -98,7 +78,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
     }
 
     [Fact]
-    public async Task ReorderSectionsAsync_NormalizesDraftOrderingWithoutChangingLiveUntilPublish()
+    public async Task SaveDraftAsync_NormalizesDraftOrderingWithoutChangingLiveUntilPublish()
     {
         using var dbContext = CreateDbContext();
         var first = CreateHeroSection(order: 0, title: "First");
@@ -107,16 +87,21 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.AddRange(first, second, third);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
 
-        var previewSections = await managementService.ReorderSectionsAsync(
-            new ReorderHomepageSectionsRequest
+        var savedDraft = await SaveDraftAsync(
+            managementService,
+            new SaveHomepageDraftRequest
             {
-                SectionIds = [third.SectionGroupId, first.SectionGroupId, second.SectionGroupId]
-            },
-            actorId: null);
+                Sections =
+                [
+                    BuildHeroDraftSection(third.SectionGroupId, "Third"),
+                    BuildHeroDraftSection(first.SectionGroupId, "First"),
+                    BuildHeroDraftSection(second.SectionGroupId, "Second")
+                ]
+            });
+        var previewSections = savedDraft.Data;
 
         var liveSections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
         var persistedDraftOrders = await dbContext.HomepageSections
@@ -151,7 +136,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.AddRange(globalSection, tenantSection);
         await dbContext.SaveChangesAsync();
 
-        var readService = CreateReadService(dbContext, CreateCacheService());
+        var readService = CreateReadService(dbContext);
 
         var tenantSections = await readService.GetActiveSectionsAsync(tenantId, HomepageSectionReadMode.Published);
         var fallbackSections = await readService.GetActiveSectionsAsync(Guid.NewGuid(), HomepageSectionReadMode.Published);
@@ -191,7 +176,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
 
         await dbContext.SaveChangesAsync();
 
-        var readService = CreateReadService(dbContext, CreateCacheService());
+        var readService = CreateReadService(dbContext);
         var sections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
 
         Assert.Single(sections);
@@ -233,7 +218,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             .Setup(x => x.FilterVisibleListingIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<Guid>());
 
-        var readService = CreateReadService(dbContext, CreateCacheService(), visibilityService.Object);
+        var readService = CreateReadService(dbContext, visibilityService.Object);
         var sections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
 
         Assert.Single(sections);
@@ -241,7 +226,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
     }
 
     [Fact]
-    public async Task CreateSectionAsync_RejectsCuratedProductsForSuppressedVendors()
+    public async Task SaveDraftAsync_RejectsCuratedProductsForSuppressedVendors()
     {
         using var dbContext = CreateDbContext();
         var tenantId = Guid.NewGuid();
@@ -255,53 +240,51 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             .Setup(x => x.FilterVisibleListingIdsAsync(It.IsAny<IEnumerable<Guid>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<Guid>());
 
-        var managementService = CreateManagementService(dbContext, CreateCacheService(), visibilityService.Object);
+        var managementService = CreateManagementService(dbContext, visibilityService.Object);
 
         var exception = await Assert.ThrowsAsync<HomepageSectionManagementException>(() =>
-            managementService.CreateSectionAsync(
-                new HomepageSectionWriteRequest
+            SaveDraftAsync(
+                managementService,
+                new SaveHomepageDraftRequest
                 {
-                    Type = HomepageSectionTypes.Products,
-                    Order = 0,
-                    SchemaVersion = 1,
-                    Data = JsonSerializer.Deserialize<JsonElement>(CreateProductsData(listingId)),
-                    IsActive = true,
-                    TenantId = null
-                },
-                actorId: null));
+                    Sections =
+                    [
+                        new SaveHomepageDraftSectionRequest
+                        {
+                            Type = HomepageSectionTypes.Products,
+                            Order = 0,
+                            SchemaVersion = 1,
+                            Data = JsonSerializer.Deserialize<JsonElement>(CreateProductsData(listingId)),
+                            IsActive = true
+                        }
+                    ]
+                }));
 
         Assert.Equal("HOMEPAGE_SECTION_REFERENCE_INVALID", exception.Code);
     }
 
     [Fact]
-    public async Task PublishSectionsAsync_InvalidatesPublishedCache()
+    public async Task PublishSectionsAsync_ReturnsCurrentPublishedSqlRows()
     {
         using var dbContext = CreateDbContext();
         var liveSection = CreateHeroSection(order: 0, title: "Cached Live");
         dbContext.HomepageSections.Add(liveSection);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
 
         var firstRead = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
         Assert.Equal("Cached Live", firstRead[0].Data.GetProperty("title").GetString());
 
-        await managementService.UpdateSectionAsync(
-            liveSection.SectionGroupId,
-            new HomepageSectionWriteRequest
-            {
-                Type = HomepageSectionTypes.Hero,
-                Order = 0,
-                SchemaVersion = 1,
-                Data = CreateHeroData("Fresh Publish"),
-                IsActive = true,
-                TenantId = null
-            },
-            actorId: null);
+        var savedDraft = await SaveDraftAsync(
+            managementService,
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Fresh Publish"));
 
-        await managementService.PublishSectionsAsync(new PublishHomepageSectionsRequest(), actorId: null);
+        await managementService.PublishSectionsAsync(
+            new PublishHomepageSectionsRequest(),
+            savedDraft.WorkspaceVersion,
+            actorId: null);
 
         var secondRead = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
         Assert.Equal("Fresh Publish", secondRead[0].Data.GetProperty("title").GetString());
@@ -315,26 +298,17 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.Add(liveSection);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
 
-        await managementService.UpdateSectionAsync(
-            liveSection.SectionGroupId,
-            new HomepageSectionWriteRequest
-            {
-                Type = HomepageSectionTypes.Hero,
-                Order = 0,
-                SchemaVersion = 1,
-                Data = CreateHeroData("Published Draft"),
-                IsActive = true,
-                TenantId = null
-            },
-            actorId: null);
+        var savedDraft = await SaveDraftAsync(
+            managementService,
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Published Draft"));
 
         dbContext.ResetHomepageSectionSaveSnapshots();
 
         await managementService.PublishSectionsAsync(
             new PublishHomepageSectionsRequest(),
+            savedDraft.WorkspaceVersion,
             actorId: null);
 
         Assert.Equal(2, dbContext.HomepageSectionSaveSnapshots.Count);
@@ -363,25 +337,16 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.Add(liveSection);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
         var publisher = new RecordingHomepageEventPublisher(dbContext);
-        var managementService = CreateManagementService(dbContext, cacheService, eventPublisher: publisher);
+        var managementService = CreateManagementService(dbContext, eventPublisher: publisher);
 
-        await managementService.UpdateSectionAsync(
-            liveSection.SectionGroupId,
-            new HomepageSectionWriteRequest
-            {
-                Type = HomepageSectionTypes.Hero,
-                Order = 0,
-                SchemaVersion = 1,
-                Data = CreateHeroData("Published Draft"),
-                IsActive = true,
-                TenantId = null
-            },
-            actorId: null);
+        var savedDraft = await SaveDraftAsync(
+            managementService,
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Published Draft"));
 
         await managementService.PublishSectionsAsync(
             new PublishHomepageSectionsRequest(),
+            savedDraft.WorkspaceVersion,
             actorId: null);
 
         Assert.True(publisher.SawPendingHomepageMutationOnPublish);
@@ -398,10 +363,10 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.AddRange(firstLive, secondLive);
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
 
+        var currentSnapshot = await managementService.GetSectionsAsync();
         var savedDraft = await managementService.SaveDraftAsync(
             new SaveHomepageDraftRequest
             {
@@ -426,6 +391,7 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
                     }
                 ]
             },
+            currentSnapshot.WorkspaceVersion,
             actorId: null);
 
         var liveSections = await readService.GetActiveSectionsAsync(null, HomepageSectionReadMode.Published);
@@ -434,13 +400,67 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             .Where(section => section.IsDraft && section.SectionGroupId == secondLive.SectionGroupId)
             .SingleAsync();
 
-        Assert.Equal(2, savedDraft.Count);
+        Assert.Equal(2, savedDraft.Data.Count);
         Assert.Equal(new[] { "Draft Hero", "Draft Banner" }, previewSections.Select(section => section.Data.GetProperty("title").GetString()).ToArray());
         Assert.Equal(new[] { "Live Hero", "Live Secondary" }, liveSections.Select(section => section.Data.GetProperty("title").GetString()).ToArray());
         Assert.True(previewSections.All(section => section.IsDraft));
         Assert.False(liveSections.Any(section => section.IsDraft));
         Assert.True(deletedDraftSection.IsDeleted);
         Assert.False(deletedDraftSection.IsActive);
+    }
+
+    [Fact]
+    public async Task SaveDraftAsync_AdoptsWorkspaceVersionAcrossRepeatedSaves_AndRejectsStaleReplay()
+    {
+        using var dbContext = CreateDbContext();
+        var liveSection = CreateHeroSection(order: 0, title: "Live Hero");
+        dbContext.HomepageSections.Add(liveSection);
+        await dbContext.SaveChangesAsync();
+
+        var managementService = CreateManagementService(dbContext);
+        var loaded = await managementService.GetSectionsAsync();
+
+        var firstSave = await managementService.SaveDraftAsync(
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Draft v1"),
+            loaded.WorkspaceVersion,
+            actorId: null);
+        var secondSave = await managementService.SaveDraftAsync(
+            BuildHeroDraftRequest(liveSection.SectionGroupId, "Draft v2"),
+            firstSave.WorkspaceVersion,
+            actorId: null);
+
+        Assert.NotEqual(loaded.WorkspaceVersion, firstSave.WorkspaceVersion);
+        Assert.NotEqual(firstSave.WorkspaceVersion, secondSave.WorkspaceVersion);
+        Assert.Equal("Draft v2", secondSave.Data[0].Data.GetProperty("title").GetString());
+
+        var conflict = await Assert.ThrowsAsync<HomepageSectionManagementException>(() =>
+            managementService.SaveDraftAsync(
+                BuildHeroDraftRequest(liveSection.SectionGroupId, "Stale overwrite"),
+                firstSave.WorkspaceVersion,
+                actorId: null));
+
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+        Assert.Equal("HOMEPAGE_WORKSPACE_CONFLICT", conflict.Code);
+
+        var current = await managementService.GetSectionsAsync();
+        Assert.Equal(secondSave.WorkspaceVersion, current.WorkspaceVersion);
+        Assert.Equal("Draft v2", current.Data[0].Data.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public async Task SaveDraftAsync_RequiresBackendIssuedWorkspaceVersion()
+    {
+        using var dbContext = CreateDbContext();
+        var managementService = CreateManagementService(dbContext);
+
+        var exception = await Assert.ThrowsAsync<HomepageSectionManagementException>(() =>
+            managementService.SaveDraftAsync(
+                new SaveHomepageDraftRequest { Sections = [] },
+                expectedWorkspaceVersion: null,
+                actorId: null));
+
+        Assert.Equal(StatusCodes.Status428PreconditionRequired, exception.StatusCode);
+        Assert.Equal("HOMEPAGE_WORKSPACE_VERSION_REQUIRED", exception.Code);
     }
 
     [Fact]
@@ -456,9 +476,8 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         });
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
         var templateSeeder = CreateTemplateSeeder(dbContext, managementService);
 
         var created = await templateSeeder.EnsurePublishedTemplateAsync(tenantId);
@@ -494,9 +513,8 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.Add(CreateHeroSection(order: 0, title: "Existing Hero", tenantId: tenantId));
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
         var templateSeeder = CreateTemplateSeeder(dbContext, managementService);
 
         var created = await templateSeeder.EnsurePublishedTemplateAsync(tenantId);
@@ -521,22 +539,26 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         dbContext.HomepageSections.Add(CreateHeroSection(order: 0, title: "Old Hero", tenantId: tenantId));
         await dbContext.SaveChangesAsync();
 
-        var cacheService = CreateCacheService();
-        var managementService = CreateManagementService(dbContext, cacheService);
-        var readService = CreateReadService(dbContext, cacheService);
+        var managementService = CreateManagementService(dbContext);
+        var readService = CreateReadService(dbContext);
         var templateSeeder = CreateTemplateSeeder(dbContext, managementService);
 
-        var generatedDraft = await templateSeeder.GenerateDraftTemplateAsync(tenantId, overwriteExisting: true);
+        var currentSnapshot = await managementService.GetSectionsAsync(tenantId);
+        var generatedDraft = await templateSeeder.GenerateDraftTemplateAsync(
+            tenantId,
+            overwriteExisting: true,
+            currentSnapshot.WorkspaceVersion);
         await managementService.PublishSectionsAsync(
             new PublishHomepageSectionsRequest
             {
                 TenantId = tenantId
             },
+            generatedDraft.WorkspaceVersion,
             actorId: null);
 
         var liveSections = await readService.GetActiveSectionsAsync(tenantId, HomepageSectionReadMode.Published);
 
-        Assert.Equal(4, generatedDraft.Count);
+        Assert.Equal(4, generatedDraft.Data.Count);
         Assert.Equal(4, liveSections.Count);
         Assert.Equal(
             new[]
@@ -559,6 +581,37 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
         return new ApplicationDbContext(options);
     }
 
+    private static async Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> SaveDraftAsync(
+        SuperAdminHomepageSectionManagementService managementService,
+        SaveHomepageDraftRequest request)
+    {
+        var snapshot = await managementService.GetSectionsAsync(request.TenantId);
+        return await managementService.SaveDraftAsync(
+            request,
+            snapshot.WorkspaceVersion,
+            actorId: null);
+    }
+
+    private static SaveHomepageDraftRequest BuildHeroDraftRequest(Guid sectionId, string title)
+    {
+        return new SaveHomepageDraftRequest
+        {
+            Sections = [BuildHeroDraftSection(sectionId, title)]
+        };
+    }
+
+    private static SaveHomepageDraftSectionRequest BuildHeroDraftSection(Guid sectionId, string title)
+    {
+        return new SaveHomepageDraftSectionRequest
+        {
+            Id = sectionId,
+            Type = HomepageSectionTypes.Hero,
+            SchemaVersion = 1,
+            Data = CreateHeroData(title),
+            IsActive = true
+        };
+    }
+
     private static SpyApplicationDbContext CreateSpyDbContext()
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
@@ -570,7 +623,6 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
 
     private static SuperAdminHomepageSectionManagementService CreateManagementService(
         ApplicationDbContext dbContext,
-        IHomepageSectionCacheService cacheService,
         ICommerceHubPublicVendorVisibilityService? publicVendorVisibilityService = null,
         IEventPublisher? eventPublisher = null)
     {
@@ -586,7 +638,6 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             dbContext,
             mongoDbContext,
             new HomepageSectionSchemaRegistry(),
-            cacheService,
             publicVendorVisibilityService ?? CreatePublicVendorVisibilityService(),
             eventPublisher ?? Mock.Of<IEventPublisher>(),
             NullLogger<SuperAdminHomepageSectionManagementService>.Instance);
@@ -594,13 +645,11 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
 
     private static HomepageSectionReadService CreateReadService(
         ApplicationDbContext dbContext,
-        IHomepageSectionCacheService cacheService,
         ICommerceHubPublicVendorVisibilityService? publicVendorVisibilityService = null)
     {
         return new HomepageSectionReadService(
             dbContext,
             new HomepageSectionSchemaRegistry(),
-            cacheService,
             publicVendorVisibilityService ?? CreatePublicVendorVisibilityService(),
             NullLogger<HomepageSectionReadService>.Instance);
     }
@@ -613,11 +662,6 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             dbContext,
             managementService,
             NullLogger<HomepageTemplateSeeder>.Instance);
-    }
-
-    private static IHomepageSectionCacheService CreateCacheService()
-    {
-        return new TestHomepageSectionCacheService();
     }
 
     private static ICommerceHubPublicVendorVisibilityService CreatePublicVendorVisibilityService()
@@ -778,41 +822,6 @@ public sealed class SuperAdminHomepageSectionManagementServiceTests
             ctaText = "Explore offer",
             ctaLink = "/collections/featured"
         });
-    }
-
-    private sealed class TestHomepageSectionCacheService : IHomepageSectionCacheService
-    {
-        private readonly Dictionary<string, IReadOnlyList<HomepageSectionDto>> _store = new(StringComparer.Ordinal);
-
-        public Task<IReadOnlyList<HomepageSectionDto>?> GetPublishedScopeAsync(
-            Guid? tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _store.TryGetValue(GetKey(tenantId), out var value);
-            return Task.FromResult(value);
-        }
-
-        public Task SetPublishedScopeAsync(
-            Guid? tenantId,
-            IReadOnlyList<HomepageSectionDto> sections,
-            CancellationToken cancellationToken = default)
-        {
-            _store[GetKey(tenantId)] = sections;
-            return Task.CompletedTask;
-        }
-
-        public Task InvalidatePublishedScopeAsync(
-            Guid? tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _store.Remove(GetKey(tenantId));
-            return Task.CompletedTask;
-        }
-
-        private static string GetKey(Guid? tenantId)
-        {
-            return tenantId?.ToString("N") ?? "global";
-        }
     }
 
     private sealed class RecordingHomepageEventPublisher(ApplicationDbContext dbContext) : IEventPublisher

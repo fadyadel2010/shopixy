@@ -1,5 +1,3 @@
-using System.Text.Json;
-using Microsoft.Extensions.Options;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Exceptions;
@@ -10,8 +8,6 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.API.Services.Storefront;
@@ -32,39 +28,25 @@ public class ShippingMethodService : IShippingMethodService
 {
     private readonly IShippingMethodReadRepository _repository;
     private readonly ApplicationDbContext _dbContext;
-    private readonly RedisConnectionFactory _redisFactory;
-    private readonly RedisSettings _redisSettings;
+    private readonly IShippingMethodCacheService _cache;
     private readonly IShippingCalculationService _shippingCalculationService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly ILogger<ShippingMethodService> _logger;
-    private readonly JsonSerializerOptions _jsonOptions;
-
-    /// <summary>
-    /// Cache TTL for shipping methods (30 minutes - rarely changes)
-    /// </summary>
-    private const int CacheTtlMinutes = 30;
 
     public ShippingMethodService(
         IShippingMethodReadRepository repository,
         ApplicationDbContext dbContext,
-        RedisConnectionFactory redisFactory,
-        IOptions<RedisSettings> redisSettings,
+        IShippingMethodCacheService cache,
         IShippingCalculationService shippingCalculationService,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         ILogger<ShippingMethodService> logger)
     {
         _repository = repository;
         _dbContext = dbContext;
-        _redisFactory = redisFactory;
-        _redisSettings = redisSettings.Value;
+        _cache = cache;
         _shippingCalculationService = shippingCalculationService;
         _reliabilityTelemetry = reliabilityTelemetry;
         _logger = logger;
-        _jsonOptions = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = false
-        };
     }
 
     /// <inheritdoc />
@@ -85,42 +67,38 @@ public class ShippingMethodService : IShippingMethodService
             return new List<ShippingMethodDto>();
         }
 
-        // Step 1: Try Redis cache first
-        var cacheKey = CacheKeyBuilder.ShippingMethodsKey(_redisSettings.InstanceName, tenantId);
-        var cached = warehouseId.HasValue
-            ? null
-            : await TryGetFromCacheAsync<List<ShippingMethodDto>>(cacheKey, correlationId);
-
-        if (cached != null)
+        List<ShippingMethodDocument> documents;
+        if (!warehouseId.HasValue)
         {
+            documents = (await _cache.GetOrCreateAsync(
+                tenantId,
+                async ct => await _repository.GetActiveShippingMethodsAsync(tenantId, ct),
+                cancellationToken)).ToList();
+
             string? cacheScopeFailureReason;
             string cacheCurrencyFailureReason = "not_evaluated";
 
-            if (TryValidateCachedTenantScope(tenantId, cached, correlationId, out cacheScopeFailureReason) &&
+            if (TryValidateCachedTenantScope(tenantId, documents, correlationId, out cacheScopeFailureReason) &&
                 TryResolveProjectedCurrency(
-                    cached.Select(method => method.Currency),
+                    documents.Select(method => method.Currency),
                     "shipping_methods_cache",
                     correlationId,
                     out var cachedCurrency,
                     out cacheCurrencyFailureReason))
             {
-                foreach (var method in cached)
-                {
-                    method.Currency = cachedCurrency;
-                }
-
-                ApplyCalculatedPrices(cached, cartSubtotal, totalWeight);
+                var cachedMethods = MapToDtos(documents, cachedCurrency);
+                ApplyCalculatedPrices(cachedMethods, cartSubtotal, totalWeight);
 
                 _logger.LogDebug(
-                    "Shipping methods cache HIT | TenantId: {TenantId} | Count: {Count} | CacheHit: true | CorrelationId: {CorrelationId}",
-                    tenantId, cached.Count, correlationId);
-                return cached;
+                    "Shipping methods loaded through cache owner | TenantId: {TenantId} | Count: {Count} | CorrelationId: {CorrelationId}",
+                    tenantId, cachedMethods.Count, correlationId);
+                return cachedMethods;
             }
 
             // Cache invalidated due to scope or currency resolution failure
             var cacheFailureReason = cacheScopeFailureReason ?? cacheCurrencyFailureReason;
             _reliabilityTelemetry.RecordCurrencyProjectionMismatch(projection: "shipping_methods_cache", reason: cacheFailureReason);
-            var cachedCurrencies = cached
+            var cachedCurrencies = documents
                 .Select(method => string.IsNullOrWhiteSpace(method.Currency) 
                     ? "<missing>" 
                     : method.Currency.Trim().ToUpperInvariant())
@@ -128,62 +106,34 @@ public class ShippingMethodService : IShippingMethodService
                 .ToList();
             _logger.LogWarning(
                 "Shipping methods cache INVALIDATED due to authority validation failure | TenantId: {TenantId} | CachedCount: {Count} | Reason: {Reason} | ProjectedCurrencies: {Currencies} | CorrelationId: {CorrelationId}",
-                tenantId, cached.Count, cacheFailureReason, string.Join(", ", cachedCurrencies), correlationId);
+                tenantId, documents.Count, cacheFailureReason, string.Join(", ", cachedCurrencies), correlationId);
+
+            await _cache.InvalidateAsync(tenantId, cancellationToken);
+            documents = (await _cache.GetOrCreateAsync(
+                tenantId,
+                async ct => await _repository.GetActiveShippingMethodsAsync(tenantId, ct),
+                cancellationToken)).ToList();
+        }
+        else
+        {
+            documents = await _repository.GetActiveShippingMethodsAsync(tenantId, cancellationToken);
+            documents = await ApplyWarehouseAssignmentFilterAsync(
+                tenantId,
+                warehouseId,
+                documents,
+                correlationId,
+                cancellationToken);
         }
 
-        // Step 2: Query MongoDB (Read Model) - NO SQL ACCESS
-        var documents = await _repository.GetActiveShippingMethodsAsync(tenantId, cancellationToken);
-        documents = await ApplyWarehouseAssignmentFilterAsync(
-            tenantId,
-            warehouseId,
-            documents,
-            correlationId,
-            cancellationToken);
         var projectedCurrency = ResolveProjectedCurrency(tenantId, documents, correlationId);
 
-        var shippingMethods = documents.Select(doc => new ShippingMethodDto
-        {
-            TenantId = doc.TenantId,
-            Id = doc.ShippingMethodId,
-            Name = doc.Name,
-            NameAr = doc.NameAr,
-            Description = doc.Description,
-            BaseRate = doc.BaseRate,
-            Price = 0m,
-            Currency = projectedCurrency,
-            RatePerKg = doc.PerKgRate,
-            FreeShippingThreshold = doc.FreeShippingThreshold,
-            DeliveryDays = FormatDeliveryDays(doc.EstimatedDeliveryDaysMin, doc.EstimatedDeliveryDaysMax),
-            EstimatedDays = doc.EstimatedDeliveryDaysMax,
-            CarrierName = doc.CarrierName,
-            SortOrder = doc.SortOrder
-        }).ToList();
+        var shippingMethods = MapToDtos(documents, projectedCurrency);
 
         ApplyCalculatedPrices(shippingMethods, cartSubtotal, totalWeight);
 
         _logger.LogInformation(
             "Shipping methods loaded from MongoDB | TenantId: {TenantId} | ResultCount: {ResultCount} | CacheHit: false | CorrelationId: {CorrelationId}",
             tenantId, shippingMethods.Count, correlationId);
-
-        // Step 3: Populate Redis cache (fire-and-forget). Warehouse-filtered reads
-        // are not cached under the tenant-wide key because assignment authority is
-        // warehouse-scoped.
-        if (!warehouseId.HasValue)
-        {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await SetCacheAsync(cacheKey, shippingMethods, CacheTtlMinutes, correlationId);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex,
-                        "Failed to cache shipping methods (non-fatal) | CacheKey: {CacheKey} | CorrelationId: {CorrelationId}",
-                        cacheKey, correlationId);
-                }
-            }, cancellationToken);
-        }
 
         return shippingMethods;
     }
@@ -271,49 +221,6 @@ public class ShippingMethodService : IShippingMethodService
         return $"{min}-{max} days";
     }
 
-    private async Task<T?> TryGetFromCacheAsync<T>(string key, string correlationId) where T : class
-    {
-        try
-        {
-            var db = _redisFactory.GetDatabase();
-            if (db == null) return null;
-
-            var json = await db.StringGetAsync(key);
-            if (json.IsNullOrEmpty) return null;
-
-            return JsonSerializer.Deserialize<T>(json!, _jsonOptions);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Cache read error (non-fatal) | Key: {Key} | CorrelationId: {CorrelationId}",
-                key, correlationId);
-            return null;
-        }
-    }
-
-    private async Task SetCacheAsync<T>(string key, T value, int ttlMinutes, string correlationId)
-    {
-        try
-        {
-            var db = _redisFactory.GetDatabase();
-            if (db == null) return;
-
-            var json = JsonSerializer.Serialize(value, _jsonOptions);
-            await db.StringSetAsync(key, json, TimeSpan.FromMinutes(ttlMinutes));
-
-            _logger.LogDebug(
-                "Cache set | Key: {Key} | TTL: {TTL}min | CorrelationId: {CorrelationId}",
-                key, ttlMinutes, correlationId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "Cache write error (non-fatal) | Key: {Key} | CorrelationId: {CorrelationId}",
-                key, correlationId);
-        }
-    }
-
     private string ResolveProjectedCurrency(
         Guid tenantId,
         IReadOnlyCollection<PointOfSale.Infrastructure.MongoDB.Documents.ShippingMethodDocument> documents,
@@ -388,7 +295,7 @@ public class ShippingMethodService : IShippingMethodService
 
     private bool TryValidateCachedTenantScope(
         Guid tenantId,
-        IReadOnlyCollection<ShippingMethodDto> cached,
+        IReadOnlyCollection<ShippingMethodDocument> cached,
         string correlationId,
         out string? failureReason)
     {
@@ -409,13 +316,36 @@ public class ShippingMethodService : IShippingMethodService
                 "Shipping methods cache scope rejected | ExpectedTenantId: {TenantId} | CachedTenantId: {CachedTenantId} | ShippingMethodId: {ShippingMethodId} | CorrelationId: {CorrelationId}",
                 tenantId,
                 method.TenantId,
-                method.Id,
+                method.ShippingMethodId,
                 correlationId);
 
             return false;
         }
 
         return true;
+    }
+
+    private static List<ShippingMethodDto> MapToDtos(
+        IEnumerable<ShippingMethodDocument> documents,
+        string currency)
+    {
+        return documents.Select(doc => new ShippingMethodDto
+        {
+            TenantId = doc.TenantId,
+            Id = doc.ShippingMethodId,
+            Name = doc.Name,
+            NameAr = doc.NameAr,
+            Description = doc.Description,
+            BaseRate = doc.BaseRate,
+            Price = 0m,
+            Currency = currency,
+            RatePerKg = doc.PerKgRate,
+            FreeShippingThreshold = doc.FreeShippingThreshold,
+            DeliveryDays = FormatDeliveryDays(doc.EstimatedDeliveryDaysMin, doc.EstimatedDeliveryDaysMax),
+            EstimatedDays = doc.EstimatedDeliveryDaysMax,
+            CarrierName = doc.CarrierName,
+            SortOrder = doc.SortOrder
+        }).ToList();
     }
 
     private static string? NormalizeCurrency(string? currency)

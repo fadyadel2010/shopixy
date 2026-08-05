@@ -10,13 +10,22 @@
 
 import { create } from 'zustand';
 import { fetchNavigation } from '@/services/api/storefrontApi';
+import {
+    getRuntimeCacheIdentity,
+    isRuntimeCacheFresh,
+    type RuntimeCacheLoadOptions,
+} from '@/storefront/runtime/cache/runtimeCachePolicy';
 import type { Navigation, NavigationLink } from '@/types';
 
 interface NavigationState {
     navigation: Navigation | null;
     loading: boolean;
     error: string | null;
-    loadNavigation: () => Promise<void>;
+    cacheIdentity: string | null;
+    loadedAt: number | null;
+    loadNavigation: (options?: RuntimeCacheLoadOptions) => Promise<void>;
+    refreshNavigation: () => Promise<void>;
+    invalidateNavigation: () => void;
     getHeaderLinks: () => NavigationLink[];
     getFooterLinks: () => NavigationLink[];
 }
@@ -28,31 +37,94 @@ const emptyNavigation: Navigation = {
     updatedAtUtc: new Date().toISOString()
 };
 
+interface NavigationRequest {
+    generation: number;
+    identity: string;
+    promise: Promise<void>;
+}
+
+let navigationGeneration = 0;
+let navigationRequest: NavigationRequest | null = null;
+
 export const useNavigationStore = create<NavigationState>((set, get) => ({
     navigation: null,
     loading: false,
     error: null,
+    cacheIdentity: null,
+    loadedAt: null,
 
-    loadNavigation: async () => {
-        // Don't reload if already loaded
-        if (get().navigation && !get().error) {
+    loadNavigation: async (options = {}) => {
+        const identity = getRuntimeCacheIdentity('navigation');
+        const state = get();
+
+        if (!options.force
+            && state.navigation
+            && !state.error
+            && isRuntimeCacheFresh(state.loadedAt, state.cacheIdentity, identity)) {
             return;
         }
 
+        if (navigationRequest
+            && navigationRequest.identity === identity
+            && navigationRequest.generation === navigationGeneration) {
+            return navigationRequest.promise;
+        }
+
+        if (options.force || (state.cacheIdentity !== null && state.cacheIdentity !== identity)) {
+            navigationGeneration += 1;
+        }
+
+        const requestGeneration = navigationGeneration;
         set({ loading: true, error: null });
 
-        try {
-            const navigation = await fetchNavigation();
-            set({ navigation, loading: false });
-        } catch (error) {
-            console.error('Failed to load navigation:', error);
-            // Per architecture: NO fallback content - show empty instead
-            set({
-                navigation: emptyNavigation,
-                error: 'Failed to load navigation',
-                loading: false
-            });
-        }
+        let requestRecord!: NavigationRequest;
+        const promise = (async () => {
+            try {
+                const navigation = await fetchNavigation();
+
+                if (navigationRequest === requestRecord && navigationGeneration === requestGeneration) {
+                    set({
+                        navigation,
+                        loading: false,
+                        error: null,
+                        cacheIdentity: identity,
+                        loadedAt: Date.now(),
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to load navigation:', error);
+
+                if (navigationRequest === requestRecord && navigationGeneration === requestGeneration) {
+                    set({
+                        navigation: get().navigation ?? emptyNavigation,
+                        error: 'Failed to load navigation',
+                        loading: false,
+                        cacheIdentity: null,
+                        loadedAt: null,
+                    });
+                }
+            } finally {
+                if (navigationRequest === requestRecord) {
+                    navigationRequest = null;
+                }
+            }
+        })();
+
+        requestRecord = {
+            generation: requestGeneration,
+            identity,
+            promise,
+        };
+        navigationRequest = requestRecord;
+
+        return promise;
+    },
+
+    refreshNavigation: () => get().loadNavigation({ force: true }),
+
+    invalidateNavigation: () => {
+        navigationGeneration += 1;
+        set({ cacheIdentity: null, loadedAt: null, error: null });
     },
 
     getHeaderLinks: () => {
@@ -72,6 +144,14 @@ export const selectHeaderLinks = (state: NavigationState) =>
     state.navigation?.header.links ?? [];
 export const selectFooterLinks = (state: NavigationState) =>
     state.navigation?.footer.links ?? [];
+
+export function invalidateNavigationCache(): void {
+    useNavigationStore.getState().invalidateNavigation();
+}
+
+export function refreshNavigationCache(): Promise<void> {
+    return useNavigationStore.getState().refreshNavigation();
+}
 
 /**
  * Resolve navigation link URL

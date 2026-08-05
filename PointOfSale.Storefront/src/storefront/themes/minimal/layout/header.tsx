@@ -1,42 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { CartIconButton } from '@/components/common/CartBadge';
-import { WishlistIconButton } from '@/components/common/WishlistBadge';
-import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
-import { useStoreConfigStore, selectStoreName } from '@/store';
-import { useNavigationStore, resolveNavLinkUrl } from '@/stores/navigationStore';
-import { useTranslation } from '@/i18n';
-import { AuthNavItems } from '@/auth/components';
+import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 
-const MinimalHeader: React.FC = () => {
-    const { t, language } = useTranslation();
-    const location = useLocation();
-    const storeName = useStoreConfigStore(selectStoreName);
-    const loadNavigation = useNavigationStore((state) => state.loadNavigation);
-    const headerLinks = useNavigationStore((state) => state.navigation?.header.links ?? []);
+const MinimalHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileOpen, setMobileOpen] = useState(false);
-
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    const links = useMemo(() => {
-        return headerLinks.map((link, index) => ({
-            key: `${link.slug || link.path || link.label}-${index}`,
-            label: language === 'ar' && link.labelAr ? link.labelAr : link.label,
-            url: resolveNavLinkUrl(link),
-            openInNewTab: link.openInNewTab,
-        }));
-    }, [headerLinks, language]);
-
-    const isActive = (path: string) => {
-        if (path === '/') {
-            return location.pathname === '/';
-        }
-
-        return location.pathname.startsWith(path);
-    };
 
     return (
         <>
@@ -46,36 +15,27 @@ const MinimalHeader: React.FC = () => {
                         {storeName}
                     </AffiliateLink>
 
-                    {links.length > 0 ? (
-                        <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-x-5 gap-y-2 md:flex" aria-label="Minimal navigation">
-                            {links.map((link) => (
-                                <AffiliateLink
-                                    key={link.key}
-                                    href={link.url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={`text-xs uppercase tracking-[0.14em] transition-colors lg:text-sm lg:tracking-[0.18em] ${
-                                        isActive(link.url) ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
-                                    }`}
-                                >
-                                    {link.label}
-                                </AffiliateLink>
-                            ))}
-                        </nav>
-                    ) : null}
+                    <NavigationSlot
+                        className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-x-5 gap-y-2 md:flex"
+                        ariaLabel="Minimal navigation"
+                        linkClassName={(link) => `text-xs uppercase tracking-[0.14em] transition-colors lg:text-sm lg:tracking-[0.18em] ${
+                            link.isActive ? 'text-slate-900' : 'text-slate-500 hover:text-slate-900'
+                        }`}
+                    />
 
                     <div className="flex shrink-0 items-center gap-1">
-                        <LanguageSwitcher variant="text" size="sm" className="hidden text-slate-500 hover:text-slate-900 md:flex" />
+                        <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-slate-500 hover:bg-slate-100 hover:text-slate-900" />
+                        <LanguageSlot variant="text" size="sm" className="hidden text-slate-500 hover:text-slate-900 md:flex" />
                         <div className="hidden rounded-full bg-slate-900 px-1 md:flex">
-                            <AuthNavItems variant="desktop" />
+                            <AuthenticationSlot variant="desktop" />
                         </div>
-                        <WishlistIconButton className="text-slate-500 hover:bg-slate-100 hover:text-slate-900" />
-                        <CartIconButton className="text-slate-500 hover:bg-slate-100 hover:text-slate-900" />
+                        <WishlistSlot className="text-slate-500 hover:bg-slate-100 hover:text-slate-900" />
+                        <CartSlot className="text-slate-500 hover:bg-slate-100 hover:text-slate-900" />
                         <button
                             type="button"
                             onClick={() => setMobileOpen((value) => !value)}
                             className="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-700 md:hidden"
-                            aria-label={t('header.menu')}
+                            aria-label={labels.menu}
                         >
                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
@@ -87,22 +47,20 @@ const MinimalHeader: React.FC = () => {
                 {mobileOpen ? (
                     <div className="border-t border-slate-200 bg-white md:hidden">
                         <nav className="space-y-1 px-4 py-4" aria-label="Minimal mobile navigation">
-                            {links.map((link) => (
-                                <AffiliateLink
-                                    key={link.key}
-                                    href={link.url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    onClick={() => setMobileOpen(false)}
-                                    className={`block rounded-xl px-3 py-3 text-sm uppercase tracking-[0.18em] ${
-                                        isActive(link.url) ? 'bg-slate-100 text-slate-900' : 'text-slate-600'
-                                    }`}
-                                >
-                                    {link.label}
-                                </AffiliateLink>
-                            ))}
+                            <SearchSlot onClick={() => setMobileOpen(false)} className="block w-full rounded-xl px-3 py-3 text-left text-sm uppercase tracking-[0.18em] text-slate-600">
+                                {labels.search}
+                            </SearchSlot>
+                            <LanguageSlot variant="text" size="sm" className="text-slate-600 hover:text-slate-900" />
+                            <NavigationSlot
+                                className="space-y-1"
+                                ariaLabel="Minimal mobile navigation"
+                                onLinkClick={() => setMobileOpen(false)}
+                                linkClassName={(link) => `block rounded-xl px-3 py-3 text-sm uppercase tracking-[0.18em] ${
+                                    link.isActive ? 'bg-slate-100 text-slate-900' : 'text-slate-600'
+                                }`}
+                            />
                             <div className="pt-3">
-                                <AuthNavItems variant="mobile" onLinkClick={() => setMobileOpen(false)} />
+                                <AuthenticationSlot variant="mobile" onLinkClick={() => setMobileOpen(false)} />
                             </div>
                         </nav>
                     </div>

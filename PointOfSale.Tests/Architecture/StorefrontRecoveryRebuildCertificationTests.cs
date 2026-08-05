@@ -13,7 +13,7 @@ public sealed class StorefrontRecoveryRebuildCertificationTests
         Assert.Contains("IProductSqlAuthorityProjectionWriter", adminSync, StringComparison.Ordinal);
         Assert.Contains("ApplySqlProductRebuildAuthorityAsync", adminSync, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", searchReindex, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteAsync(tenantId, productId", searchReindex, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", searchReindex, StringComparison.Ordinal);
         Assert.Contains("ProductSearchDocumentMapper.MapFromProductDocument", searchReindex, StringComparison.Ordinal);
         Assert.Contains("SqlAuthorityOverlayKind.StorefrontCms", adminSearch, StringComparison.Ordinal);
         Assert.Contains("DeleteStaleCmsPagesAsync", adminSearch, StringComparison.Ordinal);
@@ -51,7 +51,7 @@ public sealed class StorefrontRecoveryRebuildCertificationTests
     public void CacheReplayRepairAndDeletionConvergenceStayDerivativeOnly()
     {
         var redisInvalidation = ReadRepoFile("PointOfSale.API/Consumers/RedisInvalidationConsumer.cs");
-        var productCache = ReadRepoFile("PointOfSale.Infrastructure/Redis/Services/ProductCacheService.cs");
+        var productCache = ReadRepoFile("PointOfSale.Infrastructure/Redis/Services/StorefrontProductCacheInvalidator.cs");
         var discountRepair = ReadRepoFile("PointOfSale.API/Services/ReadModels/DiscountReadModelRepairService.cs");
         var adminDataSync = ReadRepoFile("PointOfSale.API/Controllers/AdminDataSyncController.cs");
 
@@ -60,10 +60,11 @@ public sealed class StorefrontRecoveryRebuildCertificationTests
         Assert.Contains("RunMarketplaceInvalidationWithFenceAsync", redisInvalidation, StringComparison.Ordinal);
         Assert.Contains("CacheKeyBuilder.ProductsPatternKey", productCache, StringComparison.Ordinal);
         Assert.Contains("CacheKeyBuilder.ProductByIdKey", productCache, StringComparison.Ordinal);
+        Assert.Contains("AdvanceInvalidationGenerationAsync", productCache, StringComparison.Ordinal);
 
         Assert.Contains("SqlTruthRebuildGuard.RequireSqlAuthority", discountRepair, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discountRepair, StringComparison.Ordinal);
-        Assert.Contains("_productSearchIndexService.DeleteAsync", discountRepair, StringComparison.Ordinal);
+        Assert.Contains("_productSearchIndexService.DeleteProductAsync", discountRepair, StringComparison.Ordinal);
         Assert.Contains("DeleteManyAsync(staleFilter", discountRepair, StringComparison.Ordinal);
 
         Assert.Contains("SqlTruthRebuildGuard.RequireSqlAuthority", adminDataSync, StringComparison.Ordinal);

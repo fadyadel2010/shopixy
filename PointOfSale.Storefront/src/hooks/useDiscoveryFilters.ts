@@ -37,6 +37,8 @@ export interface DiscoveryFilters {
     inStock?: boolean;
     /** Filter by variants */
     hasVariants?: boolean;
+    /** Variant attributes encoded as canonical name=value pairs */
+    attributes: string[];
     /** Sort mode */
     sort: ProductSortMode;
     /** Current page */
@@ -73,6 +75,8 @@ export interface DiscoveryFilterActions {
     setInStock: (value: boolean | undefined) => void;
     /** Set variants filter */
     setHasVariants: (value: boolean | undefined) => void;
+    /** Set variant attribute filters */
+    setAttributes: (values: string[]) => void;
     /** Set sort mode */
     setSort: (sort: ProductSortMode) => void;
     /** Set page */
@@ -149,6 +153,7 @@ export function useDiscoveryFilters(options: UseDiscoveryFiltersOptions = {}): U
             hasPromotion: hasPromotionParam ? hasPromotionParam === 'true' : undefined,
             inStock: inStockParam ? inStockParam === 'true' : undefined,
             hasVariants: hasVariantsParam ? hasVariantsParam === 'true' : undefined,
+            attributes: searchParams.getAll('attribute').filter(Boolean),
             sort: (searchParams.get('sort') as ProductSortMode) || 'relevance',
             page: pageParam ? parseInt(pageParam, 10) : 1,
             pageSize: pageSizeParam ? parseInt(pageSizeParam, 10) : DEFAULT_PAGE_SIZE,
@@ -247,6 +252,16 @@ export function useDiscoveryFilters(options: UseDiscoveryFiltersOptions = {}): U
         updateParams({ hasVariants: value !== undefined ? value.toString() : null });
     }, [updateParams]);
 
+    const setAttributes = useCallback((values: string[]) => {
+        setSearchParams(previous => {
+            const params = new URLSearchParams(previous);
+            params.delete('attribute');
+            values.filter(Boolean).forEach(value => params.append('attribute', value));
+            params.delete('page');
+            return params;
+        });
+    }, [setSearchParams]);
+
     const setSort = useCallback((sort: ProductSortMode) => {
         updateParams(
             { sort: sort === 'relevance' ? null : sort },
@@ -278,7 +293,8 @@ export function useDiscoveryFilters(options: UseDiscoveryFiltersOptions = {}): U
             filters.priceTo !== undefined ||
             filters.hasPromotion !== undefined ||
             filters.inStock !== undefined ||
-            filters.hasVariants !== undefined
+            filters.hasVariants !== undefined ||
+            filters.attributes.length > 0
         );
     }, [filters]);
 
@@ -291,6 +307,7 @@ export function useDiscoveryFilters(options: UseDiscoveryFiltersOptions = {}): U
         if (filters.hasPromotion !== undefined) count++;
         if (filters.inStock !== undefined) count++;
         if (filters.hasVariants !== undefined) count++;
+        count += filters.attributes.length;
         return count;
     }, [filters]);
 
@@ -308,6 +325,7 @@ export function useDiscoveryFilters(options: UseDiscoveryFiltersOptions = {}): U
         setHasPromotion,
         setInStock,
         setHasVariants,
+        setAttributes,
         setSort,
         setPage,
         clearAllFilters,

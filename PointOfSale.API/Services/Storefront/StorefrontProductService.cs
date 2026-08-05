@@ -70,9 +70,10 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductBySlug starting | TenantId: {TenantId} | Slug: {Slug} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, slug, affiliateModeOnly, cacheKey);
 
-        var product = await _cacheService.GetOrCreateAsync(
+        var product = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
@@ -107,8 +108,11 @@ public class StorefrontProductService : IStorefrontProductService
 
                 return CachePopulationResult<ProductReadDto>.FromValue(
                     MapToDto(document),
-                    document.SyncedAtUtc);
+                    document.SyncedAtUtc,
+                    document.LastEventOccurredAtUtc,
+                    skipCache: !document.LastEventOccurredAtUtc.HasValue);
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken);
 
         if (product != null)
@@ -145,9 +149,10 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductById starting | TenantId: {TenantId} | ProductId: {ProductId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, productId, affiliateModeOnly, cacheKey);
 
-        var product = await _cacheService.GetOrCreateAsync(
+        var product = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
@@ -182,8 +187,11 @@ public class StorefrontProductService : IStorefrontProductService
 
                 return CachePopulationResult<ProductReadDto>.FromValue(
                     MapToDto(document),
-                    document.SyncedAtUtc);
+                    document.SyncedAtUtc,
+                    document.LastEventOccurredAtUtc,
+                    skipCache: !document.LastEventOccurredAtUtc.HasValue);
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken);
 
         if (product != null)
@@ -574,9 +582,10 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductList starting | TenantId: {TenantId} | Page: {Page} | PageSize: {PageSize} | CategoryId: {CategoryId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, query.Page, query.PageSize, query.CategoryId, affiliateModeOnly, cacheKey);
 
-        var result = await _cacheService.GetOrCreateAsync(
+        var result = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product-list",
+            CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductListCacheTtlMinutes),
             async ct =>
             {
@@ -611,13 +620,15 @@ public class StorefrontProductService : IStorefrontProductService
                             $"AF-12 Security breach: {leakedCount} non-affiliate products returned in Affiliate Mode");
                     }
 
-                    var lastSyncedAtUtc = visibleItems.Count == 0
-                        ? (DateTime?)null
-                        : visibleItems.Max(item => item.SyncedAtUtc);
+                    var latestDocument = visibleItems
+                        .OrderByDescending(item => item.SyncedAtUtc)
+                        .FirstOrDefault();
 
                     return CachePopulationResult<PagedResult<ProductListItemDto>>.FromValue(
                         new PagedResult<ProductListItemDto>(dtoItems, query.Page, query.PageSize, (int)totalCount),
-                        lastSyncedAtUtc);
+                        latestDocument?.SyncedAtUtc,
+                        latestDocument?.LastEventOccurredAtUtc,
+                        skipCache: latestDocument?.LastEventOccurredAtUtc == null);
                 }
                 catch (Exception ex)
                 {
@@ -629,6 +640,7 @@ public class StorefrontProductService : IStorefrontProductService
                     throw;
                 }
             },
+            maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken)
             ?? new PagedResult<ProductListItemDto>([], query.Page, query.PageSize, 0);
 

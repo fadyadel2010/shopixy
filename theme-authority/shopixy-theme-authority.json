@@ -556,12 +556,7 @@
         "layout": "grid",
         "source": "all",
         "maxItems": 8,
-        "productIds": [],
-        "columns": 4,
-        "rows": 2,
-        "showPrice": true,
-        "showRating": true,
-        "showAddToCart": true
+        "productIds": []
       },
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "Products", "rendererConsumer": "product grid header", "visualEffect": "Section heading" },
@@ -569,12 +564,7 @@
         { "key": "layout", "type": "select", "defaultValue": "grid", "options": ["grid", "carousel"], "rendererConsumer": "product grid layout", "visualEffect": "Grid or carousel" },
         { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "product data source", "visualEffect": "Product selection mode" },
         { "key": "maxItems", "type": "number", "defaultValue": 8, "min": 1, "max": 24, "rendererConsumer": "product query", "visualEffect": "Number of products" },
-        { "key": "productIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated products", "visualEffect": "Selected product list" },
-        { "key": "columns", "type": "number", "defaultValue": 4, "min": 1, "max": 6, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
-        { "key": "rows", "type": "number", "defaultValue": 2, "min": 1, "max": 6, "rendererConsumer": "grid layout", "visualEffect": "Row count" },
-        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
-        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" },
-        { "key": "showAddToCart", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Cart action visibility" }
+        { "key": "productIds", "type": "guid-list", "defaultValue": [], "maxItems": 50, "rendererConsumer": "curated products", "visualEffect": "Selected product list" }
       ]
     },
     {
@@ -587,9 +577,7 @@
         "maxItems": 8,
         "productIds": [],
         "showBadge": true,
-        "badgeText": "Featured",
-        "showPrice": true,
-        "showRating": true
+        "badgeText": "Featured"
       },
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "Featured Products", "rendererConsumer": "featured products header", "visualEffect": "Section heading" },
@@ -597,11 +585,9 @@
         { "key": "displayStyle", "type": "select", "defaultValue": "carousel", "options": ["carousel", "grid"], "rendererConsumer": "featured products layout", "visualEffect": "Carousel or grid" },
         { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "product data source", "visualEffect": "Product selection mode" },
         { "key": "maxItems", "type": "number", "defaultValue": 8, "min": 1, "max": 24, "rendererConsumer": "product query", "visualEffect": "Number of products" },
-        { "key": "productIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated products", "visualEffect": "Selected product list" },
+        { "key": "productIds", "type": "guid-list", "defaultValue": [], "maxItems": 50, "rendererConsumer": "curated products", "visualEffect": "Selected product list" },
         { "key": "showBadge", "type": "toggle", "defaultValue": true, "rendererConsumer": "featured badge", "visualEffect": "Badge visibility" },
-        { "key": "badgeText", "type": "text", "defaultValue": "Featured", "rendererConsumer": "featured badge", "visualEffect": "Badge label" },
-        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
-        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" }
+        { "key": "badgeText", "type": "text", "defaultValue": "Featured", "rendererConsumer": "featured badge", "visualEffect": "Badge label" }
       ]
     },
     {
@@ -612,19 +598,15 @@
         "source": "all",
         "maxItems": 6,
         "categoryIds": [],
-        "columns": 3,
-        "showProductCount": false,
-        "cardStyle": "card"
+        "columns": 3
       },
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "Shop by Category", "rendererConsumer": "category grid header", "visualEffect": "Section heading" },
         { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "category grid header", "visualEffect": "Section copy" },
         { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "category data source", "visualEffect": "Category selection mode" },
         { "key": "maxItems", "type": "number", "defaultValue": 6, "min": 1, "max": 18, "rendererConsumer": "category query", "visualEffect": "Number of categories" },
-        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated categories", "visualEffect": "Selected category list" },
-        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
-        { "key": "showProductCount", "type": "toggle", "defaultValue": false, "rendererConsumer": "category card", "visualEffect": "Product count visibility" },
-        { "key": "cardStyle", "type": "select", "defaultValue": "card", "options": ["card", "tile"], "rendererConsumer": "category card", "visualEffect": "Card treatment" }
+        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "maxItems": 50, "rendererConsumer": "curated categories", "visualEffect": "Selected category list" },
+        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" }
       ]
     },
     {
@@ -635,19 +617,15 @@
         "source": "all",
         "maxItems": 6,
         "categoryIds": [],
-        "columns": 3,
-        "showProductCount": false,
-        "cardStyle": "card"
+        "columns": 3
       },
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "Subcategories", "rendererConsumer": "subcategory grid header", "visualEffect": "Section heading" },
         { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "subcategory grid header", "visualEffect": "Section copy" },
         { "key": "source", "type": "select", "defaultValue": "all", "options": ["all", "curated", "random"], "rendererConsumer": "subcategory data source", "visualEffect": "Subcategory selection mode" },
         { "key": "maxItems", "type": "number", "defaultValue": 6, "min": 1, "max": 18, "rendererConsumer": "subcategory query", "visualEffect": "Number of subcategories" },
-        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "rendererConsumer": "curated subcategories", "visualEffect": "Selected category list" },
-        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" },
-        { "key": "showProductCount", "type": "toggle", "defaultValue": false, "rendererConsumer": "subcategory card", "visualEffect": "Product count visibility" },
-        { "key": "cardStyle", "type": "select", "defaultValue": "card", "options": ["card", "tile"], "rendererConsumer": "subcategory card", "visualEffect": "Card treatment" }
+        { "key": "categoryIds", "type": "guid-list", "defaultValue": [], "maxItems": 50, "rendererConsumer": "curated subcategories", "visualEffect": "Selected category list" },
+        { "key": "columns", "type": "number", "defaultValue": 3, "min": 1, "max": 4, "rendererConsumer": "grid layout", "visualEffect": "Column count" }
       ]
     },
     {
@@ -726,86 +704,63 @@
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "What customers say", "rendererConsumer": "testimonials heading", "visualEffect": "Section heading" },
         { "key": "subtitle", "type": "textarea", "defaultValue": "", "rendererConsumer": "testimonials copy", "visualEffect": "Supporting copy" },
-        { "key": "testimonials", "type": "list", "defaultValue": [], "rendererConsumer": "testimonial cards", "visualEffect": "Customer quotes" }
+        {
+          "key": "testimonials",
+          "type": "list",
+          "defaultValue": [],
+          "maxItems": 24,
+          "itemLabel": "Testimonial",
+          "itemSchema": {
+            "defaultValue": { "name": "", "avatar": "", "text": "" },
+            "fields": [
+              { "key": "name", "type": "text", "defaultValue": "", "maxLength": 100, "allowEmpty": true },
+              { "key": "avatar", "type": "image", "defaultValue": "", "maxLength": 2048, "allowEmpty": true },
+              { "key": "text", "type": "textarea", "defaultValue": "", "maxLength": 1000, "allowEmpty": false }
+            ]
+          },
+          "rendererConsumer": "testimonial cards",
+          "visualEffect": "Marketing quotes"
+        }
       ]
     },
     {
       "type": "product-hero",
       "defaultSettings": {
-        "layoutVariant": "default",
-        "showDescription": true,
-        "showMediaGallery": true,
-        "showVariantSelector": true,
-        "showAddToCart": true,
-        "showSku": true,
-        "showStockStatus": true
+        "layoutVariant": "default"
       },
       "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product hero layout", "visualEffect": "Purchase experience skin" },
-        { "key": "showDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "product hero", "visualEffect": "Description visibility" },
-        { "key": "showMediaGallery", "type": "toggle", "defaultValue": true, "rendererConsumer": "product media", "visualEffect": "Gallery visibility" },
-        { "key": "showVariantSelector", "type": "toggle", "defaultValue": true, "rendererConsumer": "product variants", "visualEffect": "Variant selector visibility" },
-        { "key": "showAddToCart", "type": "toggle", "defaultValue": true, "rendererConsumer": "purchase CTA", "visualEffect": "Cart action visibility" },
-        { "key": "showSku", "type": "toggle", "defaultValue": true, "rendererConsumer": "product metadata", "visualEffect": "SKU visibility" },
-        { "key": "showStockStatus", "type": "toggle", "defaultValue": true, "rendererConsumer": "stock badge", "visualEffect": "Stock visibility" }
+        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product hero layout", "visualEffect": "Purchase experience skin" }
       ]
     },
     {
       "type": "product-gallery",
       "defaultSettings": {
         "layoutVariant": "default",
-        "title": "Gallery",
-        "showThumbnails": true,
-        "maxImages": 6
+        "title": "Gallery"
       },
       "fields": [
         { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product gallery layout", "visualEffect": "Gallery skin" },
-        { "key": "title", "type": "text", "defaultValue": "Gallery", "rendererConsumer": "gallery heading", "visualEffect": "Section heading" },
-        { "key": "showThumbnails", "type": "toggle", "defaultValue": true, "rendererConsumer": "gallery thumbnails", "visualEffect": "Thumbnail visibility" },
-        { "key": "maxImages", "type": "number", "defaultValue": 6, "min": 1, "max": 12, "rendererConsumer": "gallery media", "visualEffect": "Maximum image count" }
+        { "key": "title", "type": "text", "defaultValue": "Gallery", "rendererConsumer": "gallery heading", "visualEffect": "Section heading" }
       ]
     },
     {
       "type": "product-specs",
       "defaultSettings": {
         "layoutVariant": "default",
-        "title": "Product Details",
-        "useDescription": true,
-        "items": []
+        "title": "Product Details"
       },
       "fields": [
         { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "product specs layout", "visualEffect": "Specs skin" },
-        { "key": "title", "type": "text", "defaultValue": "Product Details", "rendererConsumer": "specs heading", "visualEffect": "Section heading" },
-        { "key": "useDescription", "type": "toggle", "defaultValue": true, "rendererConsumer": "specs body", "visualEffect": "Use product description" },
-        { "key": "items", "type": "list", "defaultValue": [], "rendererConsumer": "spec rows", "visualEffect": "Structured details" }
+        { "key": "title", "type": "text", "defaultValue": "Product Details", "rendererConsumer": "specs heading", "visualEffect": "Section heading" }
       ]
     },
     {
       "type": "product-video",
       "defaultSettings": {
-        "title": "Watch It In Action",
-        "videoUrl": "",
-        "autoplay": false,
-        "showControls": true
+        "title": "Watch It In Action"
       },
       "fields": [
-        { "key": "title", "type": "text", "defaultValue": "Watch It In Action", "rendererConsumer": "product video heading", "visualEffect": "Section heading" },
-        { "key": "videoUrl", "type": "video", "defaultValue": "", "rendererConsumer": "product video player", "visualEffect": "Video source" },
-        { "key": "autoplay", "type": "toggle", "defaultValue": false, "rendererConsumer": "product video player", "visualEffect": "Autoplay behavior" },
-        { "key": "showControls", "type": "toggle", "defaultValue": true, "rendererConsumer": "product video player", "visualEffect": "Control visibility" }
-      ]
-    },
-    {
-      "type": "customer-reviews",
-      "defaultSettings": {
-        "layoutVariant": "default",
-        "title": "Customer Reviews",
-        "reviews": []
-      },
-      "fields": [
-        { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "reviews layout", "visualEffect": "Reviews skin" },
-        { "key": "title", "type": "text", "defaultValue": "Customer Reviews", "rendererConsumer": "reviews heading", "visualEffect": "Section heading" },
-        { "key": "reviews", "type": "list", "defaultValue": [], "rendererConsumer": "review cards", "visualEffect": "Review content" }
+        { "key": "title", "type": "text", "defaultValue": "Watch It In Action", "rendererConsumer": "product video heading", "visualEffect": "Section heading" }
       ]
     },
     {
@@ -813,16 +768,12 @@
       "defaultSettings": {
         "layoutVariant": "default",
         "title": "Recommended Products",
-        "limit": 4,
-        "showPrice": true,
-        "showRating": true
+        "limit": 4
       },
       "fields": [
         { "key": "layoutVariant", "type": "select", "defaultValue": "default", "options": ["default", "modern", "minimal", "fashion", "pearl", "phoenix", "hype", "electronics", "cosmetics", "alizon", "sharp"], "rendererConsumer": "related products layout", "visualEffect": "Related section skin" },
         { "key": "title", "type": "text", "defaultValue": "Recommended Products", "rendererConsumer": "related products heading", "visualEffect": "Section heading" },
-        { "key": "limit", "type": "number", "defaultValue": 4, "min": 1, "max": 12, "rendererConsumer": "related products query", "visualEffect": "Product count" },
-        { "key": "showPrice", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Price visibility" },
-        { "key": "showRating", "type": "toggle", "defaultValue": true, "rendererConsumer": "product card", "visualEffect": "Rating visibility" }
+        { "key": "limit", "type": "number", "defaultValue": 4, "min": 1, "max": 12, "rendererConsumer": "related products query", "visualEffect": "Product count" }
       ]
     }
   ]

@@ -1,7 +1,6 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PointOfSale.Core.Events;
@@ -12,10 +11,8 @@ using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Infrastructure.Reliability;
-using PointOfSale.Infrastructure.Redis;
-using PointOfSale.Infrastructure.Redis.Configuration;
+using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Infrastructure.Utilities;
-using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -53,27 +50,24 @@ public class ProductVariantProjectionConsumer :
     private const string VariantDeletedConsumerName = nameof(ProductVariantProjectionConsumer) + ":" + nameof(ProductVariantDeletedEvent);
 
     private readonly IMongoCollection<ProductDocument> _collection;
-    private readonly IConnectionMultiplexer _redis;
-    private readonly IProductSearchIndexService _searchIndexService;
+    private readonly IStorefrontProductCacheInvalidator _productCacheInvalidator;
+    private readonly IUnifiedSearchIndexService _searchIndexService;
     private readonly IProductSqlAuthorityProjectionWriter? _productProjectionWriter;
     private readonly ILogger<ProductVariantProjectionConsumer> _logger;
-    private readonly string _redisInstanceName;
     private readonly ApplicationDbContext? _dbContext;
 
     public ProductVariantProjectionConsumer(
         IMongoDatabase database,
-        IConnectionMultiplexer redis,
-        IProductSearchIndexService searchIndexService,
-        IOptions<RedisSettings> redisSettings,
+        IStorefrontProductCacheInvalidator productCacheInvalidator,
+        IUnifiedSearchIndexService searchIndexService,
         ILogger<ProductVariantProjectionConsumer> logger,
         ApplicationDbContext? dbContext = null,
         IProductSqlAuthorityProjectionWriter? productProjectionWriter = null)
     {
         _collection = database.GetCollection<ProductDocument>("products");
-        _redis = redis;
+        _productCacheInvalidator = productCacheInvalidator;
         _searchIndexService = searchIndexService;
         _productProjectionWriter = productProjectionWriter;
-        _redisInstanceName = redisSettings.Value.InstanceName ?? "pos";
         _logger = logger;
         _dbContext = dbContext;
     }
@@ -1681,60 +1675,30 @@ public class ProductVariantProjectionConsumer :
     }
 
     /// <summary>
-    /// Invalidates all cached product data for a specific product.
+    /// Requests invalidation from the single Storefront product cache owner.
+    /// Required invalidation failures propagate so the projection event is retried.
     /// </summary>
     private async Task InvalidateProductCacheAsync(Guid tenantId, Guid productId, string correlationId)
     {
-        try
-        {
-            var db = _redis.GetDatabase();
+        var product = await _collection.Find(
+            Builders<ProductDocument>.Filter.And(
+                Builders<ProductDocument>.Filter.Eq(p => p.TenantId, tenantId),
+                Builders<ProductDocument>.Filter.Eq(p => p.ProductId, productId)))
+            .Project(p => new { p.Slug })
+            .FirstOrDefaultAsync();
 
-            // First, get the product slug from MongoDB for slug-based cache invalidation
-            var product = await _collection.Find(
-                Builders<ProductDocument>.Filter.And(
-                    Builders<ProductDocument>.Filter.Eq(p => p.TenantId, tenantId),
-                    Builders<ProductDocument>.Filter.Eq(p => p.ProductId, productId)
-                ))
-                .Project(p => new { p.Slug })
-                .FirstOrDefaultAsync();
+        await _productCacheInvalidator.InvalidateProductAsync(
+            tenantId,
+            productId,
+            product?.Slug,
+            cancellationToken: default);
 
-            var keysToDelete = new List<RedisKey>();
-
-            // Invalidate product by ID
-            var productByIdKey = CacheKeyBuilder.ProductByIdKey(_redisInstanceName, tenantId, productId);
-            keysToDelete.Add(productByIdKey);
-
-            // Invalidate product by slug (CRITICAL for storefront)
-            if (!string.IsNullOrEmpty(product?.Slug))
-            {
-                var productBySlugKey = CacheKeyBuilder.ProductBySlugKey(_redisInstanceName, tenantId, product.Slug);
-                keysToDelete.Add(productBySlugKey);
-            }
-
-            // Also invalidate product list cache (since variant data appears there too potentially)
-            var productsAllKey = CacheKeyBuilder.ProductsAllKey(_redisInstanceName, tenantId);
-            keysToDelete.Add(productsAllKey);
-
-            // Invalidate homepage sections that might include this product
-            var featuredKey = CacheKeyBuilder.HomeFeaturedProductsKey(_redisInstanceName, tenantId);
-            var newArrivalsKey = CacheKeyBuilder.HomeNewArrivalsKey(_redisInstanceName, tenantId);
-            keysToDelete.Add(featuredKey);
-            keysToDelete.Add(newArrivalsKey);
-
-            // Delete all keys at once
-            await db.KeyDeleteAsync(keysToDelete.ToArray());
-
-            _logger.LogDebug(
-                "Product cache invalidated | ProductId: {ProductId} | Slug: {Slug} | KeysDeleted: {KeyCount} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                productId, product?.Slug ?? "unknown", keysToDelete.Count, tenantId, correlationId);
-        }
-        catch (RedisException ex)
-        {
-            // Cache invalidation failure is non-fatal - log and continue
-            _logger.LogWarning(ex,
-                "Failed to invalidate product cache | ProductId: {ProductId} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                productId, tenantId, correlationId);
-        }
+        _logger.LogDebug(
+            "Storefront product cache invalidation requested through canonical owner | ProductId: {ProductId} | Slug: {Slug} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+            productId,
+            product?.Slug ?? "unknown",
+            tenantId,
+            correlationId);
     }
 
     /// <summary>
@@ -1780,7 +1744,7 @@ public class ProductVariantProjectionConsumer :
                         "SQL product/variant authority unavailable or not searchable for ES HasVariants sync; deleting search document fail-closed | ProductId: {ProductId} | TenantId: {TenantId}",
                         productId,
                         tenantId);
-                    var deleted = await _searchIndexService.DeleteAsync(tenantId, productId, cancellationToken);
+                    var deleted = await _searchIndexService.DeleteProductAsync(tenantId, productId, cancellationToken);
                     if (!deleted)
                     {
                         throw new InvalidOperationException(
@@ -1798,7 +1762,7 @@ public class ProductVariantProjectionConsumer :
                 product,
                 hasVariantsOverride: actualHasVariants);
 
-            var success = await _searchIndexService.IndexAsync(document, cancellationToken);
+            var success = await _searchIndexService.IndexProductAsync(document, cancellationToken);
 
             if (success)
             {

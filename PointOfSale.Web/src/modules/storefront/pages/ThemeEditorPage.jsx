@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
     Palette,
@@ -15,6 +15,16 @@ import { storeConfigService } from '../services'
 import { useToast } from '../../../components/Toast'
 import { useAuthStore } from '../../../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../../../auth/commerceHubVendorIdentityAuthority'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringStatusBadge,
+    UnsavedChangesDialog,
+    useAuthoringGuard,
+} from '../authoringPlatform'
 
 const DEFAULT_THEME = {
     presetKey: 'default',
@@ -205,6 +215,10 @@ export function ThemeEditorPage() {
     const [isPublishing, setIsPublishing] = useState(false)
     const [error, setError] = useState(null)
     const [isDirty, setIsDirty] = useState(false)
+    const [feedback, setFeedback] = useState(null)
+    const [conflict, setConflict] = useState(null)
+    const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
+    const previewRef = useRef(null)
 
     const [themePresets, setThemePresets] = useState([
         {
@@ -221,6 +235,7 @@ export function ThemeEditorPage() {
     const [font, setFont] = useState(DEFAULT_THEME.font)
     const [borderRadius, setBorderRadius] = useState(DEFAULT_THEME.borderRadius)
     const [publishedState, setPublishedState] = useState(DEFAULT_THEME)
+    const [acceptedDraftState, setAcceptedDraftState] = useState(DEFAULT_THEME)
     const [acceptedRowVersion, setAcceptedRowVersion] = useState('')
 
     useEffect(() => {
@@ -256,6 +271,7 @@ export function ThemeEditorPage() {
 
         setThemePresets(nextPresets)
         applyThemeState(draftTheme)
+        setAcceptedDraftState(draftTheme)
         setPublishedState(liveTheme)
         const rowVersion = normalizeRowVersion(acceptedResponse.rowVersion)
         setAcceptedRowVersion(rowVersion)
@@ -308,6 +324,7 @@ export function ThemeEditorPage() {
 
             setThemePresets(hydratedPresets)
             applyThemeState(draftTheme)
+            setAcceptedDraftState(draftTheme)
             setPublishedState(liveTheme)
             setAcceptedRowVersion(normalizeRowVersion(config?.rowVersion))
             setIsDirty(false)
@@ -319,8 +336,8 @@ export function ThemeEditorPage() {
         }
     }
 
-    const persistDraftTheme = async ({ silent = false } = {}) => {
-        const rowVersion = normalizeRowVersion(acceptedRowVersion)
+    const persistDraftTheme = async ({ silent = false, rowVersionOverride = null } = {}) => {
+        const rowVersion = normalizeRowVersion(rowVersionOverride || acceptedRowVersion)
         if (!rowVersion) {
             throw new Error('Theme mutation requires accepted backend RowVersion evidence.')
         }
@@ -365,22 +382,24 @@ export function ThemeEditorPage() {
         setIsDirty(true)
     }
 
-    const handleSaveDraft = async () => {
+    const handleSaveDraft = async (rowVersionOverride = null) => {
         setIsSaving(true)
         try {
-            await persistDraftTheme()
+            await persistDraftTheme({ rowVersionOverride })
+            setFeedback({ kind: 'success', title: 'Appearance draft saved', message: 'The accepted Appearance draft is up to date.' })
         } catch (err) {
             console.error('Failed to save draft:', err)
-            showError(isRTL ? 'فشل حفظ المسودة' : 'Failed to save draft')
+            if (err?.response?.status === 409) setConflict({ action: 'save', message: err?.response?.data?.message })
+            else setFeedback({ kind: 'error', title: 'Appearance draft not saved', message: err?.response?.data?.message || 'Failed to save draft.' })
         } finally {
             setIsSaving(false)
         }
     }
 
-    const handlePublish = async () => {
+    const handlePublish = async (rowVersionOverride = null) => {
         setIsPublishing(true)
         try {
-            const { nextPresets: latestPresets, rowVersion: draftRowVersion } = await persistDraftTheme({ silent: true })
+            const { nextPresets: latestPresets, rowVersion: draftRowVersion } = await persistDraftTheme({ silent: true, rowVersionOverride })
             const rowVersion = normalizeRowVersion(draftRowVersion)
             if (!rowVersion) {
                 throw new Error('Theme publish requires accepted backend RowVersion evidence.')
@@ -389,34 +408,61 @@ export function ThemeEditorPage() {
             const response = await storeConfigService.publishTheme(buildIfMatchOptions(rowVersion))
             syncThemeResponse(response, latestPresets)
             setIsDirty(false)
-            showSuccess(isRTL ? 'تم نشر الثيم بنجاح!' : 'Theme published successfully!')
+            setIsPublishConfirmOpen(false)
+            setFeedback({ kind: 'success', title: 'Colors & Typography published', message: 'The accepted Appearance draft is now live.' })
         } catch (err) {
             console.error('Failed to publish theme:', err)
-            showError(isRTL ? 'فشل نشر الثيم' : 'Failed to publish theme')
+            if (err?.response?.status === 409) {
+                setIsPublishConfirmOpen(false)
+                setConflict({ action: 'publish', message: err?.response?.data?.message })
+            }
+            else setFeedback({ kind: 'error', title: 'Appearance not published', message: err?.response?.data?.message || 'Failed to publish Colors & Typography.' })
         } finally {
             setIsPublishing(false)
         }
     }
 
     const handleResetToPublished = () => {
-        if (!publishedState) {
+        if (!acceptedDraftState) {
             return
         }
 
-        applyThemeState(publishedState)
+        applyThemeState(acceptedDraftState)
         setIsDirty(false)
-        showInfo(isRTL ? 'تمت إعادة التعيين للنسخة المنشورة' : 'Reset to published version')
+        setFeedback({ kind: 'info', title: 'Changes discarded', message: 'The accepted Appearance draft has been restored.' })
+    }
+
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty,
+        isBusy: isSaving || isPublishing,
+        onSave: () => handleSaveDraft(),
+        onPreview: () => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }),
+    })
+
+    const handleLoadLatest = async () => {
+        setConflict(null)
+        await loadThemeData()
+        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted Appearance draft replaced your local candidate.' })
+    }
+
+    const handleRetryConflict = async () => {
+        try {
+            const rawConfig = await storeConfigService.getStoreConfig()
+            const config = deriveCurrentStoreIdentityPresentation(rawConfig, user)
+            const latestRowVersion = normalizeRowVersion(config?.rowVersion)
+            if (!latestRowVersion) throw new Error('Latest Appearance version could not be admitted.')
+            setAcceptedRowVersion(latestRowVersion)
+            const action = conflict?.action
+            setConflict(null)
+            if (action === 'publish') await handlePublish(latestRowVersion)
+            else await handleSaveDraft(latestRowVersion)
+        } catch (retryError) {
+            setFeedback({ kind: 'error', title: 'Appearance retry failed', message: retryError?.response?.data?.message || retryError.message })
+        }
     }
 
     if (isLoading) {
-        return (
-            <div className="flex items-center justify-center h-96">
-                <div className="text-center">
-                    <Loader2 size={48} className="animate-spin text-indigo-600 mx-auto mb-4" />
-                    <p className="text-gray-500">{isRTL ? 'جاري تحميل الثيم...' : 'Loading theme...'}</p>
-                </div>
-            </div>
-        )
+        return <AuthoringLoadingState label="Loading Colors & Typography…" />
     }
 
     if (error) {
@@ -440,52 +486,18 @@ export function ThemeEditorPage() {
 
     return (
         <div className="max-w-6xl mx-auto">
-            <div className="flex items-center justify-between mb-8">
-                <div>
-                    <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                        <Palette className="text-indigo-600" />
-                        {isRTL ? 'تخصيص الثيم' : 'Theme Customization'}
-                    </h1>
-                    <p className="text-gray-500 mt-1">
-                        {isRTL
-                            ? 'خصص ألوان وخطوط متجرك الإلكتروني بالاعتماد على إعداداتك الفعلية.'
-                            : 'Customize your live storefront theme using the same preset and draft data the backend renders.'
-                        }
-                    </p>
-                </div>
-
-                <div className="flex items-center gap-3">
-                    {isDirty && (
-                        <span className="text-sm text-yellow-600 bg-yellow-100 px-3 py-1 rounded-full">
-                            {isRTL ? 'تغييرات غير محفوظة' : 'Unsaved changes'}
-                        </span>
-                    )}
-                    <button
-                        onClick={handleResetToPublished}
-                        disabled={!publishedState || isPublishing}
-                        className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    >
-                        <RotateCcw size={16} />
-                        {isRTL ? 'إعادة تعيين' : 'Reset'}
-                    </button>
-                    <button
-                        onClick={handleSaveDraft}
-                        disabled={!isDirty || isSaving || isPublishing}
-                        className="flex items-center gap-2 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
-                    >
-                        {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-                        {isSaving ? (isRTL ? 'جاري الحفظ...' : 'Saving...') : (isRTL ? 'حفظ المسودة' : 'Save Draft')}
-                    </button>
-                    <button
-                        onClick={handlePublish}
-                        disabled={isPublishing || isSaving}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
-                    >
-                        {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-                        {isPublishing ? (isRTL ? 'جاري النشر...' : 'Publishing...') : (isRTL ? 'نشر الثيم' : 'Publish Theme')}
-                    </button>
-                </div>
-            </div>
+            <AuthoringActionBar
+                title="Colors & Typography"
+                subtitle="Edit the Appearance draft, preview the local candidate below, then publish only Colors & Typography."
+                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront') }}
+                status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isDirty ? 'dirty' : 'draft'} />}
+                previewAction={{ label: 'Preview Candidate', onClick: () => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), disabled: isSaving || isPublishing }}
+                historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
+                discardAction={{ label: 'Discard', onClick: handleResetToPublished, disabled: !isDirty || isSaving || isPublishing }}
+                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => handleSaveDraft(), disabled: !isDirty || isPublishing, busy: isSaving }}
+                publishAction={{ label: 'Publish Colors & Typography', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving, busy: isPublishing }}
+            />
+            {feedback ? <div className="my-6"><AuthoringFeedback {...feedback} /></div> : null}
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-8">
@@ -622,7 +634,7 @@ export function ThemeEditorPage() {
                 </div>
 
                 <div className="lg:col-span-1">
-                    <div className="sticky top-6">
+                    <div ref={previewRef} className="sticky top-6" tabIndex={-1} aria-label="Appearance candidate preview">
                         <h2 className="text-lg font-semibold text-gray-900 mb-4">
                             {isRTL ? 'معاينة حية' : 'Live Preview'}
                         </h2>
@@ -718,6 +730,25 @@ export function ThemeEditorPage() {
                     </div>
                 </div>
             </div>
+            <AuthoringConfirmDialog
+                open={isPublishConfirmOpen}
+                title="Publish Colors & Typography?"
+                description="The accepted Appearance draft will become live. This does not activate a Theme or publish any content surface."
+                confirmLabel="Publish Colors & Typography"
+                confirmTone="publish"
+                busy={isPublishing}
+                onClose={() => setIsPublishConfirmOpen(false)}
+                onConfirm={() => handlePublish()}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                busy={isSaving || isPublishing}
+                onClose={() => setConflict(null)}
+                onLoadLatest={handleLoadLatest}
+                onRetry={handleRetryConflict}
+            />
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }

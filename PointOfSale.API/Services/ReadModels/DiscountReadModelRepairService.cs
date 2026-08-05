@@ -31,24 +31,21 @@ public sealed class DiscountReadModelRepairService : IDiscountReadModelRepairSer
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly MongoDbContext _mongoDbContext;
-    private readonly IPromotionCacheService _promotionCacheService;
-    private readonly IProductSearchIndexService _productSearchIndexService;
-    private readonly IProductCacheService _productCacheService;
+    private readonly IUnifiedSearchIndexService _productSearchIndexService;
+    private readonly IStorefrontProductCacheInvalidator _productCacheInvalidator;
     private readonly ILogger<DiscountReadModelRepairService> _logger;
 
     public DiscountReadModelRepairService(
         ApplicationDbContext dbContext,
         MongoDbContext mongoDbContext,
-        IPromotionCacheService promotionCacheService,
-        IProductSearchIndexService productSearchIndexService,
-        IProductCacheService productCacheService,
+        IUnifiedSearchIndexService productSearchIndexService,
+        IStorefrontProductCacheInvalidator productCacheInvalidator,
         ILogger<DiscountReadModelRepairService> logger)
     {
         _dbContext = dbContext;
         _mongoDbContext = mongoDbContext;
-        _promotionCacheService = promotionCacheService;
         _productSearchIndexService = productSearchIndexService;
-        _productCacheService = productCacheService;
+        _productCacheInvalidator = productCacheInvalidator;
         _logger = logger;
     }
 
@@ -192,7 +189,6 @@ public sealed class DiscountReadModelRepairService : IDiscountReadModelRepairSer
         var deleted = await _mongoDbContext.Promotions.DeleteManyAsync(staleFilter, cancellationToken);
 
         await RebuildPromotionDecorationsAsync(tenantId, promotions, cancellationToken);
-        await _promotionCacheService.InvalidatePromotionCacheAsync(tenantId, cancellationToken);
 
         _logger.LogInformation(
             "Promotion read models rebuilt from SQL authority | TenantId: {TenantId} | SourceRows: {SourceRows} | Rebuilt: {Rebuilt} | DeletedStale: {DeletedStale}",
@@ -297,24 +293,11 @@ public sealed class DiscountReadModelRepairService : IDiscountReadModelRepairSer
                 BuildApplyProductPromotionUpdate(product),
                 cancellationToken: cancellationToken);
 
-            // RESILIENCE FIX: Best-effort cache/search refresh per product
-            // Exceptions should not stop processing of remaining products
-            try
-            {
-                await _productCacheService.InvalidateProductAsync(
-                    tenantId,
-                    product.ProductId,
-                    product.Slug,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Promotion repair could not invalidate product cache | TenantId: {TenantId} | ProductId: {ProductId}",
-                    tenantId,
-                    product.ProductId);
-            }
+            await _productCacheInvalidator.InvalidateProductAsync(
+                tenantId,
+                product.ProductId,
+                product.Slug,
+                cancellationToken: cancellationToken);
 
             try
             {
@@ -326,11 +309,11 @@ public sealed class DiscountReadModelRepairService : IDiscountReadModelRepairSer
 
                 if (searchProduct == null)
                 {
-                    await _productSearchIndexService.DeleteAsync(tenantId, product.ProductId, cancellationToken);
+                    await _productSearchIndexService.DeleteProductAsync(tenantId, product.ProductId, cancellationToken);
                     continue;
                 }
 
-                var indexed = await _productSearchIndexService.IndexAsync(
+                var indexed = await _productSearchIndexService.IndexProductAsync(
                     ProductSearchDocumentMapper.MapFromProductDocument(searchProduct),
                     cancellationToken);
 

@@ -20,9 +20,9 @@ public static class RedisServiceCollectionExtensions
     /// - RedisSettings (bound from configuration)
     /// - RedisConnectionFactory (singleton - connection reuse)
     /// - IDistributedLockService (singleton - distributed lock operations)
-    /// - IProductCacheService (singleton - uses shared connection)
-    /// - IStoreConfigCacheService (singleton - store config caching)
-    /// - IPromotionCacheService (singleton - promotion cache invalidation)
+    /// - IRedisJsonCacheService (singleton - shared cache transport)
+    /// - IStorefrontProductCacheInvalidator (singleton - product keyspace invalidation owner)
+    /// - IShippingMethodCacheService (singleton - shipping cache owner)
     /// 
     /// Usage in Program.cs:
     /// builder.Services.AddRedisCache(builder.Configuration);
@@ -73,22 +73,15 @@ public static class RedisServiceCollectionExtensions
         // Register distributed lock service as singleton (consumed by singleton RedisJsonCacheService)
         services.AddSingleton<IDistributedLockService, DistributedLockService>();
 
-        // Register cache service as singleton (uses shared connection)
-        services.AddSingleton<IProductCacheService, ProductCacheService>();
         services.AddSingleton<RedisPerformanceTelemetry>();
         services.AddSingleton<IRedisJsonCacheService, RedisJsonCacheService>();
-
-        // Register store config cache service (Phase 7.1)
-        services.AddSingleton<IStoreConfigCacheService, StoreConfigCacheService>();
-
-        // Register promotion cache service (Promotions Engine)
-        services.AddSingleton<IPromotionCacheService, PromotionCacheService>();
-
-        // Register promotion ranking cache service (Promotion-Aware Search)
-        services.AddSingleton<IPromotionRankingCacheService, PromotionRankingCacheService>();
+        services.AddSingleton<IStorefrontProductCacheInvalidator, StorefrontProductCacheInvalidator>();
+        services.AddSingleton<IShippingMethodCacheService, ShippingMethodCacheService>();
+        services.AddSingleton<IStorefrontWishlistCacheInvalidator, StorefrontWishlistCacheInvalidator>();
 
         // AF-27A/28: Register Redis-backed funnel rate limiter (horizontal-scaling safe)
         services.AddSingleton<IFunnelRateLimiter, RedisFunnelRateLimiter>();
+        services.AddSingleton<IFunnelFraudSignalStore, FunnelFraudSignalStore>();
 
         return services;
     }

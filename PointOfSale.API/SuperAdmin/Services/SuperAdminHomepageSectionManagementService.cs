@@ -1,6 +1,10 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.Driver;
 using Npgsql;
 using PointOfSale.Core.Events;
@@ -19,41 +23,22 @@ namespace PointOfSale.API.SuperAdmin.Services;
 
 public interface ISuperAdminHomepageSectionManagementService
 {
-    Task<IReadOnlyList<HomepageSectionDto>> GetSectionsAsync(
-        Guid? tenantId,
+    Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> GetSectionsAsync(
+        Guid? tenantId = null,
         HomepageSectionReadMode mode = HomepageSectionReadMode.Preview,
         CancellationToken cancellationToken = default);
 
     IReadOnlyList<HomepageSectionSchemaDto> GetSchemas();
 
-    Task<HomepageSectionDto> CreateSectionAsync(
-        HomepageSectionWriteRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default);
-
-    Task<HomepageSectionDto> UpdateSectionAsync(
-        Guid id,
-        HomepageSectionWriteRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default);
-
-    Task<HomepageSectionDto> DeleteSectionAsync(
-        Guid id,
-        Guid? actorId,
-        CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<HomepageSectionDto>> ReorderSectionsAsync(
-        ReorderHomepageSectionsRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<HomepageSectionDto>> PublishSectionsAsync(
+    Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> PublishSectionsAsync(
         PublishHomepageSectionsRequest request,
+        string? expectedWorkspaceVersion,
         Guid? actorId,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<HomepageSectionDto>> SaveDraftAsync(
+    Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> SaveDraftAsync(
         SaveHomepageDraftRequest request,
+        string? expectedWorkspaceVersion,
         Guid? actorId,
         CancellationToken cancellationToken = default);
 }
@@ -63,7 +48,6 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
     private readonly ApplicationDbContext _dbContext;
     private readonly MongoDbContext _mongoDbContext;
     private readonly IHomepageSectionSchemaRegistry _schemaRegistry;
-    private readonly IHomepageSectionCacheService _cacheService;
     private readonly ICommerceHubPublicVendorVisibilityService _publicVendorVisibilityService;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<SuperAdminHomepageSectionManagementService> _logger;
@@ -72,7 +56,6 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         ApplicationDbContext dbContext,
         MongoDbContext mongoDbContext,
         IHomepageSectionSchemaRegistry schemaRegistry,
-        IHomepageSectionCacheService cacheService,
         ICommerceHubPublicVendorVisibilityService publicVendorVisibilityService,
         IEventPublisher eventPublisher,
         ILogger<SuperAdminHomepageSectionManagementService> logger)
@@ -80,14 +63,13 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         _dbContext = dbContext;
         _mongoDbContext = mongoDbContext;
         _schemaRegistry = schemaRegistry;
-        _cacheService = cacheService;
         _publicVendorVisibilityService = publicVendorVisibilityService;
         _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
-    public async Task<IReadOnlyList<HomepageSectionDto>> GetSectionsAsync(
-        Guid? tenantId,
+    public async Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> GetSectionsAsync(
+        Guid? tenantId = null,
         HomepageSectionReadMode mode = HomepageSectionReadMode.Preview,
         CancellationToken cancellationToken = default)
     {
@@ -96,223 +78,22 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
             await EnsureTenantExistsAsync(tenantId.Value, cancellationToken);
         }
 
-        if (mode == HomepageSectionReadMode.Preview)
-        {
-            var hasDraftWorkspace = await ScopeSections(tenantId)
-                .AsNoTracking()
-                .AnyAsync(section => section.IsDraft, cancellationToken);
+        var scopeSections = await ScopeSections(tenantId)
+            .AsNoTracking()
+            .OrderBy(section => section.Id)
+            .ToListAsync(cancellationToken);
+        var selectedSections = SelectSnapshotSections(scopeSections, mode);
 
-            if (hasDraftWorkspace)
-            {
-                var draftSections = await LoadScopeSectionsAsync(
-                    tenantId,
-                    isDraft: true,
-                    includeDeleted: false,
-                    cancellationToken);
-
-                return draftSections.Select(Map).ToList();
-            }
-        }
-
-        var publishedSections = await LoadScopeSectionsAsync(
-            tenantId,
-            isDraft: false,
-            includeDeleted: false,
-            cancellationToken);
-
-        return publishedSections.Select(Map).ToList();
+        return new HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>(
+            selectedSections.Select(Map).ToList(),
+            ComputeWorkspaceVersion(tenantId, scopeSections));
     }
 
     public IReadOnlyList<HomepageSectionSchemaDto> GetSchemas() => _schemaRegistry.GetSchemas();
 
-    public async Task<HomepageSectionDto> CreateSectionAsync(
-        HomepageSectionWriteRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        if (request.TenantId.HasValue)
-        {
-            await EnsureTenantExistsAsync(request.TenantId.Value, cancellationToken);
-        }
-
-        var validation = _schemaRegistry.ValidateAndNormalize(request.Type, request.Data, request.SchemaVersion);
-        await ValidateReferencesAsync(validation, request.TenantId, cancellationToken);
-
-        var draftSections = await EnsureDraftWorkspaceAsync(request.TenantId, cancellationToken);
-        var workingSections = ToWorkingSet(draftSections);
-        var targetOrder = ClampOrder(request.Order, workingSections.Count);
-        var now = DateTime.UtcNow;
-        var draftGroupId = ResolveDraftGroupId(draftSections);
-        var sectionGroupId = Guid.NewGuid();
-
-        var section = new HomepageSection
-        {
-            Id = Guid.NewGuid(),
-            SectionGroupId = sectionGroupId,
-            Type = validation.Type,
-            Order = targetOrder,
-            Data = validation.NormalizedData,
-            Version = 1,
-            SchemaVersion = validation.SchemaVersion,
-            IsActive = request.IsActive ?? true,
-            IsDeleted = false,
-            IsDraft = true,
-            IsPublished = false,
-            PublishedAt = null,
-            DraftGroupId = draftGroupId,
-            TenantId = request.TenantId,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-
-        workingSections.Insert(targetOrder, section);
-        Resequence(workingSections, now);
-        _dbContext.HomepageSections.Add(section);
-
-        await SaveChangesAsync(cancellationToken);
-        await InvalidatePublishedScopeCacheAsync(request.TenantId, cancellationToken);
-        return Map(section);
-    }
-
-    public async Task<HomepageSectionDto> UpdateSectionAsync(
-        Guid id,
-        HomepageSectionWriteRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var currentSection = await LoadCurrentSectionAsync(id, cancellationToken);
-        EnsureScopeMatches(currentSection.TenantId, request.TenantId);
-
-        if (request.TenantId.HasValue)
-        {
-            await EnsureTenantExistsAsync(request.TenantId.Value, cancellationToken);
-        }
-
-        var validation = _schemaRegistry.ValidateAndNormalize(request.Type, request.Data, request.SchemaVersion);
-        await ValidateReferencesAsync(validation, request.TenantId, cancellationToken);
-
-        var draftSections = await EnsureDraftWorkspaceAsync(currentSection.TenantId, cancellationToken);
-        var draftSection = draftSections.FirstOrDefault(section => section.SectionGroupId == id && !section.IsDeleted);
-
-        if (draftSection == null)
-        {
-            throw new HomepageSectionManagementException(
-                StatusCodes.Status404NotFound,
-                "HOMEPAGE_SECTION_NOT_FOUND",
-                "Homepage section was not found.");
-        }
-
-        var workingSections = ToWorkingSet(draftSections);
-        var currentIndex = workingSections.FindIndex(section => section.SectionGroupId == id);
-        if (currentIndex >= 0)
-        {
-            workingSections.RemoveAt(currentIndex);
-        }
-
-        var targetIndex = ClampOrder(request.Order, workingSections.Count);
-        var now = DateTime.UtcNow;
-
-        draftSection.Type = validation.Type;
-        draftSection.Data = validation.NormalizedData;
-        draftSection.SchemaVersion = validation.SchemaVersion;
-        draftSection.IsActive = request.IsActive ?? draftSection.IsActive;
-        draftSection.UpdatedAt = now;
-
-        workingSections.Insert(targetIndex, draftSection);
-        Resequence(workingSections, now);
-
-        await SaveChangesAsync(cancellationToken);
-        await InvalidatePublishedScopeCacheAsync(currentSection.TenantId, cancellationToken);
-        return Map(draftSection);
-    }
-
-    public async Task<HomepageSectionDto> DeleteSectionAsync(
-        Guid id,
-        Guid? actorId,
-        CancellationToken cancellationToken = default)
-    {
-        var currentSection = await LoadCurrentSectionAsync(id, cancellationToken);
-        var draftSections = await EnsureDraftWorkspaceAsync(currentSection.TenantId, cancellationToken);
-        var draftSection = draftSections.FirstOrDefault(section => section.SectionGroupId == id && !section.IsDeleted);
-
-        if (draftSection == null)
-        {
-            throw new HomepageSectionManagementException(
-                StatusCodes.Status404NotFound,
-                "HOMEPAGE_SECTION_NOT_FOUND",
-                "Homepage section was not found.");
-        }
-
-        var now = DateTime.UtcNow;
-        draftSection.IsDeleted = true;
-        draftSection.IsActive = false;
-        draftSection.UpdatedAt = now;
-
-        var workingSections = ToWorkingSet(draftSections);
-        Resequence(workingSections, now);
-
-        await SaveChangesAsync(cancellationToken);
-        await InvalidatePublishedScopeCacheAsync(currentSection.TenantId, cancellationToken);
-        return Map(draftSection);
-    }
-
-    public async Task<IReadOnlyList<HomepageSectionDto>> ReorderSectionsAsync(
-        ReorderHomepageSectionsRequest request,
-        Guid? actorId,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        if (request.TenantId.HasValue)
-        {
-            await EnsureTenantExistsAsync(request.TenantId.Value, cancellationToken);
-        }
-
-        var requestedSectionIds = request.SectionIds
-            .Where(id => id != Guid.Empty)
-            .ToList();
-
-        if (requestedSectionIds.Count == 0 || requestedSectionIds.Distinct().Count() != requestedSectionIds.Count)
-        {
-            throw new HomepageSectionManagementException(
-                StatusCodes.Status400BadRequest,
-                "HOMEPAGE_SECTION_REORDER_INVALID",
-                "Reorder payload must contain each section ID exactly once.");
-        }
-
-        var draftSections = await EnsureDraftWorkspaceAsync(request.TenantId, cancellationToken);
-        var workingSections = ToWorkingSet(draftSections);
-
-        if (workingSections.Count != requestedSectionIds.Count ||
-            workingSections.Any(section => !requestedSectionIds.Contains(section.SectionGroupId)))
-        {
-            throw new HomepageSectionManagementException(
-                StatusCodes.Status400BadRequest,
-                "HOMEPAGE_SECTION_REORDER_INVALID",
-                "Reorder payload must include every section in the selected scope exactly once.");
-        }
-
-        var lookup = workingSections.ToDictionary(section => section.SectionGroupId);
-        var now = DateTime.UtcNow;
-
-        for (var index = 0; index < requestedSectionIds.Count; index += 1)
-        {
-            var section = lookup[requestedSectionIds[index]];
-            section.Order = index;
-            section.UpdatedAt = now;
-        }
-
-        await SaveChangesAsync(cancellationToken);
-        await InvalidatePublishedScopeCacheAsync(request.TenantId, cancellationToken);
-        return requestedSectionIds.Select(id => Map(lookup[id])).ToList();
-    }
-
-    public async Task<IReadOnlyList<HomepageSectionDto>> PublishSectionsAsync(
+    public async Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> PublishSectionsAsync(
         PublishHomepageSectionsRequest request,
+        string? expectedWorkspaceVersion,
         Guid? actorId,
         CancellationToken cancellationToken = default)
     {
@@ -322,6 +103,12 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         {
             await EnsureTenantExistsAsync(request.TenantId.Value, cancellationToken);
         }
+
+        using var transaction = _dbContext.Database.IsRelational()
+            ? await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
+            : null;
+
+        await RequireExpectedWorkspaceVersionAsync(request.TenantId, expectedWorkspaceVersion, cancellationToken);
 
         var draftSections = await LoadScopeSectionsAsync(
             request.TenantId,
@@ -331,10 +118,12 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
 
         if (draftSections.Count == 0)
         {
-            return await GetSectionsAsync(
+            var unchanged = await GetSectionsAsync(
                 request.TenantId,
                 HomepageSectionReadMode.Published,
                 cancellationToken);
+            await CommitTransactionAsync(transaction, cancellationToken);
+            return unchanged;
         }
 
         var publishedSections = await LoadScopeSectionsAsync(
@@ -342,10 +131,6 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
             isDraft: false,
             includeDeleted: true,
             cancellationToken);
-
-        using var transaction = _dbContext.Database.IsRelational()
-            ? await _dbContext.Database.BeginTransactionAsync(cancellationToken)
-            : null;
 
         var now = DateTime.UtcNow;
 
@@ -392,19 +177,17 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
             cancellationToken);
 
         await SaveChangesAsync(cancellationToken);
+        var workspaceVersion = await GetCurrentWorkspaceVersionAsync(request.TenantId, cancellationToken);
 
-        if (transaction != null)
-        {
-            await transaction.CommitAsync(cancellationToken);
-        }
-
-        await InvalidatePublishedScopeCacheAsync(request.TenantId, cancellationToken);
-
-        return currentPublished.Select(Map).ToList();
+        await CommitTransactionAsync(transaction, cancellationToken);
+        return new HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>(
+            currentPublished.Select(Map).ToList(),
+            workspaceVersion);
     }
 
-    public async Task<IReadOnlyList<HomepageSectionDto>> SaveDraftAsync(
+    public async Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> SaveDraftAsync(
         SaveHomepageDraftRequest request,
+        string? expectedWorkspaceVersion,
         Guid? actorId,
         CancellationToken cancellationToken = default)
     {
@@ -429,8 +212,10 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         }
 
         using var transaction = _dbContext.Database.IsRelational()
-            ? await _dbContext.Database.BeginTransactionAsync(cancellationToken)
+            ? await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken)
             : null;
+
+        await RequireExpectedWorkspaceVersionAsync(request.TenantId, expectedWorkspaceVersion, cancellationToken);
 
         var draftSections = await EnsureDraftWorkspaceAsync(request.TenantId, cancellationToken);
         var activeDraftSections = draftSections
@@ -518,14 +303,12 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         Resequence(workingSections, now);
 
         await SaveChangesAsync(cancellationToken);
+        var workspaceVersion = await GetCurrentWorkspaceVersionAsync(request.TenantId, cancellationToken);
 
-        if (transaction != null)
-        {
-            await transaction.CommitAsync(cancellationToken);
-        }
-
-        await InvalidatePublishedScopeCacheAsync(request.TenantId, cancellationToken);
-        return workingSections.Select(Map).ToList();
+        await CommitTransactionAsync(transaction, cancellationToken);
+        return new HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>(
+            workingSections.Select(Map).ToList(),
+            workspaceVersion);
     }
 
     private IQueryable<HomepageSection> ScopeSections(Guid? tenantId)
@@ -610,27 +393,41 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
             .ToListAsync(cancellationToken);
     }
 
-    private async Task<HomepageSection> LoadCurrentSectionAsync(Guid sectionGroupId, CancellationToken cancellationToken)
+    private async Task<string> RequireExpectedWorkspaceVersionAsync(
+        Guid? tenantId,
+        string? expectedWorkspaceVersion,
+        CancellationToken cancellationToken)
     {
-        var section = await _dbContext.HomepageSections
-            .Where(
-                item => item.SectionGroupId == sectionGroupId &&
-                        !item.IsDeleted &&
-                        (item.IsDraft || item.IsPublished))
-            .OrderByDescending(item => item.IsDraft)
-            .ThenByDescending(item => item.Version)
-            .FirstOrDefaultAsync(
-                cancellationToken);
-
-        if (section == null)
+        if (string.IsNullOrWhiteSpace(expectedWorkspaceVersion))
         {
             throw new HomepageSectionManagementException(
-                StatusCodes.Status404NotFound,
-                "HOMEPAGE_SECTION_NOT_FOUND",
-                "Homepage section was not found.");
+                StatusCodes.Status428PreconditionRequired,
+                "HOMEPAGE_WORKSPACE_VERSION_REQUIRED",
+                "The current Homepage workspace version is required. Refresh and try again.");
         }
 
-        return section;
+        var currentWorkspaceVersion = await GetCurrentWorkspaceVersionAsync(tenantId, cancellationToken);
+        if (!string.Equals(expectedWorkspaceVersion.Trim(), currentWorkspaceVersion, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new HomepageSectionManagementException(
+                StatusCodes.Status409Conflict,
+                "HOMEPAGE_WORKSPACE_CONFLICT",
+                "The Homepage workspace changed after it was loaded. Refresh and try again.");
+        }
+
+        return currentWorkspaceVersion;
+    }
+
+    private async Task<string> GetCurrentWorkspaceVersionAsync(
+        Guid? tenantId,
+        CancellationToken cancellationToken)
+    {
+        var scopeSections = await ScopeSections(tenantId)
+            .AsNoTracking()
+            .OrderBy(section => section.Id)
+            .ToListAsync(cancellationToken);
+
+        return ComputeWorkspaceVersion(tenantId, scopeSections);
     }
 
     private async Task EnsureTenantExistsAsync(Guid tenantId, CancellationToken cancellationToken)
@@ -748,11 +545,29 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         {
             throw validationException;
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            throw CreateWorkspaceConflictException();
+        }
     }
 
-    private async Task InvalidatePublishedScopeCacheAsync(Guid? tenantId, CancellationToken cancellationToken)
+    private static async Task CommitTransactionAsync(
+        IDbContextTransaction? transaction,
+        CancellationToken cancellationToken)
     {
-        await _cacheService.InvalidatePublishedScopeAsync(tenantId, cancellationToken);
+        if (transaction == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.SerializationFailure)
+        {
+            throw CreateWorkspaceConflictException();
+        }
     }
 
     private static bool TryTranslateConstraintViolation(
@@ -767,6 +582,7 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
 
         validationException = postgresException.SqlState switch
         {
+            PostgresErrorCodes.SerializationFailure => CreateWorkspaceConflictException(),
             "23505" => new HomepageSectionManagementException(
                 StatusCodes.Status409Conflict,
                 "HOMEPAGE_SECTION_CONFLICT",
@@ -781,15 +597,12 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
         return validationException != null;
     }
 
-    private static void EnsureScopeMatches(Guid? actualTenantId, Guid? requestedTenantId)
+    private static HomepageSectionManagementException CreateWorkspaceConflictException()
     {
-        if (actualTenantId != requestedTenantId)
-        {
-            throw new HomepageSectionManagementException(
-                StatusCodes.Status400BadRequest,
-                "HOMEPAGE_SECTION_SCOPE_INVALID",
-                "Existing homepage sections cannot be moved across scopes.");
-        }
+        return new HomepageSectionManagementException(
+            StatusCodes.Status409Conflict,
+            "HOMEPAGE_WORKSPACE_CONFLICT",
+            "The Homepage workspace changed after it was loaded. Refresh and try again.");
     }
 
     private static Guid ResolveDraftGroupId(IReadOnlyList<HomepageSection> sections)
@@ -800,23 +613,44 @@ public sealed class SuperAdminHomepageSectionManagementService : ISuperAdminHome
             ?? Guid.NewGuid();
     }
 
-    private static int ClampOrder(int requestedOrder, int maxCount)
+    private static IReadOnlyList<HomepageSection> SelectSnapshotSections(
+        IReadOnlyList<HomepageSection> scopeSections,
+        HomepageSectionReadMode mode)
     {
-        if (requestedOrder < 0)
-        {
-            return 0;
-        }
+        var useDraft = mode == HomepageSectionReadMode.Preview && scopeSections.Any(section => section.IsDraft);
 
-        return requestedOrder > maxCount ? maxCount : requestedOrder;
-    }
-
-    private static List<HomepageSection> ToWorkingSet(IEnumerable<HomepageSection> sections)
-    {
-        return sections
-            .Where(section => !section.IsDeleted)
+        return scopeSections
+            .Where(section => !section.IsDeleted && (useDraft ? section.IsDraft : section.IsPublished))
             .OrderBy(section => section.Order)
             .ThenBy(section => section.CreatedAt)
             .ToList();
+    }
+
+    private static string ComputeWorkspaceVersion(Guid? tenantId, IEnumerable<HomepageSection> scopeSections)
+    {
+        var evidence = new StringBuilder(tenantId?.ToString("N") ?? "global");
+        foreach (var section in scopeSections.OrderBy(section => section.Id))
+        {
+            evidence
+                .Append('|').Append(section.Id.ToString("N"))
+                .Append('|').Append(section.SectionGroupId.ToString("N"))
+                .Append('|').Append(section.Type)
+                .Append('|').Append(section.Order)
+                .Append('|').Append(Convert.ToBase64String(Encoding.UTF8.GetBytes(section.Data)))
+                .Append('|').Append(section.Version)
+                .Append('|').Append(section.SchemaVersion)
+                .Append('|').Append(section.IsActive)
+                .Append('|').Append(section.IsDeleted)
+                .Append('|').Append(section.IsDraft)
+                .Append('|').Append(section.IsPublished)
+                .Append('|').Append(section.PublishedAt?.Ticks ?? 0)
+                .Append('|').Append(section.DraftGroupId?.ToString("N") ?? string.Empty)
+                .Append('|').Append(section.CreatedAt.Ticks)
+                .Append('|').Append(section.UpdatedAt.Ticks);
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidence.ToString())))
+            .ToLowerInvariant();
     }
 
     private static void Resequence(List<HomepageSection> sections, DateTime now)

@@ -30,18 +30,15 @@ public class TenantCurrencyProjectionConsumer : IConsumer<TenantCurrencyChangedE
 {
     private readonly IMongoCollection<StorefrontConfigDocument> _collection;
     private readonly ApplicationDbContext _dbContext;
-    private readonly IStoreConfigCacheService _cacheService;
     private readonly ILogger<TenantCurrencyProjectionConsumer> _logger;
 
     public TenantCurrencyProjectionConsumer(
         IMongoDatabase mongoDatabase,
         ApplicationDbContext dbContext,
-        IStoreConfigCacheService cacheService,
         ILogger<TenantCurrencyProjectionConsumer> logger)
     {
         _collection = mongoDatabase.GetCollection<StorefrontConfigDocument>("storefront_configs");
         _dbContext = dbContext;
-        _cacheService = cacheService;
         _logger = logger;
     }
 
@@ -150,8 +147,6 @@ public class TenantCurrencyProjectionConsumer : IConsumer<TenantCurrencyChangedE
                     tenantId, sqlCurrency, result.ModifiedCount, @event.CorrelationId);
             }
 
-            // 3. Invalidate Redis cache using the proper cache service (correct key format)
-            await InvalidateRedisCacheAsync(tenantId, @event.CorrelationId);
             await fence.CompleteAsync(@event, new ProjectionEventFenceKey(
                 nameof(TenantCurrencyProjectionConsumer),
                 nameof(TenantCurrencyChangedEvent),
@@ -183,36 +178,6 @@ public class TenantCurrencyProjectionConsumer : IConsumer<TenantCurrencyChangedE
             tenantCurrency,
             $"Consumer: TenantCurrencyProjectionConsumer, Method: ResolveCurrentSqlTenantCurrencyAsync, TenantId: {tenantId}",
             validateIso: true);
-    }
-
-    private async Task InvalidateRedisCacheAsync(Guid tenantId, string? correlationId)
-    {
-        try
-        {
-            // Use IStoreConfigCacheService for correct cache key format
-            // Format: {instanceName}:tenant:{tenantId:N}:store:config
-            var invalidated = await _cacheService.InvalidateStoreConfigAsync(tenantId);
-            
-            if (invalidated)
-            {
-                _logger.LogInformation(
-                    "Redis cache invalidated for currency change | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                    tenantId, correlationId);
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "Redis cache invalidation returned false | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                    tenantId, correlationId);
-            }
-        }
-        catch (Exception ex)
-        {
-            // Cache invalidation failure is non-fatal - log warning but don't fail the projection
-            _logger.LogWarning(ex,
-                "Failed to invalidate Redis cache (non-fatal) | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                tenantId, correlationId);
-        }
     }
 
     private static FilterDefinition<StorefrontConfigDocument> BuildFreshCurrencyEventFilter(

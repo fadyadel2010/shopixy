@@ -6,6 +6,7 @@ public sealed class CacheEnvelope<T>
     public DateTime CachedAtUtc { get; set; }
     public DateTime? ProjectionLastUpdatedAtUtc { get; set; }
     public DateTime? SourceEventOccurredAtUtc { get; set; }
+    public long InvalidationGeneration { get; set; }
     public int SchemaVersion { get; set; } = 1;
 }
 

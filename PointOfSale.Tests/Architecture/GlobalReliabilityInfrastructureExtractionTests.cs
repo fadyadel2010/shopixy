@@ -68,7 +68,7 @@ public class GlobalReliabilityInfrastructureExtractionTests
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", storefrontReindex, StringComparison.Ordinal);
         Assert.Contains("new ProductDocument", storefrontReindex, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteAsync(tenantId, productId", storefrontReindex, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", storefrontReindex, StringComparison.Ordinal);
         Assert.Contains("!sqlProjection.IsActive || !sqlProjection.IsOnlineVisible", storefrontReindex, StringComparison.Ordinal);
 
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", commerceHubReindex, StringComparison.Ordinal);
@@ -143,8 +143,8 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("IConsumer<ProductPublishStatusChangedEvent>", deletedSearch, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", deletedSearch, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", deletedSearch, StringComparison.Ordinal);
-        Assert.Contains("_indexService.IndexAsync", deletedSearch, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteAsync", deletedSearch, StringComparison.Ordinal);
+        Assert.Contains("_indexService.IndexProductAsync", deletedSearch, StringComparison.Ordinal);
+        Assert.Contains("_indexService.DeleteProductAsync", deletedSearch, StringComparison.Ordinal);
         Assert.Contains("ProductCreatedConsumerName", cache, StringComparison.Ordinal);
         Assert.Contains("ProductUpdatedConsumerName", cache, StringComparison.Ordinal);
         Assert.Contains("ProductDeletedConsumerName", cache, StringComparison.Ordinal);

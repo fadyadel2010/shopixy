@@ -535,8 +535,6 @@ public sealed class StorefrontTenantIsolationTests
             Mock.Of<IPaymentMethodReadRepository>(),
             Mock.Of<IProductVariantStockRepository>(),
             mongoDatabase.Object,
-            CreateDisabledRedisFactory(),
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
             Mock.Of<IEventPublisher>(),
             Mock.Of<ICouponValidationService>(),
             Mock.Of<IPromotionEngine>(),
@@ -555,7 +553,8 @@ public sealed class StorefrontTenantIsolationTests
             Options.Create(new R2Options()),
             Options.Create(new PaymentLifecycleSettings { RequireRowLevelLocking = false }),
             NullLogger<CheckoutService>.Instance,
-            new HttpContextAccessor());
+            new HttpContextAccessor(),
+            Mock.Of<ICartService>());
     }
 
     private static CartService CreateCartService(ApplicationDbContext dbContext)
@@ -633,8 +632,7 @@ public sealed class StorefrontTenantIsolationTests
         return new StorefrontUrlResolver(
             configuration,
             NullLogger<StorefrontUrlResolver>.Instance,
-            services.GetRequiredService<IServiceScopeFactory>(),
-            new MemoryCache(new MemoryCacheOptions()));
+            services.GetRequiredService<IServiceScopeFactory>());
     }
 
     private static RedisConnectionFactory CreateDisabledRedisFactory()

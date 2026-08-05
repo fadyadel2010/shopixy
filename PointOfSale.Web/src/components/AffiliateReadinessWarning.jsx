@@ -90,8 +90,8 @@ export default function AffiliateReadinessWarning({
                         <ChecklistItem
                             checked={storefrontLive}
                             label="Storefront must be live"
-                            actionLabel="Go to Storefront Settings"
-                            actionPath="/settings?tab=storefront"
+                            actionLabel="Go to Storefront Status"
+                            actionPath="/storefront/status"
                         />
                         <ChecklistItem
                             checked={hasPaymentMethod}
@@ -153,7 +153,7 @@ export default function AffiliateReadinessWarning({
                     checked={storefrontLive}
                     label="Storefront must be live"
                     actionLabel="Setup"
-                    actionPath="/settings?tab=storefront"
+                    actionPath="/storefront/status"
                 />
                 <ChecklistItem
                     checked={hasPaymentMethod}

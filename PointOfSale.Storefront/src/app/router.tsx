@@ -12,6 +12,9 @@ import {
     HomePage,
     ProductListPage,
     ProductDetailsPage,
+    CartPage,
+    CheckoutPage,
+    SearchPage,
     CheckoutPendingPage,
     OrderConfirmationPage,
     OrderTrackingPage,
@@ -27,12 +30,13 @@ import {
     ForgotPasswordPage,
     ResetPasswordPage,
     VerifyEmailPage,
+    AccountPage,
+    WishlistPage,
 } from '@/auth/pages';
 import { Layout } from '@/components/layout'; // AF-27E
 import { useLanguageStore, type SupportedLanguage } from '@/i18n';
 // PHASE 6: Commerce AI Chat Widget
 import { ChatWidget } from '@/components/chat';
-import { ThemePageRoute } from '@/storefront/pages/ThemePageRoute';
 
 // ============================================================================
 // Root Layout
@@ -114,11 +118,11 @@ export const pageRoutes = [
     },
     {
         path: 'cart',
-        element: <ThemePageRoute pageName="cart" />,
+        element: <CartPage />,
     },
     {
         path: 'checkout',
-        element: <ThemePageRoute pageName="checkout" />,
+        element: <CheckoutPage />,
     },
     {
         path: 'checkout/pending',
@@ -148,7 +152,7 @@ export const pageRoutes = [
     // Search (Unified Search - Elasticsearch)
     {
         path: 'search',
-        element: <ThemePageRoute pageName="search" />,
+        element: <SearchPage />,
     },
 ];
 
@@ -183,11 +187,11 @@ export const storefrontRoutes = [
             },
             {
                 path: '/cart',
-                element: <ThemePageRoute pageName="cart" />,
+                element: <CartPage />,
             },
             {
                 path: '/checkout',
-                element: <ThemePageRoute pageName="checkout" />,
+                element: <CheckoutPage />,
             },
             {
                 path: '/checkout/pending',
@@ -215,7 +219,7 @@ export const storefrontRoutes = [
             },
             {
                 path: '/search',
-                element: <ThemePageRoute pageName="search" />,
+                element: <SearchPage />,
             },
             // Auth routes (Phase F1)
             {
@@ -242,12 +246,12 @@ export const storefrontRoutes = [
             // Protected routes (Phase F1.1)
             {
                 path: '/account',
-                element: <ThemePageRoute pageName="account" />,
+                element: <AccountPage />,
             },
             // Wishlist route (Phase 10.3.6)
             {
                 path: '/wishlist',
-                element: <ThemePageRoute pageName="wishlist" />,
+                element: <WishlistPage />,
             },
             // Abandoned Checkout Recovery Link
             {

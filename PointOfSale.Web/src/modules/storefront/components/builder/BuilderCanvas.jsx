@@ -1,96 +1,80 @@
-/**
- * Builder Canvas
- * Phase 9.8: POS Integration
- */
-
 import { useTranslation } from 'react-i18next'
 import { DragOverlay } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable'
+import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { GripVertical, Eye, EyeOff, Copy, Trash2, Settings } from 'lucide-react'
-import { useBuilderStore, selectSections, selectSelectedSectionId, selectCurrentPage } from '../../store'
-import { sectionRegistry } from '../../builder'
-import { isSectionAvailableForPage } from '../../builder/pageSectionAvailability'
-import { BuilderThemeProvider } from './BuilderThemeProvider'
-import { ThemeNativeCanvas } from './ThemeNativeCanvas'
-import { isThemeNativeCanvasEnabled } from './themeNativeCanvasFlag'
+import { Copy, Eye, EyeOff, GripVertical, Lock, Settings, Trash2 } from 'lucide-react'
+
 import { SectionRenderer as StorefrontSectionRenderer } from '@/components/sections/SectionRenderer'
 import { StorefrontLayout } from '@/storefront/layout/StorefrontLayout'
-import { getProductTemplatePreviewProduct } from '@/storefront/products/ProductTemplateRegistry'
+import {
+    createMandatoryProductHeroSection,
+    getProductTemplatePreviewProduct,
+} from '@/storefront/products/ProductTemplateRegistry'
+import { sectionRegistry } from '../../builder'
+import { selectCurrentPage, selectSections, selectSelectedSectionId, useBuilderStore } from '../../store'
+import { BuilderThemeProvider } from './BuilderThemeProvider'
 
-/**
- * Sortable Section Card
- */
 function SortableSectionCard({ section, isSelected, onSelect, onToggle, onDuplicate, onDelete, sectionProps }) {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
-
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: section.id })
-
     const definition = sectionRegistry.get(section.type)
     const Icon = definition?.icon
-
-    const style = {
-        transform: CSS.Transform.toString(transform),
-        transition,
-        zIndex: isDragging ? 100 : undefined,
-    }
 
     return (
         <div
             ref={setNodeRef}
-            style={style}
-            className={`relative group rounded-xl overflow-hidden border-2 transition-all duration-200 ${isSelected
-                    ? 'border-indigo-500 ring-2 ring-indigo-200'
-                    : 'border-gray-200 hover:border-gray-300'
-                } ${isDragging ? 'opacity-50' : ''} ${!section.enabled ? 'opacity-50' : ''}`}
+            style={{
+                transform: CSS.Transform.toString(transform),
+                transition,
+                zIndex: isDragging ? 100 : undefined,
+            }}
+            className={`relative group overflow-hidden rounded-xl border-2 transition-all duration-200 ${
+                isSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-gray-200 hover:border-gray-300'
+            } ${isDragging ? 'opacity-50' : ''} ${!section.enabled ? 'opacity-50' : ''}`}
             onClick={onSelect}
         >
-            {/* Section Header */}
-            <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between p-2 bg-gradient-to-b from-gray-900/80 to-transparent">
-                {/* Drag Handle & Title */}
+            <div className="absolute inset-x-0 top-0 z-10 flex items-center justify-between bg-gradient-to-b from-gray-900/80 to-transparent p-2">
                 <div className="flex items-center gap-2">
                     <button
                         {...attributes}
                         {...listeners}
-                        className="p-1 rounded hover:bg-white/20 cursor-grab active:cursor-grabbing"
+                        className="cursor-grab rounded p-1 hover:bg-white/20 active:cursor-grabbing"
+                        aria-label={isRTL ? 'إعادة ترتيب القسم' : 'Reorder section'}
                     >
                         <GripVertical size={16} className="text-white" />
                     </button>
-                    <div className="flex items-center gap-2">
-                        {Icon && <Icon size={14} className="text-indigo-300" />}
-                        <span className="text-sm font-medium text-white">
-                            {isRTL ? definition?.displayName.ar : definition?.displayName.en}
-                        </span>
-                    </div>
+                    {Icon ? <Icon size={14} className="text-indigo-300" /> : null}
+                    <span className="text-sm font-medium text-white">
+                        {isRTL ? definition?.displayName.ar : definition?.displayName.en}
+                    </span>
                 </div>
 
-                {/* Actions */}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     <button
-                        onClick={(e) => { e.stopPropagation(); onToggle() }}
-                        className="p-1.5 rounded hover:bg-white/20 transition-colors"
+                        onClick={(event) => { event.stopPropagation(); onToggle() }}
+                        className="rounded p-1.5 transition-colors hover:bg-white/20"
                         title={section.enabled ? (isRTL ? 'إخفاء' : 'Hide') : (isRTL ? 'إظهار' : 'Show')}
                     >
                         {section.enabled ? <Eye size={14} className="text-white" /> : <EyeOff size={14} className="text-white/60" />}
                     </button>
                     <button
-                        onClick={(e) => { e.stopPropagation(); onDuplicate() }}
-                        className="p-1.5 rounded hover:bg-white/20 transition-colors"
+                        onClick={(event) => { event.stopPropagation(); onDuplicate() }}
+                        className="rounded p-1.5 transition-colors hover:bg-white/20"
                         title={isRTL ? 'تكرار' : 'Duplicate'}
                     >
                         <Copy size={14} className="text-white" />
                     </button>
                     <button
-                        onClick={(e) => { e.stopPropagation(); onDelete() }}
-                        className="p-1.5 rounded hover:bg-red-500/50 transition-colors"
+                        onClick={(event) => { event.stopPropagation(); onDelete() }}
+                        className="rounded p-1.5 transition-colors hover:bg-red-500/50"
                         title={isRTL ? 'حذف' : 'Delete'}
                     >
                         <Trash2 size={14} className="text-red-300" />
                     </button>
                     <button
-                        onClick={(e) => { e.stopPropagation(); onSelect() }}
-                        className="p-1.5 rounded hover:bg-indigo-500/50 transition-colors"
+                        onClick={(event) => { event.stopPropagation(); onSelect() }}
+                        className="rounded p-1.5 transition-colors hover:bg-indigo-500/50"
                         title={isRTL ? 'تعديل' : 'Edit'}
                     >
                         <Settings size={14} className="text-indigo-300" />
@@ -98,135 +82,106 @@ function SortableSectionCard({ section, isSelected, onSelect, onToggle, onDuplic
                 </div>
             </div>
 
-            {/* Section Preview */}
             <div className="min-h-[100px] bg-white">
-                {definition ? (
-                    <StorefrontSectionRenderer section={section} sectionProps={sectionProps} />
-                ) : (
-                    <div className="p-8 text-center text-gray-400">
-                        <p>{isRTL ? 'لا توجد معاينة' : 'No preview available'}</p>
-                    </div>
-                )}
+                <StorefrontSectionRenderer section={section} sectionProps={sectionProps} />
             </div>
 
-            {/* Disabled Overlay */}
-            {!section.enabled && (
-                <div className="absolute inset-0 bg-gray-900/40 flex items-center justify-center">
-                    <div className="px-3 py-1.5 bg-gray-800 rounded-full text-gray-300 text-sm font-medium flex items-center gap-2">
+            {!section.enabled ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900/40">
+                    <div className="flex items-center gap-2 rounded-full bg-gray-800 px-3 py-1.5 text-sm font-medium text-gray-300">
                         <EyeOff size={14} />
                         {isRTL ? 'مخفي' : 'Hidden'}
                     </div>
                 </div>
-            )}
+            ) : null}
         </div>
     )
 }
 
-/**
- * Empty State
- */
-function EmptyCanvasState({ onLoadDemo }) {
+function RuntimeOwnedProductHeroCard({ section, sectionProps }) {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
 
     return (
-        <div className="h-full flex items-center justify-center">
-            <div className="text-center max-w-md mx-auto">
-                <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <Settings size={32} className="text-gray-400" />
+        <div className="overflow-hidden rounded-xl border-2 border-emerald-400 bg-white">
+            <div className="flex items-center justify-between bg-emerald-700 px-3 py-2 text-white">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                    <Lock size={15} />
+                    <span>{isRTL ? 'واجهة المنتج الإلزامية' : 'Mandatory Product Hero'}</span>
                 </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                    {isRTL ? 'ابدأ في بناء صفحتك' : 'Start Building Your Page'}
+                <span className="rounded-full bg-white/15 px-2 py-1 text-xs">
+                    {isRTL ? 'مملوك لوقت التشغيل' : 'Runtime owned'}
+                </span>
+            </div>
+            <StorefrontSectionRenderer section={section} sectionProps={sectionProps} />
+        </div>
+    )
+}
+
+function EmptyCanvasState({ onLoadDemo, supplemental = false }) {
+    const { i18n } = useTranslation()
+    const isRTL = i18n.language === 'ar'
+
+    return (
+        <div className="flex min-h-64 items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 p-8">
+            <div className="mx-auto max-w-md text-center">
+                <Settings size={32} className="mx-auto mb-4 text-gray-400" />
+                <h3 className="mb-2 text-xl font-semibold text-gray-900">
+                    {supplemental
+                        ? (isRTL ? 'أضف أقساماً إضافية' : 'Add supplemental sections')
+                        : (isRTL ? 'ابدأ في بناء صفحتك' : 'Start building your page')}
                 </h3>
-                <p className="text-gray-500 mb-6">
-                    {isRTL
-                        ? 'اسحب الأقسام من اللوحة الجانبية لبدء تصميم صفحة متجرك'
-                        : 'Drag sections from the palette to start designing your storefront page.'
-                    }
+                <p className="mb-6 text-gray-500">
+                    {isRTL ? 'اسحب الأقسام من اللوحة الجانبية إلى الصفحة.' : 'Drag sections from the palette onto the page.'}
                 </p>
-                <div className="flex flex-col gap-3">
-                    <button
-                        onClick={onLoadDemo}
-                        className="w-full px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-                    >
-                        {isRTL ? 'تحميل قالب تجريبي' : 'Load Demo Template'}
-                    </button>
-                    <div className="p-4 bg-gray-100 rounded-lg border border-dashed border-gray-300">
-                        <p className="text-sm text-gray-500">
-                            {isRTL ? 'أو أفلت الأقسام هنا' : 'Or drop sections here'}
-                        </p>
-                    </div>
-                </div>
+                <button
+                    type="button"
+                    onClick={onLoadDemo}
+                    className="rounded-lg bg-indigo-600 px-4 py-2 font-medium text-white transition-colors hover:bg-indigo-700"
+                >
+                    {isRTL ? 'تحميل قالب تجريبي' : 'Load Demo Template'}
+                </button>
             </div>
         </div>
     )
 }
 
-/**
- * Builder Canvas
- */
-export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
+export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId, templateId = 'default' }) {
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
-
     const sections = useBuilderStore(selectSections)
     const selectedSectionId = useBuilderStore(selectSelectedSectionId)
     const currentPage = useBuilderStore(selectCurrentPage)
-    const selectSection = useBuilderStore((s) => s.selectSection)
-    const toggleSection = useBuilderStore((s) => s.toggleSection)
-    const duplicateSection = useBuilderStore((s) => s.duplicateSection)
-    const removeSection = useBuilderStore((s) => s.removeSection)
-    const addSection = useBuilderStore((s) => s.addSection)
+    const selectSection = useBuilderStore((state) => state.selectSection)
+    const toggleSection = useBuilderStore((state) => state.toggleSection)
+    const duplicateSection = useBuilderStore((state) => state.duplicateSection)
+    const removeSection = useBuilderStore((state) => state.removeSection)
 
-    const sectionIds = sections.map((s) => s.id)
-    const activeSection = activeId ? sections.find((s) => s.id === activeId) : null
-    const activeDef = activeId?.startsWith('palette-') ? sectionRegistry.get(activeId.replace('palette-', '')) : null
-    const isConfigReady = Boolean(storeConfig)
-    const sectionProps = currentPage === 'product-template'
-        ? { product: getProductTemplatePreviewProduct() }
-        : undefined
-
-    // ARCH-1.3: theme-native canvas (real storefront runtime via Editor
-    // Bridge). Flag OFF => legacy synthetic canvas below (instant rollback).
-    if (isThemeNativeCanvasEnabled()) {
-        if (!isConfigReady) {
-            return (
-                <div className="flex-1 h-full bg-gray-100 flex items-center justify-center">
-                    <div className="flex min-h-[320px] w-full max-w-4xl items-center justify-center rounded-xl border border-dashed border-gray-300 bg-white text-sm text-gray-500">
-                        {isRTL ? 'جارٍ تحميل معاينة المتجر...' : 'Loading storefront preview...'}
-                    </div>
-                </div>
-            )
-        }
-
-        return (
-            <ThemeNativeCanvas
-                storeConfig={storeConfig}
-                tenantId={tenantId}
-                onLoadDemo={onLoadDemo}
-                onInsertSection={(sectionType, insertionIndex) => {
-                    if (!isSectionAvailableForPage(sectionType, currentPage)) {
-                        return
-                    }
-
-                    addSection(sectionType, insertionIndex, sectionRegistry)
-                }}
-            />
-        )
-    }
+    const sectionIds = sections.map((section) => section.id)
+    const activeSection = activeId ? sections.find((section) => section.id === activeId) : null
+    const activeDefinition = activeId?.startsWith('palette-')
+        ? sectionRegistry.get(activeId.replace('palette-', ''))
+        : null
+    const isProductTemplate = currentPage === 'product-template'
+    const sectionProps = isProductTemplate ? { product: getProductTemplatePreviewProduct() } : undefined
+    const runtimeProductHero = isProductTemplate ? createMandatoryProductHeroSection(templateId) : null
 
     return (
-        <div className="flex-1 h-full bg-gray-100 overflow-auto">
-            <div className="max-w-4xl mx-auto p-6 min-h-full">
-                {isConfigReady ? (
+        <div className="h-full flex-1 overflow-auto bg-gray-100">
+            <div className="mx-auto min-h-full max-w-4xl p-6">
+                {storeConfig ? (
                     <BuilderThemeProvider tenantId={tenantId} storeConfig={storeConfig}>
                         <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-xl">
                             <StorefrontLayout>
-                                {sections.length === 0 ? (
-                                    <EmptyCanvasState onLoadDemo={onLoadDemo} />
-                                ) : (
-                                    <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
-                                        <div className="space-y-4 p-4 md:p-6">
+                                <div className="space-y-4 p-4 md:p-6">
+                                    {runtimeProductHero ? (
+                                        <RuntimeOwnedProductHeroCard section={runtimeProductHero} sectionProps={sectionProps} />
+                                    ) : null}
+
+                                    {sections.length === 0 ? (
+                                        <EmptyCanvasState onLoadDemo={onLoadDemo} supplemental={isProductTemplate} />
+                                    ) : (
+                                        <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
                                             {sections.map((section) => (
                                                 <SortableSectionCard
                                                     key={section.id}
@@ -239,9 +194,9 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
                                                     onDelete={() => removeSection(section.id)}
                                                 />
                                             ))}
-                                        </div>
-                                    </SortableContext>
-                                )}
+                                        </SortableContext>
+                                    )}
+                                </div>
                             </StorefrontLayout>
                         </div>
                     </BuilderThemeProvider>
@@ -250,32 +205,25 @@ export function BuilderCanvas({ activeId, onLoadDemo, storeConfig, tenantId }) {
                         {isRTL ? 'جارٍ تحميل معاينة المتجر...' : 'Loading storefront preview...'}
                     </div>
                 )}
-
-                {sections.length === 0 && (
-                    <div className="mt-4 p-8 border-2 border-dashed border-gray-300 rounded-xl text-center">
-                        <p className="text-gray-400">{isRTL ? 'أفلت الأقسام هنا لإضافتها' : 'Drop sections here to add them'}</p>
-                    </div>
-                )}
             </div>
 
-            {/* Drag Overlay */}
             <DragOverlay>
-                {activeSection && (
-                    <div className="w-[600px] p-4 bg-white rounded-xl border-2 border-indigo-500 shadow-2xl opacity-90">
-                        <div className="flex items-center gap-2 text-gray-900">
-                            <span className="font-medium">
-                                {isRTL ? sectionRegistry.get(activeSection.type)?.displayName.ar : sectionRegistry.get(activeSection.type)?.displayName.en}
-                            </span>
-                        </div>
+                {activeSection ? (
+                    <div className="w-[600px] rounded-xl border-2 border-indigo-500 bg-white p-4 shadow-2xl opacity-90">
+                        <span className="font-medium text-gray-900">
+                            {isRTL
+                                ? sectionRegistry.get(activeSection.type)?.displayName.ar
+                                : sectionRegistry.get(activeSection.type)?.displayName.en}
+                        </span>
                     </div>
-                )}
-                {activeDef && (
-                    <div className="w-64 p-3 bg-white rounded-lg border-2 border-indigo-500 shadow-2xl opacity-90">
-                        <div className="flex items-center gap-2 text-gray-900">
-                            <span className="font-medium">{isRTL ? activeDef.displayName.ar : activeDef.displayName.en}</span>
-                        </div>
+                ) : null}
+                {activeDefinition ? (
+                    <div className="w-64 rounded-lg border-2 border-indigo-500 bg-white p-3 shadow-2xl opacity-90">
+                        <span className="font-medium text-gray-900">
+                            {isRTL ? activeDefinition.displayName.ar : activeDefinition.displayName.en}
+                        </span>
                     </div>
-                )}
+                ) : null}
             </DragOverlay>
         </div>
     )

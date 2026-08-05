@@ -7,7 +7,6 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.API.Controllers;
 
@@ -20,7 +19,6 @@ namespace PointOfSale.API.Controllers;
 /// These endpoints are used to:
 /// 1. Delete and recreate the ES index with fresh mappings
 /// 2. Reindex all products from current SQL authority into ES
-/// 3. Clear Redis caches for promotion/search data
 /// 
 /// Key Principle: Search intelligence lives in Elasticsearch analyzers.
 /// NO translation dictionaries. NO data duplication.
@@ -30,27 +28,24 @@ namespace PointOfSale.API.Controllers;
 [Authorize(Roles = "Owner,Admin")]
 public class SearchReindexController : ControllerBase
 {
-    private readonly IProductSearchIndexService _indexService;
+    private readonly IUnifiedSearchIndexService _indexService;
     private readonly IMongoCollection<ProductDocument> _productCollection;
     private readonly ApplicationDbContext _dbContext;
-    private readonly IStoreConfigCacheService _storeConfigCache;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<SearchReindexController> _logger;
 
     private const string ProductsCollectionName = "products";
 
     public SearchReindexController(
-        IProductSearchIndexService indexService,
+        IUnifiedSearchIndexService indexService,
         IMongoDatabase database,
         ApplicationDbContext dbContext,
-        IStoreConfigCacheService storeConfigCache,
         ITenantContext tenantContext,
         ILogger<SearchReindexController> logger)
     {
         _indexService = indexService;
         _productCollection = database.GetCollection<ProductDocument>(ProductsCollectionName);
         _dbContext = dbContext;
-        _storeConfigCache = storeConfigCache;
         _tenantContext = tenantContext;
         _logger = logger;
     }
@@ -128,7 +123,7 @@ public class SearchReindexController : ControllerBase
         try
         {
             // Ensure index exists with correct mappings
-            await _indexService.EnsureIndexExistsAsync(cancellationToken);
+            await _indexService.EnsureIndicesExistAsync(cancellationToken);
 
             var indexedCount = 0;
             var errorCount = 0;
@@ -163,7 +158,7 @@ public class SearchReindexController : ControllerBase
                             productId,
                             tenantId);
 
-                        if (!await _indexService.DeleteAsync(tenantId, productId, cancellationToken))
+                        if (!await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken))
                         {
                             errorCount++;
                         }
@@ -173,7 +168,7 @@ public class SearchReindexController : ControllerBase
 
                     if (!sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
                     {
-                        if (!await _indexService.DeleteAsync(tenantId, sqlProjection.ProductId, cancellationToken))
+                        if (!await _indexService.DeleteProductAsync(tenantId, sqlProjection.ProductId, cancellationToken))
                         {
                             errorCount++;
                         }
@@ -182,7 +177,7 @@ public class SearchReindexController : ControllerBase
                     }
 
                     var document = MapToSearchDocument(sqlProjection);
-                    var success = await _indexService.IndexAsync(document, cancellationToken);
+                    var success = await _indexService.IndexProductAsync(document, cancellationToken);
 
                     if (success)
                     {
@@ -234,10 +229,10 @@ public class SearchReindexController : ControllerBase
     }
 
     /// <summary>
-    /// Clear all promotion and search caches from Redis.
+    /// Compatibility response for the retired promotion/search caches.
     /// </summary>
     [HttpPost("clear-cache")]
-    public async Task<IActionResult> ClearCache(CancellationToken cancellationToken)
+    public IActionResult ClearCache(CancellationToken cancellationToken)
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
@@ -245,36 +240,13 @@ public class SearchReindexController : ControllerBase
             "Admin requested cache clear | TenantId: {TenantId} | User: {User}",
             tenantId, User.Identity?.Name ?? "Unknown");
 
-        try
+        return Ok(new
         {
-            // Clear store config cache (includes PromotionRankingConfig)
-            await _storeConfigCache.InvalidateStoreConfigAsync(tenantId, cancellationToken);
-
-            _logger.LogInformation(
-                "Cache cleared for tenant | TenantId: {TenantId}",
-                tenantId);
-
-            return Ok(new
-            {
-                success = true,
-                tenantId,
-                message = "Cache cleared successfully. Fresh config will be loaded on next request.",
-                clearedCaches = new[]
-                {
-                    "StoreConfig (including PromotionRankingConfig)",
-                    "Promotion badges will refresh on next product fetch"
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Cache clear failed | TenantId: {TenantId}", tenantId);
-            return StatusCode(500, new
-            {
-                success = false,
-                message = "An unexpected error occurred"
-            });
-        }
+            success = true,
+            tenantId,
+            message = "Dormant StoreConfig and promotion-ranking caches are retired; no cache clear is required.",
+            clearedCaches = Array.Empty<string>()
+        });
     }
 
     /// <summary>

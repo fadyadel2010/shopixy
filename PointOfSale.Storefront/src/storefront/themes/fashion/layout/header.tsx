@@ -1,42 +1,11 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useState } from 'react';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { CartIconButton } from '@/components/common/CartBadge';
-import { WishlistIconButton } from '@/components/common/WishlistBadge';
-import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
-import { useStoreConfigStore, selectStoreName } from '@/store';
-import { useNavigationStore, resolveNavLinkUrl } from '@/stores/navigationStore';
-import { useTranslation } from '@/i18n';
-import { AuthNavItems } from '@/auth/components';
+import type { HeaderPresentationProps } from '@/storefront/presentation/models';
 
-const FashionHeader: React.FC = () => {
-    const { t, language } = useTranslation();
-    const location = useLocation();
-    const storeName = useStoreConfigStore(selectStoreName);
-    const loadNavigation = useNavigationStore((state) => state.loadNavigation);
-    const headerLinks = useNavigationStore((state) => state.navigation?.header.links ?? []);
+const FashionHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileOpen, setMobileOpen] = useState(false);
-
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    const links = useMemo(() => {
-        return headerLinks.map((link, index) => ({
-            key: `${link.slug || link.path || link.label}-${index}`,
-            label: language === 'ar' && link.labelAr ? link.labelAr : link.label,
-            url: resolveNavLinkUrl(link),
-            openInNewTab: link.openInNewTab,
-        }));
-    }, [headerLinks, language]);
-
-    const isActive = (path: string) => {
-        if (path === '/') {
-            return location.pathname === '/';
-        }
-
-        return location.pathname.startsWith(path);
-    };
 
     return (
         <>
@@ -45,16 +14,16 @@ const FashionHeader: React.FC = () => {
                     <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.32em] text-white/60">
                         <span>Editorial storefront</span>
                         <div className="hidden items-center gap-2 md:flex">
-                            <LanguageSwitcher variant="text" size="sm" className="text-white/60 hover:text-white" />
+                            <LanguageSlot variant="text" size="sm" className="text-white/60 hover:text-white" />
                             <div className="border-l border-white/10 pl-3">
-                                <AuthNavItems variant="desktop" className="!text-white/80" />
+                                <AuthenticationSlot variant="desktop" className="!text-white/80" />
                             </div>
                         </div>
                         <button
                             type="button"
                             onClick={() => setMobileOpen((value) => !value)}
                             className="flex h-10 w-10 items-center justify-center rounded-full border border-white/15 md:hidden"
-                            aria-label={t('header.menu')}
+                            aria-label={labels.menu}
                         >
                             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
@@ -64,8 +33,9 @@ const FashionHeader: React.FC = () => {
 
                     <div className="mt-5 flex items-center justify-between gap-4">
                         <div className="hidden md:flex md:flex-1">
-                            <WishlistIconButton className="text-white/70 hover:bg-white/10 hover:text-white" />
-                            <CartIconButton className="text-white/70 hover:bg-white/10 hover:text-white" />
+                            <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white/70 hover:bg-white/10 hover:text-white" />
+                            <WishlistSlot className="text-white/70 hover:bg-white/10 hover:text-white" />
+                            <CartSlot className="text-white/70 hover:bg-white/10 hover:text-white" />
                         </div>
 
                         <AffiliateLink
@@ -82,53 +52,38 @@ const FashionHeader: React.FC = () => {
                         </div>
                     </div>
 
-                    {links.length > 0 ? (
-                        <nav className="mt-5 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex" aria-label="Fashion navigation">
-                            {links.map((link) => (
-                                <AffiliateLink
-                                    key={link.key}
-                                    href={link.url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={`text-xs uppercase tracking-[0.18em] transition-colors lg:text-sm lg:tracking-[0.22em] ${
-                                        isActive(link.url) ? 'text-white' : 'text-white/60 hover:text-white'
-                                    }`}
-                                >
-                                    {link.label}
-                                </AffiliateLink>
-                            ))}
-                        </nav>
-                    ) : null}
+                    <NavigationSlot
+                        className="mt-5 hidden flex-wrap items-center justify-center gap-x-6 gap-y-2 border-t border-white/10 pt-4 md:flex"
+                        ariaLabel="Fashion navigation"
+                        linkClassName={(link) => `text-xs uppercase tracking-[0.18em] transition-colors lg:text-sm lg:tracking-[0.22em] ${
+                            link.isActive ? 'text-white' : 'text-white/60 hover:text-white'
+                        }`}
+                    />
                 </div>
 
                 {mobileOpen ? (
                     <div className="border-t border-white/10 bg-[#120f0d] px-4 py-4 md:hidden">
                         <div className="mb-4 flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                                <WishlistIconButton className="text-white/70 hover:bg-white/10 hover:text-white" />
-                                <CartIconButton className="text-white/70 hover:bg-white/10 hover:text-white" />
+                                <SearchSlot className="inline-flex h-10 w-10 items-center justify-center rounded-full text-white/70 hover:bg-white/10 hover:text-white" />
+                                <WishlistSlot className="text-white/70 hover:bg-white/10 hover:text-white" />
+                                <CartSlot className="text-white/70 hover:bg-white/10 hover:text-white" />
                             </div>
-                            <LanguageSwitcher variant="text" size="sm" className="text-white/60 hover:text-white" />
+                            <LanguageSlot variant="text" size="sm" className="text-white/60 hover:text-white" />
                         </div>
-                        <nav className="space-y-2" aria-label="Fashion mobile navigation">
-                            {links.map((link) => (
-                                <AffiliateLink
-                                    key={link.key}
-                                    href={link.url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    onClick={() => setMobileOpen(false)}
-                                    className={`block rounded-2xl px-4 py-3 text-sm uppercase tracking-[0.24em] ${
-                                        isActive(link.url) ? 'bg-white text-[#161311]' : 'bg-white/5 text-white/70'
-                                    }`}
-                                >
-                                    {link.label}
-                                </AffiliateLink>
-                            ))}
+                        <div className="space-y-2">
+                            <NavigationSlot
+                                className="space-y-2"
+                                ariaLabel="Fashion mobile navigation"
+                                onLinkClick={() => setMobileOpen(false)}
+                                linkClassName={(link) => `block rounded-2xl px-4 py-3 text-sm uppercase tracking-[0.24em] ${
+                                    link.isActive ? 'bg-white text-[#161311]' : 'bg-white/5 text-white/70'
+                                }`}
+                            />
                             <div className="pt-3">
-                                <AuthNavItems variant="mobile" onLinkClick={() => setMobileOpen(false)} />
+                                <AuthenticationSlot variant="mobile" onLinkClick={() => setMobileOpen(false)} />
                             </div>
-                        </nav>
+                        </div>
                     </div>
                 ) : null}
             </header>

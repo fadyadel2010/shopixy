@@ -70,7 +70,7 @@ describe('storefront theme runtime registry', () => {
             expect(normalizeCommerceTheme(theme.id)).toBe(theme.commerceBrowsingTheme);
             expect(resolvePurchaseExperienceVariant('default', theme.id)).toBe(theme.supportedPurchaseProfiles[0]);
             expect(getBuiltinProductTemplate(theme.supportedProductTemplates[0])?.templateId).toBe(theme.supportedProductTemplates[0]);
-            expect(resolveProductCardRenderer(theme.id, 'default')).toBe(theme.supportedProductCards[0]);
+            expect(resolveProductCardRenderer(theme.id)).toBe(theme.supportedProductCards[0]);
 
             for (const section of theme.supportedSections) {
                 expect(themedSectionModules[`./${theme.id}/sections/${section}.tsx`]).toBeDefined();
@@ -108,7 +108,7 @@ describe('storefront theme runtime registry', () => {
                 (section) => Boolean(themedSectionModules[`./${themeId}/sections/${section}.tsx`])
             ),
             components: normalizeThemeComponentTheme(themeId) === themeId,
-            productCards: resolveProductCardRenderer(themeId, 'default') === themeId,
+            productCards: resolveProductCardRenderer(themeId) === themeId,
             browsing: normalizeCommerceTheme(themeId) === themeId,
             purchase: resolvePurchaseExperienceVariant('default', themeId) === themeId,
             templates: getBuiltinProductTemplate(themeId)?.templateId === themeId,

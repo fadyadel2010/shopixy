@@ -1,4 +1,9 @@
 import api from '../../../../services/api'
+import {
+    admitNavigationSnapshot,
+    admitNavigationTargets,
+    mapNavigationDraftToRequest,
+} from './navigationAuthoringContract'
 
 const noStoreOptions = {
     headers: {
@@ -9,14 +14,16 @@ const noStoreOptions = {
 
 export function extractCmsConflict(error) {
     const response = error?.response
-    if (!response || (response.status !== 409 && response.data?.code !== 'CONCURRENCY_CONFLICT')) {
+    if (!response || response.status !== 409 || response.data?.code !== 'CONCURRENCY_CONFLICT') {
         return null
     }
+
+    const latestVersion = response.data?.latestVersion ?? response.data?.LatestVersion ?? null
 
     return {
         code: response.data?.code || 'CONCURRENCY_CONFLICT',
         message: response.data?.message || 'This content was updated by another admin. Reload the latest version before saving again.',
-        latestVersion: response.data?.latestVersion || null,
+        latestVersion,
     }
 }
 
@@ -108,10 +115,16 @@ export const cmsService = {
 
     async getNavigation(options = {}) {
         const response = await api.get('/admin/cms/navigation', options)
-        return response.data
+        return admitNavigationSnapshot(response.data)
     },
 
-    async updateNavigation(navigationData, options = {}) {
+    async getNavigationTargets(options = {}) {
+        const response = await api.get('/admin/cms/navigation/targets', options)
+        return admitNavigationTargets(response.data)
+    },
+
+    async updateNavigation(navigationSnapshot, options = {}) {
+        const navigationData = mapNavigationDraftToRequest(navigationSnapshot)
         const response = await api.put('/admin/cms/navigation', navigationData, {
             ...options,
             headers: {
@@ -119,7 +132,7 @@ export const cmsService = {
                 'If-Match': `"${navigationData.rowVersion}"`,
             },
         })
-        return response.data
+        return admitNavigationSnapshot(response.data)
     },
 
     async publishNavigation(rowVersion, options = {}) {
@@ -130,21 +143,9 @@ export const cmsService = {
                 'If-Match': `"${rowVersion}"`,
             },
         })
-        return response.data
+        return admitNavigationSnapshot(response.data)
     },
 
-    async getFooterConfiguration() {
-        const response = await api.get('/admin/footer')
-        return response.data
-    },
-
-    async updateFooterConfiguration(configuration) {
-        const response = await api.put('/admin/footer', {
-            ...configuration,
-            expectedUpdatedAtUtc: configuration.updatedAtUtc,
-        })
-        return response.data
-    },
 }
 
 export default cmsService

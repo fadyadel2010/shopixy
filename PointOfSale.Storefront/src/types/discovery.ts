@@ -44,6 +44,8 @@ export interface ProductDiscoveryQuery {
     inStock?: boolean;
     /** Filter by variant products */
     hasVariants?: boolean;
+    /** Variant attributes encoded as canonical name=value pairs */
+    attribute?: string[];
     /** Sort mode */
     sort?: ProductSortMode;
     /** Page number (1-indexed) */
@@ -243,6 +245,7 @@ export function buildDiscoveryQueryString(query: ProductDiscoveryQuery): string 
     if (query.hasPromotion !== undefined) params.set('hasPromotion', query.hasPromotion.toString());
     if (query.inStock !== undefined) params.set('inStock', query.inStock.toString());
     if (query.hasVariants !== undefined) params.set('hasVariants', query.hasVariants.toString());
+    if (query.attribute) query.attribute.forEach(value => params.append('attribute', value));
     if (query.sort && query.sort !== 'relevance') params.set('sort', query.sort);
     if (query.page && query.page > 1) params.set('page', query.page.toString());
     if (query.pageSize && query.pageSize !== 12) params.set('pageSize', query.pageSize.toString());
@@ -266,6 +269,7 @@ export function parseDiscoveryQueryString(queryString: string): ProductDiscovery
         hasPromotion: params.has('hasPromotion') ? params.get('hasPromotion') === 'true' : undefined,
         inStock: params.has('inStock') ? params.get('inStock') === 'true' : undefined,
         hasVariants: params.has('hasVariants') ? params.get('hasVariants') === 'true' : undefined,
+        attribute: params.getAll('attribute').filter(Boolean) || undefined,
         sort: (params.get('sort') as ProductSortMode) || undefined,
         page: params.has('page') ? parseInt(params.get('page')!, 10) : undefined,
         pageSize: params.has('pageSize') ? parseInt(params.get('pageSize')!, 10) : undefined,

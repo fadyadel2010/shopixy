@@ -1,5 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
+import { SearchRuntimeProvider } from '@/components/search';
+import type { FooterPresentationProps, HeaderPresentationProps } from '@/storefront/presentation/models';
+import { FooterRuntime, HeaderRuntime } from '@/storefront/runtime/layout/LayoutRuntime';
 import { useTheme } from '../themes/ThemeContext';
 import {
     getDefaultFooterComponent,
@@ -14,8 +17,8 @@ interface StorefrontLayoutProps {
 
 export const StorefrontLayout: React.FC<StorefrontLayoutProps> = ({ children }) => {
     const { themeId } = useTheme();
-    const [HeaderComponent, setHeaderComponent] = useState<ComponentType | null>(() => getDefaultHeaderComponent());
-    const [FooterComponent, setFooterComponent] = useState<ComponentType | null>(() => getDefaultFooterComponent());
+    const [HeaderComponent, setHeaderComponent] = useState<ComponentType<HeaderPresentationProps> | null>(() => getDefaultHeaderComponent());
+    const [FooterComponent, setFooterComponent] = useState<ComponentType<FooterPresentationProps> | null>(() => getDefaultFooterComponent());
 
     useEffect(() => {
         let cancelled = false;
@@ -57,11 +60,13 @@ export const StorefrontLayout: React.FC<StorefrontLayoutProps> = ({ children }) 
     }, [themeId]);
 
     return (
-        <div className="flex min-h-full flex-col bg-background text-text">
-            {HeaderComponent ? <HeaderComponent /> : null}
-            {children}
-            {FooterComponent ? <FooterComponent /> : null}
-        </div>
+        <SearchRuntimeProvider>
+            <div className="flex min-h-full flex-col bg-background text-text">
+                {HeaderComponent ? <HeaderRuntime component={HeaderComponent} /> : null}
+                {children}
+                {FooterComponent ? <FooterRuntime component={FooterComponent} /> : null}
+            </div>
+        </SearchRuntimeProvider>
     );
 };
 

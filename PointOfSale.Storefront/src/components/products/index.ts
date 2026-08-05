@@ -18,6 +18,7 @@ export {
     ProductCardPrice,
     ProductCardQuickAddButton,
     ProductCardWishlist,
+    ProductCardInteractionLayer,
     type ProductCardRuntime,
 } from './ProductCardRuntime';
 export {

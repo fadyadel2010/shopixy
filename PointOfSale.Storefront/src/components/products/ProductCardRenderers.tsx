@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-    ThemeLabel,
     ThemeProductMeta,
     ThemeProductTitle,
     ThemeSurface,
@@ -9,9 +8,7 @@ import {
     ProductCardLink,
     ProductCardMedia,
     ProductCardPrice,
-    ProductCardQuickAddButton,
     ProductCardRuntime,
-    ProductCardWishlist,
 } from './ProductCardRuntime';
 import type { ProductCardRendererId } from './productCardRendererResolver';
 
@@ -24,10 +21,6 @@ export const ModernProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="modern"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -47,12 +40,7 @@ export const ModernProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
                     {runtime.displayName}
                 </ThemeProductTitle>
 
-                <div className="flex items-center justify-between gap-3">
-                    <ProductCardPrice runtime={runtime} />
-                    <ThemeLabel themeId="modern">
-                        {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
-                    </ThemeLabel>
-                </div>
+                <ProductCardPrice runtime={runtime} />
             </div>
         </ProductCardLink>
     </ThemeSurface>
@@ -65,10 +53,6 @@ export const MinimalProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
         data-product-card-theme="minimal"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="grid gap-3">
             <ProductCardMedia
                 runtime={runtime}
@@ -109,10 +93,6 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
         data-product-card-theme="fashion"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-4 top-4 z-20">
-            <ProductCardWishlist runtime={runtime} size="medium" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -147,9 +127,6 @@ export const FashionProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
                         saleClassName="text-xl font-semibold text-primary"
                         compareClassName="text-sm text-muted line-through"
                     />
-                    <ThemeLabel themeId="fashion">
-                        {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
-                    </ThemeLabel>
                 </div>
             </div>
         </ProductCardLink>
@@ -163,10 +140,6 @@ export const SevenProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="seven"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-4 top-4 z-20">
-            <ProductCardWishlist runtime={runtime} size="medium" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -207,16 +180,6 @@ export const SevenProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
                         saleClassName="text-xl font-semibold text-[#CD1515]"
                         compareClassName="text-sm text-muted line-through"
                     />
-                    {runtime.canQuickAdd ? (
-                        <ProductCardQuickAddButton
-                            runtime={runtime}
-                            className="text-xs font-black uppercase tracking-[0.12em] text-primary"
-                        />
-                    ) : (
-                        <ThemeLabel themeId="seven">
-                            {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
-                        </ThemeLabel>
-                    )}
                 </div>
             </div>
         </ProductCardLink>
@@ -230,10 +193,6 @@ export const PearlProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="pearl"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -276,10 +235,6 @@ export const PhoenixProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
         data-product-card-theme="phoenix"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-4 top-4 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -306,9 +261,6 @@ export const PhoenixProductCardRenderer: ProductCardRenderer = ({ runtime }) => 
                         saleClassName="text-lg font-black text-primary"
                         compareClassName="text-xs font-semibold text-muted line-through"
                     />
-                    <ThemeLabel themeId="phoenix">
-                        {runtime.inStock ? runtime.labels.inStock : runtime.labels.outOfStock}
-                    </ThemeLabel>
                 </div>
             </div>
         </ProductCardLink>
@@ -322,10 +274,6 @@ export const ElectronicsProductCardRenderer: ProductCardRenderer = ({ runtime })
         data-product-card-theme="electronics"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -343,13 +291,6 @@ export const ElectronicsProductCardRenderer: ProductCardRenderer = ({ runtime })
                 </div>
             </div>
         </ProductCardLink>
-
-        <div className="px-4 pb-4">
-            <ProductCardQuickAddButton
-                runtime={runtime}
-                className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:bg-muted disabled:text-white disabled:cursor-not-allowed"
-            />
-        </div>
     </ThemeSurface>
 );
 
@@ -360,10 +301,6 @@ export const HypeProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="hype"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -381,13 +318,6 @@ export const HypeProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
                 </div>
             </div>
         </ProductCardLink>
-
-        <div className="px-4 pb-4">
-            <ProductCardQuickAddButton
-                runtime={runtime}
-                className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-full bg-primary px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:bg-muted disabled:text-white disabled:cursor-not-allowed"
-            />
-        </div>
     </ThemeSurface>
 );
 
@@ -398,10 +328,6 @@ export const AlizonProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="alizon"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -419,13 +345,6 @@ export const AlizonProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
                 </div>
             </div>
         </ProductCardLink>
-
-        <div className="px-4 pb-4">
-            <ProductCardQuickAddButton
-                runtime={runtime}
-                className="inline-flex min-h-9 w-full items-center justify-center gap-1 rounded-none bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white transition-colors duration-fast hover:bg-primary/90 disabled:bg-muted disabled:text-white disabled:cursor-not-allowed"
-            />
-        </div>
     </ThemeSurface>
 );
 
@@ -436,10 +355,6 @@ export const SharpProductCardRenderer: ProductCardRenderer = ({ runtime }) => (
         data-product-card-theme="sharp"
         data-product-card-layout={runtime.layout}
     >
-        <div className="absolute right-3 top-3 z-20">
-            <ProductCardWishlist runtime={runtime} size="small" />
-        </div>
-
         <ProductCardLink runtime={runtime} className="block">
             <ProductCardMedia
                 runtime={runtime}
@@ -492,12 +407,6 @@ export const CosmeticsProductCardRenderer: ProductCardRenderer = ({ runtime }) =
                     showUnavailableOverlay={false}
                 />
 
-                {runtime.canQuickAdd ? (
-                    <ProductCardQuickAddButton
-                        runtime={runtime}
-                        className="absolute bottom-3 left-1/2 z-20 h-9 min-h-9 w-9 -translate-x-1/2 overflow-hidden rounded-full border-0 bg-white/90 px-0 py-0 text-sm font-medium text-text shadow-[0_6px_18px_rgba(0,0,0,0.12)] backdrop-blur transition-all duration-slow hover:w-32 hover:rounded-full hover:bg-white [&>span:first-child]:text-xl [&>span:last-child]:hidden hover:[&>span:last-child]:inline"
-                    />
-                ) : null}
             </div>
 
             <div className="space-y-2 px-3 py-3 text-center">

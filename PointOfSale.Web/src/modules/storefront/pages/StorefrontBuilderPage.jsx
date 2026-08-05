@@ -8,7 +8,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
     DndContext,
@@ -25,8 +25,6 @@ import {
     SectionPalette,
     BuilderCanvas,
     SettingsPanel,
-    PublishModal,
-    RollbackModal,
     PreviewModal,
 } from '../components/builder'
 import { useBuilderStore, selectSections, selectCurrentPage } from '../store'
@@ -42,14 +40,27 @@ import {
 } from '../../../auth/commerceHubVendorIdentityAuthority'
 import { getDefaultSections } from '../config'
 import {
+    composeProductTemplateSections,
     getBuiltinProductTemplate,
     getProductTemplateOptions,
+    getSupplementalProductTemplateSections,
 } from '@/storefront/products/ProductTemplateRegistry'
+import { StorefrontBreadcrumbs } from '../informationArchitecture'
+import {
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringFeedback,
+    AuthoringPromptDialog,
+    UnsavedChangesDialog,
+    useAuthoringGuard,
+    useAuthoringShortcuts,
+} from '../authoringPlatform'
 
 export function StorefrontBuilderPage() {
     const { t, i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const navigate = useNavigate()
+    const location = useLocation()
     const [searchParams] = useSearchParams()
     const currentUser = useAuthStore((state) => state.user)
     const tenantId = currentUser?.tenantId || ''
@@ -65,17 +76,19 @@ export function StorefrontBuilderPage() {
     const setPublishing = useBuilderStore((s) => s.setPublishing)
     const markClean = useBuilderStore((s) => s.markClean)
     const isDirty = useBuilderStore((s) => s.isDirty)
+    const isSaving = useBuilderStore((s) => s.isSaving)
+    const isPublishing = useBuilderStore((s) => s.isPublishing)
     const reset = useBuilderStore((s) => s.reset)
 
     // Local state
     const [activeId, setActiveId] = useState(null)
-    const [isPublishModalOpen, setIsPublishModalOpen] = useState(false)
-    const [isRollbackModalOpen, setIsRollbackModalOpen] = useState(false)
+    const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
+    const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+    const [isCreateTemplateOpen, setIsCreateTemplateOpen] = useState(false)
+    const [newTemplateName, setNewTemplateName] = useState('')
     const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false)
-    /** @type {[import('../types/builder').VersionHistoryEntry[], Function]} */
-    const [versions, setVersions] = useState([])
-    const [isLoadingVersions, setIsLoadingVersions] = useState(false)
-    const [isRollingBack, setIsRollingBack] = useState(false)
+    const [conflict, setConflict] = useState(null)
+    const [feedback, setFeedback] = useState(null)
     const [storeConfig, setStoreConfig] = useState(null)
     const [saveStatus, setSaveStatus] = useState('idle')
     const [saveError, setSaveError] = useState(null)
@@ -102,12 +115,15 @@ export function StorefrontBuilderPage() {
     )
 
     // Get page from URL - this is the source of truth
-    const pageFromUrl = searchParams.get('page') || 'home'
+    const pageFromUrl = searchParams.get('page')
+        || (location.pathname.endsWith('/catalog/product-template') ? 'product-template' : 'home')
     const templateIdFromUrl = searchParams.get('templateId') || 'default'
-    const validPages = ['home', 'product', 'category', 'product-template']
+    const validPages = ['home', 'product-template']
     const targetPage = validPages.includes(pageFromUrl) ? pageFromUrl : 'home'
     const activeTemplateOptions = getProductTemplateOptions(storeConfig?.productTemplates)
     const isProductTemplatePage = targetPage === 'product-template'
+    const activeTemplateName = activeTemplateOptions.find((option) => option.id === templateIdFromUrl)?.name
+        || templateIdFromUrl
 
     const getActiveStorageKey = useCallback(
         () => (isProductTemplatePage ? `product-template:${templateIdFromUrl}` : targetPage),
@@ -180,7 +196,7 @@ export function StorefrontBuilderPage() {
                 sections: [],
             }
 
-            return Array.isArray(resolvedTemplate.sections) ? resolvedTemplate.sections : []
+            return getSupplementalProductTemplateSections(resolvedTemplate.sections)
         }
 
         const pageSections = config?.pages?.[page]?.sections
@@ -293,7 +309,9 @@ export function StorefrontBuilderPage() {
                 return
             }
 
-            void loadPageData(targetPage, templateIdFromUrl)
+            if (!isDirty && !isSaving && !isPublishing) {
+                void loadPageData(targetPage, templateIdFromUrl)
+            }
         }
 
         window.addEventListener('focus', syncThemePreview)
@@ -303,12 +321,12 @@ export function StorefrontBuilderPage() {
             window.removeEventListener('focus', syncThemePreview)
             document.removeEventListener('visibilitychange', syncThemePreview)
         }
-    }, [loadPageData, targetPage, templateIdFromUrl])
+    }, [isDirty, isPublishing, isSaving, loadPageData, targetPage, templateIdFromUrl])
 
-    const persistPageLayout = useCallback(async (sectionsToSave = sections) => {
+    const persistPageLayout = useCallback(async (sectionsToSave = sections, rowVersionOverride = null) => {
         clearScheduledSave(true)
 
-        const rowVersion = requireWorkspaceAdmission()
+        const rowVersion = rowVersionOverride || requireWorkspaceAdmission()
         if (!rowVersion) {
             return { saved: false, error: saveError }
         }
@@ -323,7 +341,14 @@ export function StorefrontBuilderPage() {
         setSaveError(null)
 
         try {
-            const pageSectionsToSave = filterSectionsForPage(sectionsToSave, targetPage)
+            const supplementalSectionsToSave = filterSectionsForPage(sectionsToSave, targetPage)
+            const pageSectionsToSave = isProductTemplatePage
+                ? composeProductTemplateSections(
+                    supplementalSectionsToSave,
+                    templateIdFromUrl,
+                    storeConfig?.productTemplates?.[templateIdFromUrl]?.sections,
+                )
+                : supplementalSectionsToSave
             validateSectionsAgainstContract(pageSectionsToSave)
 
             const storageKey = getActiveStorageKey()
@@ -347,7 +372,7 @@ export function StorefrontBuilderPage() {
                 return { saved: false }
             }
 
-            const acceptedConfig = admitWorkspaceConfig(response, storeConfig)
+            const acceptedConfig = admitWorkspaceConfig(response)
             if (!acceptedConfig) {
                 throw new Error('Current backend workspace response authority is unavailable.')
             }
@@ -363,6 +388,8 @@ export function StorefrontBuilderPage() {
             markClean()
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
+            setConflict(null)
+            setFeedback({ kind: 'success', title: 'Draft saved', message: 'Your accepted draft is up to date.' })
             return { saved: true, config: acceptedConfig }
         } catch (error) {
             if (isRequestCanceled(error)) {
@@ -374,6 +401,9 @@ export function StorefrontBuilderPage() {
                 || (isRTL ? 'فشل حفظ تغييرات الصفحة. حاول مرة أخرى.' : 'Failed to save page changes. Please try again.')
             setSaveStatus('error')
             setSaveError(errorMessage)
+            if (error?.response?.status === 409) {
+                setConflict({ message: errorMessage })
+            }
             return { saved: false, error: errorMessage }
         } finally {
             if (saveAbortControllerRef.current === controller) {
@@ -421,25 +451,10 @@ export function StorefrontBuilderPage() {
         }
     }, [clearScheduledSave, reset])
 
-    // Keyboard shortcuts
-    useEffect(() => {
-        const handleKeyDown = (e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-                e.preventDefault()
-                handleSave()
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
-                e.preventDefault()
-                useBuilderStore.getState().undo()
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
-                e.preventDefault()
-                useBuilderStore.getState().redo()
-            }
-        }
-        window.addEventListener('keydown', handleKeyDown)
-        return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [handleSave])
+    useAuthoringShortcuts([
+        { key: 'z', ctrlOrMeta: true, onInvoke: () => useBuilderStore.getState().undo() },
+        { key: 'y', ctrlOrMeta: true, onInvoke: () => useBuilderStore.getState().redo() },
+    ])
 
     // DnD Handlers
     const handleDragStart = (event) => {
@@ -453,9 +468,6 @@ export function StorefrontBuilderPage() {
 
         // Handle new section from palette
         if (String(active.id).startsWith('palette-')) {
-            // Native canvas dropzone owns its own insertion (ThemeNativeCanvas
-            // useDndMonitor → onInsertSection). Skip here to avoid double-adds.
-            if (String(over.id) === 'theme-native-canvas-dropzone') return
             const sectionType = String(active.id).replace('palette-', '')
             if (!isSectionAvailableForPage(sectionType, targetPage)) return
             const overIndex = sections.findIndex((s) => s.id === over.id)
@@ -564,12 +576,16 @@ export function StorefrontBuilderPage() {
             }
 
             setStoreConfig(acceptedConfig)
-            setIsPublishModalOpen(false)
+            setIsPublishConfirmOpen(false)
             markClean()
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
             setSaveError(null)
-            alert(isRTL ? '✓ تم نشر الصفحة بنجاح!' : '✓ Page published successfully!')
+            setFeedback({
+                kind: 'success',
+                title: isProductTemplatePage ? 'Product Template published' : 'Homepage published',
+                message: 'The accepted page draft is now live.',
+            })
         } catch (error) {
             console.error('Publish failed:', error)
             setSaveStatus('error')
@@ -577,53 +593,12 @@ export function StorefrontBuilderPage() {
                 error?.response?.data?.message
                 || (isRTL ? 'فشل نشر الصفحة. حاول مرة أخرى.' : 'Failed to publish the page. Please try again.')
             )
-            alert(isRTL ? 'فشل النشر. حاول مرة أخرى.' : 'Failed to publish. Please try again.')
+            if (error?.response?.status === 409) {
+                setIsPublishConfirmOpen(false)
+                setConflict({ message: error?.response?.data?.message })
+            }
         } finally {
             setPublishing(false)
-        }
-    }
-
-    const handleRollback = async (version, reason) => {
-        try {
-            setIsRollingBack(true)
-            const selectedVersion = versions.find((entry) => entry.version === version)
-            if (!selectedVersion) {
-                throw new Error(isRTL ? 'الإصدار المحدد غير متاح.' : 'The selected version is no longer available.')
-            }
-
-            const rowVersion = requireWorkspaceAdmission()
-            if (!rowVersion) {
-                return
-            }
-
-            await storeConfigService.rollback(
-                selectedVersion.version,
-                { confirm: true, reason },
-                buildIfMatchOptions(rowVersion),
-            )
-            setIsRollbackModalOpen(false)
-            await loadPageData(targetPage, templateIdFromUrl)
-            alert(isRTL ? `✓ تم الاستعادة للإصدار ${version}` : `✓ Rolled back to version ${version}`)
-        } catch (error) {
-            console.error('Rollback failed:', error)
-            alert(isRTL ? 'فشل الاستعادة. حاول مرة أخرى.' : 'Failed to rollback. Please try again.')
-        } finally {
-            setIsRollingBack(false)
-        }
-    }
-
-    const openRollbackModal = async () => {
-        setIsRollbackModalOpen(true)
-        setIsLoadingVersions(true)
-        try {
-            const response = await storeConfigService.getVersionHistory()
-            setVersions(response?.versions || [])
-        } catch (error) {
-            console.error('Version history load failed:', error)
-            setVersions([])
-            alert(isRTL ? 'فشل تحميل سجل الإصدارات.' : 'Failed to load version history.')
-        } finally {
-            setIsLoadingVersions(false)
         }
     }
 
@@ -636,17 +611,59 @@ export function StorefrontBuilderPage() {
         useBuilderStore.getState().setSections(demoSections)
     }
 
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty,
+        isBusy: isSaving || isPublishing,
+        onSave: handleSave,
+        onPreview: handlePreview,
+    })
+
+    const handleDiscard = useCallback(() => {
+        clearScheduledSave(true)
+        admitSections(
+            filterSectionsForPage(
+                getAcceptedSectionsFromConfig(storeConfig, targetPage, templateIdFromUrl),
+                targetPage,
+            ),
+        )
+        markClean()
+        setSaveError(null)
+        setSaveStatus('idle')
+        setFeedback({ kind: 'info', title: 'Changes discarded', message: 'The accepted server draft has been restored.' })
+    }, [admitSections, clearScheduledSave, getAcceptedSectionsFromConfig, markClean, storeConfig, targetPage, templateIdFromUrl])
+
+    const handleLoadLatest = useCallback(async () => {
+        setConflict(null)
+        await loadPageData(targetPage, templateIdFromUrl)
+        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted server draft replaced your local candidate.' })
+    }, [loadPageData, targetPage, templateIdFromUrl])
+
+    const handleRetryConflict = useCallback(async () => {
+        const retainedSections = sections
+        try {
+            const latestResponse = await storeConfigService.getStoreConfig()
+            const latestConfig = admitWorkspaceConfig(latestResponse, storeConfig)
+            const latestRowVersion = getAcceptedWorkspaceRowVersion(latestConfig)
+            if (!latestConfig || !latestRowVersion) throw new Error('The latest workspace version could not be admitted.')
+            setStoreConfig(latestConfig)
+            setConflict(null)
+            await persistPageLayout(retainedSections, latestRowVersion)
+        } catch (error) {
+            setSaveError(error?.response?.data?.message || error.message || 'Your draft could not be retried.')
+        }
+    }, [admitWorkspaceConfig, getAcceptedWorkspaceRowVersion, persistPageLayout, sections, storeConfig])
+
     const handleTemplateChange = (templateId) => {
-        navigate(`/storefront/builder?page=product-template&templateId=${encodeURIComponent(templateId)}`)
+        requestNavigation(`/storefront/catalog/product-template?templateId=${encodeURIComponent(templateId)}`)
     }
 
     const handleCreateTemplate = () => {
-        const templateName = window.prompt(isRTL ? 'اسم القالب الجديد' : 'New template name')
-        if (!templateName) {
-            return
-        }
+        setNewTemplateName('')
+        setIsCreateTemplateOpen(true)
+    }
 
-        const templateId = templateName
+    const confirmCreateTemplate = () => {
+        const templateId = newTemplateName
             .trim()
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
@@ -656,21 +673,19 @@ export function StorefrontBuilderPage() {
             return
         }
 
-        navigate(`/storefront/builder?page=product-template&templateId=${encodeURIComponent(templateId)}`)
+        setIsCreateTemplateOpen(false)
+        requestNavigation(`/storefront/catalog/product-template?templateId=${encodeURIComponent(templateId)}`)
     }
 
-    const handleDeleteTemplate = async () => {
+    const handleDeleteTemplate = () => {
         if (templateIdFromUrl === 'default') {
             return
         }
 
-        const confirmed = window.confirm(
-            isRTL ? 'هل تريد حذف قالب المنتج هذا؟' : 'Do you want to delete this product template?'
-        )
-        if (!confirmed) {
-            return
-        }
+        setIsDeleteConfirmOpen(true)
+    }
 
+    const confirmDeleteTemplate = async () => {
         try {
             const rowVersion = requireWorkspaceAdmission()
             if (!rowVersion) {
@@ -681,34 +696,35 @@ export function StorefrontBuilderPage() {
                 templateIdFromUrl,
                 buildIfMatchOptions(rowVersion),
             )
-            navigate('/storefront/builder?page=product-template&templateId=default')
+            setIsDeleteConfirmOpen(false)
+            markClean()
+            navigate('/storefront/catalog/product-template?templateId=default')
         } catch (error) {
             console.error('Delete product template failed:', error)
-            alert(isRTL ? 'فشل حذف القالب.' : 'Failed to delete template.')
+            setFeedback({ kind: 'error', title: 'Template not deleted', message: error?.response?.data?.message || 'Failed to delete template.' })
         }
     }
 
     const handleExit = () => {
-        if (isDirty) {
-            const confirmed = window.confirm(
-                isRTL ? 'لديك تغييرات غير محفوظة. هل أنت متأكد من الخروج؟' : 'You have unsaved changes. Are you sure you want to exit?'
-            )
-            if (!confirmed) return
-        }
-        navigate('/storefront')
+        requestNavigation('/storefront')
     }
 
     if (!storeConfig) {
         return (
             <div className="h-screen flex flex-col bg-gray-100 -m-6 -mt-6">
-                <div className="h-10 bg-white border-b border-gray-200 flex items-center px-4">
+                <div className="min-h-10 bg-white border-b border-gray-200 flex flex-wrap items-center justify-between gap-2 px-4 py-2">
                     <button
                         onClick={handleExit}
                         className="flex items-center gap-2 text-sm text-gray-600 hover:text-indigo-600 transition-colors"
                     >
                         <ArrowLeft size={16} className={isRTL ? 'rotate-180' : ''} />
-                        {isRTL ? 'العودة للإعدادات' : 'Back to Settings'}
+                        {isRTL ? 'العودة إلى نظرة عامة' : 'Back to Overview'}
                     </button>
+                    <StorefrontBreadcrumbs
+                        appendCurrentLabel={isProductTemplatePage}
+                        currentLabel={isProductTemplatePage ? activeTemplateName : ''}
+                        onNavigate={(path) => requestNavigation(path)}
+                    />
                 </div>
 
                 <div className="flex flex-1 items-center justify-center px-6">
@@ -750,22 +766,22 @@ export function StorefrontBuilderPage() {
             onDragEnd={handleDragEnd}
         >
             <div className="h-screen flex flex-col bg-gray-100 -m-6 -mt-6">
-                {/* Back Link */}
-                <div className="h-10 bg-white border-b border-gray-200 flex items-center px-4">
-                    <button
-                        onClick={handleExit}
-                        className="flex items-center gap-2 text-sm text-gray-600 hover:text-indigo-600 transition-colors"
-                    >
-                        <ArrowLeft size={16} className={isRTL ? 'rotate-180' : ''} />
-                        {isRTL ? 'العودة للإعدادات' : 'Back to Settings'}
-                    </button>
+                <div className="min-h-10 border-b border-gray-200 bg-white px-4 py-2">
+                    <StorefrontBreadcrumbs
+                        appendCurrentLabel={isProductTemplatePage}
+                        currentLabel={isProductTemplatePage ? activeTemplateName : ''}
+                        onNavigate={(path) => requestNavigation(path)}
+                    />
                 </div>
 
                 {/* Top Bar */}
                 <BuilderTopBar
+                    onBack={handleExit}
+                    onPageChange={requestNavigation}
                     onPreview={handlePreview}
-                    onPublish={() => setIsPublishModalOpen(true)}
-                    onRollback={openRollbackModal}
+                    onPublish={() => setIsPublishConfirmOpen(true)}
+                    onHistory={() => requestNavigation('/storefront/storeconfig-version-history')}
+                    onDiscard={handleDiscard}
                     onSave={handleSave}
                     templateOptions={activeTemplateOptions}
                     activeTemplateId={templateIdFromUrl}
@@ -778,6 +794,8 @@ export function StorefrontBuilderPage() {
                     lastSavedAt={lastSavedAt}
                     onRetrySave={handleRetrySave}
                 />
+
+                {feedback ? <div className="px-4 pt-3"><AuthoringFeedback {...feedback} /></div> : null}
 
                 {loadError && (
                     <div className="border-b border-red-200 bg-red-50 px-4 py-3">
@@ -842,29 +860,52 @@ export function StorefrontBuilderPage() {
                     <SectionPalette pageKey={targetPage} />
 
                     {/* Center: Canvas */}
-                    <BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} />
+                    <BuilderCanvas activeId={activeId} onLoadDemo={handleLoadDemo} storeConfig={storeConfig} tenantId={tenantId} templateId={templateIdFromUrl} />
 
                     {/* Right: Settings Panel */}
                     <SettingsPanel />
                 </div>
 
                 {/* Modals */}
-                <PublishModal
-                    isOpen={isPublishModalOpen}
-                    onClose={() => setIsPublishModalOpen(false)}
+                <AuthoringConfirmDialog
+                    open={isPublishConfirmOpen}
+                    title={isProductTemplatePage ? 'Publish Product Template?' : 'Publish Homepage?'}
+                    description="Publishing makes the accepted draft live. Other Storefront surfaces are not changed."
+                    confirmLabel={isProductTemplatePage ? 'Publish Product Template' : 'Publish Homepage'}
+                    confirmTone="publish"
+                    busy={isPublishing}
+                    onClose={() => setIsPublishConfirmOpen(false)}
                     onConfirm={handlePublish}
-                    pageKey={currentPage}
-                    isPublishing={useBuilderStore.getState().isPublishing}
                 />
-
-                <RollbackModal
-                    isOpen={isRollbackModalOpen}
-                    onClose={() => setIsRollbackModalOpen(false)}
-                    onConfirm={handleRollback}
-                    versions={versions}
-                    isLoading={isLoadingVersions}
-                    isRollingBack={isRollingBack}
+                <AuthoringConfirmDialog
+                    open={isDeleteConfirmOpen}
+                    title="Delete Product Template?"
+                    description="This danger action deletes only the selected product template. It cannot be undone from this editor."
+                    confirmLabel="Delete Product Template"
+                    confirmTone="danger"
+                    onClose={() => setIsDeleteConfirmOpen(false)}
+                    onConfirm={confirmDeleteTemplate}
                 />
+                <AuthoringPromptDialog
+                    open={isCreateTemplateOpen}
+                    title="Create Product Template"
+                    description="Create a new Product Template draft. It remains unpublished until Publish Product Template is chosen."
+                    label="Template name"
+                    value={newTemplateName}
+                    placeholder="e.g. Featured product"
+                    confirmLabel="Create Template"
+                    onChange={setNewTemplateName}
+                    onClose={() => setIsCreateTemplateOpen(false)}
+                    onConfirm={confirmCreateTemplate}
+                />
+                <AuthoringConflictDialog
+                    open={conflict != null}
+                    message={conflict?.message}
+                    onClose={() => setConflict(null)}
+                    onLoadLatest={handleLoadLatest}
+                    onRetry={handleRetryConflict}
+                />
+                <UnsavedChangesDialog {...unsavedDialogProps} />
 
                 <PreviewModal
                     isOpen={isPreviewModalOpen}

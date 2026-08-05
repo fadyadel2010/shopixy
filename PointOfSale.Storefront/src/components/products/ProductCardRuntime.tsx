@@ -5,6 +5,7 @@ import { OptimizedImage } from '@/components/media';
 import {
     ThemeAddToCartButton,
     ThemeImageFrame,
+    ThemeLabel,
     ThemePrice,
     type ThemePricePresentation,
 } from '@/components/theme-components';
@@ -259,5 +260,51 @@ export function ProductCardQuickAddButton({
             disabled={!runtime.canQuickAdd || runtime.isAddingToCart}
             className={className}
         />
+    );
+}
+
+const CONTROL_PANEL_CLASSES: Record<string, string> = {
+    cosmetics: 'border-x border-b border-black bg-white px-3 pb-3 text-[10px]',
+    fashion: 'border-t border-slate-200 bg-white px-3 py-3',
+    minimal: 'border-t border-muted/15 bg-background px-3 py-3',
+    pearl: 'border-t border-secondary/30 bg-background px-3 py-3',
+    phoenix: 'border-t border-black/10 bg-background px-3 py-3',
+    seven: 'border-t border-muted/15 bg-white px-3 py-3',
+};
+
+const QUICK_ADD_CLASSES: Record<string, string> = {
+    alizon: 'inline-flex min-h-9 items-center justify-center rounded-none bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
+    cosmetics: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-medium text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
+    hype: 'inline-flex min-h-9 items-center justify-center rounded-full bg-primary px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white',
+    seven: 'inline-flex min-h-9 items-center justify-center text-xs font-black uppercase tracking-[0.12em] text-primary disabled:text-muted',
+};
+
+/**
+ * Canonical functional control layer for every Product Card presentation.
+ * Theme renderers own the card's appearance; this runtime alone owns the
+ * presence and behavior of wishlist, stock, and quick-add controls.
+ */
+export function ProductCardInteractionLayer({ runtime }: { runtime: ProductCardRuntime }) {
+    const stockLabel = runtime.isAvailable && runtime.inStock
+        ? runtime.labels.inStock
+        : runtime.labels.outOfStock;
+    const panelClassName = CONTROL_PANEL_CLASSES[runtime.themeId]
+        ?? 'border-t border-muted/15 bg-background px-3 py-3';
+    const quickAddClassName = QUICK_ADD_CLASSES[runtime.themeId]
+        ?? 'inline-flex min-h-9 items-center justify-center rounded-md bg-primary px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-primary/90 disabled:bg-muted disabled:text-white';
+
+    return (
+        <>
+            <div className="absolute right-3 top-3 z-20">
+                <ProductCardWishlist runtime={runtime} size="small" />
+            </div>
+            <div
+                className={`flex items-center justify-between gap-3 ${panelClassName}`}
+                data-product-card-control-owner="ProductCardRuntime"
+            >
+                <ThemeLabel themeId={runtime.themeId}>{stockLabel}</ThemeLabel>
+                <ProductCardQuickAddButton runtime={runtime} className={quickAddClassName} />
+            </div>
+        </>
     );
 }

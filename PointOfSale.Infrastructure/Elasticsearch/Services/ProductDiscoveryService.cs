@@ -374,6 +374,21 @@ public class ProductDiscoveryService : IProductDiscoveryService
                 .Value(query.HasVariants.Value)));
         }
 
+        if (query.Attribute?.Count > 0)
+        {
+            foreach (var attribute in query.Attribute
+                .Select(NormalizeAttributeFilter)
+                .Where(value => value != null)
+                .Cast<string>()
+                .Distinct(StringComparer.Ordinal))
+            {
+                var requiredAttribute = attribute;
+                filters.Add(f => f.Term(t => t
+                    .Field(p => p.VariantAttributes)
+                    .Value(requiredAttribute)));
+            }
+        }
+
         return filters.ToArray();
     }
 
@@ -657,7 +672,47 @@ public class ProductDiscoveryService : IProductDiscoveryService
             return false;
         }
 
+        if (query.Attribute?.Count > 0)
+        {
+            var authoritativeAttributes = (product.Variants ?? new List<ProductVariantDocument>())
+                .Where(variant => variant.IsActive)
+                .SelectMany(variant => variant.Attributes ?? new List<VariantAttributeDocument>())
+                .Where(attribute => !string.IsNullOrWhiteSpace(attribute.Name) && !string.IsNullOrWhiteSpace(attribute.Value))
+                .Select(attribute => $"{attribute.Name.Trim().ToLowerInvariant()}={attribute.Value.Trim().ToLowerInvariant()}")
+                .ToHashSet(StringComparer.Ordinal);
+            var requestedAttributes = query.Attribute
+                .Select(NormalizeAttributeFilter)
+                .Where(value => value != null)
+                .Cast<string>()
+                .Distinct(StringComparer.Ordinal);
+
+            if (!requestedAttributes.All(authoritativeAttributes.Contains))
+            {
+                return false;
+            }
+        }
+
         return true;
+    }
+
+    private static string? NormalizeAttributeFilter(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var separatorIndex = value.IndexOf('=');
+        if (separatorIndex <= 0 || separatorIndex == value.Length - 1)
+        {
+            return null;
+        }
+
+        var name = value[..separatorIndex].Trim().ToLowerInvariant();
+        var attributeValue = value[(separatorIndex + 1)..].Trim().ToLowerInvariant();
+        return string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(attributeValue)
+            ? null
+            : $"{name}={attributeValue}";
     }
 
     private static IEnumerable<ProductDiscoveryItemDto> SortSqlRecomposedItems(

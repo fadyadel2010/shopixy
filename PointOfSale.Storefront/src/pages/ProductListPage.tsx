@@ -32,8 +32,6 @@ import { useProductListDiscovery, useCategories } from '@/hooks';
 import { useStoreConfigStore, selectConfig } from '@/store';
 import { scrollToTop } from '@/utils';
 import type { SearchInputHandle } from '@/components/data/SearchInput';
-import { SectionRenderer } from '@/components/sections/SectionRenderer';
-import type { SectionRendererInputSection } from '@/components/sections/homepageSections';
 import { CategoryPromotionBanner } from '@/components/products/CategoryPromotionBanner';
 import {
     ProductFiltersSidebar,
@@ -54,14 +52,12 @@ import {
     getCommerceGridItemClass,
     normalizeCommerceTheme,
 } from '@/storefront/commerce/CommerceBrowsingExperience';
-import { splitProductCatalogSections } from './productCatalogSections';
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const DEFAULT_PAGE_SIZE = 20;
-const PRODUCT_CATALOG_PATH = '/products';
 
 // ============================================================================
 // Component
@@ -82,13 +78,6 @@ export const ProductListPage: React.FC = () => {
 
     // Mobile filter drawer state
     const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
-
-    // Get product page sections from config
-    const productSections = config.pages?.product?.sections || [];
-    const { top: topProductSections, bottom: bottomProductSections } = useMemo(
-        () => splitProductCatalogSections(productSections),
-        [productSections]
-    );
 
     // ========================================================================
     // Route params - get category from /category/:slug
@@ -337,27 +326,6 @@ export const ProductListPage: React.FC = () => {
         );
     };
 
-    const renderConfiguredProductSections = useCallback((
-        sections: SectionRendererInputSection[],
-        slot: 'top' | 'bottom'
-    ) => {
-        if (sections.length === 0) {
-            return null;
-        }
-
-        return (
-            <div className="product-list-page__sections" data-catalog-section-slot={slot}>
-                {sections.map((section) => (
-                    <SectionRenderer
-                        key={section.id}
-                        section={section}
-                        sectionProps={{ suppressActionHref: PRODUCT_CATALOG_PATH }}
-                    />
-                ))}
-            </div>
-        );
-    }, []);
-
     // ========================================================================
     // Render
     // ========================================================================
@@ -365,8 +333,6 @@ export const ProductListPage: React.FC = () => {
     return (
         <Layout categories={categories}>
             <div className="product-list-page" data-catalog-owner="ProductListPage">
-                {renderConfiguredProductSections(topProductSections, 'top')}
-
                 <div className={commerceStyles.page} data-commerce-theme={commerceTheme} data-catalog-owner="ProductListPage">
                     <div className={commerceStyles.container}>
                     {/* Page Header */}
@@ -573,7 +539,6 @@ export const ProductListPage: React.FC = () => {
                     />
                     </div>
                 </div>
-                {renderConfiguredProductSections(bottomProductSections, 'bottom')}
             </div>
         </Layout>
     );

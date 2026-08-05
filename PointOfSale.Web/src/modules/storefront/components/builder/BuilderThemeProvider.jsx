@@ -1,10 +1,7 @@
-import { useLayoutEffect, useMemo, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ThemeProvider } from '@/storefront/themes/ThemeContext'
-import { isTenantResolved, setResolvedTenant } from '@/bootstrap'
+import { clearResolvedTenant, getTenantId, isTenantResolved, setResolvedTenant } from '@/bootstrap'
 import { useStoreConfigStore } from '@/store/storeConfigStore'
-// ARCH-1.4R: normalizeStoreConfig extracted to a standalone module so the
-// theme-native canvas no longer depends on this legacy provider. Re-exported
-// here for backward compatibility until decommission.
 import { normalizeStoreConfig } from './normalizeStoreConfig'
 
 export { normalizeStoreConfig }
@@ -12,6 +9,8 @@ export { normalizeStoreConfig }
 export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
     const setConfig = useStoreConfigStore((state) => state.setConfig)
     const normalizedConfig = useMemo(() => normalizeStoreConfig(storeConfig), [storeConfig])
+    const previousConfigRef = useRef(useStoreConfigStore.getState().config)
+    const previousTenantRef = useRef(isTenantResolved() ? getTenantId() : null)
     const [isReady, setIsReady] = useState(false)
 
     useLayoutEffect(() => {
@@ -35,6 +34,16 @@ export function BuilderThemeProvider({ tenantId, storeConfig, children }) {
 
         setConfig(normalizedConfig)
         setIsReady(true)
+
+        return () => {
+            setConfig(previousConfigRef.current)
+            if (previousTenantRef.current) {
+                setResolvedTenant(previousTenantRef.current, { overwrite: true })
+            } else {
+                clearResolvedTenant()
+            }
+            setIsReady(false)
+        }
     }, [normalizedConfig, setConfig, storeConfig, tenantId])
 
     if (!storeConfig || !isReady) {

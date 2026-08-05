@@ -4,6 +4,7 @@ import type { HomepageSectionSchema } from './homepageService'
 import {
     buildSaveHomepageDraftPayload,
     canAutoPersistReorder,
+    createBuilderSectionsFingerprint,
     createBuilderSection,
     validateBuilderSections,
 } from './homepageBuilderUtils'
@@ -150,5 +151,42 @@ describe('homepageBuilderUtils', () => {
         const validationMap = validateBuilderSections([draftSection], schemas)
 
         expect(validationMap[draftSection.clientId]).toBeUndefined()
+    })
+
+    it('compares semantic persisted state without backend or transient metadata', () => {
+        const baseline = createBuilderSection(schemas[0], 0, null)
+        baseline.persistedId = 'section-1'
+        baseline.version = 1
+        baseline.updatedAt = '2026-08-03T00:00:00Z'
+        baseline.data.title = 'Featured'
+        baseline.data.source = 'all'
+        baseline.data.layout = 'grid'
+
+        const refreshedMetadata = {
+            ...baseline,
+            clientId: 'different-transient-client-id',
+            version: 99,
+            updatedAt: '2026-08-03T01:00:00Z',
+        }
+
+        expect(createBuilderSectionsFingerprint([baseline], schemas)).toBe(
+            createBuilderSectionsFingerprint([refreshedMetadata], schemas),
+        )
+    })
+
+    it('marks every persisted Homepage authoring change dirty', () => {
+        const baseline = createBuilderSection(schemas[0], 0, null)
+        baseline.persistedId = 'section-1'
+        baseline.data.title = 'Featured'
+        baseline.data.source = 'all'
+        baseline.data.layout = 'grid'
+        const changed = {
+            ...baseline,
+            data: { ...baseline.data, title: 'Changed title' },
+        }
+
+        expect(createBuilderSectionsFingerprint([baseline], schemas)).not.toBe(
+            createBuilderSectionsFingerprint([changed], schemas),
+        )
     })
 })

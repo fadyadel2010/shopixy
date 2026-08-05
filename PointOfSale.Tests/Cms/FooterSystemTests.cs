@@ -500,35 +500,6 @@ public sealed class FooterSystemTests
         }
     }
 
-    private sealed class InMemoryStorefrontFooterCacheService : IStorefrontFooterCacheService
-    {
-        private readonly Dictionary<Guid, PointOfSale.API.DTOs.Storefront.StorefrontFooterDto> _footers = new();
-
-        public Task<PointOfSale.API.DTOs.Storefront.StorefrontFooterDto?> GetAsync(
-            Guid tenantId,
-            CancellationToken cancellationToken = default)
-        {
-            _footers.TryGetValue(tenantId, out var footer);
-            return Task.FromResult(footer);
-        }
-
-        public Task SetAsync(
-            Guid tenantId,
-            PointOfSale.API.DTOs.Storefront.StorefrontFooterDto footer,
-            DateTime? lastUpdatedAtUtc,
-            CancellationToken cancellationToken = default)
-        {
-            _footers[tenantId] = footer;
-            return Task.CompletedTask;
-        }
-
-        public Task InvalidateAsync(Guid tenantId, CancellationToken cancellationToken = default)
-        {
-            _footers.Remove(tenantId);
-            return Task.CompletedTask;
-        }
-    }
-
     private sealed class InMemoryMarketplaceFooterCacheService : IMarketplaceFooterCacheService
     {
         private PointOfSale.API.DTOs.Marketplace.MarketplaceFooterDto? _footer;

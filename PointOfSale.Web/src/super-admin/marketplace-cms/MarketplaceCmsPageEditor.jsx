@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Eye, Globe, Loader2, Plus, Save, Sparkles, Trash2 } from 'lucide-react'
+import { ArrowLeft, Eye, Globe, Loader2, Plus, RefreshCcw, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react'
 import { marketplaceCmsService } from './marketplaceCmsService'
 import { sanitizeRichTextHtml } from '@/utils/htmlSanitizer'
+import { getAuthoringErrorFeedback } from '../../modules/storefront/authoringPlatform'
 
 const CONTENT_TYPES = { RichText: 'RichText', Blocks: 'Blocks' }
 const SUPPORTED_LANGUAGES = ['en', 'ar']
@@ -44,22 +45,38 @@ export function MarketplaceCmsPageEditor() {
 
     const [page, setPage] = useState(null)
     const [form, setForm] = useState(createEmptyForm())
+    const [acceptedFingerprint, setAcceptedFingerprint] = useState(() => getMarketplaceFormFingerprint(createEmptyForm()))
     const [isLoading, setIsLoading] = useState(!isNewPage)
     const [isSaving, setIsSaving] = useState(false)
     const [isPublishing, setIsPublishing] = useState(false)
     const [activeLanguage, setActiveLanguage] = useState('en')
     const [translatingField, setTranslatingField] = useState('')
     const [error, setError] = useState('')
+    const [notice, setNotice] = useState('')
 
     const publicBaseUrl = useMemo(
         () => import.meta.env.VITE_MARKETPLACE_PUBLIC_URL || window.location.origin,
         [],
     )
+    const currentFingerprint = useMemo(() => getMarketplaceFormFingerprint(form), [form])
+    const isDirty = currentFingerprint !== acceptedFingerprint
+
+    useEffect(() => {
+        if (!isDirty) return undefined
+        const handleBeforeUnload = (event) => {
+            event.preventDefault()
+            event.returnValue = ''
+        }
+        window.addEventListener('beforeunload', handleBeforeUnload)
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    }, [isDirty])
 
     useEffect(() => {
         if (isNewPage) {
             setPage(null)
-            setForm(createEmptyForm())
+            const emptyForm = createEmptyForm()
+            setForm(emptyForm)
+            setAcceptedFingerprint(getMarketplaceFormFingerprint(emptyForm))
             setIsLoading(false)
             return
         }
@@ -73,8 +90,7 @@ export function MarketplaceCmsPageEditor() {
             try {
                 const data = await marketplaceCmsService.getPage(pageId)
                 if (!cancelled) {
-                    setPage(data)
-                    setForm(fromPageResponse(data))
+                    adoptMarketplaceResponse(data)
                 }
             } catch (err) {
                 if (!cancelled) {
@@ -94,6 +110,14 @@ export function MarketplaceCmsPageEditor() {
             cancelled = true
         }
     }, [isNewPage, pageId])
+
+    function adoptMarketplaceResponse(response) {
+        const acceptedForm = fromPageResponse(response)
+        setPage(response)
+        setForm(acceptedForm)
+        setAcceptedFingerprint(getMarketplaceFormFingerprint(acceptedForm))
+        return response
+    }
 
     function patchForm(patch) {
         setForm((current) => ({ ...current, ...patch }))
@@ -134,21 +158,27 @@ export function MarketplaceCmsPageEditor() {
 
     async function handleSave() {
         if (!form.slug.trim() || !form.titleLocalized.en.trim()) {
-            alert('English title and slug are required.')
+            setError('English title and slug are required.')
             return null
         }
+        if (!isNewPage && !isDirty) return page
 
         setIsSaving(true)
         setError('')
+        setNotice('')
 
         try {
             const payload = toRequestPayload(form)
             const saved = isNewPage
                 ? await marketplaceCmsService.createPage(payload)
-                : await marketplaceCmsService.updatePage(pageId, payload)
+                : await marketplaceCmsService.updatePage(
+                    pageId,
+                    payload,
+                    marketplaceCmsService.getPageVersion(page),
+                )
 
-            setPage(saved)
-            setForm(fromPageResponse(saved))
+            adoptMarketplaceResponse(saved)
+            setNotice('Draft saved and backend response adopted.')
 
             if (isNewPage) {
                 navigate(`/super-admin/marketplace/pages/${saved.id}`, { replace: true })
@@ -157,7 +187,15 @@ export function MarketplaceCmsPageEditor() {
             return saved
         } catch (err) {
             console.error('Failed to save marketplace CMS page', err)
-            setError(err?.message || 'Failed to save draft.')
+            if (marketplaceCmsService.isConcurrencyConflict(err)) {
+                const refreshed = await refreshPageAfterConflict()
+                setError(refreshed
+                    ? `${err.message} The latest page version has been loaded.`
+                    : `${err.message} The latest page version could not be loaded.`)
+            } else {
+                const feedback = getAuthoringErrorFeedback(err)
+                setError(`${feedback.title}: ${feedback.message}`)
+            }
             return null
         } finally {
             setIsSaving(false)
@@ -165,7 +203,7 @@ export function MarketplaceCmsPageEditor() {
     }
 
     async function handlePublish() {
-        const target = page || await handleSave()
+        const target = (isDirty || !page) ? await handleSave() : page
         if (!target) {
             return
         }
@@ -176,20 +214,43 @@ export function MarketplaceCmsPageEditor() {
 
         setIsPublishing(true)
         try {
-            const published = await marketplaceCmsService.publishPage(target.id)
-            setPage(published)
-            setForm(fromPageResponse(published))
+            const published = await marketplaceCmsService.publishPage(
+                target.id,
+                marketplaceCmsService.getPageVersion(target),
+            )
+            adoptMarketplaceResponse(published)
+            setNotice('Marketplace page published successfully.')
         } catch (err) {
             console.error('Failed to publish marketplace CMS page', err)
-            alert(err?.message || 'Failed to publish marketplace page.')
+            if (marketplaceCmsService.isConcurrencyConflict(err)) {
+                await refreshPageAfterConflict()
+            }
+            const feedback = getAuthoringErrorFeedback(err)
+            setError(`${feedback.title}: ${feedback.message}`)
         } finally {
             setIsPublishing(false)
         }
     }
 
+    async function refreshPageAfterConflict() {
+        try {
+            const latest = await marketplaceCmsService.getPage(pageId)
+            setPage(latest)
+            return true
+        } catch (refreshError) {
+            console.error('Failed to refresh marketplace CMS page after a version conflict', refreshError)
+            setPage(null)
+            return false
+        }
+    }
+
     async function handlePreview() {
         if (isNewPage) {
-            alert('Save the page first so a preview draft exists.')
+            setError('Save the page first so a preview draft exists.')
+            return
+        }
+        if (isDirty) {
+            setError('Save your changes before previewing. Preview never saves or changes versions.')
             return
         }
 
@@ -199,7 +260,8 @@ export function MarketplaceCmsPageEditor() {
             window.open(previewUrl, '_blank', 'noopener,noreferrer')
         } catch (err) {
             console.error('Failed to create marketplace preview link', err)
-            alert(err?.message || 'Unable to create a secure preview link.')
+            const feedback = getAuthoringErrorFeedback(err)
+            setError(`${feedback.title}: ${feedback.message}`)
         }
     }
 
@@ -258,6 +320,7 @@ export function MarketplaceCmsPageEditor() {
     }
 
     function removeBlock(index) {
+        if (!window.confirm('Delete this content block?')) return
         setForm((current) => ({
             ...current,
             localizedContent: {
@@ -265,6 +328,34 @@ export function MarketplaceCmsPageEditor() {
                 [activeLanguage]: ensureBlocks(current.localizedContent?.[activeLanguage]).filter((_, blockIndex) => blockIndex !== index),
             },
         }))
+    }
+
+    function handleCancel() {
+        if (!isDirty || window.confirm('Discard all unsaved marketplace page changes?')) {
+            const acceptedForm = page ? fromPageResponse(page) : createEmptyForm()
+            setForm(acceptedForm)
+            setAcceptedFingerprint(getMarketplaceFormFingerprint(acceptedForm))
+            setError('')
+            setNotice('')
+        }
+    }
+
+    async function handleRefresh() {
+        if (isDirty && !window.confirm('Discard unsaved changes and load the latest marketplace page?')) return
+        if (isNewPage) {
+            handleCancel()
+            return
+        }
+        setIsLoading(true)
+        setError('')
+        try {
+            adoptMarketplaceResponse(await marketplaceCmsService.getPage(pageId))
+        } catch (err) {
+            const feedback = getAuthoringErrorFeedback(err)
+            setError(`${feedback.title}: ${feedback.message}`)
+        } finally {
+            setIsLoading(false)
+        }
     }
 
     if (isLoading) {
@@ -275,12 +366,28 @@ export function MarketplaceCmsPageEditor() {
         )
     }
 
+    if (!isNewPage && !page && !isDirty) {
+        return (
+            <div className="rounded-[28px] border border-rose-200 bg-white p-8 shadow-sm">
+                <h1 className="text-2xl font-semibold text-slate-900">Marketplace page editor unavailable</h1>
+                <p className="mt-2 text-sm text-rose-700">{error || 'No authoritative page response was loaded.'}</p>
+                <button type="button" onClick={handleRefresh} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
+                    <RefreshCcw size={16} /> Retry loading
+                </button>
+            </div>
+        )
+    }
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
                 <div className="flex items-start gap-4">
                     <button
-                        onClick={() => navigate('/super-admin/marketplace/pages')}
+                        onClick={() => {
+                            if (!isDirty || window.confirm('Leave this page and discard unsaved changes?')) {
+                                navigate('/super-admin/marketplace/pages')
+                            }
+                        }}
                         className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
                     >
                         <ArrowLeft size={18} />
@@ -299,13 +406,22 @@ export function MarketplaceCmsPageEditor() {
                 </div>
 
                 <div className="flex flex-wrap gap-3">
+                    <span className={`inline-flex items-center rounded-xl px-3 py-2 text-sm font-medium ${isDirty ? 'bg-amber-100 text-amber-900' : 'bg-emerald-50 text-emerald-800'}`}>
+                        {isDirty ? 'Unsaved changes' : 'Draft in sync'}
+                    </span>
+                    <ActionButton onClick={handleCancel} disabled={!isDirty || isSaving || isPublishing} icon={RotateCcw}>
+                        Cancel
+                    </ActionButton>
+                    <ActionButton onClick={handleRefresh} disabled={isSaving || isPublishing} icon={RefreshCcw}>
+                        Refresh
+                    </ActionButton>
                     <ActionButton onClick={handlePreview} disabled={isNewPage} icon={Eye}>
                         Preview
                     </ActionButton>
-                    <ActionButton onClick={handleSave} disabled={isSaving} icon={isSaving ? Loader2 : Save} spinning={isSaving}>
+                    <ActionButton onClick={handleSave} disabled={isSaving || isPublishing || !isDirty} icon={isSaving ? Loader2 : Save} spinning={isSaving}>
                         Save Draft
                     </ActionButton>
-                    <ActionButton onClick={handlePublish} disabled={isPublishing} icon={isPublishing ? Loader2 : Globe} primary spinning={isPublishing}>
+                    <ActionButton onClick={handlePublish} disabled={isPublishing || isSaving} icon={isPublishing ? Loader2 : Globe} primary spinning={isPublishing}>
                         Publish
                     </ActionButton>
                 </div>
@@ -316,6 +432,12 @@ export function MarketplaceCmsPageEditor() {
             {error ? (
                 <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                     {error}
+                </div>
+            ) : null}
+
+            {notice ? (
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    {notice}
                 </div>
             ) : null}
 
@@ -500,6 +622,10 @@ function toRequestPayload(form) {
             openGraphImageUrl: emptyToNull(form.seo.openGraphImageUrl),
         },
     }
+}
+
+export function getMarketplaceFormFingerprint(form) {
+    return JSON.stringify(toRequestPayload(form))
 }
 
 function emptyToNull(value) {

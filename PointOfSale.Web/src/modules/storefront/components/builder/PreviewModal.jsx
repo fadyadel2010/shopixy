@@ -3,8 +3,7 @@
  * Authenticated draft preview that renders backend preview data locally.
  */
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, Loader2, Monitor, Smartphone, Tablet, X } from 'lucide-react'
 
@@ -15,6 +14,7 @@ import { isTenantResolved, setResolvedTenant } from '@/bootstrap'
 import { useStoreConfigStore } from '@/store/storeConfigStore'
 
 import { normalizeStoreConfig } from './normalizeStoreConfig'
+import { AuthoringDialog } from '../../authoringPlatform'
 
 const DEVICE_SIZES = [
     { key: 'desktop', icon: Monitor, width: '100%', label: { en: 'Desktop', ar: 'سطح المكتب' } },
@@ -87,85 +87,6 @@ export function PreviewModal({
         [currentPage, previewConfig, templateId],
     )
     
-    const dialogRef = useRef(null)
-    const previousFocusRef = useRef(null)
-
-    // Focus management and keyboard trap
-    useEffect(() => {
-        if (!isOpen) {
-            return undefined
-        }
-
-        // Save current focus
-        previousFocusRef.current = document.activeElement
-
-        // Move focus into dialog
-        const titleElement = document.getElementById('preview-modal-title')
-        if (titleElement) {
-            titleElement.setAttribute('tabindex', '-1')
-            titleElement.focus()
-        }
-
-        // Handle Escape key
-        const handleEscape = (event) => {
-            if (event.key === 'Escape') {
-                onClose()
-            }
-        }
-
-        // Focus trap implementation
-        const handleTabKey = (event) => {
-            if (event.key !== 'Tab' || !dialogRef.current) {
-                return
-            }
-
-            const focusableElements = dialogRef.current.querySelectorAll(
-                'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-            )
-            const focusableArray = Array.from(focusableElements)
-            const firstElement = focusableArray[0]
-            const lastElement = focusableArray[focusableArray.length - 1]
-
-            if (event.shiftKey) {
-                // Shift + Tab
-                if (document.activeElement === firstElement) {
-                    event.preventDefault()
-                    lastElement?.focus()
-                }
-            } else {
-                // Tab
-                if (document.activeElement === lastElement) {
-                    event.preventDefault()
-                    firstElement?.focus()
-                }
-            }
-        }
-
-        document.addEventListener('keydown', handleEscape)
-        document.addEventListener('keydown', handleTabKey)
-
-        // Mark background as inert (only #root, not the portal container)
-        const mainContent = document.getElementById('root')
-        if (mainContent) {
-            mainContent.setAttribute('aria-hidden', 'true')
-        }
-
-        return () => {
-            document.removeEventListener('keydown', handleEscape)
-            document.removeEventListener('keydown', handleTabKey)
-
-            // Restore focus
-            if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
-                previousFocusRef.current.focus()
-            }
-
-            // Remove inert state from #root
-            if (mainContent) {
-                mainContent.removeAttribute('aria-hidden')
-            }
-        }
-    }, [isOpen, onClose])
-
     if (!isOpen) {
         return null
     }
@@ -174,14 +95,16 @@ export function PreviewModal({
         ? { product: getProductTemplatePreviewProduct() }
         : undefined
 
-    const modalContent = (
-        <div 
-            ref={dialogRef}
-            className="fixed inset-0 z-50 flex flex-col bg-slate-950/95 backdrop-blur-sm"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="preview-modal-title"
+    return (
+        <AuthoringDialog
+            open
+            title={isRTL ? 'معاينة المسودة' : 'Draft Preview'}
+            onClose={onClose}
+            overlayClassName="!bg-slate-950/95 !p-0 backdrop-blur-sm"
+            panelClassName="!h-full !max-w-none !rounded-none !bg-transparent !p-0 !shadow-none"
+            titleClassName="sr-only"
         >
+        <div className="flex h-full flex-col">
             <div className="flex h-14 items-center justify-between border-b border-slate-700 bg-slate-900 px-4">
                 <div className="flex items-center gap-3">
                     <div 
@@ -301,7 +224,6 @@ export function PreviewModal({
                 </div>
             </div>
         </div>
+        </AuthoringDialog>
     )
-
-    return createPortal(modalContent, document.body)
 }

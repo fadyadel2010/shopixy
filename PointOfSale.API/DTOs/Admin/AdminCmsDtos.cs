@@ -112,6 +112,17 @@ public sealed class AdminCmsPreviewAccessResponse
     public DateTime ExpiresAtUtc { get; set; }
 }
 
+public sealed class AdminCmsSeedResponse
+{
+    public bool Success { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public List<string> SeededPages { get; set; } = new();
+    public bool NavigationCreated { get; set; }
+    public bool HomepageCreated { get; set; }
+    public bool FooterCreated { get; set; }
+    public string Message { get; set; } = string.Empty;
+}
+
 public sealed class AdminCmsPageVersionHistoryResponse
 {
     public Guid PageId { get; set; }
@@ -149,12 +160,17 @@ public class AdminNavigationLinkRequest
 {
     public string Label { get; set; } = string.Empty;
     public string? LabelAr { get; set; }
-    public string Type { get; set; } = "internal";
+    public string Type { get; set; } = "custom";
+    public Guid? TargetId { get; set; }
+    public string? CollectionKey { get; set; }
     public string? Path { get; set; }
     public string? Slug { get; set; }
     public bool OpenInNewTab { get; set; }
     public int Order { get; set; }
     public bool Enabled { get; set; } = true;
+    public string? ValidationStatus { get; set; }
+    public string? ValidationCode { get; set; }
+    public string? ValidationMessage { get; set; }
 }
 
 public class AdminNavigationResponse
@@ -163,6 +179,8 @@ public class AdminNavigationResponse
     public AdminNavigationConfigResponse Draft { get; set; } = new();
     public AdminNavigationConfigResponse? Live { get; set; }
     public bool HasPendingChanges { get; set; }
+    public List<AdminNavigationValidationWarningResponse> ValidationWarnings { get; set; } = new();
+    public List<AdminNavigationValidationWarningResponse> BrokenLinks { get; set; } = new();
 }
 
 public class AdminNavigationConfigResponse
@@ -171,12 +189,53 @@ public class AdminNavigationConfigResponse
     public List<AdminNavigationLinkRequest> Footer { get; set; } = new();
 }
 
+public sealed class AdminNavigationValidationWarningResponse
+{
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string Snapshot { get; set; } = string.Empty;
+    public string Menu { get; set; } = string.Empty;
+    public int? Index { get; set; }
+    public string? Field { get; set; }
+    public string LinkType { get; set; } = string.Empty;
+    public Guid? TargetId { get; set; }
+    public string Status { get; set; } = "invalid";
+}
+
+public sealed class AdminNavigationTargetsResponse
+{
+    public List<AdminNavigationTargetOptionResponse> Categories { get; set; } = new();
+    public List<AdminNavigationTargetOptionResponse> Products { get; set; } = new();
+    public List<AdminNavigationTargetOptionResponse> CmsPages { get; set; } = new();
+    public List<AdminNavigationTargetOptionResponse> Collections { get; set; } = new();
+}
+
+public sealed class AdminNavigationTargetOptionResponse
+{
+    public string Type { get; set; } = string.Empty;
+    public Guid? TargetId { get; set; }
+    public string? CollectionKey { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public string? ResolvedPath { get; set; }
+    public string State { get; set; } = string.Empty;
+}
+
+public sealed class AdminNavigationAdmissionErrorDetails
+{
+    public string LinkType { get; set; } = string.Empty;
+    public string Menu { get; set; } = string.Empty;
+    public int? Index { get; set; }
+    public string? Field { get; set; }
+    public Guid? TargetId { get; set; }
+}
+
 public class AdminCmsApiErrorResponse
 {
     public string Code { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
     public string? TraceId { get; set; }
     public object? LatestVersion { get; set; }
+    public AdminNavigationAdmissionErrorDetails? Navigation { get; set; }
 
     public AdminCmsApiErrorResponse()
     {

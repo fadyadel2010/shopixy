@@ -15,7 +15,7 @@ vi.mock('../../../../services/api', () => ({
     },
 }))
 
-import { cmsService } from './cmsService'
+import { cmsService, extractCmsConflict } from './cmsService'
 
 describe('cmsService', () => {
     beforeEach(() => {
@@ -102,6 +102,34 @@ describe('cmsService', () => {
         })
     })
 
+    it('submits CMS publish with backend version evidence', async () => {
+        apiPost.mockResolvedValue({ data: { id: 'page-id', published: { version: 3 } } })
+
+        await cmsService.publishPage('page-id', 3)
+
+        expect(apiPost).toHaveBeenCalledWith('/admin/pages/page-id/publish', undefined, {
+            headers: { 'If-Match': '"3"' },
+        })
+    })
+
+    it('does not replace structured CMS publish errors with a generic service error', async () => {
+        const structuredConflict = {
+            name: 'AxiosError',
+            code: 'ERR_BAD_REQUEST',
+            message: 'Request failed with status code 409',
+            response: {
+                status: 409,
+                data: {
+                    code: 'CONCURRENCY_CONFLICT',
+                    message: 'This page changed before it could be published.',
+                },
+            },
+        }
+        apiPost.mockRejectedValue(structuredConflict)
+
+        await expect(cmsService.publishPage('page-id', 3)).rejects.toBe(structuredConflict)
+    })
+
     it('submits rollback intent only with If-Match version evidence', async () => {
         apiPost.mockResolvedValue({ data: { id: 'page-id' } })
 
@@ -112,6 +140,33 @@ describe('cmsService', () => {
             reason: 'operator reason',
         }, {
             headers: { 'If-Match': '"5"' },
+        })
+    })
+
+    it('classifies only the exact CMS concurrency contract as retryable', () => {
+        expect(extractCmsConflict({ response: { status: 409, data: { code: 'CONCURRENCY_CONFLICT', message: 'stale' } } })).toMatchObject({
+            code: 'CONCURRENCY_CONFLICT',
+            message: 'stale',
+        })
+        expect(extractCmsConflict({ response: { status: 409, data: { code: 'SLUG_CONFLICT' } } })).toBeNull()
+        expect(extractCmsConflict({ response: { status: 422, data: { code: 'CONCURRENCY_CONFLICT' } } })).toBeNull()
+    })
+
+    it('adopts CMS conflict LatestVersion from the backend contract casing', () => {
+        const latestVersion = { id: 'page-id', published: { version: 2 } }
+
+        expect(extractCmsConflict({
+            response: {
+                status: 409,
+                data: {
+                    code: 'CONCURRENCY_CONFLICT',
+                    message: 'Already published by the backend.',
+                    LatestVersion: latestVersion,
+                },
+            },
+        })).toMatchObject({
+            code: 'CONCURRENCY_CONFLICT',
+            latestVersion,
         })
     })
 })

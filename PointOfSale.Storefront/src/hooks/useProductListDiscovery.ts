@@ -92,6 +92,8 @@ export interface UseProductListDiscoveryResult {
         priceTo?: number;
         hasPromotion?: boolean;
         inStock?: boolean;
+        hasVariants?: boolean;
+        attributes: string[];
     };
 
     // Sort
@@ -178,6 +180,8 @@ export function useProductListDiscovery(options: UseProductListDiscoveryOptions 
         priceTo: filters.priceTo,
         hasPromotion: filters.hasPromotion,
         inStock: filters.inStock,
+        hasVariants: filters.hasVariants,
+        attribute: filters.attributes.length > 0 ? filters.attributes : undefined,
         sort: filters.sort,
         page: filters.page,
         pageSize: filters.pageSize,
@@ -218,6 +222,8 @@ export function useProductListDiscovery(options: UseProductListDiscoveryOptions 
             priceTo: filters.priceTo,
             hasPromotion: filters.hasPromotion,
             inStock: filters.inStock,
+            hasVariants: filters.hasVariants,
+            attributes: filters.attributes,
         },
 
         // Sort

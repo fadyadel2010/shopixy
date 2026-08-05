@@ -1,41 +1,31 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp, Loader2, Plus, RefreshCcw, Save, Sparkles, Trash2 } from 'lucide-react'
+import { CheckCircle2, ChevronDown, ChevronUp, Loader2, Plus, RefreshCcw, RotateCcw, Save, Sparkles, Trash2 } from 'lucide-react'
+import {
+    admitFooterConfiguration,
+    createFooterLink as createLink,
+    createFooterSection as createSection,
+    createSocialLink as createSocial,
+    getFooterDraftFingerprint,
+    mapFooterDraftToRequest,
+    validateFooterDraft,
+} from './footerAuthoringContract'
+import { loadFooterConfiguration, saveFooterConfiguration } from './footerAuthoringService'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringStatusBadge,
+    AuthoringValidationSummary,
+    UnsavedChangesDialog,
+    getAuthoringErrorFeedback,
+    useAuthoringGuard,
+} from '../../modules/storefront/authoringPlatform'
 
 const LINK_TYPES = ['Internal', 'Cms', 'External']
 const inputClassName = 'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-100'
 const createLocalizedField = (fallback = '') => ({ en: fallback || '', ar: '' })
-
-const createId = () =>
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `footer-${Date.now()}-${Math.random().toString(16).slice(2)}`
-
-const createLink = (localized) => ({
-    _key: createId(),
-    label: '',
-    labelLocalized: localized ? createLocalizedField('') : undefined,
-    type: 'Internal',
-    url: '',
-    cmsPageSlug: '',
-    openInNewTab: false,
-    isActive: true,
-})
-
-const createSection = (localized) => ({
-    _key: createId(),
-    title: '',
-    titleLocalized: localized ? createLocalizedField('') : undefined,
-    isActive: true,
-    links: [createLink(localized)],
-})
-
-const createSocial = () => ({
-    _key: createId(),
-    platform: '',
-    url: '',
-    icon: '',
-    isActive: true,
-})
 
 const moveItem = (items, index, direction) => {
     const nextIndex = direction === 'up' ? index - 1 : index + 1
@@ -49,126 +39,78 @@ const moveItem = (items, index, direction) => {
     return cloned
 }
 
-function normalizeConfig(configuration, localized) {
-    return {
-        sections: (configuration?.sections || [])
-            .slice()
-            .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
-            .map((section) => ({
-                _key: createId(),
-                title: section.title || '',
-                titleLocalized: localized
-                    ? {
-                        en: section.titleLocalized?.en || section.title || '',
-                        ar: section.titleLocalized?.ar || '',
-                    }
-                    : undefined,
-                isActive: section.isActive !== false,
-                links: (section.links || [])
-                    .slice()
-                    .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
-                    .map((link) => ({
-                        _key: createId(),
-                        label: link.label || '',
-                        labelLocalized: localized
-                            ? {
-                                en: link.labelLocalized?.en || link.label || '',
-                                ar: link.labelLocalized?.ar || '',
-                            }
-                            : undefined,
-                        type: link.type || 'Internal',
-                        url: link.url || '',
-                        cmsPageSlug: link.cmsPageSlug || '',
-                        openInNewTab: Boolean(link.openInNewTab),
-                        isActive: link.isActive !== false,
-                    })),
-            })),
-        socialLinks: (configuration?.socialLinks || [])
-            .slice()
-            .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
-            .map((link) => ({
-                _key: createId(),
-                platform: link.platform || '',
-                url: link.url || '',
-                icon: link.icon || '',
-                isActive: link.isActive !== false,
-            })),
-    }
-}
-
-function toRequest(draft, localized) {
-    return {
-        sections: draft.sections.map((section, sectionIndex) => ({
-            title: localized ? (section.titleLocalized?.en || '').trim() : section.title.trim(),
-            ...(localized ? { titleLocalized: trimLocalizedField(section.titleLocalized) } : {}),
-            order: sectionIndex,
-            isActive: section.isActive !== false,
-            links: section.links.map((link, linkIndex) => ({
-                label: localized ? (link.labelLocalized?.en || '').trim() : link.label.trim(),
-                ...(localized ? { labelLocalized: trimLocalizedField(link.labelLocalized) } : {}),
-                type: link.type,
-                url: link.type === 'Cms' ? null : (link.url || '').trim(),
-                cmsPageSlug: link.type === 'Cms' ? (link.cmsPageSlug || '').trim() : null,
-                openInNewTab: Boolean(link.openInNewTab),
-                order: linkIndex,
-                isActive: link.isActive !== false,
-            })),
-        })),
-        socialLinks: draft.socialLinks.map((link, index) => ({
-            platform: link.platform.trim(),
-            url: link.url.trim(),
-            icon: (link.icon || '').trim() || null,
-            order: index,
-            isActive: link.isActive !== false,
-        })),
-    }
-}
-
-const getErrorMessage = (error) =>
-    error?.message || error?.response?.data?.message || 'Unable to save the footer configuration.'
-
-function trimLocalizedField(field) {
-    const trimmed = {
-        en: (field?.en || '').trim(),
-        ar: (field?.ar || '').trim(),
-    }
-
-    return trimmed.en || trimmed.ar ? trimmed : null
-}
-
 export function FooterConfigScreen({
+    scope,
     title,
     description,
     note,
-    configuration,
-    cmsPages,
     localized = false,
     allowCmsSlugEntry = false,
-    isLoading,
-    isSaving,
-    error,
-    conflict,
-    onRefresh,
-    onSave,
-    onLoadLatest,
-    onDismissConflict,
+    loadCmsPages,
     onTranslateContent,
 }) {
-    const [draft, setDraft] = useState(() => normalizeConfig(configuration, localized))
-    const [saveError, setSaveError] = useState('')
+    const [acceptedConfiguration, setAcceptedConfiguration] = useState(null)
+    const [draft, setDraft] = useState(null)
+    const [cmsPages, setCmsPages] = useState([])
+    const [isLoading, setIsLoading] = useState(true)
+    const [isSaving, setIsSaving] = useState(false)
+    const [loadError, setLoadError] = useState(null)
+    const [feedback, setFeedback] = useState(null)
+    const [conflict, setConflict] = useState(null)
+    const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false)
+    const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false)
+    const [pendingDelete, setPendingDelete] = useState(null)
+    const [pendingTranslation, setPendingTranslation] = useState(null)
     const [activeLanguage, setActiveLanguage] = useState('en')
     const [translatingKey, setTranslatingKey] = useState('')
 
-    useEffect(() => {
-        setDraft(normalizeConfig(configuration, localized))
-    }, [configuration, localized])
-
     const baseline = useMemo(
-        () => JSON.stringify(toRequest(normalizeConfig(configuration, localized), localized)),
-        [configuration, localized],
+        () => acceptedConfiguration ? getFooterDraftFingerprint(acceptedConfiguration, localized) : '',
+        [acceptedConfiguration, localized],
     )
-    const current = useMemo(() => JSON.stringify(toRequest(draft, localized)), [draft, localized])
-    const isDirty = baseline !== current
+    const current = useMemo(
+        () => draft ? getFooterDraftFingerprint(draft, localized) : '',
+        [draft, localized],
+    )
+    const isDirty = Boolean(draft && acceptedConfiguration && baseline !== current)
+    const validationIssues = useMemo(
+        () => draft ? validateFooterDraft(draft, { isLocalized: localized, cmsPages, allowCmsSlugEntry }) : [],
+        [allowCmsSlugEntry, cmsPages, draft, localized],
+    )
+
+    const adoptFooterResponse = (response) => {
+        const admitted = admitFooterConfiguration(response, scope)
+        setAcceptedConfiguration(admitted)
+        setDraft(admitted)
+        setConflict(null)
+        return admitted
+    }
+
+    const loadWorkspace = async () => {
+        setIsLoading(true)
+        setLoadError(null)
+        setFeedback(null)
+        try {
+            const [configuration, pages] = await Promise.all([
+                loadFooterConfiguration(scope),
+                loadCmsPages ? loadCmsPages() : Promise.resolve([]),
+            ])
+            setCmsPages(Array.isArray(pages) ? pages : [])
+            adoptFooterResponse(configuration)
+            return true
+        } catch (error) {
+            setLoadError(getAuthoringErrorFeedback(error))
+            return false
+        } finally {
+            setIsLoading(false)
+        }
+    }
+
+    useEffect(() => {
+        loadWorkspace()
+        // The scope owns the workspace identity. Explicit Refresh owns later reloads.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [scope])
 
     const updateSection = (sectionKey, updater) =>
         setDraft((value) => ({
@@ -184,97 +126,132 @@ export function FooterConfigScreen({
 
     const cmsOptions = (cmsPages || []).slice().sort((left, right) => left.title.localeCompare(right.title))
 
+    const performTranslation = async (key, source, apply) => {
+        setTranslatingKey(key)
+        try {
+            const translated = await onTranslateContent(source, 'en', 'ar')
+            apply(translated)
+        } catch (saveFailure) {
+            setFeedback(getAuthoringErrorFeedback(saveFailure))
+        } finally {
+            setTranslatingKey('')
+        }
+    }
+
     const updateLocalizedField = async (key, source, target, apply) => {
         if (!onTranslateContent || activeLanguage !== 'ar') {
             return
         }
 
         if (!source?.trim()) {
-            window.alert('Add English content first, then translate it into Arabic.')
+            setFeedback({ kind: 'warning', title: 'English content required', message: 'Add English content first, then translate it into Arabic.' })
             return
         }
 
-        if (target?.trim() && !window.confirm('Arabic content already exists. Overwrite it with a fresh AI translation?')) {
+        if (target?.trim()) {
+            setPendingTranslation({ key, source, apply })
             return
         }
 
-        setTranslatingKey(key)
+        await performTranslation(key, source, apply)
+    }
+
+    const handleSave = async (revision = acceptedConfiguration?.revision) => {
+        if (!draft || !revision || validationIssues.length > 0) return
+        setIsSaving(true)
+        setFeedback(null)
         try {
-            const translated = await onTranslateContent(source, 'en', 'ar')
-            apply(translated)
+            const request = mapFooterDraftToRequest(draft, revision, localized)
+            const response = await saveFooterConfiguration(scope, request)
+            adoptFooterResponse(response)
+            setFeedback({
+                kind: 'success',
+                title: 'Footer saved live',
+                message: 'The accepted backend response is now live and is the saved authoring baseline.',
+            })
+            setIsSaveConfirmOpen(false)
         } catch (saveFailure) {
-            window.alert(getErrorMessage(saveFailure))
+            const failure = getAuthoringErrorFeedback(saveFailure)
+            if (failure.kind === 'conflict') {
+                setIsSaveConfirmOpen(false)
+                try {
+                    const latest = admitFooterConfiguration(await loadFooterConfiguration(scope), scope)
+                    setConflict({ ...failure, latest })
+                } catch (refreshFailure) {
+                    setConflict({
+                        ...failure,
+                        message: `${failure.message} The latest revision could not be loaded, so retry is disabled.`,
+                        latest: null,
+                    })
+                }
+            } else {
+                setFeedback(failure)
+            }
         } finally {
-            setTranslatingKey('')
+            setIsSaving(false)
         }
     }
 
-    const handleSave = async () => {
-        setSaveError('')
-
-        try {
-            await onSave(toRequest(draft, localized))
-        } catch (saveFailure) {
-            setSaveError(getErrorMessage(saveFailure))
-        }
+    const handleDiscard = () => {
+        setDraft(acceptedConfiguration)
+        setConflict(null)
+        setFeedback({ kind: 'info', title: 'Changes discarded', message: 'The accepted live Footer has been restored.' })
+        setIsDiscardConfirmOpen(false)
     }
+
+    const handleLoadLatest = () => {
+        if (!conflict?.latest) return
+        adoptFooterResponse(conflict.latest)
+        setFeedback({ kind: 'success', title: 'Latest revision loaded', message: 'The footer editor now matches the authoritative backend response.' })
+    }
+
+    const handleRetryAfterConflict = () => {
+        if (!conflict?.latest) return
+        handleSave(conflict.latest.revision)
+    }
+
+    const confirmDelete = (message, remove) => {
+        setPendingDelete({ message, remove })
+    }
+
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty,
+        isBusy: isSaving,
+        onSave: () => setIsSaveConfirmOpen(true),
+    })
 
     if (isLoading) {
+        return <AuthoringLoadingState label="Loading Footer content…" />
+    }
+
+    if (!draft) {
         return (
-            <div className="flex min-h-[280px] items-center justify-center rounded-[24px] border border-slate-200 bg-white">
-                <Loader2 size={28} className="animate-spin text-slate-500" />
+            <div className="rounded-[24px] border border-rose-200 bg-white p-8 shadow-sm">
+                <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
+                <p className="mt-3 font-semibold text-rose-800">{loadError?.title || 'Footer authoring is unavailable'}</p>
+                <p className="mt-1 text-sm text-rose-700">{loadError?.message || 'No editable fallback was created because the authoritative footer could not be loaded.'}</p>
+                <button type="button" onClick={() => loadWorkspace()} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
+                    <RefreshCcw size={16} /> Retry loading
+                </button>
             </div>
         )
     }
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <div>
-                    <h1 className="text-3xl font-semibold text-slate-900">{title}</h1>
-                    <p className="mt-2 max-w-3xl text-sm text-slate-500">{description}</p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                    <button onClick={onRefresh} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50">
-                        <RefreshCcw size={16} />
-                        Refresh
-                    </button>
-                    <button onClick={handleSave} disabled={isSaving || !isDirty} className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60">
-                        {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                        Save Footer
-                    </button>
-                </div>
-            </div>
+            <AuthoringActionBar
+                title={title}
+                subtitle={`${description} Changes on this surface are committed live; there is no separate publish step.`}
+                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront') }}
+                status={<AuthoringStatusBadge state={isSaving ? 'saving' : isDirty ? 'dirty' : 'live'} />}
+                historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
+                discardAction={{ label: 'Discard', onClick: () => setIsDiscardConfirmOpen(true), disabled: !isDirty || isSaving }}
+                publishAction={{ label: 'Save live Footer', busyLabel: 'Saving…', onClick: () => setIsSaveConfirmOpen(true), disabled: !isDirty || validationIssues.length > 0, busy: isSaving }}
+            />
 
             <div className="rounded-[24px] border border-sky-100 bg-sky-50/80 px-5 py-4 text-sm text-sky-900">{note}</div>
-            {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-            {saveError ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{saveError}</div> : null}
-            {conflict ? (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                    <p className="font-semibold">A newer footer version is available</p>
-                    <p className="mt-1 text-amber-800">{conflict.message}</p>
-                    <p className="mt-1 text-amber-700">
-                        Your current draft is still visible. Load the latest version to review it, or keep this draft and merge manually.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={onLoadLatest}
-                            className="inline-flex items-center gap-2 rounded-xl bg-amber-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-950"
-                        >
-                            <RefreshCcw size={16} />
-                            Load latest version
-                        </button>
-                        <button
-                            type="button"
-                            onClick={onDismissConflict}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100"
-                        >
-                            Keep my draft
-                        </button>
-                    </div>
-                </div>
-            ) : null}
+            {feedback ? <AuthoringFeedback {...feedback} /> : null}
+            {isDirty ? <AuthoringValidationSummary errors={validationIssues.map((item) => item.message)} title="Resolve Footer validation before saving live" /> : null}
 
             {localized ? (
                 <div className="inline-flex rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
@@ -367,7 +344,7 @@ export function FooterConfigScreen({
                                 <div className="flex items-start gap-2">
                                     <button onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'up') }))} disabled={sectionIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
                                     <button onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'down') }))} disabled={sectionIndex === draft.sections.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
-                                    <button onClick={() => setDraft((value) => ({ ...value, sections: value.sections.filter((item) => item._key !== section._key) }))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
+                                    <button type="button" aria-label={`Delete section ${section.title || sectionIndex + 1}`} onClick={() => confirmDelete('Delete this footer section and all of its links?', () => setDraft((value) => ({ ...value, sections: value.sections.filter((item) => item._key !== section._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                                 </div>
                             </div>
 
@@ -463,7 +440,7 @@ export function FooterConfigScreen({
                                                 </label>
                                                 <button onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
                                                 <button onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'down') }))} disabled={linkIndex === section.links.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
-                                                <button onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: currentSection.links.filter((item) => item._key !== link._key) }))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
+                                                <button type="button" aria-label={`Delete link ${link.label || linkIndex + 1}`} onClick={() => confirmDelete('Delete this footer link?', () => updateSection(section._key, (currentSection) => ({ ...currentSection, links: currentSection.links.filter((item) => item._key !== link._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                                             </div>
                                         </div>
                                     </div>
@@ -505,12 +482,66 @@ export function FooterConfigScreen({
                             <button onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'down') }))} disabled={linkIndex === draft.socialLinks.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
-                                <button onClick={() => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.filter((item) => item._key !== link._key) }))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
+                                <button type="button" aria-label={`Delete social link ${link.platform || linkIndex + 1}`} onClick={() => confirmDelete('Delete this social link?', () => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.filter((item) => item._key !== link._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                             </div>
                         </div>
                     ))}
                 </div>
             </div>
+            <AuthoringConfirmDialog
+                open={isSaveConfirmOpen}
+                title="Save Footer live?"
+                description="This action immediately replaces the live Footer content. It does not publish Homepage, Navigation, Theme, or Pages."
+                confirmLabel="Save live Footer"
+                confirmTone="publish"
+                busy={isSaving}
+                onClose={() => setIsSaveConfirmOpen(false)}
+                onConfirm={() => handleSave()}
+            />
+            <AuthoringConfirmDialog
+                open={isDiscardConfirmOpen}
+                title="Discard Footer changes?"
+                description="The editor will return to the accepted live Footer configuration."
+                confirmLabel="Discard Changes"
+                confirmTone="danger"
+                onClose={() => setIsDiscardConfirmOpen(false)}
+                onConfirm={handleDiscard}
+            />
+            <AuthoringConfirmDialog
+                open={pendingDelete != null}
+                title="Delete Footer item?"
+                description={pendingDelete?.message}
+                confirmLabel="Delete Item"
+                confirmTone="danger"
+                onClose={() => setPendingDelete(null)}
+                onConfirm={() => {
+                    pendingDelete?.remove()
+                    setPendingDelete(null)
+                }}
+            />
+            <AuthoringConfirmDialog
+                open={pendingTranslation != null}
+                title="Overwrite Arabic translation?"
+                description="Arabic content already exists. Replace it with a fresh AI translation from the current English content?"
+                confirmLabel="Overwrite Translation"
+                confirmTone="danger"
+                onClose={() => setPendingTranslation(null)}
+                onConfirm={() => {
+                    const translation = pendingTranslation
+                    setPendingTranslation(null)
+                    void performTranslation(translation.key, translation.source, translation.apply)
+                }}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                hasLatest={Boolean(conflict?.latest)}
+                busy={isSaving}
+                onClose={() => setConflict(null)}
+                onLoadLatest={handleLoadLatest}
+                onRetry={handleRetryAfterConflict}
+            />
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }

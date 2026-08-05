@@ -5,9 +5,20 @@ import { useAuthStore } from '../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../auth/commerceHubVendorIdentityAuthority'
 import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { storeConfigService } from '../modules/storefront/services'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringPermissionState,
+    AuthoringStatusBadge,
+    UnsavedChangesDialog,
+    useAuthoringGuard,
+} from '../modules/storefront/authoringPlatform'
 
 /**
- * Storefront Settings Component
+ * Storefront Status Component
  * 
  * PHASE 7.10: POS ↔ Storefront Bridge Polish
  * 
@@ -21,7 +32,7 @@ import { storeConfigService } from '../modules/storefront/services'
 // Storefront domain configuration
 const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
 
-export default function StorefrontSettings() {
+export default function StorefrontSettings({ onDirtyChange }) {
     const { t, i18n } = useTranslation()
     const { showSuccess, showError, showInfo } = useToast()
     const { user } = useAuthStore()
@@ -36,6 +47,9 @@ export default function StorefrontSettings() {
     const [baselineConfig, setBaselineConfig] = useState(null)
     const [candidateConfig, setCandidateConfig] = useState(null)
     const [loadError, setLoadError] = useState(null)
+    const [feedback, setFeedback] = useState(null)
+    const [conflict, setConflict] = useState(null)
+    const [isSaveConfirmOpen, setIsSaveConfirmOpen] = useState(false)
     const requestIdRef = useRef(0)
     const dirtyRef = useRef(false)
     const saveInFlightRef = useRef(false)
@@ -47,7 +61,8 @@ export default function StorefrontSettings() {
 
     useEffect(() => {
         dirtyRef.current = isDirty
-    }, [isDirty])
+        onDirtyChange?.(isDirty)
+    }, [isDirty, onDirtyChange])
 
     useEffect(() => {
         return () => {
@@ -78,10 +93,10 @@ export default function StorefrontSettings() {
             if (!dirtyRef.current) {
                 setCandidateConfig(nextStoreConfig)
             }
-            setLoadError(nextStoreConfig ? null : t('storefront.failedToLoad') || 'Failed to load storefront settings')
+            setLoadError(nextStoreConfig ? null : t('storefront.failedToLoad') || 'Failed to load Storefront Status')
             if (!nextStoreConfig) {
                 setCandidateConfig(null)
-                showError(t('storefront.failedToLoad') || 'Failed to load storefront settings')
+                showError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
             }
         } catch (error) {
             if (requestId !== requestIdRef.current) {
@@ -91,9 +106,9 @@ export default function StorefrontSettings() {
             console.error('Error fetching store config:', error)
             setBaselineConfig(null)
             setCandidateConfig(null)
-            setLoadError(t('storefront.failedToLoad') || 'Failed to load storefront settings')
+            setLoadError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
             if (error.response?.status !== 404) {
-                showError(t('storefront.failedToLoad') || 'Failed to load storefront settings')
+                showError(t('storefront.failedToLoad') || 'Failed to load Storefront Status')
             }
         } finally {
             if (requestId === requestIdRef.current) {
@@ -107,7 +122,7 @@ export default function StorefrontSettings() {
     }, [fetchStoreConfig])
 
     // Save store config
-    const handleSave = async () => {
+    const handleSave = async (rowVersionOverride = null) => {
         if (!candidateConfig || saveInFlightRef.current) {
             return
         }
@@ -118,7 +133,7 @@ export default function StorefrontSettings() {
             const acceptedResponse = await storeConfigService.updateStorefrontStatus({
                 storefrontStatus: candidateConfig.storefrontStatus,
                 maintenanceMessage: candidateConfig.maintenanceMessage,
-                rowVersion: candidateConfig.rowVersion,
+                rowVersion: rowVersionOverride || candidateConfig.rowVersion,
             })
             const acceptedConfig = deriveCurrentStoreIdentityPresentation(acceptedResponse, user)
             if (!acceptedConfig) {
@@ -128,10 +143,17 @@ export default function StorefrontSettings() {
             setBaselineConfig(acceptedConfig)
             setCandidateConfig(acceptedConfig)
             setLoadError(null)
-            showSuccess(t('storefront.saved') || 'Storefront settings saved')
+            setConflict(null)
+            setIsSaveConfirmOpen(false)
+            setFeedback({ kind: 'success', title: 'Storefront Status saved live', message: 'The accepted status and maintenance message are now live.' })
+            showSuccess(t('storefront.saved') || 'Storefront status saved')
         } catch (error) {
             console.error('Error saving store config:', error)
 
+            if (error?.response?.status === 409) {
+                setIsSaveConfirmOpen(false)
+                setConflict({ message: error?.response?.data?.message })
+            }
             // Phase 8.4: Handle email verification error
             const errorCode = error.response?.data?.code
             if (errorCode === 'EMAIL_NOT_VERIFIED') {
@@ -140,7 +162,7 @@ export default function StorefrontSettings() {
                     'Please verify your email before publishing your storefront. Check your inbox for the verification link.'
                 )
             } else {
-                showError(t('storefront.failedToSave') || 'Failed to save storefront settings')
+                showError(t('storefront.failedToSave') || 'Failed to save Storefront Status')
             }
         } finally {
             saveInFlightRef.current = false
@@ -159,6 +181,31 @@ export default function StorefrontSettings() {
         showInfo(t('storefront.openingPreview') || 'Opening storefront preview...')
     }
 
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty,
+        isBusy: saving,
+        onSave: () => setIsSaveConfirmOpen(true),
+    })
+
+    const handleLoadLatest = async () => {
+        setConflict(null)
+        dirtyRef.current = false
+        await fetchStoreConfig()
+        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted live Storefront Status replaced your local candidate.' })
+    }
+
+    const handleRetryConflict = async () => {
+        try {
+            const response = await storeConfigService.getStoreConfig()
+            const latest = deriveCurrentStoreIdentityPresentation(response, user)
+            if (!latest?.rowVersion) throw new Error('Latest Storefront Status version could not be admitted.')
+            setConflict(null)
+            await handleSave(latest.rowVersion)
+        } catch (error) {
+            setFeedback({ kind: 'error', title: 'Status retry failed', message: error?.response?.data?.message || error.message })
+        }
+    }
+
     // Get status badge config
     const getStatusConfig = (status) => {
         switch (status) {
@@ -174,25 +221,17 @@ export default function StorefrontSettings() {
     }
 
     if (loading) {
-        return (
-            <div className="flex items-center justify-center py-12">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            </div>
-        )
+        return <AuthoringLoadingState label="Loading Storefront Status…" />
     }
 
     if (!canManageStorefront) {
-        return (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-600" dir={isRTL ? 'rtl' : 'ltr'}>
-                {t('common.unauthorized') || 'You are not authorized to manage storefront settings.'}
-            </div>
-        )
+        return <AuthoringPermissionState message={t('common.unauthorized') || 'You are not authorized to manage Storefront Status.'} />
     }
 
     if (loadError || !baselineConfig || !candidateConfig) {
         return (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-6 text-sm text-gray-600" dir={isRTL ? 'rtl' : 'ltr'}>
-                {loadError || (t('storefront.failedToLoad') || 'Failed to load storefront settings')}
+                {loadError || (t('storefront.failedToLoad') || 'Failed to load Storefront Status')}
             </div>
         )
     }
@@ -201,41 +240,15 @@ export default function StorefrontSettings() {
 
     return (
         <div className="space-y-8" dir={isRTL ? 'rtl' : 'ltr'}>
-            {/* Header with Status Badge */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                        <span className="text-2xl">🌐</span>
-                    </div>
-                    <div>
-                        <h3 className="text-lg font-semibold text-gray-900">
-                            {t('storefront.onlineStore') || 'Online Store'}
-                        </h3>
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-sm font-medium ${baselineStatusConfig.bg} ${baselineStatusConfig.text}`}>
-                                <span>{baselineStatusConfig.icon}</span>
-                                {baselineStatusConfig.label}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                <button
-                    onClick={handleSave}
-                    disabled={saving || !candidateConfig}
-                    className="btn-primary"
-                >
-                    {saving ? (t('common.saving') || 'Saving...') : (t('common.save') || 'Save')}
-                </button>
-            </div>
-
-            {isDirty && (
-                <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                    <span>Unsaved storefront settings are candidate-only until the backend accepts them.</span>
-                    <button type="button" onClick={resetCandidateToBaseline} className="font-semibold underline">
-                        Reset Changes
-                    </button>
-                </div>
-            )}
+            <AuthoringActionBar
+                title={t('storefront.ia.status', 'Storefront Status')}
+                subtitle="Status changes are committed live. This surface does not publish content, Theme, or Builder drafts."
+                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront') }}
+                status={<AuthoringStatusBadge state={saving ? 'saving' : isDirty ? 'dirty' : baselineConfig.storefrontStatus === 'live' ? 'live' : baselineConfig.storefrontStatus === 'disabled' ? 'disabled' : 'published'}>{isDirty ? 'Unsaved changes' : baselineStatusConfig.label}</AuthoringStatusBadge>}
+                discardAction={{ label: 'Discard', onClick: resetCandidateToBaseline, disabled: !isDirty || saving }}
+                publishAction={{ label: 'Save live Status', busyLabel: 'Saving…', onClick: () => setIsSaveConfirmOpen(true), disabled: !isDirty, busy: saving }}
+            />
+            {feedback ? <AuthoringFeedback {...feedback} /> : null}
 
             {/* Storefront Status Warning Banner */}
             {baselineConfig.storefrontStatus === 'disabled' && (
@@ -428,6 +441,25 @@ export default function StorefrontSettings() {
                     </div>
                 </div>
             </div>
+            <AuthoringConfirmDialog
+                open={isSaveConfirmOpen}
+                title="Save Storefront Status live?"
+                description="This immediately changes storefront availability and the maintenance message. It does not publish any authoring draft."
+                confirmLabel="Save live Status"
+                confirmTone="publish"
+                busy={saving}
+                onClose={() => setIsSaveConfirmOpen(false)}
+                onConfirm={() => handleSave()}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                busy={saving}
+                onClose={() => setConflict(null)}
+                onLoadLatest={handleLoadLatest}
+                onRetry={handleRetryConflict}
+            />
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }

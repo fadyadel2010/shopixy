@@ -68,7 +68,6 @@ public class StorefrontShippingMethodsController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetShippingMethods([FromQuery] Guid? warehouseId, CancellationToken cancellationToken)
     {
-        SetNoStoreHeaders();
         var traceId = GetTraceId();
 
         // Validate tenant identity securely
@@ -247,13 +246,6 @@ public class StorefrontShippingMethodsController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-    }
-
-    private void SetNoStoreHeaders()
-    {
-        Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
-        Response.Headers["Pragma"] = "no-cache";
-        Response.Headers["Expires"] = "0";
     }
 
     private sealed record ShippingMethodCallerIdentity(ClaimsPrincipal? Principal, Guid? CustomerId);

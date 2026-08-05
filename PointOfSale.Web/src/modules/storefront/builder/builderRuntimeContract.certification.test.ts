@@ -5,7 +5,11 @@ import { sectionRegistry } from './sectionRegistry'
 import { filterSectionsForPage, isSectionAvailableForPage } from './pageSectionAvailability'
 import { sectionContracts, validateSectionsAgainstContract } from './sectionContractRegistry'
 import { getDefaultSections } from '../config/demoSections'
-import { getBuiltinProductTemplates } from '@/storefront/products/ProductTemplateRegistry'
+import {
+    composeProductTemplateSections,
+    getBuiltinProductTemplates,
+    getSupplementalProductTemplateSections,
+} from '@web/storefront/products/ProductTemplateRegistry'
 
 describe('builder/runtime section contract authority', () => {
     it('derives builder defaults and setting schemas from the canonical section contract', () => {
@@ -44,19 +48,19 @@ describe('builder/runtime section contract authority', () => {
         expect(productGrid.settingsSchema.map((field) => field.key)).toContain('source')
     })
 
-    it('promotes runtime-consumed product template settings into the canonical contract', () => {
+    it('keeps Product Details capabilities out of authored settings', () => {
         const productHero = sectionRegistry.get('product-hero')
         const productSpecs = sectionRegistry.get('product-specs')
         const relatedProducts = sectionRegistry.get('related-products')
 
-        expect(productHero.defaultSettings).toHaveProperty('layoutVariant', 'default')
-        expect(productHero.defaultSettings).toHaveProperty('showMediaGallery', true)
-        expect(productSpecs.defaultSettings).toHaveProperty('layoutVariant', 'default')
-        expect(relatedProducts.defaultSettings).toHaveProperty('layoutVariant', 'default')
+        expect(productHero.defaultSettings).toEqual({ layoutVariant: 'default' })
+        expect(productSpecs.defaultSettings).toEqual({ layoutVariant: 'default', title: 'Product Details' })
+        expect(relatedProducts.defaultSettings).toEqual({ layoutVariant: 'default', title: 'Recommended Products', limit: 4 })
+        expect(JSON.stringify(sectionAuthority.sectionContracts)).not.toMatch(/showPrice|showRating|showAddToCart|showMediaGallery|showSku|reviews/)
     })
 
     it('certifies section creation paths produce complete canonical settings', () => {
-        for (const pageKey of ['home', 'product', 'category', 'product-template']) {
+        for (const pageKey of ['home', 'product-template']) {
             expect(() => validateSectionsAgainstContract(getDefaultSections(pageKey))).not.toThrow()
         }
 
@@ -80,13 +84,12 @@ describe('builder/runtime section contract authority', () => {
         expect(() => validateSectionsAgainstContract([section])).toThrow(/unsupported setting "productSource"/)
     })
 
-    it('keeps product-context sections out of home and category compositions', () => {
+    it('keeps Runtime Product Hero out of every palette and supplemental Product Details sections out of home', () => {
         const productContextTypes = ['product-hero', 'product-gallery', 'product-specs', 'product-video', 'related-products']
 
         for (const sectionType of productContextTypes) {
             expect(isSectionAvailableForPage(sectionType, 'home')).toBe(false)
-            expect(isSectionAvailableForPage(sectionType, 'category')).toBe(false)
-            expect(isSectionAvailableForPage(sectionType, 'product-template')).toBe(true)
+            expect(isSectionAvailableForPage(sectionType, 'product-template')).toBe(sectionType !== 'product-hero')
         }
 
         const mixedHomeSections = [
@@ -101,17 +104,33 @@ describe('builder/runtime section contract authority', () => {
         ])
     })
 
-    it('keeps reusable sections available for product page builder compositions', () => {
-        const mixedProductSections = [
-            { id: 'catalog-hero', type: 'hero-banner', order: 0 },
-            { id: 'catalog-shelf', type: 'product-grid', order: 1 },
-            { id: 'catalog-categories', type: 'category-grid', order: 2 },
-        ]
+    it('serializes exactly one mandatory Runtime hero before supplemental sections', () => {
+        const supplemental = getSupplementalProductTemplateSections(getBuiltinProductTemplates()[0].sections)
+        const composed = composeProductTemplateSections(supplemental, 'default')
 
-        expect(filterSectionsForPage(mixedProductSections, 'product')).toEqual([
-            { id: 'catalog-hero', type: 'hero-banner', order: 0 },
-            { id: 'catalog-shelf', type: 'product-grid', order: 1 },
-            { id: 'catalog-categories', type: 'category-grid', order: 2 },
-        ])
+        expect(composed[0]).toMatchObject({ type: 'product-hero', enabled: true, order: 0 })
+        expect(composed.filter((section) => section.type === 'product-hero')).toHaveLength(1)
+        expect(supplemental.some((section) => section.type === 'product-hero')).toBe(false)
+    })
+
+    it('rejects malformed testimonial objects and unsafe authored URLs', () => {
+        const testimonials = sectionRegistry.get('testimonials').defaultSettings
+        expect(() => validateSectionsAgainstContract([{
+            id: 'section_bad_testimonial', type: 'testimonials', enabled: true, order: 0,
+            settings: { ...testimonials, testimonials: [{ name: 'A', avatar: 'javascript:alert(1)', text: 'Quote' }] },
+        }])).toThrow(/safe URL/)
+        expect(() => validateSectionsAgainstContract([{
+            id: 'section_bad_testimonial_shape', type: 'testimonials', enabled: true, order: 0,
+            settings: { ...testimonials, testimonials: [{ name: 'A', avatar: '', text: 'Quote', rating: 5 }] },
+        }])).toThrow(/unsupported property "rating"/)
+
+        expect(() => validateSectionsAgainstContract([{
+            id: 'section_bad_color', type: 'hero-banner', enabled: true, order: 0,
+            settings: { ...sectionRegistry.get('hero-banner').defaultSettings, backgroundColor: 'red' },
+        }])).toThrow(/hex color/)
+        expect(() => validateSectionsAgainstContract([{
+            id: 'section_bad_video', type: 'video-block', enabled: true, order: 0,
+            settings: { ...sectionRegistry.get('video-block').defaultSettings, videoUrl: 'https://example.com/not encoded.mp4' },
+        }])).toThrow(/safe URL/)
     })
 })

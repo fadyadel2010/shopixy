@@ -4,7 +4,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.MongoDB.Documents;
-using StackExchange.Redis;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -31,20 +31,16 @@ public class OnlineCustomerWishlistProjectionConsumer :
     IConsumer<OnlineCustomerWishlistClearedEvent>
 {
     private readonly IMongoCollection<OnlineCustomerWishlistDocument> _collection;
-    private readonly IConnectionMultiplexer _redis;
+    private readonly IStorefrontWishlistCacheInvalidator _cacheInvalidator;
     private readonly ILogger<OnlineCustomerWishlistProjectionConsumer> _logger;
-
-    private const string CacheKeyPrefix = "storefront:tenant:{0}:wishlist:{1}";
-    private const string CountCacheKeyPrefix = "storefront:tenant:{0}:wishlist:count:{1}";
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(10);
 
     public OnlineCustomerWishlistProjectionConsumer(
         IMongoDatabase mongoDatabase,
-        IConnectionMultiplexer redis,
+        IStorefrontWishlistCacheInvalidator cacheInvalidator,
         ILogger<OnlineCustomerWishlistProjectionConsumer> logger)
     {
         _collection = mongoDatabase.GetCollection<OnlineCustomerWishlistDocument>("online_customer_wishlists");
-        _redis = redis;
+        _cacheInvalidator = cacheInvalidator;
         _logger = logger;
 
         // PHASE 10.3.6 - Startup log for debugging consumer registration
@@ -154,7 +150,10 @@ public class OnlineCustomerWishlistProjectionConsumer :
 
             await RecalculateTotalCountAsync(@event.TenantId!.Value, @event.CustomerId, cancellationToken);
 
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
+            await _cacheInvalidator.InvalidateAsync(
+                @event.TenantId!.Value,
+                @event.CustomerId,
+                cancellationToken);
 
             _logger.LogInformation(
                 "[Wishlist] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId} | ProductId: {ProductId}",
@@ -240,7 +239,10 @@ public class OnlineCustomerWishlistProjectionConsumer :
 
             await RecalculateTotalCountAsync(@event.TenantId!.Value, @event.CustomerId, cancellationToken);
 
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
+            await _cacheInvalidator.InvalidateAsync(
+                @event.TenantId!.Value,
+                @event.CustomerId,
+                cancellationToken);
 
             _logger.LogInformation(
                 "[Wishlist] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId} | ProductId: {ProductId}",
@@ -313,7 +315,10 @@ public class OnlineCustomerWishlistProjectionConsumer :
                 return;
             }
 
-            await InvalidateCacheAsync(@event.TenantId!.Value, @event.CustomerId);
+            await _cacheInvalidator.InvalidateAsync(
+                @event.TenantId!.Value,
+                @event.CustomerId,
+                cancellationToken);
 
             _logger.LogInformation(
                 "[Wishlist] {Action} projected successfully | TenantId: {TenantId} | CustomerId: {CustomerId} | ItemsCleared: {ItemsCleared}",
@@ -524,34 +529,6 @@ public class OnlineCustomerWishlistProjectionConsumer :
             });
     }
 
-    /// <summary>
-    /// Invalidates Redis cache for the customer's wishlist.
-    /// </summary>
-    private async Task InvalidateCacheAsync(Guid tenantId, Guid customerId)
-    {
-        try
-        {
-            var db = _redis.GetDatabase();
-            var cacheKey = string.Format(CacheKeyPrefix, tenantId, customerId);
-            var countCacheKey = string.Format(CountCacheKeyPrefix, tenantId, customerId);
-            
-            await Task.WhenAll(
-                db.KeyDeleteAsync(cacheKey),
-                db.KeyDeleteAsync(countCacheKey)
-            );
-
-            _logger.LogDebug(
-                "[Wishlist] Cache invalidated | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "[Wishlist] Cache invalidation failed (non-critical) | TenantId: {TenantId} | CustomerId: {CustomerId}",
-                tenantId, customerId);
-            // Don't throw - cache invalidation failure shouldn't fail the projection
-        }
-    }
 }
 
 /// <summary>

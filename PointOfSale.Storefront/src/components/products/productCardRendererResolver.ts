@@ -1,4 +1,3 @@
-import type { ProductCardLayout } from '@/storefront/utils/resolveProductCardLayout';
 import themeAuthority from '@theme-authority/shopixy-theme-authority.json';
 
 export type ProductCardRendererId =
@@ -21,30 +20,9 @@ const THEME_RENDERERS = new Map(
 );
 
 export function resolveProductCardRenderer(
-    themeId: string | null | undefined,
-    layout: ProductCardLayout
+    themeId: string | null | undefined
 ): ProductCardRendererId {
     const normalizedThemeId = `${themeId ?? ''}`.trim().toLowerCase();
-
-    if (layout === 'electronics' && normalizedThemeId === 'electronics') {
-        return 'electronics';
-    }
-
-    if (layout === 'hype' && normalizedThemeId === 'hype') {
-        return 'hype';
-    }
-
-    if (layout === 'phoenix' && normalizedThemeId === 'phoenix') {
-        return 'phoenix';
-    }
-
-    if (layout === 'pearl' && normalizedThemeId === 'pearl') {
-        return 'pearl';
-    }
-
-    if (layout === 'fashion' && normalizedThemeId === 'fashion') {
-        return 'fashion';
-    }
 
     return (THEME_RENDERERS.get(normalizedThemeId) as ProductCardRendererId | undefined) ?? 'modern';
 }

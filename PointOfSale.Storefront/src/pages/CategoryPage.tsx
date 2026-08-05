@@ -2,19 +2,11 @@
  * Category Page
  * 
  * Displays all categories in a browsable grid with main categories and subcategories.
- * Design is controlled via the Storefront Builder (page=category).
- * 
  * Phase 9.11: Category Browsing Experience
- * 
- * The page supports both:
- * 1. Builder-defined sections (from config.pages.category.sections)
- * 2. Default category grid when no builder sections are configured
  */
 
 import React, { useEffect, useState } from 'react';
 import { Layout } from '@/components/layout';
-import { SectionRenderer } from '@/components/sections/SectionRenderer';
-import { useStoreConfigStore, selectConfig } from '@/store';
 import { fetchCategories } from '@/services/api/storefrontApi';
 import type { CategoryTreeDto } from '@/types/category';
 import './CategoryPage.css';
@@ -118,10 +110,6 @@ const CategoryCard: React.FC<CategoryCardProps> = ({ category, isExpanded, onTog
 // ============================================================================
 
 const CategoryPage: React.FC = () => {
-    // Get category page sections from builder config
-    const config = useStoreConfigStore(selectConfig);
-    const categorySections = config?.pages?.category?.sections ?? [];
-
     const [categories, setCategories] = useState<CategoryTreeDto[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -244,22 +232,7 @@ const CategoryPage: React.FC = () => {
 
     return (
         <Layout>
-            {/* If builder has sections, render them; otherwise show default category grid */}
-            {categorySections.length > 0 ? (
-                <div className="category-page">
-                    {/* Builder-defined sections */}
-                    {categorySections
-                        .filter(s => s.enabled)
-                        .sort((a, b) => a.order - b.order)
-                        .map((section) => (
-                            <SectionRenderer
-                                key={section.id}
-                                section={section}
-                            />
-                        ))}
-                </div>
-            ) : (
-                <div className="category-page">
+            <div className="category-page" data-category-owner="CategoryPage">
                     {/* Default Category Page Layout */}
                     {/* Hero Section */}
                     <div className="category-page__hero">
@@ -328,8 +301,7 @@ const CategoryPage: React.FC = () => {
                             </a>
                         </div>
                     </div>
-                </div>
-            )}
+            </div>
         </Layout>
     );
 };

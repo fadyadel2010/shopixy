@@ -11,15 +11,35 @@ const cloneTemplate = (template: StorefrontProductTemplate): StorefrontProductTe
     })),
 });
 
-const PRODUCT_DETAIL_SECTION_TYPES = new Set([
-    'product-hero',
-    'product-gallery',
-    'product-specs',
-    'product-video',
-]);
+const injectProductDetailsRuntime = (
+    template: StorefrontProductTemplate,
+    builtinTemplate: StorefrontProductTemplate | null,
+    fallbackTemplate: StorefrontProductTemplate | null
+): StorefrontProductTemplate => {
+    const declaredHero = template.sections.find((section) => section.type === 'product-hero');
+    const builtinHero = builtinTemplate?.sections.find((section) => section.type === 'product-hero');
+    const fallbackHero = fallbackTemplate?.sections.find((section) => section.type === 'product-hero');
+    const layoutVariant = [declaredHero, builtinHero, fallbackHero]
+        .map((section) => section?.settings?.layoutVariant)
+        .find((value): value is string => typeof value === 'string' && value.length > 0) || 'default';
+    const supplementalSections = template.sections
+        .filter((section) => section.type !== 'product-hero' && section.type !== 'customer-reviews')
+        .map((section, index) => ({ ...section, order: index + 1 }));
 
-const isProductDetailPageTemplate = (template?: StorefrontProductTemplate | null): template is StorefrontProductTemplate =>
-    Boolean(template?.sections?.some((section) => PRODUCT_DETAIL_SECTION_TYPES.has(section.type)));
+    return {
+        ...template,
+        sections: [
+            {
+                id: `runtime_product_hero_${template.templateId || 'default'}`,
+                type: 'product-hero',
+                enabled: true,
+                order: 0,
+                settings: { layoutVariant },
+            },
+            ...supplementalSections,
+        ],
+    };
+};
 
 export const resolveProductTemplate = (
     templateId: string | null | undefined,
@@ -34,38 +54,24 @@ export const resolveProductTemplate = (
     }
 
     const savedTemplate = config?.productTemplates?.[resolvedTemplateId];
-    const hasConfiguredDefaultProductSections = (config?.pages?.product?.sections?.length ?? 0) > 0;
-    const configuredDefaultProductPageTemplate = resolvedTemplateId === 'default' && hasConfiguredDefaultProductSections && config?.pages?.product
-        ? {
-            templateId: 'default',
-            name: 'Default Template',
-            sections: config.pages.product.sections || [],
-        }
-        : null;
-    const defaultProductPageTemplate = isProductDetailPageTemplate(configuredDefaultProductPageTemplate)
-        ? configuredDefaultProductPageTemplate
-        : null;
     const builtinTemplate = getBuiltinProductTemplate(resolvedTemplateId);
     const fallbackTemplate = savedTemplate
-        || defaultProductPageTemplate
         || builtinTemplate
         || getBuiltinProductTemplate('default')
         || { templateId: 'default', name: 'Default Template', sections: [] };
 
-    const normalizedTemplate = cloneTemplate({
+    const normalizedTemplate = cloneTemplate(injectProductDetailsRuntime({
         templateId: fallbackTemplate.templateId || resolvedTemplateId,
         name: fallbackTemplate.name || resolvedTemplateId,
         sections: fallbackTemplate.sections || [],
-    });
+    }, builtinTemplate, getBuiltinProductTemplate('default')));
 
     if (import.meta.env.DEV) {
         console.info('[ProductTemplateResolver] Resolved template', {
             requestedTemplateId: templateId ?? null,
             resolvedTemplateId,
-            usedBuiltinTemplate: !savedTemplate && !defaultProductPageTemplate && Boolean(builtinTemplate),
+            usedBuiltinTemplate: !savedTemplate && Boolean(builtinTemplate),
             usedSavedTemplate: Boolean(savedTemplate),
-            usedDefaultProductPage: !savedTemplate && Boolean(defaultProductPageTemplate),
-            ignoredDefaultProductPage: Boolean(configuredDefaultProductPageTemplate && !defaultProductPageTemplate),
             availableSavedTemplates: Object.keys(config?.productTemplates || {}),
             finalTemplateId: normalizedTemplate.templateId,
             finalSectionTypes: normalizedTemplate.sections.map((section) => section.type),

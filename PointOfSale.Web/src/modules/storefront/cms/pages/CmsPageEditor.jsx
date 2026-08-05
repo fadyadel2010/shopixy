@@ -24,6 +24,21 @@ import {
     deriveCurrentCmsPageIdentityPresentation,
     deriveCurrentCmsPageVersionHistoryPresentation,
 } from '../cmsPageIdentityAuthority'
+import { useStorefrontAdminFrame } from '../../informationArchitecture/StorefrontAdminFrame'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringFeedback,
+    AuthoringDialog,
+    AuthoringLoadingState,
+    AuthoringPromptDialog,
+    AuthoringStatusBadge,
+    AuthoringValidationSummary,
+    UnsavedChangesDialog,
+    getAuthoringErrorFeedback,
+    useAuthoringGuard,
+} from '../../authoringPlatform'
 
 const CONTENT_TYPES = {
     RichText: 'RichText',
@@ -79,17 +94,24 @@ function createFaqBlock() {
 export function CmsPageEditor() {
     const { pageId } = useParams()
     const navigate = useNavigate()
+    const storefrontFrame = useStorefrontAdminFrame()
     const { i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const isNewPage = pageId === 'new'
 
     const [page, setPage] = useState(null)
     const [form, setForm] = useState(createEmptyPageForm())
+    const [acceptedFingerprint, setAcceptedFingerprint] = useState(() => getPageFormFingerprint(createEmptyPageForm()))
     const [isLoading, setIsLoading] = useState(!isNewPage)
     const [isSaving, setIsSaving] = useState(false)
     const [isPublishing, setIsPublishing] = useState(false)
     const [error, setError] = useState('')
+    const [notice, setNotice] = useState('')
     const [conflict, setConflict] = useState(null)
+    const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
+    const [isDiscardConfirmOpen, setIsDiscardConfirmOpen] = useState(false)
+    const [deleteBlockIndex, setDeleteBlockIndex] = useState(null)
+    const [pendingHistorySnapshot, setPendingHistorySnapshot] = useState(null)
     const [versionHistory, setVersionHistory] = useState(null)
     const [isHistoryOpen, setIsHistoryOpen] = useState(false)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -98,11 +120,23 @@ export function CmsPageEditor() {
     const storefrontBaseUrl = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174'
     const currentUser = useAuthStore((state) => state.user)
     const currentTenantId = currentUser?.tenantId || ''
+    const currentFingerprint = useMemo(() => getPageFormFingerprint(form), [form])
+    const isDirty = currentFingerprint !== acceptedFingerprint
+    const canPublish = !isSaving && !isPublishing && (isDirty || Boolean(page?.draft))
+
+    useEffect(() => {
+        storefrontFrame.setStorefrontBreadcrumbLabel?.(
+            form.title.trim() || (isNewPage ? (isRTL ? 'صفحة جديدة' : 'New Page') : (isRTL ? 'صفحة' : 'Page')),
+        )
+        return () => storefrontFrame.setStorefrontBreadcrumbLabel?.('')
+    }, [form.title, isNewPage, isRTL, storefrontFrame.setStorefrontBreadcrumbLabel])
 
     useEffect(() => {
         if (isNewPage) {
             setPage(null)
-            setForm(createEmptyPageForm())
+            const emptyForm = createEmptyPageForm()
+            setForm(emptyForm)
+            setAcceptedFingerprint(getPageFormFingerprint(emptyForm))
             setIsLoading(false)
             return
         }
@@ -117,13 +151,7 @@ export function CmsPageEditor() {
 
         try {
             const data = await cmsService.getPage(id)
-            const admittedPage = deriveCurrentCmsPageIdentityPresentation(data, currentUser, { expectedPageId: id })
-            if (!admittedPage) {
-                throw new Error('CMS page was rejected by backend page identity admission.')
-            }
-
-            setPage(admittedPage)
-            setForm(fromPageResponse(admittedPage))
+            adoptAuthoritativePage(data, id)
         } catch (err) {
             console.error('Failed to load CMS page', err)
             setError(isRTL ? 'تعذر تحميل الصفحة.' : 'Unable to load page.')
@@ -146,36 +174,34 @@ export function CmsPageEditor() {
         }))
     }
 
-    async function handleSave() {
+    async function handleSave(expectedVersionOverride = null) {
         if (!form.slug.trim() || !form.title.trim()) {
-            alert(isRTL ? 'العنوان والرابط مطلوبان.' : 'Title and slug are required.')
+            setError(isRTL ? 'العنوان والرابط مطلوبان.' : 'Title and slug are required.')
             return null
+        }
+
+        if (!isNewPage && !isDirty && !expectedVersionOverride) {
+            return page
         }
 
         setIsSaving(true)
         setError('')
+        setNotice('')
         setConflict(null)
 
         try {
             const payload = toRequestPayload(form)
             if (!isNewPage) {
-                payload.expectedVersion = page?.draft?.version ?? page?.published?.version
+                payload.expectedVersion = expectedVersionOverride ?? page?.draft?.version ?? page?.published?.version
             }
             const savedPage = isNewPage
                 ? await cmsService.createPage(payload)
                 : await cmsService.updatePage(pageId, payload)
-            const admittedPage = deriveCurrentCmsPageIdentityPresentation(savedPage, currentUser, {
-                expectedPageId: isNewPage ? undefined : pageId,
-            })
-            if (!admittedPage) {
-                throw new Error('Saved CMS page was rejected by backend page identity admission.')
-            }
-
-            setPage(admittedPage)
-            setForm(fromPageResponse(admittedPage))
+            const admittedPage = adoptAuthoritativePage(savedPage, isNewPage ? undefined : pageId)
+            setNotice(isRTL ? 'تم حفظ المسودة واعتماد استجابة الخادم.' : 'Draft saved and backend response adopted.')
 
             if (isNewPage) {
-                navigate(`/storefront/cms/pages/${admittedPage.id}`, { replace: true })
+                navigate(`/storefront/content/pages/${admittedPage.id}`, { replace: true })
             }
 
             return admittedPage
@@ -187,9 +213,8 @@ export function CmsPageEditor() {
                 setError(conflictState.message)
                 return null
             }
-            const message = err?.response?.data?.message
-                || (isRTL ? 'فشل حفظ المسودة.' : 'Failed to save draft.')
-            setError(message)
+            const feedback = getAuthoringErrorFeedback(err)
+            setError(`${feedback.title}: ${feedback.message}`)
             return null
         } finally {
             setIsSaving(false)
@@ -197,45 +222,35 @@ export function CmsPageEditor() {
     }
 
     async function handlePublish() {
-        const targetPage = page || await handleSave()
+        const targetPage = (isDirty || !page) ? await handleSave() : page
         if (!targetPage) {
-            return
-        }
-
-        if (!window.confirm(
-            isRTL
-                ? 'سيتم نشر هذه المسودة لتصبح مرئية في المتجر. هل تريد المتابعة؟'
-                : 'Publish this draft to the storefront now?'
-        )) {
             return
         }
 
         setIsPublishing(true)
         setConflict(null)
+        setError('')
+        setNotice('')
         try {
             const expectedVersion = targetPage.draft?.version
             if (!expectedVersion) {
                 throw new Error('The page does not have a draft version to publish.')
             }
             const published = await cmsService.publishPage(targetPage.id, expectedVersion)
-            const admittedPage = deriveCurrentCmsPageIdentityPresentation(published, currentUser, {
-                expectedPageId: targetPage.id,
-            })
-            if (!admittedPage) {
-                throw new Error('Published CMS page was rejected by backend page identity admission.')
-            }
-
-            setPage(admittedPage)
-            setForm(fromPageResponse(admittedPage))
+            adoptAuthoritativePage(published, targetPage.id)
+            setNotice(isRTL ? 'تم نشر الصفحة بنجاح.' : 'Page published successfully.')
+            setIsPublishConfirmOpen(false)
         } catch (err) {
             console.error('Failed to publish CMS page', err)
             const conflictState = extractCmsConflict(err)
             if (conflictState) {
+                setIsPublishConfirmOpen(false)
                 setConflict(conflictState)
                 setError(conflictState.message)
                 return
             }
-            alert(err?.response?.data?.message || (isRTL ? 'فشل نشر الصفحة.' : 'Failed to publish page.'))
+            const feedback = getAuthoringErrorFeedback(err)
+            setError(`${feedback.title}: ${feedback.message}`)
         } finally {
             setIsPublishing(false)
         }
@@ -265,12 +280,40 @@ export function CmsPageEditor() {
         }
     }
 
+    function adoptAuthoritativePage(response, expectedPageId = pageId) {
+        const admittedPage = deriveCurrentCmsPageIdentityPresentation(response, currentUser, {
+            expectedPageId: expectedPageId === 'new' ? undefined : expectedPageId,
+        })
+        if (!admittedPage) {
+            throw new Error('CMS page was rejected by backend page identity admission.')
+        }
+
+        const acceptedForm = fromPageResponse(admittedPage)
+        setPage(admittedPage)
+        setForm(acceptedForm)
+        setAcceptedFingerprint(getPageFormFingerprint(acceptedForm))
+        setConflict(null)
+        return admittedPage
+    }
+
+    function adoptConflictLatestVersion(conflictState, expectedPageId = pageId) {
+        if (!conflictState?.latestVersion) {
+            return null
+        }
+
+        return adoptAuthoritativePage(conflictState.latestVersion, expectedPageId)
+    }
+
     async function openVersionHistory() {
         setIsHistoryOpen(true)
         await loadVersionHistory()
     }
 
     function previewHistoryVersion(entry) {
+        if (isDirty) {
+            setPendingHistorySnapshot(entry)
+            return
+        }
         setForm(fromVersionSnapshot(entry.snapshot))
     }
 
@@ -299,8 +342,7 @@ export function CmsPageEditor() {
                 throw new Error('Rolled back CMS page was rejected by backend page identity admission.')
             }
 
-            setPage(admittedPage)
-            setForm(fromPageResponse(admittedPage))
+            adoptAuthoritativePage(admittedPage, pageId)
             setRollbackState({ version: null, reason: '', confirmed: false, isRollingBack: false })
             await loadVersionHistory()
         } catch (err) {
@@ -318,12 +360,17 @@ export function CmsPageEditor() {
 
     async function handlePreview() {
         if (!form.slug.trim()) {
-            alert(isRTL ? 'احفظ الصفحة أولاً أو أدخل رابطاً صالحاً للمعاينة.' : 'Add a valid slug before previewing.')
+            setError(isRTL ? 'احفظ الصفحة أولاً أو أدخل رابطاً صالحاً للمعاينة.' : 'Add a valid slug before previewing.')
             return
         }
 
         if (isNewPage) {
-            alert(isRTL ? 'احفظ الصفحة أولاً لإنشاء مسودة قابلة للمعاينة.' : 'Save the page first so a preview draft exists.')
+            setError(isRTL ? 'احفظ الصفحة أولاً لإنشاء مسودة قابلة للمعاينة.' : 'Save the page first so a preview draft exists.')
+            return
+        }
+
+        if (isDirty) {
+            setError(isRTL ? 'احفظ تغييراتك قبل المعاينة. المعاينة لا تحفظ أو تغيّر الإصدارات.' : 'Save your changes before previewing. Preview never saves or changes versions.')
             return
         }
 
@@ -336,7 +383,7 @@ export function CmsPageEditor() {
             window.open(previewUrl, '_blank', 'noopener,noreferrer')
         } catch (err) {
             console.error('Failed to create CMS preview link', err)
-            alert(isRTL ? 'تعذر إنشاء رابط معاينة آمن.' : 'Unable to create a secure preview link.')
+            setError(isRTL ? 'تعذر إنشاء رابط معاينة آمن.' : 'Unable to create a secure preview link.')
         }
     }
 
@@ -365,10 +412,15 @@ export function CmsPageEditor() {
     }
 
     function removeBlock(index) {
+        setDeleteBlockIndex(index)
+    }
+
+    function confirmRemoveBlock() {
         setForm((current) => ({
             ...current,
-            content: current.content.filter((_, blockIndex) => blockIndex !== index),
+            content: current.content.filter((_, blockIndex) => blockIndex !== deleteBlockIndex),
         }))
+        setDeleteBlockIndex(null)
     }
 
     function moveBlock(index, offset) {
@@ -388,130 +440,79 @@ export function CmsPageEditor() {
         })
     }
 
+    function handleDiscard() {
+        const acceptedForm = page ? fromPageResponse(page) : createEmptyPageForm()
+        setForm(acceptedForm)
+        setAcceptedFingerprint(getPageFormFingerprint(acceptedForm))
+        setError('')
+        setNotice('Changes discarded. The accepted draft has been restored.')
+        setConflict(null)
+        setIsDiscardConfirmOpen(false)
+    }
+
+    const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
+        isDirty,
+        isBusy: isSaving || isPublishing,
+        onSave: () => handleSave(),
+        onPreview: handlePreview,
+    })
+
+    const handleLoadLatest = () => {
+        if (!conflict?.latestVersion) return
+        try {
+            adoptConflictLatestVersion(conflict, pageId)
+            setError('')
+            setNotice('Latest accepted version loaded.')
+        } catch {
+            setError('Latest version was rejected by page identity admission.')
+        }
+    }
+
+    const handleRetryConflict = () => {
+        const latestVersion = conflict?.latestVersion?.draft?.version ?? conflict?.latestVersion?.published?.version
+        if (!latestVersion) return
+        void handleSave(latestVersion)
+    }
+
     if (isLoading) {
+        return <AuthoringLoadingState label="Loading CMS Page draft…" />
+    }
+
+    if (!isNewPage && !page) {
         return (
-            <div className="flex min-h-[320px] items-center justify-center rounded-[28px] border border-slate-200 bg-white">
-                <Loader2 size={32} className="animate-spin text-slate-500" />
+            <div className="rounded-[28px] border border-rose-200 bg-white p-8 shadow-sm">
+                <h1 className="text-2xl font-semibold text-slate-900">{isRTL ? 'تعذر فتح محرر الصفحة' : 'Page editor unavailable'}</h1>
+                <p className="mt-2 text-sm text-rose-700">{error || (isRTL ? 'لم يتم تحميل نسخة موثوقة.' : 'No authoritative page response was loaded.')}</p>
+                <button type="button" onClick={() => loadPage(pageId)} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
+                    <RefreshCcw size={16} /> {isRTL ? 'إعادة المحاولة' : 'Retry loading'}
+                </button>
             </div>
         )
     }
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-                <div className="flex items-start gap-4">
-                    <button
-                        onClick={() => navigate('/storefront/cms/pages')}
-                        className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                    >
-                        <ArrowLeft size={18} className={isRTL ? 'rotate-180' : ''} />
-                    </button>
-                    <div>
-                        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-sky-600">
-                            {isRTL ? 'محرر الصفحات' : 'Page Editor'}
-                        </p>
-                        <h1 className="mt-2 text-3xl font-semibold text-slate-900">
-                            {isNewPage
-                                ? (isRTL ? 'صفحة جديدة' : 'Create CMS Page')
-                                : form.title || (isRTL ? 'تحرير الصفحة' : 'Edit CMS Page')}
-                        </h1>
-                        <p className="mt-2 text-sm text-slate-500">
-                            {page?.publishedAtUtc
-                                ? `${isRTL ? 'آخر نشر:' : 'Last published:'} ${new Date(page.publishedAtUtc).toLocaleString()}`
-                                : (isRTL ? 'هذه الصفحة ما زالت في وضع المسودة.' : 'This page is still in draft mode.')}
-                        </p>
-                    </div>
-                </div>
+            <AuthoringActionBar
+                title={isNewPage ? 'Create Page' : form.title || 'Edit Page'}
+                subtitle={page?.publishedAtUtc ? `Last published ${new Date(page.publishedAtUtc).toLocaleString()}. Preview uses the saved draft.` : 'This Page is still in draft mode. Preview never saves changes.'}
+                backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront/content/pages') }}
+                status={<AuthoringStatusBadge state={isPublishing ? 'publishing' : isSaving ? 'saving' : isDirty ? 'dirty' : page?.published ? 'published' : 'draft'} />}
+                previewAction={{ label: 'Preview Saved Draft', onClick: handlePreview, disabled: isNewPage || isDirty || isSaving || isPublishing, title: isDirty ? 'Save Draft before previewing' : undefined }}
+                historyAction={{ label: 'Page History', onClick: openVersionHistory, disabled: isNewPage || isSaving || isPublishing }}
+                discardAction={{ label: 'Discard', onClick: () => setIsDiscardConfirmOpen(true), disabled: !isDirty || isSaving || isPublishing }}
+                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => handleSave(), disabled: !isDirty || isPublishing, busy: isSaving }}
+                publishAction={{ label: 'Publish Page', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: !canPublish || isSaving, busy: isPublishing }}
+            />
 
-                <div className="flex flex-wrap gap-3">
-                    <button
-                        onClick={handlePreview}
-                        disabled={isNewPage}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        <Eye size={16} />
-                        {isRTL ? 'معاينة' : 'Preview'}
-                    </button>
-                    <button
-                        onClick={openVersionHistory}
-                        disabled={isNewPage}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        <History size={16} />
-                        {isRTL ? 'سجل الإصدارات' : 'Version History'}
-                    </button>
-                    <button
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                        {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                        {isRTL ? 'حفظ المسودة' : 'Save Draft'}
-                    </button>
-                    <button
-                        onClick={handlePublish}
-                        disabled={isPublishing}
-                        className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-500 disabled:opacity-50"
-                    >
-                        {isPublishing ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
-                        {isRTL ? 'نشر' : 'Publish'}
-                    </button>
-                </div>
-            </div>
-
-            {error && (
-                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    {error}
-                </div>
-            )}
-
-            {conflict && (
-                <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                    <p className="font-semibold">
-                        {isRTL ? 'تم اكتشاف تعارض في النسخة' : 'A newer CMS version is available'}
-                    </p>
-                    <p className="mt-1 text-amber-800">{conflict.message}</p>
-                    <p className="mt-1 text-amber-700">
-                        {isRTL
-                            ? 'تغييراتك الحالية ما زالت على الشاشة. حمّل آخر نسخة للمراجعة أو احتفظ بمسودتك الحالية للدمج اليدوي.'
-                            : 'Your current edits are still on screen. Load the latest version to review it, or keep this draft visible and merge manually.'}
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-3">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                if (conflict.latestVersion) {
-                                    const admittedPage = deriveCurrentCmsPageIdentityPresentation(
-                                        conflict.latestVersion,
-                                        currentUser,
-                                        { expectedPageId: pageId }
-                                    )
-                                    if (admittedPage) {
-                                        setPage(admittedPage)
-                                        setForm(fromPageResponse(admittedPage))
-                                        setConflict(null)
-                                        setError('')
-                                    } else {
-                                        setError('Latest version was rejected by page identity admission.')
-                                    }
-                                }
-                            }}
-                            disabled={!conflict.latestVersion}
-                            className="inline-flex items-center gap-2 rounded-xl bg-amber-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-amber-950 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-amber-900"
-                        >
-                            <RefreshCcw size={16} />
-                            {isRTL ? 'تحميل آخر نسخة' : 'Load latest version'}
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setConflict(null)}
-                            className="inline-flex items-center gap-2 rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-900 transition hover:bg-amber-100"
-                        >
-                            {isRTL ? 'الاحتفاظ بمسودتي' : 'Keep my draft'}
-                        </button>
-                    </div>
-                </div>
-            )}
+            {error ? <AuthoringFeedback kind="error" title="Page action failed" message={error} /> : null}
+            {notice ? <AuthoringFeedback kind="success" title="Page updated" message={notice} /> : null}
+            <AuthoringValidationSummary
+                errors={[
+                    ...(!form.title.trim() ? ['Title is required.'] : []),
+                    ...(!form.slug.trim() ? ['Slug is required.'] : []),
+                ]}
+                title="Resolve Page validation before saving"
+            />
 
             <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
                 <div className="space-y-6">
@@ -645,18 +646,14 @@ export function CmsPageEditor() {
                 </section>
             </div>
 
-            {isHistoryOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4 py-8">
-                    <div className="max-h-[90vh] w-full max-w-3xl overflow-hidden rounded-[28px] bg-white shadow-2xl">
-                        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
-                            <div>
-                                <h2 className="text-lg font-semibold text-slate-900">
-                                    {isRTL ? 'سجل إصدارات الصفحة' : 'Page Version History'}
-                                </h2>
-                                <p className="text-sm text-slate-500">
-                                    {isRTL ? 'المعاينة والاستعادة تستخدمان أدلة النسخ المقبولة من الخادم.' : 'Preview and rollback use backend-admitted version evidence.'}
-                                </p>
-                            </div>
+            <AuthoringDialog
+                open={isHistoryOpen}
+                title={isRTL ? 'سجل إصدارات الصفحة' : 'Page Version History'}
+                description={isRTL ? 'المعاينة والاستعادة تستخدمان أدلة النسخ المقبولة من الخادم.' : 'Preview and rollback use backend-admitted version evidence.'}
+                onClose={rollbackState.isRollingBack ? undefined : () => setIsHistoryOpen(false)}
+                panelClassName="max-h-[90vh] !max-w-3xl overflow-hidden"
+            >
+                        <div className="mt-4 flex justify-end">
                             <button
                                 type="button"
                                 onClick={() => setIsHistoryOpen(false)}
@@ -666,11 +663,9 @@ export function CmsPageEditor() {
                                 {isRTL ? 'إغلاق' : 'Close'}
                             </button>
                         </div>
-                        <div className="max-h-[calc(90vh-90px)] overflow-y-auto p-6">
+                        <div className="mt-4 max-h-[calc(90vh-180px)] overflow-y-auto">
                             {isHistoryLoading ? (
-                                <div className="flex min-h-[220px] items-center justify-center">
-                                    <Loader2 size={28} className="animate-spin text-slate-500" />
-                                </div>
+                                <AuthoringLoadingState label={isRTL ? 'جارٍ تحميل سجل الصفحة...' : 'Loading Page History...'} />
                             ) : (
                                 <div className="space-y-4">
                                     {(versionHistory?.versions || []).map((entry) => (
@@ -695,7 +690,7 @@ export function CmsPageEditor() {
                                                         className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                                                     >
                                                         <Eye size={14} />
-                                                        {isRTL ? 'معاينة' : 'Preview'}
+                                                        {isRTL ? 'تحميل اللقطة' : 'Load snapshot'}
                                                     </button>
                                                     <button
                                                         type="button"
@@ -741,9 +736,58 @@ export function CmsPageEditor() {
                                 </div>
                             )}
                         </div>
-                    </div>
-                </div>
-            )}
+            </AuthoringDialog>
+
+            <AuthoringConfirmDialog
+                open={isPublishConfirmOpen}
+                title="Publish Page?"
+                description="The accepted Page draft will become live. This does not publish Homepage, Navigation, Footer, Theme, or Product Template."
+                confirmLabel="Publish Page"
+                confirmTone="publish"
+                busy={isPublishing}
+                onClose={() => setIsPublishConfirmOpen(false)}
+                onConfirm={handlePublish}
+            />
+            <AuthoringConfirmDialog
+                open={isDiscardConfirmOpen}
+                title="Discard Page changes?"
+                description="The editor will return to the accepted Page draft."
+                confirmLabel="Discard Changes"
+                confirmTone="danger"
+                onClose={() => setIsDiscardConfirmOpen(false)}
+                onConfirm={handleDiscard}
+            />
+            <AuthoringConfirmDialog
+                open={deleteBlockIndex != null}
+                title="Delete Content Block?"
+                description="The block is removed from the local Page draft. Save Draft is still required."
+                confirmLabel="Delete Block"
+                confirmTone="danger"
+                onClose={() => setDeleteBlockIndex(null)}
+                onConfirm={confirmRemoveBlock}
+            />
+            <AuthoringConfirmDialog
+                open={pendingHistorySnapshot != null}
+                title="Load historical Page snapshot?"
+                description="This replaces the local candidate in the editor. It does not roll back or publish until you explicitly choose those actions."
+                confirmLabel="Load Snapshot"
+                confirmTone="danger"
+                onClose={() => setPendingHistorySnapshot(null)}
+                onConfirm={() => {
+                    setForm(fromVersionSnapshot(pendingHistorySnapshot.snapshot))
+                    setPendingHistorySnapshot(null)
+                }}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                hasLatest={Boolean(conflict?.latestVersion)}
+                busy={isSaving || isPublishing}
+                onClose={() => setConflict(null)}
+                onLoadLatest={handleLoadLatest}
+                onRetry={handleRetryConflict}
+            />
+            <UnsavedChangesDialog {...unsavedDialogProps} />
         </div>
     )
 }
@@ -794,6 +838,10 @@ function toRequestPayload(form) {
     }
 }
 
+export function getPageFormFingerprint(form) {
+    return JSON.stringify(toRequestPayload(form))
+}
+
 function normalizeSlugInput(value) {
     return value
         .toLowerCase()
@@ -835,6 +883,9 @@ function LabeledTextarea({ label, ...props }) {
 function RichTextEditor({ value, onChange, isRTL }) {
     const editorRef = useRef(null)
     const isEditingRef = useRef(false)
+    const linkSelectionRef = useRef(null)
+    const [isLinkPromptOpen, setIsLinkPromptOpen] = useState(false)
+    const [linkUrl, setLinkUrl] = useState('')
     const sanitizedValue = useMemo(() => sanitizeRichTextHtml(typeof value === 'string' ? value : ''), [value])
 
     useEffect(() => {
@@ -885,10 +936,9 @@ function RichTextEditor({ value, onChange, isRTL }) {
                 <ToolbarButton
                     label={isRTL ? 'رابط' : 'Link'}
                     onClick={() => {
-                        const url = window.prompt(isRTL ? 'أدخل الرابط' : 'Enter URL')
-                        if (url) {
-                            runCommand('createLink', url)
-                        }
+                        linkSelectionRef.current = saveSelection()
+                        setLinkUrl('')
+                        setIsLinkPromptOpen(true)
                     }}
                 />
             </div>
@@ -918,6 +968,22 @@ function RichTextEditor({ value, onChange, isRTL }) {
                     onChange(sanitized)
                 }}
                 className="min-h-[360px] px-5 py-4 text-sm leading-7 text-slate-700 outline-none"
+            />
+            <AuthoringPromptDialog
+                open={isLinkPromptOpen}
+                title="Add Link"
+                description="Enter the destination for the selected Page text."
+                label="URL"
+                value={linkUrl}
+                placeholder="https://example.com or /page"
+                confirmLabel="Add Link"
+                onChange={setLinkUrl}
+                onClose={() => setIsLinkPromptOpen(false)}
+                onConfirm={() => {
+                    setIsLinkPromptOpen(false)
+                    restoreSelection(linkSelectionRef.current)
+                    runCommand('createLink', linkUrl)
+                }}
             />
         </div>
     )

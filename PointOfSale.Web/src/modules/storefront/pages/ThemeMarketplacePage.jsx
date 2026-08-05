@@ -10,6 +10,15 @@ import {
     getAvailableMarketplaceThemes,
     getMarketplaceThemeById,
 } from '../themes/themeMarketplaceRegistry'
+import {
+    AuthoringActionBar,
+    AuthoringConfirmDialog,
+    AuthoringConflictDialog,
+    AuthoringEmptyState,
+    AuthoringFeedback,
+    AuthoringLoadingState,
+    AuthoringStatusBadge,
+} from '../authoringPlatform'
 
 const STOREFRONT_BASE_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174'
 
@@ -125,6 +134,9 @@ export function ThemeMarketplacePage() {
     const [storeConfig, setStoreConfig] = useState(null)
     const [loading, setLoading] = useState(true)
     const [activatingThemeId, setActivatingThemeId] = useState('')
+    const [pendingThemeId, setPendingThemeId] = useState('')
+    const [feedback, setFeedback] = useState(null)
+    const [conflict, setConflict] = useState(null)
 
     const activeThemeId = storeConfig?.storefrontTheme || null
     const activeTheme = activeThemeId ? getMarketplaceThemeById(activeThemeId) : null
@@ -174,14 +186,14 @@ export function ThemeMarketplacePage() {
         }
     }
 
-    const handleActivate = async (themeId) => {
+    const handleActivate = async (themeId, rowVersionOverride = null) => {
         if (!storeConfig) {
             return
         }
 
         setActivatingThemeId(themeId)
         try {
-            const rowVersion = normalizeRowVersion(storeConfig.rowVersion)
+            const rowVersion = normalizeRowVersion(rowVersionOverride || storeConfig.rowVersion)
             if (!rowVersion) {
                 throw new Error('Theme activation requires accepted backend RowVersion evidence.')
             }
@@ -196,6 +208,9 @@ export function ThemeMarketplacePage() {
             }
 
             setStoreConfig(updatedConfig)
+            setPendingThemeId('')
+            setConflict(null)
+            setFeedback({ kind: 'success', title: 'Theme activated', message: `${getMarketplaceThemeById(themeId)?.name || themeId} is now the live Theme.` })
             showSuccess(
                 isRTL
                     ? `تم تفعيل ثيم ${getMarketplaceThemeById(themeId)?.name || themeId}`
@@ -203,44 +218,37 @@ export function ThemeMarketplacePage() {
             )
         } catch (error) {
             console.error('Failed to activate storefront theme:', error)
-            showError(isRTL ? 'فشل تفعيل الثيم' : 'Failed to activate theme')
+            if (error?.response?.status === 409) {
+                setPendingThemeId('')
+                setConflict({ themeId, message: error?.response?.data?.message })
+            }
+            else setFeedback({ kind: 'error', title: 'Theme not activated', message: error?.response?.data?.message || 'Failed to activate theme.' })
         } finally {
             setActivatingThemeId('')
         }
     }
 
     if (loading) {
-        return (
-            <div className="flex h-80 items-center justify-center">
-                <div className="text-center">
-                    <Loader2 className="mx-auto mb-4 animate-spin text-indigo-600" size={40} />
-                    <p className="text-sm text-gray-500">{isRTL ? 'جارٍ تحميل مكتبة الثيمات...' : 'Loading theme marketplace...'}</p>
-                </div>
-            </div>
-        )
+        return <AuthoringLoadingState label="Loading Themes…" />
     }
 
     return (
         <div className="mx-auto max-w-7xl">
-            <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-                <div>
-                    <h1 className="text-3xl font-bold text-gray-900">{isRTL ? 'مكتبة ثيمات المتجر' : 'Storefront Themes'}</h1>
-                    <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">
-                        {isRTL
-                            ? 'استعرض الثيمات المتاحة، جرّبها على المتجر مباشرة، ثم فعّل الثيم المناسب لمتجرك.'
-                            : 'Browse the available themes, preview them on your storefront, and activate the one that fits your brand.'}
-                    </p>
-                </div>
-
-                <button
+            <AuthoringActionBar
+                title="Themes"
+                subtitle="Preview a signed, read-only Theme candidate, then explicitly activate one Theme live. Theme activation does not publish content."
+                backAction={{ label: 'Back', onClick: () => navigate('/storefront') }}
+                status={<AuthoringStatusBadge state={activeTheme ? 'live' : 'draft'}>{activeTheme ? `${activeTheme.name} active` : 'No active Theme'}</AuthoringStatusBadge>}
+                leading={<button
                     type="button"
-                    onClick={() => navigate('/storefront/theme')}
+                    onClick={() => navigate('/storefront/appearance/colors-typography')}
                     className="inline-flex items-center gap-2 self-start rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
                 >
                     <Paintbrush size={16} />
-                    {isRTL ? 'فتح محرر الثيم' : 'Open Theme Editor'}
-                </button>
-            </div>
+                    {isRTL ? 'فتح الألوان والطباعة' : 'Open Colors & Typography'}
+                </button>}
+            />
+            {feedback ? <div className="my-6"><AuthoringFeedback {...feedback} /></div> : null}
 
             <section className="mb-10">
                 <div className="mb-4 flex items-center gap-2">
@@ -254,18 +262,14 @@ export function ThemeMarketplacePage() {
                         isBusy={false}
                         onPreview={() => openPreview(activeTheme.id)}
                         onActivate={() => {}}
-                        onCustomize={() => navigate('/storefront/theme')}
-                        previewLabel={isRTL ? 'معاينة' : 'Preview'}
-                        activateLabel={isRTL ? 'تفعيل' : 'Activate'}
+                        onCustomize={() => navigate('/storefront/appearance/colors-typography')}
+                        previewLabel={isRTL ? 'معاينة القالب' : 'Preview Theme'}
+                        activateLabel={isRTL ? 'تفعيل القالب الآن' : 'Activate theme now'}
                         customizeLabel={isRTL ? 'تخصيص' : 'Customize'}
                         activeBadge={isRTL ? 'الثيم النشط' : 'Active Theme'}
                     />
                 ) : (
-                    <div className="rounded-3xl border border-dashed border-gray-300 bg-white p-8 text-sm text-gray-600">
-                        {isRTL
-                            ? 'لم يقم الخادم بإرسال ثيم نشط حتى الآن. اختر ثيماً من الخيارات المتاحة بالأسفل.'
-                            : 'The backend has not provided an active theme yet. Choose one from the available themes below.'}
-                    </div>
+                    <AuthoringEmptyState title="No active Theme" description="Choose a Theme below. Preview is read-only; activation requires explicit confirmation." />
                 )}
             </section>
 
@@ -283,16 +287,46 @@ export function ThemeMarketplacePage() {
                             isActive={false}
                             isBusy={activatingThemeId === theme.id}
                             onPreview={() => openPreview(theme.id)}
-                            onActivate={() => handleActivate(theme.id)}
+                            onActivate={() => setPendingThemeId(theme.id)}
                             onCustomize={() => {}}
-                            previewLabel={isRTL ? 'معاينة' : 'Preview'}
-                            activateLabel={isRTL ? 'تفعيل' : 'Activate'}
+                            previewLabel={isRTL ? 'معاينة القالب' : 'Preview Theme'}
+                            activateLabel={isRTL ? 'تفعيل القالب الآن' : 'Activate theme now'}
                             customizeLabel={isRTL ? 'تخصيص' : 'Customize'}
                             activeBadge={isRTL ? 'الثيم النشط' : 'Active Theme'}
                         />
                     ))}
                 </div>
+                {installedThemes.length === 0 ? <AuthoringEmptyState title="No additional Themes" description="The active Theme is the only Theme currently available." /> : null}
             </section>
+            <AuthoringConfirmDialog
+                open={Boolean(pendingThemeId)}
+                title="Activate theme now?"
+                description="Activation immediately changes the live Theme only. It does not publish Homepage, Pages, Navigation, Footer, or Product Template."
+                confirmLabel="Activate theme now"
+                confirmTone="publish"
+                busy={Boolean(activatingThemeId)}
+                onClose={() => setPendingThemeId('')}
+                onConfirm={() => handleActivate(pendingThemeId)}
+            />
+            <AuthoringConflictDialog
+                open={conflict != null}
+                message={conflict?.message}
+                canRetry
+                onClose={() => setConflict(null)}
+                onLoadLatest={async () => {
+                    setConflict(null)
+                    const response = await storeConfigService.getStoreConfig()
+                    const config = deriveCurrentStoreIdentityPresentation(response, user)
+                    if (config) setStoreConfig(config)
+                }}
+                onRetry={async () => {
+                    const response = await storeConfigService.getStoreConfig()
+                    const config = deriveCurrentStoreIdentityPresentation(response, user)
+                    if (!config) return
+                    setStoreConfig(config)
+                    await handleActivate(conflict.themeId, config.rowVersion)
+                }}
+            />
         </div>
     )
 }

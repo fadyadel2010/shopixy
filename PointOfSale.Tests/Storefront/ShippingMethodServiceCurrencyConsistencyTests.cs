@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.Pricing;
@@ -12,7 +11,6 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
-using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Tests.Storefront;
@@ -32,13 +30,11 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
                 CreateShippingMethod(tenantId, "SAR", 35m)
             });
 
-        using var redisFactory = CreateDisabledRedisFactory();
         await using var dbContext = CreateDbContext();
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
-            redisFactory,
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodService>.Instance);
@@ -67,13 +63,11 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
                 CreateShippingMethod(tenantId, "USD", 35m)
             });
 
-        using var redisFactory = CreateDisabledRedisFactory();
         await using var dbContext = CreateDbContext();
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
-            redisFactory,
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodService>.Instance);
@@ -150,12 +144,10 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             });
         await dbContext.SaveChangesAsync();
 
-        using var redisFactory = CreateDisabledRedisFactory();
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
-            redisFactory,
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodService>.Instance);
@@ -195,12 +187,10 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
         });
         await dbContext.SaveChangesAsync();
 
-        using var redisFactory = CreateDisabledRedisFactory();
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
-            redisFactory,
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
+            CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
             NullLogger<ShippingMethodService>.Instance);
@@ -252,10 +242,19 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
         return new ApplicationDbContext(options);
     }
 
-    private static RedisConnectionFactory CreateDisabledRedisFactory()
+    private static IShippingMethodCacheService CreatePassThroughCache()
     {
-        return new RedisConnectionFactory(
-            Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
-            NullLogger<RedisConnectionFactory>.Instance);
+        var cache = new Mock<IShippingMethodCacheService>(MockBehavior.Loose);
+        cache
+            .Setup(service => service.GetOrCreateAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Func<CancellationToken, Task<IReadOnlyCollection<ShippingMethodDocument>>>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<Guid, Func<CancellationToken, Task<IReadOnlyCollection<ShippingMethodDocument>>>, CancellationToken>(
+                async (_, factory, cancellationToken) => (await factory(cancellationToken)).ToList());
+        cache
+            .Setup(service => service.InvalidateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return cache.Object;
     }
 }

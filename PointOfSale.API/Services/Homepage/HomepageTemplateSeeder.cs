@@ -14,9 +14,10 @@ public interface IHomepageTemplateSeeder
         Guid? actorId = null,
         CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<HomepageSectionDto>> GenerateDraftTemplateAsync(
+    Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> GenerateDraftTemplateAsync(
         Guid? tenantId,
         bool overwriteExisting,
+        string? expectedWorkspaceVersion,
         Guid? actorId = null,
         CancellationToken cancellationToken = default);
 }
@@ -47,8 +48,13 @@ public sealed class HomepageTemplateSeeder : IHomepageTemplateSeeder
             return false;
         }
 
+        var currentSnapshot = await _managementService.GetSectionsAsync(
+            tenantId,
+            HomepageSectionReadMode.Preview,
+            cancellationToken);
         var templateDraft = await _managementService.SaveDraftAsync(
             BuildTemplateRequest(tenantId),
+            currentSnapshot.WorkspaceVersion,
             actorId,
             cancellationToken);
 
@@ -57,20 +63,22 @@ public sealed class HomepageTemplateSeeder : IHomepageTemplateSeeder
             {
                 TenantId = tenantId
             },
+            templateDraft.WorkspaceVersion,
             actorId,
             cancellationToken);
 
         _logger.LogInformation(
             "Homepage starter template seeded | TenantId: {TenantId} | SectionCount: {SectionCount}",
             tenantId,
-            templateDraft.Count);
+            templateDraft.Data.Count);
 
         return true;
     }
 
-    public async Task<IReadOnlyList<HomepageSectionDto>> GenerateDraftTemplateAsync(
+    public async Task<HomepageAuthoringResult<IReadOnlyList<HomepageSectionDto>>> GenerateDraftTemplateAsync(
         Guid? tenantId,
         bool overwriteExisting,
+        string? expectedWorkspaceVersion,
         Guid? actorId = null,
         CancellationToken cancellationToken = default)
     {
@@ -84,6 +92,7 @@ public sealed class HomepageTemplateSeeder : IHomepageTemplateSeeder
 
         var sections = await _managementService.SaveDraftAsync(
             BuildTemplateRequest(tenantId),
+            expectedWorkspaceVersion,
             actorId,
             cancellationToken);
 
@@ -91,7 +100,7 @@ public sealed class HomepageTemplateSeeder : IHomepageTemplateSeeder
             "Homepage starter template generated for draft workspace | TenantId: {TenantId} | OverwriteExisting: {OverwriteExisting} | SectionCount: {SectionCount}",
             tenantId,
             overwriteExisting,
-            sections.Count);
+            sections.Data.Count);
 
         return sections;
     }

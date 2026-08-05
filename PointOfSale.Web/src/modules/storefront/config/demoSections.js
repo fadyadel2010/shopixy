@@ -48,23 +48,10 @@ export function getDefaultSections(pageKey) {
                 ...s,
                 id: generateId(),
             }))
-        case 'product':
-            return [createDemoSection(generateId(), 'product-grid', 0, {
-                title: 'You May Also Like',
-                rows: 1,
-            })]
-        case 'category':
-            return [
-                createDemoSection(generateId(), 'category-grid', 0),
-                createDemoSection(generateId(), 'subcategory-grid', 1, {
-                    cardStyle: 'card',
-                }),
-            ]
         case 'product-template':
             return [
-                createDemoSection(generateId(), 'product-hero', 0),
-                createDemoSection(generateId(), 'product-specs', 1),
-                createDemoSection(generateId(), 'related-products', 2, {
+                createDemoSection(generateId(), 'product-specs', 0),
+                createDemoSection(generateId(), 'related-products', 1, {
                     title: 'You May Also Like',
                 }),
             ]

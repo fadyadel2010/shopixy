@@ -16,45 +16,33 @@
  * Phase 10.3.6: Wishlist badge in header
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useLocation } from 'react-router-dom';
-import { useStoreConfigStore, selectStoreName, selectLayout, selectBehavior } from '@/store';
+import React, { useState, useEffect, useRef } from 'react';
 import { useScrollPosition, useBodyScrollLock, useFocusTrap } from '@/hooks/useScrollPosition';
-import { CartIconButton } from '@/components/common/CartBadge';
-import { WishlistIconButton } from '@/components/common/WishlistBadge';
 import { AffiliateModeIndicator } from '@/components/common/AffiliateModeIndicator';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
-import { LanguageSwitcher } from '@/components/common/LanguageSwitcher';
-import { useNavigationStore, resolveNavLinkUrl } from '@/stores/navigationStore';
-import { SearchModal, useSearchShortcut } from '@/components/search/SearchModal';
-import { useTranslation } from '@/i18n';
-import { AuthNavItems } from '@/auth/components';
-import type { NavigationLink } from '@/types';
+import type { HeaderPresentationProps, HeaderRuntimeSlots } from '@/storefront/presentation/models';
 
 // ============================================================================
 // Types
 // ============================================================================
 
-interface HeaderProps {
-    // Categories removed - now using filters sidebar on products page
-}
+type HeaderProps = HeaderPresentationProps;
 
 interface MobileMenuProps {
     isOpen: boolean;
     onClose: () => void;
-    enableSearch: boolean;
+    model: HeaderPresentationProps['model'];
+    slots: HeaderRuntimeSlots;
 }
 
 // ============================================================================
 // Mobile Menu Component
 // ============================================================================
 
-const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, enableSearch }) => {
-    const { t, language } = useTranslation();
+const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, model, slots }) => {
+    const { labels } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const menuRef = useRef<HTMLDivElement>(null);
-    const location = useLocation();
-    const { getHeaderLinks, loadNavigation } = useNavigationStore();
-    const headerLinks = getHeaderLinks();
 
     // Body scroll lock when menu is open
     useBodyScrollLock(isOpen);
@@ -76,23 +64,6 @@ const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, enableSearch }
         document.addEventListener('keydown', handleKeyDown);
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [isOpen, onClose]);
-
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    // Check if route is active
-    const isActive = useCallback((path: string) => {
-        return location.pathname === path || location.pathname.startsWith(path + '/');
-    }, [location.pathname]);
-
-    const getNavLabel = useCallback((link: NavigationLink) => {
-        if (language === 'ar' && link.labelAr) {
-            return link.labelAr;
-        }
-
-        return link.label;
-    }, [language]);
 
     if (!isOpen) return null;
 
@@ -117,14 +88,14 @@ const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, enableSearch }
                     {/* Header */}
                     <div className="flex items-center justify-between p-4 border-b border-muted/20">
                         <div className="flex items-center gap-2">
-                            <span className="font-semibold text-text">{t('header.menu')}</span>
+                            <span className="font-semibold text-text">{labels.menu}</span>
                             {/* AF-12: Affiliate Mode Indicator - Mobile */}
                             <AffiliateModeIndicator />
                         </div>
                         <button
                             onClick={onClose}
                             className="p-2.5 min-w-[44px] min-h-[44px] flex items-center justify-center text-muted hover:text-text transition-colors rounded-lg hover:bg-muted/10 focus-visible:ring-2 focus-visible:ring-primary"
-                            aria-label={t('header.closeMenu')}
+                            aria-label={labels.closeMenu}
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -133,66 +104,58 @@ const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, enableSearch }
                     </div>
 
                     {/* Search */}
-                    {enableSearch && (
-                        <div className="p-4 border-b border-muted/10">
-                            <a
-                                href="/products?focus=search"
-                                className="flex items-center gap-3 px-4 py-3 bg-muted/10 rounded-lg text-muted hover:text-text transition-colors"
+                    <div className="p-4 border-b border-muted/10">
+                            <SearchSlot
+                                onClick={onClose}
+                                className="flex w-full items-center gap-3 px-4 py-3 bg-muted/10 rounded-lg text-muted hover:text-text transition-colors"
                             >
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
-                                <span>{t('header.searchProducts')}</span>
-                            </a>
-                        </div>
-                    )}
+                                <span>{labels.searchProducts}</span>
+                            </SearchSlot>
+                    </div>
 
                     {/* Navigation Links */}
-                    <nav className="flex-1 overflow-y-auto py-4" aria-label="Main navigation">
-                        {headerLinks.map((link, index) => {
-                            const url = resolveNavLinkUrl(link);
-                            return (
-                                <AffiliateLink
-                                    key={`${link.label}-${index}`}
-                                    href={url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={`flex items-center px-4 py-3.5 min-h-[44px] transition-colors ${isActive(url)
-                                        ? 'bg-primary/10 text-primary border-r-2 border-primary'
-                                        : 'text-text hover:bg-primary/10 hover:text-primary'
-                                        }`}
-                                >
-                                    <span className="w-5 ltr:mr-3 rtl:ml-3 flex-shrink-0 text-center text-sm font-semibold">
-                                        {index + 1}
-                                    </span>
-                                    {getNavLabel(link)}
-                                </AffiliateLink>
-                            );
-                        })}
-                    </nav>
+                    <NavigationSlot
+                        className="flex-1 overflow-y-auto py-4"
+                        ariaLabel={labels.mainNavigation}
+                        onLinkClick={onClose}
+                        linkClassName={(link) => `flex items-center px-4 py-3.5 min-h-[44px] transition-colors ${link.isActive
+                            ? 'bg-primary/10 text-primary border-r-2 border-primary'
+                            : 'text-text hover:bg-primary/10 hover:text-primary'
+                        }`}
+                        renderLinkContent={(link) => (
+                            <>
+                                <span className="w-5 ltr:mr-3 rtl:ml-3 flex-shrink-0 text-center text-sm font-semibold">
+                                    {link.index + 1}
+                                </span>
+                                {link.label}
+                            </>
+                        )}
+                    />
 
                     {/* Auth Section */}
                     <div className="px-4 py-2 mt-2 border-t border-muted/10">
                         <span className="text-xs font-semibold text-muted uppercase tracking-wider">
-                            {t('header.account')}
+                            {labels.account}
                         </span>
                     </div>
-                    <AuthNavItems
+                    <AuthenticationSlot
                         variant="mobile"
                         onLinkClick={onClose}
                     />
 
+                    <div className="flex items-center justify-between gap-2 border-t border-muted/10 px-4 py-3">
+                        <LanguageSlot variant="text" size="sm" />
+                        <WishlistSlot />
+                    </div>
+
                     {/* Footer */}
                     <div className="p-4 border-t border-muted/20 mt-auto">
-                        <AffiliateLink
-                            href="/cart"
+                        <CartSlot
                             className="flex items-center justify-center gap-2 w-full px-4 py-3.5 min-h-[44px] bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors font-medium focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-                        >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
-                            </svg>
-                            {t('header.viewCart')}
-                        </AffiliateLink>
+                        />
                     </div>
                 </div>
             </div>
@@ -226,27 +189,19 @@ const HamburgerButton: React.FC<HamburgerButtonProps> = ({ onClick }) => (
 // ============================================================================
 
 interface SearchButtonProps {
+    SearchSlot: HeaderRuntimeSlots['SearchSlot'];
     className?: string;
     onClick?: () => void;
 }
 
-const SearchButton: React.FC<SearchButtonProps> = ({ className = '', onClick }) => {
+const SearchButton: React.FC<SearchButtonProps> = ({ SearchSlot, className = '', onClick }) => {
     // Detect platform for shortcut hint
     const isMac = typeof navigator !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
     const shortcutKey = isMac ? '⌘K' : 'Ctrl+K';
 
-    const handleClick = () => {
-        if (onClick) {
-            onClick();
-        } else {
-            // Navigate to products page with search focus
-            window.location.href = '/products?focus=search';
-        }
-    };
-
     return (
-        <button
-            onClick={handleClick}
+        <SearchSlot
+            onClick={onClick}
             className={`p-2 rounded-lg transition-colors flex items-center gap-2 group ${className}`}
             aria-label="Search products"
         >
@@ -257,7 +212,7 @@ const SearchButton: React.FC<SearchButtonProps> = ({ className = '', onClick }) 
             <kbd className="hidden lg:inline-flex items-center px-1.5 py-0.5 text-xs text-white/50 bg-white/10 rounded font-mono group-hover:text-white/70 group-hover:bg-white/20 transition-colors">
                 {shortcutKey}
             </kbd>
-        </button>
+        </SearchSlot>
     );
 };
 
@@ -265,44 +220,11 @@ const SearchButton: React.FC<SearchButtonProps> = ({ className = '', onClick }) 
 // Standard Header Variant
 // ============================================================================
 
-const HeaderStandard: React.FC<HeaderProps> = () => {
-    const { language } = useTranslation();
-    const storeName = useStoreConfigStore(selectStoreName);
-    const behavior = useStoreConfigStore(selectBehavior);
+const HeaderStandard: React.FC<HeaderProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-    const [searchModalOpen, setSearchModalOpen] = useState(false);
-    const location = useLocation();
     const { isScrolled } = useScrollPosition({ threshold: 10 });
-
-    // Get dynamic header links from navigation store
-    const { getHeaderLinks, loadNavigation } = useNavigationStore();
-    const headerLinks = getHeaderLinks();
-
-    // Load navigation on mount
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    // Keyboard shortcut for search (Cmd/Ctrl + K)
-    useSearchShortcut(() => {
-        if (behavior.enableSearch) {
-            setSearchModalOpen(true);
-        }
-    });
-
-    // Check if route is active
-    const isActive = useCallback((path: string) => {
-        if (path === '/') return location.pathname === '/';
-        return location.pathname.startsWith(path);
-    }, [location.pathname]);
-
-    // Get localized navigation label
-    const getNavLabel = (link: { label: string; labelAr?: string }) => {
-        if (language === 'ar' && link.labelAr) {
-            return link.labelAr;
-        }
-        return link.label;
-    };
 
     return (
         <>
@@ -325,52 +247,33 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
                         </AffiliateLink>
 
                         {/* Desktop Navigation - Dynamic from CMS */}
-                        <nav className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-1 md:flex" aria-label="Main navigation">
-                            {/* AF-12: Affiliate Mode Indicator */}
-                            <AffiliateModeIndicator className="ltr:mr-2 rtl:ml-2" />
-
-                            {headerLinks.map((link, index) => {
-                                const url = resolveNavLinkUrl(link);
-                                return (
-                                    <AffiliateLink
-                                        key={`${link.label}-${index}`}
-                                        href={url}
-                                        className={`rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${isActive(url)
-                                            ? 'text-white bg-white/20'
-                                            : 'text-white/80 hover:text-white hover:bg-white/10'
-                                            }`}
-                                        target={link.openInNewTab ? '_blank' : undefined}
-                                        rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    >
-                                        {getNavLabel(link)}
-                                    </AffiliateLink>
-                                );
-                            })}
-                            {/* Categories removed - now using filters sidebar on products page */}
-                        </nav>
+                        <NavigationSlot
+                            className="hidden min-w-0 flex-1 flex-wrap items-center justify-center gap-1 md:flex"
+                            ariaLabel={labels.mainNavigation}
+                            beforeLinks={<AffiliateModeIndicator className="ltr:mr-2 rtl:ml-2" />}
+                            linkClassName={(link) => `rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${link.isActive
+                                ? 'text-white bg-white/20'
+                                : 'text-white/80 hover:text-white hover:bg-white/10'
+                            }`}
+                        />
 
                         {/* Actions */}
                         <div className="flex shrink-0 items-center gap-1">
-                            {behavior.enableSearch && (
-                                <SearchButton
-                                    className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex"
-                                    onClick={() => setSearchModalOpen(true)}
-                                />
-                            )}
-                            <LanguageSwitcher
+                            <SearchButton SearchSlot={SearchSlot} className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex" />
+                            <LanguageSlot
                                 variant="text"
                                 className="text-white/80 hover:text-white hidden sm:flex"
                                 size="sm"
                             />
                             {/* Auth Navigation - Desktop */}
                             <div className="hidden md:flex">
-                                <AuthNavItems variant="desktop" />
+                                <AuthenticationSlot variant="desktop" />
                             </div>
-                            <WishlistIconButton
+                            <WishlistSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex"
                                 showTooltip
                             />
-                            <CartIconButton
+                            <CartSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10"
                                 showTooltip
                             />
@@ -383,16 +286,9 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
             <MobileMenu
                 isOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
-                enableSearch={behavior.enableSearch}
+                model={model}
+                slots={slots}
             />
-
-            {/* Search Modal */}
-            {behavior.enableSearch && (
-                <SearchModal
-                    isOpen={searchModalOpen}
-                    onClose={() => setSearchModalOpen(false)}
-                />
-            )}
         </>
     );
 };
@@ -401,32 +297,11 @@ const HeaderStandard: React.FC<HeaderProps> = () => {
 // Centered Header Variant
 // ============================================================================
 
-const HeaderCentered: React.FC<HeaderProps> = () => {
-    const { language } = useTranslation();
-    const storeName = useStoreConfigStore(selectStoreName);
-    const behavior = useStoreConfigStore(selectBehavior);
+const HeaderCentered: React.FC<HeaderProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-    const location = useLocation();
     const { isScrolled } = useScrollPosition({ threshold: 10 });
-    const { getHeaderLinks, loadNavigation } = useNavigationStore();
-    const headerLinks = getHeaderLinks();
-
-    useEffect(() => {
-        loadNavigation();
-    }, [loadNavigation]);
-
-    const isActive = useCallback((path: string) => {
-        if (path === '/') return location.pathname === '/';
-        return location.pathname.startsWith(path);
-    }, [location.pathname]);
-
-    const getNavLabel = useCallback((link: NavigationLink) => {
-        if (language === 'ar' && link.labelAr) {
-            return link.labelAr;
-        }
-
-        return link.label;
-    }, [language]);
 
     return (
         <>
@@ -442,9 +317,7 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                     {/* Top row - search and cart */}
                     <div className="flex items-center justify-between h-14 border-b border-white/10">
                         <div className="flex-1 flex items-center">
-                            {behavior.enableSearch && (
-                                <SearchButton className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex" />
-                            )}
+                            <SearchButton SearchSlot={SearchSlot} className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex" />
                         </div>
 
                         {/* Centered Logo */}
@@ -456,11 +329,15 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                         </a>
 
                         <div className="flex-1 flex justify-end items-center gap-1">
-                            <WishlistIconButton
+                            <LanguageSlot variant="text" className="hidden text-white/80 hover:text-white sm:flex" size="sm" />
+                            <div className="hidden md:flex">
+                                <AuthenticationSlot variant="desktop" />
+                            </div>
+                            <WishlistSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex"
                                 showTooltip
                             />
-                            <CartIconButton
+                            <CartSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10"
                                 showTooltip
                             />
@@ -469,32 +346,22 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
                     </div>
 
                     {/* Desktop Navigation row */}
-                    <nav className="hidden min-h-12 flex-wrap items-center justify-center gap-1 py-2 md:flex" aria-label="Main navigation">
-                        {headerLinks.map((link, index) => {
-                            const url = resolveNavLinkUrl(link);
-                            return (
-                                <AffiliateLink
-                                    key={`${link.label}-${index}`}
-                                    href={url}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className={`rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${isActive(url)
-                                        ? 'text-white bg-white/20'
-                                        : 'text-white/80 hover:text-white hover:bg-white/10'
-                                        }`}
-                                >
-                                    {getNavLabel(link)}
-                                </AffiliateLink>
-                            );
-                        })}
-                    </nav>
+                    <NavigationSlot
+                        className="hidden min-h-12 flex-wrap items-center justify-center gap-1 py-2 md:flex"
+                        ariaLabel={labels.mainNavigation}
+                        linkClassName={(link) => `rounded-lg px-3 py-2 text-sm font-medium transition-all focus-visible:ring-2 focus-visible:ring-white/50 lg:px-4 ${link.isActive
+                            ? 'text-white bg-white/20'
+                            : 'text-white/80 hover:text-white hover:bg-white/10'
+                        }`}
+                    />
                 </div>
             </header>
 
             <MobileMenu
                 isOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
-                enableSearch={behavior.enableSearch}
+                model={model}
+                slots={slots}
             />
         </>
     );
@@ -504,9 +371,9 @@ const HeaderCentered: React.FC<HeaderProps> = () => {
 // Minimal Header Variant
 // ============================================================================
 
-const HeaderMinimal: React.FC<HeaderProps> = () => {
-    const storeName = useStoreConfigStore(selectStoreName);
-    const behavior = useStoreConfigStore(selectBehavior);
+const HeaderMinimal: React.FC<HeaderProps> = ({ model, slots }) => {
+    const { labels, storeName } = model;
+    const { AuthenticationSlot, CartSlot, LanguageSlot, NavigationSlot, SearchSlot, WishlistSlot } = slots;
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const { isScrolled } = useScrollPosition({ threshold: 10 });
 
@@ -532,24 +399,38 @@ const HeaderMinimal: React.FC<HeaderProps> = () => {
 
                         {/* Actions */}
                         <div className="flex items-center gap-1">
-                            <WishlistIconButton
+                            <SearchButton SearchSlot={SearchSlot} className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex" />
+                            <LanguageSlot variant="text" className="hidden text-white/80 hover:text-white sm:flex" size="sm" />
+                            <div className="hidden md:flex">
+                                <AuthenticationSlot variant="desktop" />
+                            </div>
+                            <WishlistSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10 hidden sm:flex"
                                 showTooltip
                             />
-                            <CartIconButton
+                            <CartSlot
                                 className="text-white/80 hover:text-white hover:bg-white/10"
                                 showTooltip
                             />
                             <HamburgerButton onClick={() => setMobileMenuOpen(true)} />
                         </div>
                     </div>
+                    <NavigationSlot
+                        className="hidden min-h-12 flex-wrap items-center justify-center gap-1 border-t border-white/10 py-2 md:flex"
+                        ariaLabel={labels.mainNavigation}
+                        linkClassName={(link) => `rounded-lg px-3 py-2 text-sm font-medium transition-all ${link.isActive
+                            ? 'bg-white/20 text-white'
+                            : 'text-white/80 hover:bg-white/10 hover:text-white'
+                        }`}
+                    />
                 </div>
             </header>
 
             <MobileMenu
                 isOpen={mobileMenuOpen}
                 onClose={() => setMobileMenuOpen(false)}
-                enableSearch={behavior.enableSearch}
+                model={model}
+                slots={slots}
             />
         </>
     );
@@ -570,8 +451,7 @@ const HEADER_VARIANTS = {
 // ============================================================================
 
 export const Header: React.FC<HeaderProps> = (props) => {
-    const layout = useStoreConfigStore(selectLayout);
-    const HeaderComponent = HEADER_VARIANTS[layout.headerVariant] || HeaderStandard;
+    const HeaderComponent = HEADER_VARIANTS[props.model.headerVariant] || HeaderStandard;
 
     return <HeaderComponent {...props} />;
 };
