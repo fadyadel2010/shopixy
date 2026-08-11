@@ -202,6 +202,7 @@ public class OrdersController : ControllerBase
     /// Get order by ID with full details
     /// </summary>
     [HttpGet("{id}")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<ActionResult<OrderDetailDto>> GetOrder(Guid id, CancellationToken cancellationToken)
     {
         var matchedStandardOrder = await _context.Orders
@@ -212,6 +213,7 @@ public class OrdersController : ControllerBase
             .Include(o => o.Coupon)
             .Include(o => o.Items)
                 .ThenInclude(i => i.Product)
+            .Include(o => o.CheckoutFieldSnapshots)
             .Include(o => o.Warehouse)
             .FirstOrDefaultAsync(
                 o => o.Id == id && o.TenantId == _tenantContext.RequiredTenantId,
@@ -235,6 +237,7 @@ public class OrdersController : ControllerBase
     /// Get order by order number
     /// </summary>
     [HttpGet("by-number/{orderNumber}")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<ActionResult<OrderDetailDto>> GetOrderByNumber(string orderNumber, CancellationToken cancellationToken)
     {
         var matchedStandardOrder = await _context.Orders
@@ -245,6 +248,7 @@ public class OrdersController : ControllerBase
             .Include(o => o.Coupon)
             .Include(o => o.Items)
                 .ThenInclude(i => i.Product)
+            .Include(o => o.CheckoutFieldSnapshots)
             .Include(o => o.Warehouse)
             .FirstOrDefaultAsync(
                 o => o.OrderNumber == orderNumber && o.TenantId == _tenantContext.RequiredTenantId,
@@ -2352,6 +2356,25 @@ public class OrdersController : ControllerBase
                 TaxAmount = i.TaxAmount,
                 Total = i.Total
             }).ToList(),
+            CheckoutFieldSnapshots = order.CheckoutFieldSnapshots
+                .OrderBy(snapshot => snapshot.DisplayOrder)
+                .ThenBy(snapshot => snapshot.CreatedAt)
+                .ThenBy(snapshot => snapshot.Id)
+                .Select(snapshot => new OrderCheckoutFieldSnapshotDto
+                {
+                    FieldId = snapshot.CheckoutFieldDefinitionId,
+                    FieldKind = ToCheckoutFieldApiValue(snapshot.FieldKind),
+                    FieldType = ToCheckoutFieldApiValue(snapshot.FieldType),
+                    SystemFieldKey = snapshot.SystemFieldKey,
+                    Label = snapshot.Label,
+                    HelpText = snapshot.HelpText,
+                    IsRequired = snapshot.IsRequired,
+                    DisplayOrder = snapshot.DisplayOrder,
+                    ConfigurationSchemaVersion = snapshot.ConfigurationSchemaVersion,
+                    ConfigurationJson = snapshot.ConfigurationJson,
+                    ValueJson = snapshot.ValueJson
+                })
+                .ToList(),
             // AF-35: Affiliate visibility
             IsAffiliateOrder = order.AffiliateAccountId.HasValue,
             AffiliateId = order.AffiliateAccountId,
@@ -2516,6 +2539,30 @@ public class OrdersController : ControllerBase
             ? PaymentMethod.Cash
             : PaymentMethod.Card;
     }
+
+    private static string ToCheckoutFieldApiValue(CheckoutFieldKind kind) => kind switch
+    {
+        CheckoutFieldKind.System => "SYSTEM",
+        CheckoutFieldKind.Custom => "CUSTOM",
+        _ => kind.ToString().ToUpperInvariant()
+    };
+
+    private static string ToCheckoutFieldApiValue(CheckoutFieldType type) => type switch
+    {
+        CheckoutFieldType.Text => "TEXT",
+        CheckoutFieldType.Textarea => "TEXTAREA",
+        CheckoutFieldType.Number => "NUMBER",
+        CheckoutFieldType.Email => "EMAIL",
+        CheckoutFieldType.Phone => "PHONE",
+        CheckoutFieldType.Select => "SELECT",
+        CheckoutFieldType.Radio => "RADIO",
+        CheckoutFieldType.Checkbox => "CHECKBOX",
+        CheckoutFieldType.Date => "DATE",
+        CheckoutFieldType.Image => "IMAGE",
+        CheckoutFieldType.File => "FILE",
+        CheckoutFieldType.MultiImage => "MULTI_IMAGE",
+        _ => type.ToString().ToUpperInvariant()
+    };
 
     private async Task<PreviousOrderStatsDto> GetPreviousOrderStatsByPhoneAsync(
         Guid tenantId,
@@ -2705,6 +2752,7 @@ public class OrderDetailDto
     public string? ShippingSnapshotJson { get; set; }
     public string? PaymentSnapshotJson { get; set; }
     public List<OrderItemDto> Items { get; set; } = new();
+    public List<OrderCheckoutFieldSnapshotDto> CheckoutFieldSnapshots { get; set; } = new();
     // AF-35: Affiliate order details
     public bool IsAffiliateOrder { get; set; }
     public Guid? AffiliateId { get; set; }
@@ -2721,6 +2769,21 @@ public class OrderDetailDto
     public bool SupportsAdminOverride { get; set; } = true;
     public bool SupportsPaymentActions { get; set; } = true;
     public bool SupportsFulfillmentActions { get; set; } = true;
+}
+
+public class OrderCheckoutFieldSnapshotDto
+{
+    public Guid FieldId { get; set; }
+    public string FieldKind { get; set; } = string.Empty;
+    public string FieldType { get; set; } = string.Empty;
+    public string? SystemFieldKey { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public string? HelpText { get; set; }
+    public bool IsRequired { get; set; }
+    public int DisplayOrder { get; set; }
+    public int ConfigurationSchemaVersion { get; set; }
+    public string ConfigurationJson { get; set; } = "{}";
+    public string ValueJson { get; set; } = "null";
 }
 
 /// <summary>

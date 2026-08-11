@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
+import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import ResetDatabase from './ResetDatabase'
 import StorefrontSettings from './StorefrontSettings'
 import { useRTL } from '../hooks/useRTL'
@@ -13,7 +14,9 @@ import { StorefrontBreadcrumbs } from '../modules/storefront/informationArchitec
 
 export default function Settings() {
     const { t } = useTranslation()
+    const navigate = useNavigate()
     const { dir, isRTL } = useRTL()
+    const { confirm } = useConfirmDialog()
     const { showSuccess, showError, showWarning } = useToast()
     const user = useAuthStore((state) => state.user)
     const [searchParams] = useSearchParams()
@@ -658,11 +661,25 @@ export default function Settings() {
         <div dir={dir} className="space-y-6">
             {activeTab === 'storefront' ? (
                 <StorefrontBreadcrumbs
-                    onNavigate={() => (
-                        !storefrontStatusDirty || window.confirm(
-                            isRTL ? 'لديك تغييرات غير محفوظة. هل أنت متأكد من الخروج؟' : 'You have unsaved changes. Are you sure you want to exit?',
-                        )
-                    )}
+                    onNavigate={(path) => {
+                        if (!storefrontStatusDirty) return true
+
+                        void confirm({
+                            confirmLabel: t('common.discard', 'Discard'),
+                            description: t(
+                                'storefront.unsavedNavigationConfirm',
+                                'You have unsaved changes. Are you sure you want to exit?',
+                            ),
+                            title: t('common.unsavedChanges', 'Unsaved changes'),
+                            variant: 'warning',
+                        }).then((confirmed) => {
+                            if (confirmed && path) {
+                                navigate(path)
+                            }
+                        })
+
+                        return false
+                    }}
                 />
             ) : null}
             <div className="flex items-center justify-between">

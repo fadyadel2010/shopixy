@@ -139,6 +139,11 @@ public class AdminOrderDetailsDto
     /// Order items.
     /// </summary>
     public List<AdminOrderItemDto> Items { get; set; } = new();
+
+    /// <summary>
+    /// Immutable checkout field definition/value snapshots captured at order creation.
+    /// </summary>
+    public List<AdminOrderCheckoutFieldSnapshotDto> CheckoutFieldSnapshots { get; set; } = new();
     
     /// <summary>
     /// Payment intents for this order.
@@ -221,6 +226,105 @@ public class AdminOrderDetailsDto
     /// Billing address details (if different from shipping).
     /// </summary>
     public AdminAddressDto? BillingAddress { get; set; }
+}
+
+public class AdminOrderCheckoutFieldSnapshotDto
+{
+    public Guid SnapshotId { get; set; }
+    public Guid FieldId { get; set; }
+    public string FieldKind { get; set; } = string.Empty;
+    public string FieldType { get; set; } = string.Empty;
+    public string? SystemFieldKey { get; set; }
+    public string Label { get; set; } = string.Empty;
+    public string? HelpText { get; set; }
+    public bool IsRequired { get; set; }
+    public bool IsVisible { get; set; }
+    public int DisplayOrder { get; set; }
+    public int ConfigurationSchemaVersion { get; set; }
+
+    public AdminOrderCheckoutFieldConfigurationPresentationDto Configuration { get; set; } = new();
+    public AdminOrderCheckoutFieldSubmittedValueDto SubmittedValue { get; set; } = new();
+
+    /// <summary>
+    /// Backward-compatible raw snapshot configuration. New admin clients should use Configuration.
+    /// </summary>
+    public string ConfigurationJson { get; set; } = "{}";
+
+    /// <summary>
+    /// Backward-compatible raw snapshot value. New admin clients should use SubmittedValue.
+    /// </summary>
+    public string ValueJson { get; set; } = "null";
+}
+
+public sealed class AdminOrderCheckoutFieldConfigurationPresentationDto
+{
+    public int SchemaVersion { get; set; }
+    public List<AdminOrderCheckoutFieldOptionDto> Options { get; set; } = new();
+    public AdminOrderCheckoutFieldUploadPolicyDto? UploadPolicy { get; set; }
+    public List<AdminOrderCheckoutFieldConditionalRuleDto> ConditionalRules { get; set; } = new();
+    public bool HasAdditionalConfiguration { get; set; }
+}
+
+public sealed class AdminOrderCheckoutFieldOptionDto
+{
+    public string Value { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+}
+
+public sealed class AdminOrderCheckoutFieldUploadPolicyDto
+{
+    public List<string> AllowedMimeTypes { get; set; } = new();
+    public long? MaxFileSize { get; set; }
+    public int? MaxFiles { get; set; }
+}
+
+public sealed class AdminOrderCheckoutFieldConditionalRuleDto
+{
+    public string RuleId { get; set; } = string.Empty;
+    public string ConditionMode { get; set; } = string.Empty;
+    public List<string> Actions { get; set; } = new();
+    public List<AdminOrderCheckoutFieldRuleConditionDto> Conditions { get; set; } = new();
+}
+
+public sealed class AdminOrderCheckoutFieldRuleConditionDto
+{
+    public Guid SourceFieldId { get; set; }
+    public string Operator { get; set; } = string.Empty;
+    public string? ComparisonValue { get; set; }
+}
+
+public sealed class AdminOrderCheckoutFieldSubmittedValueDto
+{
+    public string Kind { get; set; } = "EMPTY";
+    public string DisplayValue { get; set; } = "Not provided";
+    public string? TextValue { get; set; }
+    public decimal? NumberValue { get; set; }
+    public bool? BooleanValue { get; set; }
+    public string? DateValue { get; set; }
+    public string? OptionValue { get; set; }
+    public string? OptionLabel { get; set; }
+    public List<AdminOrderCheckoutAttachmentPresentationDto> Attachments { get; set; } = new();
+}
+
+public sealed class AdminOrderCheckoutAttachmentPresentationDto
+{
+    public Guid AttachmentId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string? MediaType { get; set; }
+    public DateTime? UploadedAtUtc { get; set; }
+    public DateTime? FinalizedAtUtc { get; set; }
+    public string? FinalETag { get; set; }
+    public string? FinalChecksumSha256 { get; set; }
+}
+
+public sealed class AdminOrderAttachmentDownloadDto
+{
+    public Guid AttachmentId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
 }
 
 /// <summary>

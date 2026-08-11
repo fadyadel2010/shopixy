@@ -2063,15 +2063,15 @@ namespace PointOfSale.Infrastructure.Migrations
                         {
                             t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_AllocatedAmount_Valid", "\"AllocatedAmount\" >= 0 AND \"AllocatedAmount\" <= \"ExpectedAmount\"");
 
-                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_Currency_NotBlank", "btrim(\"Currency\", E' \\t\\n\\r') <> ''");
+                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_Currency_NotBlank", "btrim(\"Currency\", ' 	\n\r') <> ''");
 
                             t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_ExpectedAmount_Positive", "\"ExpectedAmount\" > 0");
 
-                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_NormalizedPaymentReference_NotBlank", "btrim(\"NormalizedPaymentReference\", E' \\t\\n\\r') <> ''");
+                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_NormalizedPaymentReference_NotBlank", "btrim(\"NormalizedPaymentReference\", ' 	\n\r') <> ''");
 
-                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_PaymentReference_NotBlank", "btrim(\"PaymentReference\", E' \\t\\n\\r') <> ''");
+                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_PaymentReference_NotBlank", "btrim(\"PaymentReference\", ' 	\n\r') <> ''");
 
-                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_RailNamespace_NotBlank", "btrim(\"RailNamespace\", E' \\t\\n\\r') <> ''");
+                            t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_RailNamespace_NotBlank", "btrim(\"RailNamespace\", ' 	\n\r') <> ''");
 
                             t.HasCheckConstraint("CK_AffiliatePayoutTransferEvidence_Tenant_Required", "\"StoreTenantId\" <> '00000000-0000-0000-0000-000000000000'");
                         });
@@ -2959,6 +2959,234 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.HasIndex("ParentCategoryId");
 
                     b.ToTable("Categories");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("AttachedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("CartId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CheckoutFieldDefinitionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("ExpectedSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FinalChecksumSha256")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("FinalETag")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("FinalObjectKey")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("FinalizedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("MediaType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<string>("ObjectKey")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("OnlineCustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("OriginalFileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("OwnerType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StagedETag")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UploadedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FinalObjectKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CheckoutAttachments_FinalObjectKey");
+
+                    b.HasIndex("ObjectKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CheckoutAttachments_ObjectKey");
+
+                    b.HasIndex("Status", "ExpiresAtUtc")
+                        .HasDatabaseName("IX_CheckoutAttachments_Status_ExpiresAtUtc");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .HasDatabaseName("IX_CheckoutAttachments_Tenant_OrderId");
+
+                    b.HasIndex("TenantId", "CartId", "OwnerId", "CheckoutFieldDefinitionId")
+                        .HasDatabaseName("IX_CheckoutAttachments_Tenant_Cart_Owner_Field");
+
+                    b.ToTable("CheckoutAttachments", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutFieldDefinition", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConfigurationJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<int>("ConfigurationSchemaVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("FieldKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("FieldType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("HelpText")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsRequired")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("SystemFieldKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId")
+                        .HasDatabaseName("IX_CheckoutFieldDefinitions_TenantId");
+
+                    b.HasIndex("TenantId", "DisplayOrder")
+                        .HasDatabaseName("IX_CheckoutFieldDefinitions_TenantId_DisplayOrder");
+
+                    b.HasIndex("TenantId", "IsDeleted")
+                        .HasDatabaseName("IX_CheckoutFieldDefinitions_TenantId_IsDeleted");
+
+                    b.HasIndex("TenantId", "SystemFieldKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_CheckoutFieldDefinitions_Tenant_SystemFieldKey_Active")
+                        .HasFilter("\"IsDeleted\" = false AND \"SystemFieldKey\" IS NOT NULL");
+
+                    b.ToTable("CheckoutFieldDefinitions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CheckoutFieldDefinitions_RequiredEnabled", "NOT \"IsRequired\" OR \"IsEnabled\"");
+
+                            t.HasCheckConstraint("CK_CheckoutFieldDefinitions_SystemFieldKey", "(\"FieldKind\" = 'System' AND \"SystemFieldKey\" IS NOT NULL AND LENGTH(TRIM(\"SystemFieldKey\")) > 0) OR (\"FieldKind\" = 'Custom' AND \"SystemFieldKey\" IS NULL)");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutSession", b =>
@@ -8830,6 +9058,305 @@ namespace PointOfSale.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.Domain", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CanonicalPolicy")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("CertificateOperationFencingToken")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime?>("DeletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DomainHistoryJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("[]")
+                        .HasColumnName("DomainHistoryJson");
+
+                    b.Property<int>("DomainType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("HostName")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("LifecycleState")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("NormalizedHostName")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)");
+
+                    b.Property<Guid?>("RedirectTargetDomainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RedirectType")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SslActivatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("SslCertificateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("VerificationMethod")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VerificationToken")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime?>("VerificationTokenIssuedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("VerifiedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<uint>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_Domains_TenantId_Id");
+
+                    b.HasIndex("DomainType")
+                        .HasDatabaseName("IX_Domains_DomainType");
+
+                    b.HasIndex("IsDeleted")
+                        .HasDatabaseName("IX_Domains_IsDeleted")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("LifecycleState")
+                        .HasDatabaseName("IX_Domains_LifecycleState");
+
+                    b.HasIndex("NormalizedHostName")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_Domains_NormalizedHostName");
+
+                    b.HasIndex("RedirectTargetDomainId")
+                        .HasDatabaseName("IX_Domains_RedirectTargetDomainId");
+
+                    b.HasIndex("SslCertificateId")
+                        .HasDatabaseName("IX_Domains_SslCertificateId");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_Domains_TenantId_Primary")
+                        .HasFilter("\"DomainType\" = 0 AND \"LifecycleState\" = 5 AND \"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "LifecycleState")
+                        .HasDatabaseName("IX_Domains_TenantId_LifecycleState");
+
+                    b.HasIndex("TenantId", "RedirectTargetDomainId");
+
+                    b.ToTable("Domains", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Domains_CertificateOperationFencingToken_NonNegative", "\"CertificateOperationFencingToken\" >= 0");
+
+                            t.HasCheckConstraint("CK_Domains_HostName_Length", "\"HostName\" IS NOT NULL AND LENGTH(TRIM(\"HostName\")) >= 1 AND LENGTH(\"HostName\") <= 253");
+
+                            t.HasCheckConstraint("CK_Domains_Primary_Host_Ssl", "(\"LifecycleState\" <> 5 AND \"LifecycleState\" <> 4) OR \"SslCertificateId\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_Domains_Primary_Type_State_Equivalent", "((\"DomainType\" = 0 AND \"LifecycleState\" = 5) OR (\"DomainType\" <> 0 AND \"LifecycleState\" <> 5))");
+
+                            t.HasCheckConstraint("CK_Domains_Redirect_Cascade", "((\"DomainType\" = 2 AND \"RedirectTargetDomainId\" IS NOT NULL AND \"RedirectTargetDomainId\" <> \"Id\" AND \"RedirectType\" <> 0) OR (\"DomainType\" <> 2 AND \"RedirectTargetDomainId\" IS NULL AND \"RedirectType\" = 0))");
+
+                            t.HasCheckConstraint("CK_Domains_System_NoTenant", "(\"DomainType\" NOT IN (5, 6)) OR \"TenantId\" IS NOT NULL");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.DomainAuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("ActorType")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("ActorUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AfterSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("BeforeSnapshotJson")
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("DomainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IpAddress")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("TimestampUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("TraceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("UserAgent")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Action")
+                        .HasDatabaseName("IX_DomainAuditEntries_Action");
+
+                    b.HasIndex("DomainId")
+                        .HasDatabaseName("IX_DomainAuditEntries_DomainId");
+
+                    b.HasIndex("TimestampUtc")
+                        .HasDatabaseName("IX_DomainAuditEntries_TimestampUtc");
+
+                    b.HasIndex("TraceId")
+                        .HasDatabaseName("IX_DomainAuditEntries_TraceId");
+
+                    b.HasIndex("TenantId", "TimestampUtc")
+                        .HasDatabaseName("IX_DomainAuditEntries_TenantId_TimestampUtc");
+
+                    b.ToTable("DomainAuditEntries", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.DomainVerification", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Attempt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<DateTime>("AttemptedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("DomainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int?>("LatencyMilliseconds")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Method")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolvedValue")
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("ResolverEndpoint")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Token")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int?>("Ttl")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("VerifiedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AttemptedAtUtc")
+                        .HasDatabaseName("IX_DomainVerifications_AttemptedAtUtc");
+
+                    b.HasIndex("DomainId")
+                        .HasDatabaseName("IX_DomainVerifications_DomainId");
+
+                    b.HasIndex("IsDeleted")
+                        .HasDatabaseName("IX_DomainVerifications_IsDeleted")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("DomainId", "Attempt")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_DomainVerifications_DomainId_Attempt")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("DomainId", "Method")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_DomainVerifications_DomainId_Method")
+                        .HasFilter("\"Status\" = 0");
+
+                    b.HasIndex("DomainId", "Status")
+                        .HasDatabaseName("IX_DomainVerifications_DomainId_Status");
+
+                    b.ToTable("DomainVerifications", (string)null);
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.EmailVerificationToken", b =>
                 {
                     b.Property<Guid>("Id")
@@ -12763,6 +13290,107 @@ namespace PointOfSale.Infrastructure.Migrations
                             t.HasCheckConstraint("CK_Orders_CustomerAuthorityBoundary", "(\"CustomerId\" IS NULL OR \"OnlineCustomerId\" IS NULL) AND (\"Source\" <> 0 OR \"CustomerId\" IS NULL)");
 
                             t.HasCheckConstraint("CK_Orders_FinancialPostingStatus_Valid", "\"FinancialPostingStatus\" IN (0, 1, 2, 3) AND (\"FinancialPostingStatus\" <> 1 OR \"FinancialPostingPendingAtUtc\" IS NOT NULL) AND (\"FinancialPostingStatus\" <> 2 OR (\"FinancialPostedAtUtc\" IS NOT NULL AND \"FinancialPostingJournalId\" IS NOT NULL)) AND (\"FinancialPostingStatus\" <> 3 OR \"FinancialPostingFailureReason\" IS NOT NULL)");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.OrderCheckoutFieldSnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CheckoutFieldDefinitionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConfigurationJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("{}");
+
+                    b.Property<int>("ConfigurationSchemaVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("DisplayOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("FieldKind")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<string>("FieldType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("HelpText")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsRequired")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("OrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SystemFieldKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ValueJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("null");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrderId")
+                        .HasDatabaseName("IX_OrderCheckoutFieldSnapshots_OrderId");
+
+                    b.HasIndex("TenantId", "OrderId")
+                        .HasDatabaseName("IX_OrderCheckoutFieldSnapshots_TenantId_OrderId");
+
+                    b.HasIndex("TenantId", "OrderId", "CheckoutFieldDefinitionId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_OrderCheckoutFieldSnapshots_Tenant_Order_FieldDefinition_Active")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "OrderId", "DisplayOrder")
+                        .HasDatabaseName("IX_OrderCheckoutFieldSnapshots_TenantId_OrderId_DisplayOrder");
+
+                    b.ToTable("OrderCheckoutFieldSnapshots", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_OrderCheckoutFieldSnapshots_ConfigurationSchemaVersion_Positive", "\"ConfigurationSchemaVersion\" > 0");
+
+                            t.HasCheckConstraint("CK_OrderCheckoutFieldSnapshots_SystemFieldKey", "(\"FieldKind\" = 'System' AND \"SystemFieldKey\" IS NOT NULL AND LENGTH(TRIM(\"SystemFieldKey\")) > 0) OR (\"FieldKind\" = 'Custom' AND \"SystemFieldKey\" IS NULL)");
                         });
                 });
 
@@ -18230,6 +18858,502 @@ namespace PointOfSale.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ActivatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("ActivationFailedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ActivationFailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ActivationFailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("ActivationStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AuthorizationReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("BackoffReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("CaddyStorageReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("CertificateArn")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ChallengeReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("DeployedGeneration")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("DomainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EdgeCertificateReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("EdgeCluster")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<DateTime?>("EdgeDeactivationAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EdgeIdentifier")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ExpectedThumbprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("ExpiredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("FailureReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("FencingToken")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<string>("Fingerprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Generation")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<string>("IdempotencyKey")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("IssuedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Issuer")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("LastEdgeProbeAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastFailureAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastObservedThumbprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid?>("LastOperationAuditId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("LastRenewalAttemptUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LockOwnerReference")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("NextRenewalUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("NormalizedHostName")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)");
+
+                    b.Property<DateTime?>("NotAfterUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("NotBeforeUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("ObservedGeneration")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OperationPhase")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OrderReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProviderAccountReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ProviderEnvironment")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ProviderErrorClass")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("ProviderImplementation")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ProviderRequestReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ProviderRevocationReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("RenewalAttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<bool>("RenewalEligible")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<Guid?>("ReplacementCertificateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("RetryAfterUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Retryable")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("RevokedByActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("RevokedByActorType")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<string>("SafeFailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("SerialNumber")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("SignatureAlgorithm")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("SslCertificateHistoryJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("[]");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Subject")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("SubjectAlternativeNamesJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("jsonb")
+                        .HasDefaultValue("[]");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Thumbprint")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "DomainId", "Id")
+                        .HasName("AK_SslCertificates_TenantId_DomainId_Id");
+
+                    b.HasIndex("DomainId")
+                        .HasDatabaseName("IX_SslCertificates_DomainId");
+
+                    b.HasIndex("IsDeleted")
+                        .HasDatabaseName("IX_SslCertificates_IsDeleted")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("Status")
+                        .HasDatabaseName("IX_SslCertificates_Status");
+
+                    b.HasIndex("NextRenewalUtc", "Status")
+                        .HasDatabaseName("IX_SslCertificates_NextRenewalUtc_Status")
+                        .HasFilter("\"NextRenewalUtc\" IS NOT NULL AND \"IsDeleted\" = false");
+
+                    b.HasIndex("NotAfterUtc", "Status")
+                        .HasDatabaseName("IX_SslCertificates_NotAfterUtc_Status")
+                        .HasFilter("\"NotAfterUtc\" IS NOT NULL AND \"IsDeleted\" = false");
+
+                    b.HasIndex("RetryAfterUtc", "Status")
+                        .HasDatabaseName("IX_SslCertificates_RetryAfterUtc_Status")
+                        .HasFilter("\"RetryAfterUtc\" IS NOT NULL AND \"IsDeleted\" = false");
+
+                    b.HasIndex("Status", "OperationPhase")
+                        .HasDatabaseName("IX_SslCertificates_Status_OperationPhase");
+
+                    b.HasIndex("TenantId", "DomainId")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SslCertificates_TenantId_DomainId_Active")
+                        .HasFilter("\"IsDeleted\" = false AND \"Status\" = 1");
+
+                    b.HasIndex("TenantId", "DomainId", "Generation")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SslCertificates_TenantId_DomainId_ActiveActivatingGeneration")
+                        .HasFilter("\"IsDeleted\" = false AND \"Status\" IN (1, 8)");
+
+                    b.HasIndex("TenantId", "DomainId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SslCertificates_TenantId_DomainId_IdempotencyKey")
+                        .HasFilter("\"IsDeleted\" = false AND \"IdempotencyKey\" IS NOT NULL");
+
+                    b.HasIndex("TenantId", "DomainId", "IsDeleted")
+                        .HasDatabaseName("IX_SslCertificates_TenantId_DomainId_IsDeleted");
+
+                    b.HasIndex("TenantId", "DomainId", "OperationPhase")
+                        .HasDatabaseName("IX_SslCertificates_TenantId_DomainId_OperationPhase")
+                        .HasFilter("\"IsDeleted\" = false AND \"OperationPhase\" <> 0");
+
+                    b.HasIndex("TenantId", "DomainId", "ReplacementCertificateId");
+
+                    b.HasIndex("TenantId", "NormalizedHostName", "Status")
+                        .HasDatabaseName("IX_SslCertificates_TenantId_NormalizedHostName_Status");
+
+                    b.ToTable("SslCertificates", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SslCertificates_Activation_ExpectedThumbprint", "\"Status\" <> 8 OR \"ExpectedThumbprint\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_SslCertificates_Expired_Metadata", "\"Status\" <> 2 OR \"ExpiredAtUtc\" IS NOT NULL OR \"NotAfterUtc\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_SslCertificates_Failed_Metadata", "\"Status\" <> 4 OR \"FailureCode\" IS NOT NULL OR \"SafeFailureReason\" IS NOT NULL OR \"FailureReason\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_SslCertificates_Generation_Positive", "\"Generation\" >= 1");
+
+                            t.HasCheckConstraint("CK_SslCertificates_HostName_Length", "\"NormalizedHostName\" IS NOT NULL AND LENGTH(TRIM(\"NormalizedHostName\")) >= 1 AND LENGTH(\"NormalizedHostName\") <= 253");
+
+                            t.HasCheckConstraint("CK_SslCertificates_Revoked_Metadata", "\"Status\" <> 3 OR \"RevokedAtUtc\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_SslCertificates_Status_Canonical", "\"Status\" IN (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificateOperation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(0);
+
+                    b.Property<Guid?>("CertificateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<Guid>("DomainId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("EdgeCertificateReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<long>("FencingToken")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(0L);
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("LeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LockOwnerReference")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("NormalizedHostName")
+                        .IsRequired()
+                        .HasMaxLength(253)
+                        .HasColumnType("character varying(253)");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("OperationType")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Phase")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProviderRequestReference")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("RequestHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("RetryAfterUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("Retryable")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.Property<string>("SafeFailureReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LeaseExpiresAtUtc", "Status")
+                        .HasDatabaseName("IX_SslCertificateOperations_LeaseExpiresAtUtc_Status")
+                        .HasFilter("\"LeaseExpiresAtUtc\" IS NOT NULL AND \"IsDeleted\" = false");
+
+                    b.HasIndex("RetryAfterUtc", "Status")
+                        .HasDatabaseName("IX_SslCertificateOperations_RetryAfterUtc_Status")
+                        .HasFilter("\"RetryAfterUtc\" IS NOT NULL AND \"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "DomainId", "CertificateId")
+                        .HasDatabaseName("IX_SslCertificateOperations_Tenant_Domain_Certificate")
+                        .HasFilter("\"IsDeleted\" = false AND \"CertificateId\" IS NOT NULL");
+
+                    b.HasIndex("TenantId", "DomainId", "FencingToken")
+                        .HasDatabaseName("IX_SslCertificateOperations_Tenant_Domain_FencingToken")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "DomainId", "OperationType")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SslCertificateOperations_Tenant_Domain_Type_InProgress")
+                        .HasFilter("\"IsDeleted\" = false AND \"Status\" IN (0, 1)");
+
+                    b.HasIndex("TenantId", "DomainId", "OperationType", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("UQ_SslCertificateOperations_Tenant_Domain_Type_IdempotencyKey")
+                        .HasFilter("\"IsDeleted\" = false");
+
+                    b.ToTable("SslCertificateOperations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SslCertificateOperations_Fencing_NonNegative", "\"FencingToken\" >= 0");
+
+                            t.HasCheckConstraint("CK_SslCertificateOperations_HostName_Length", "\"NormalizedHostName\" IS NOT NULL AND LENGTH(TRIM(\"NormalizedHostName\")) >= 1 AND LENGTH(\"NormalizedHostName\") <= 253");
+
+                            t.HasCheckConstraint("CK_SslCertificateOperations_IdempotencyKey_NotBlank", "\"IdempotencyKey\" IS NOT NULL AND LENGTH(TRIM(\"IdempotencyKey\")) >= 1");
+                        });
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.StockMovement", b =>
                 {
                     b.Property<Guid>("Id")
@@ -21060,6 +22184,28 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("ParentCategory");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutAttachment", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OrderId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Order");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutFieldDefinition", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Tenant", "Tenant")
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Tenant");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.CheckoutSession", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Tenant", "Tenant")
@@ -21553,6 +22699,49 @@ namespace PointOfSale.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Snapshot");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Domain", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_Domains_TenantId");
+
+                    b.HasOne("PointOfSale.Core.Entities.Domain", "RedirectTargetDomain")
+                        .WithMany("RedirectSources")
+                        .HasForeignKey("TenantId", "RedirectTargetDomainId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_Domains_RedirectTargetDomainId");
+
+                    b.Navigation("RedirectTargetDomain");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.DomainAuditEntry", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
+                        .WithMany("AuditEntries")
+                        .HasForeignKey("DomainId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_DomainAuditEntries_DomainId");
+
+                    b.Navigation("Domain");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.DomainVerification", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
+                        .WithMany("Verifications")
+                        .HasForeignKey("DomainId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_DomainVerifications_DomainId");
+
+                    b.Navigation("Domain");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.EmailVerificationToken", b =>
@@ -22294,6 +23483,18 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Warehouse");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.OrderCheckoutFieldSnapshot", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Order", "Order")
+                        .WithMany("CheckoutFieldSnapshots")
+                        .HasForeignKey("TenantId", "OrderId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Order");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.OrderItem", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Order", "Order")
@@ -22917,6 +24118,50 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("ShippingMethod");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificate", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
+                        .WithMany("SslCertificates")
+                        .HasForeignKey("TenantId", "DomainId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_SslCertificates_DomainId");
+
+                    b.HasOne("PointOfSale.Core.Entities.SslCertificate", "ReplacementCertificate")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "DomainId", "ReplacementCertificateId")
+                        .HasPrincipalKey("TenantId", "DomainId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_SslCertificates_ReplacementCertificateId");
+
+                    b.Navigation("Domain");
+
+                    b.Navigation("ReplacementCertificate");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificateOperation", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
+                        .WithMany("SslCertificateOperations")
+                        .HasForeignKey("TenantId", "DomainId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_SslCertificateOperations_DomainId");
+
+                    b.HasOne("PointOfSale.Core.Entities.SslCertificate", "Certificate")
+                        .WithMany("Operations")
+                        .HasForeignKey("TenantId", "DomainId", "CertificateId")
+                        .HasPrincipalKey("TenantId", "DomainId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_SslCertificateOperations_CertificateId");
+
+                    b.Navigation("Certificate");
+
+                    b.Navigation("Domain");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.StockMovement", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Product", "Product")
@@ -23458,6 +24703,19 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Lines");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.Domain", b =>
+                {
+                    b.Navigation("AuditEntries");
+
+                    b.Navigation("RedirectSources");
+
+                    b.Navigation("SslCertificateOperations");
+
+                    b.Navigation("SslCertificates");
+
+                    b.Navigation("Verifications");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.ExpenseCategory", b =>
                 {
                     b.Navigation("Expenses");
@@ -23487,6 +24745,8 @@ namespace PointOfSale.Infrastructure.Migrations
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Order", b =>
                 {
+                    b.Navigation("CheckoutFieldSnapshots");
+
                     b.Navigation("Items");
 
                     b.Navigation("Refunds");
@@ -23559,6 +24819,11 @@ namespace PointOfSale.Infrastructure.Migrations
             modelBuilder.Entity("PointOfSale.Core.Entities.ServiceReview", b =>
                 {
                     b.Navigation("MarketingEvidence");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificate", b =>
+                {
+                    b.Navigation("Operations");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.StockTransfer", b =>

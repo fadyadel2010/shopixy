@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
@@ -29,17 +31,20 @@ namespace PointOfSale.API.Controllers;
 public class StorefrontPaymentMethodsController : ControllerBase
 {
     private readonly IPaymentMethodReadRepository _paymentMethodReadRepository;
+    private readonly ApplicationDbContext _dbContext;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly TenantContext _tenantContext;
     private readonly ILogger<StorefrontPaymentMethodsController> _logger;
 
     public StorefrontPaymentMethodsController(
         IPaymentMethodReadRepository paymentMethodReadRepository,
+        ApplicationDbContext dbContext,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         TenantContext tenantContext,
         ILogger<StorefrontPaymentMethodsController> logger)
     {
         _paymentMethodReadRepository = paymentMethodReadRepository;
+        _dbContext = dbContext;
         _reliabilityTelemetry = reliabilityTelemetry;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -57,7 +62,7 @@ public class StorefrontPaymentMethodsController : ControllerBase
     /// ❌ NO secrets are returned
     /// </summary>
     [HttpGet]
-    [ProducesResponseType(typeof(List<StorefrontPaymentMethodDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(StorefrontPaymentMethodsResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetPaymentMethods(CancellationToken cancellationToken)
@@ -75,6 +80,11 @@ public class StorefrontPaymentMethodsController : ControllerBase
             var documents = await _paymentMethodReadRepository.GetEnabledPaymentMethodsAsync(
                 tenantId,
                 cancellationToken);
+
+            var configuredCount = await _dbContext.TenantPaymentMethods
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .CountAsync(method => method.TenantId == tenantId && !method.IsDeleted, cancellationToken);
 
             var invalidDocuments = documents
                 .Where(document => document.IsConfigurationValid == false)
@@ -105,7 +115,15 @@ public class StorefrontPaymentMethodsController : ControllerBase
                 "GetPaymentMethods | TenantId: {TenantId} | Count: {Count} | TraceId: {TraceId}",
                 tenantId, response.Count, traceId);
 
-            return Ok(response);
+            return Ok(new StorefrontPaymentMethodsResponseDto
+            {
+                Status = response.Count > 0 ? "AVAILABLE" : "EMPTY",
+                PaymentMethods = response,
+                TotalCount = response.Count,
+                ConfiguredCount = configuredCount,
+                EnabledCount = documents.Count,
+                AvailableCount = response.Count
+            });
         }
         catch (Exception ex)
         {
@@ -175,4 +193,14 @@ public class StorefrontPaymentMethodDto
     public int SortOrder { get; set; }
     public bool IsAvailable { get; set; } = true;
     public string? UnavailableReasonCode { get; set; }
+}
+
+public class StorefrontPaymentMethodsResponseDto
+{
+    public string Status { get; set; } = "AVAILABLE";
+    public List<StorefrontPaymentMethodDto> PaymentMethods { get; set; } = new();
+    public int TotalCount { get; set; }
+    public int ConfiguredCount { get; set; }
+    public int EnabledCount { get; set; }
+    public int AvailableCount { get; set; }
 }

@@ -95,6 +95,12 @@ public class CheckoutRequestDto
     public string? AffiliateReferralCode { get; set; }
 
     /// <summary>
+    /// Merchant-defined checkout field values. The server resolves field definitions from tenant context.
+    /// Values are validated authoritatively and persisted as immutable order snapshots.
+    /// </summary>
+    public List<CheckoutCustomFieldValueDto>? CustomFields { get; set; }
+
+    /// <summary>
     /// Validates the checkout request.
     /// </summary>
     public (string? ErrorCode, string? ErrorMessage) Validate()
@@ -248,29 +254,21 @@ public class AddressDto
     /// <summary>
     /// Recipient name.
     /// </summary>
-    [Required(AllowEmptyStrings = false)]
-    [StringLength(120)]
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
     /// Phone number.
     /// </summary>
-    [Required(AllowEmptyStrings = false)]
-    [StringLength(32)]
     public string Phone { get; set; } = string.Empty;
 
     /// <summary>
     /// Email address.
     /// </summary>
-    [EmailAddress]
-    [StringLength(256)]
     public string? Email { get; set; }
 
     /// <summary>
     /// Street address line 1.
     /// </summary>
-    [Required(AllowEmptyStrings = false)]
-    [StringLength(200)]
     public string Street { get; set; } = string.Empty;
 
     /// <summary>
@@ -282,8 +280,6 @@ public class AddressDto
     /// <summary>
     /// City.
     /// </summary>
-    [Required(AllowEmptyStrings = false)]
-    [StringLength(120)]
     public string City { get; set; } = string.Empty;
 
     /// <summary>
@@ -328,26 +324,6 @@ public class AddressDto
     /// </summary>
     public (string? ErrorCode, string? ErrorMessage) Validate()
     {
-        if (string.IsNullOrWhiteSpace(Name))
-        {
-            return ("INVALID_ADDRESS", "Recipient name is required");
-        }
-
-        if (string.IsNullOrWhiteSpace(Phone))
-        {
-            return ("INVALID_ADDRESS", "Phone number is required");
-        }
-
-        if (string.IsNullOrWhiteSpace(Street))
-        {
-            return ("INVALID_ADDRESS", "Street address is required");
-        }
-
-        if (string.IsNullOrWhiteSpace(City))
-        {
-            return ("INVALID_ADDRESS", "City is required");
-        }
-
         if (string.IsNullOrWhiteSpace(Country))
         {
             return ("INVALID_ADDRESS", "Country is required");
@@ -406,6 +382,53 @@ public class GeographicAddressCandidateDto
 
         return (null, null);
     }
+}
+
+public class CheckoutCustomFieldValueDto
+{
+    public Guid FieldId { get; set; }
+
+    [StringLength(5000)]
+    public string? Value { get; set; }
+
+    public List<Guid>? AttachmentIds { get; set; }
+}
+
+public sealed class CheckoutAttachmentUploadLeaseRequestDto
+{
+    public Guid CartId { get; set; }
+    public Guid FieldId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long FileSizeBytes { get; set; }
+}
+
+public sealed class CheckoutAttachmentUploadLeaseResponseDto
+{
+    public Guid AttachmentId { get; set; }
+    public string UploadUrl { get; set; } = string.Empty;
+    public string UploadMethod { get; set; } = "PUT";
+    public string ContentType { get; set; } = string.Empty;
+    public DateTime ExpiresAtUtc { get; set; }
+    public DateTime AttachmentExpiresAtUtc { get; set; }
+}
+
+public sealed class CheckoutAttachmentConfirmRequestDto
+{
+    public Guid CartId { get; set; }
+    public Guid FieldId { get; set; }
+    public Guid AttachmentId { get; set; }
+}
+
+public sealed class CheckoutAttachmentDto
+{
+    public Guid AttachmentId { get; set; }
+    public Guid FieldId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long SizeBytes { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public DateTime? UploadedAtUtc { get; set; }
 }
 
 public class CheckoutExpectedPricingDto

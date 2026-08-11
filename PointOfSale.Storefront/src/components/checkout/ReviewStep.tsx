@@ -26,6 +26,8 @@ import {
     selectPaymentSelectionStatus,
     selectStalePaymentSelection,
     selectSelectedPaymentMethod,
+    selectCheckoutFields,
+    selectCustomFieldValues,
 } from '@/store/checkoutStore';
 import {
     useCartStore,
@@ -34,6 +36,7 @@ import {
     selectAppliedCoupon,
 } from '@/store';
 import { formatMoney } from '@/utils';
+import { getCustomCheckoutFieldReviewItems } from '@/utils/checkoutFieldRules';
 
 // Constants
 const STALE_SELECTION_FALLBACK = 'Your previous selection is no longer available';
@@ -296,6 +299,9 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
     const staleShippingSelection = useCheckoutStore(selectStaleShippingSelection);
     const paymentSelectionStatus = useCheckoutStore(selectPaymentSelectionStatus);
     const stalePaymentSelection = useCheckoutStore(selectStalePaymentSelection);
+    const checkoutFields = useCheckoutStore(selectCheckoutFields);
+    const customFieldValues = useCheckoutStore(selectCustomFieldValues);
+    const customFieldReviewItems = getCustomCheckoutFieldReviewItems(checkoutFields, address, customFieldValues);
 
     const currency = useCartStore(selectCartCurrency);
     const itemCount = useCartStore(selectCartItemCount);
@@ -381,6 +387,23 @@ export const ReviewStep: React.FC<ReviewStepProps> = ({ onPlaceOrder, onBack }) 
                     )}
                 </div>
             </SummarySection>
+
+            {customFieldReviewItems.length > 0 && (
+                <SummarySection
+                    title="Additional details"
+                    onEdit={() => handleEdit('shipping')}
+                    editDisabled={isSubmitting}
+                >
+                    <dl className="space-y-3 text-sm">
+                        {customFieldReviewItems.map((item) => (
+                            <div key={item.id}>
+                                <dt className="text-xs font-medium text-muted">{item.label}</dt>
+                                <dd className="mt-1 whitespace-pre-wrap text-text">{item.value}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                </SummarySection>
+            )}
 
             {/* Shipping Method Summary */}
             <SummarySection

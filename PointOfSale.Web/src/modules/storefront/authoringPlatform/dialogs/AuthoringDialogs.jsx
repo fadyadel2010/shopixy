@@ -21,6 +21,11 @@ export function AuthoringDialog({
     const descriptionId = useId()
     const panelRef = useRef(null)
     const previousFocusRef = useRef(null)
+    const onCloseRef = useRef(onClose)
+
+    useEffect(() => {
+        onCloseRef.current = onClose
+    }, [onClose])
 
     useEffect(() => {
         if (!open) return undefined
@@ -31,9 +36,9 @@ export function AuthoringDialog({
         }, 0)
 
         const handleKeyDown = (event) => {
-            if (event.key === 'Escape' && onClose) {
+            if (event.key === 'Escape' && onCloseRef.current) {
                 event.preventDefault()
-                onClose()
+                onCloseRef.current()
                 return
             }
             if (event.key !== 'Tab') return
@@ -60,7 +65,7 @@ export function AuthoringDialog({
             document.removeEventListener('keydown', handleKeyDown)
             previousFocusRef.current?.focus?.()
         }
-    }, [initialFocusRef, onClose, open])
+    }, [initialFocusRef, open])
 
     if (!open) return null
 

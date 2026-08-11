@@ -1,4 +1,4 @@
-﻿namespace PointOfSale.Tests;
+namespace PointOfSale.Tests;
 
 public class UnitTest1
 {

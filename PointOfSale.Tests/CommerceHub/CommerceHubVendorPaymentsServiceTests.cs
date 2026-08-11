@@ -621,6 +621,32 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
             return Task.CompletedTask;
         }
 
+        public Task<R2ObjectMetadata> CopyObjectAsync(
+            string sourceObjectKey,
+            string destinationObjectKey,
+            string contentType,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new R2ObjectMetadata(contentType, 1024, null, TestETag));
+        }
+
+        public Task<R2DownloadObjectResult> DownloadObjectAsync(
+            string objectKey,
+            string? ifMatchETag,
+            CancellationToken cancellationToken = default)
+        {
+            if (ifMatchETag != null && ifMatchETag != TestETag)
+            {
+                throw new InvalidOperationException($"ETag mismatch: expected '{TestETag}', got '{ifMatchETag}'");
+            }
+
+            return Task.FromResult(new R2DownloadObjectResult(
+                new MemoryStream(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }),
+                "image/jpeg",
+                4,
+                TestETag));
+        }
+
         public Task<R2UploadResult> UploadFileAsync(
             Stream file,
             string contentType,

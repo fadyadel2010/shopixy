@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import ProductAffiliateSettingsCard from './ProductAffiliateSettingsCard'
+import { ConfirmDialogProvider } from '../common/confirm/ConfirmDialogProvider'
 
 const getSettingsMock = vi.hoisted(() => vi.fn())
 const getCategoryTreeMock = vi.hoisted(() => vi.fn())
@@ -52,9 +53,11 @@ const categoryTree = [
 
 function renderCard() {
     return render(
-        <MemoryRouter>
-            <ProductAffiliateSettingsCard productId="product-1" />
-        </MemoryRouter>
+        <ConfirmDialogProvider>
+            <MemoryRouter>
+                <ProductAffiliateSettingsCard productId="product-1" />
+            </MemoryRouter>
+        </ConfirmDialogProvider>
     )
 }
 
@@ -188,8 +191,6 @@ describe('product affiliate settings edit authority', () => {
             templateType: 'ClassicV1',
             affiliateCategoryId: 'category-a',
         })
-        const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(false)
-
         renderCard()
 
         const rateInput = await screen.findByLabelText(/commission rate/i)
@@ -198,9 +199,8 @@ describe('product affiliate settings edit authority', () => {
 
         fireEvent.popState(window)
 
-        expect(confirmMock).toHaveBeenCalledWith('You have unsaved affiliate configuration changes. Leave without saving?')
-
-        confirmMock.mockRestore()
+        expect(await screen.findByText('Unsaved affiliate changes')).toBeInTheDocument()
+        expect(screen.getByText('You have unsaved affiliate configuration changes. Leave without saving?')).toBeInTheDocument()
     })
 
     it('does not render editable controls when backend settings authority is unavailable', async () => {

@@ -219,6 +219,7 @@ export const CheckoutPage: React.FC = () => {
     const submitCheckout = useCheckoutStore((state) => state.submitCheckout);
     const fetchShippingMethods = useCheckoutStore((state) => state.fetchShippingMethods);
     const fetchPaymentMethods = useCheckoutStore((state) => state.fetchPaymentMethods);
+    const fetchCheckoutFields = useCheckoutStore((state) => state.fetchCheckoutFields);
     const refreshPricingPreview = useCheckoutStore((state) => state.refreshPricingPreview);
     const retryAutosaveCheckoutSession = useCheckoutStore((state) => state.retryAutosaveCheckoutSession);
     const resetCheckoutError = useCheckoutStore((state) => state.resetError);
@@ -228,10 +229,11 @@ export const CheckoutPage: React.FC = () => {
     useEffect(() => {
         // Always fetch cart when entering checkout to ensure freshness
         fetchCart();
+        fetchCheckoutFields();
         fetchShippingMethods();
         // Fetch payment methods from POS Admin (Phase 10.4.D2)
         fetchPaymentMethods();
-    }, [fetchCart, fetchShippingMethods, fetchPaymentMethods]);
+    }, [fetchCart, fetchCheckoutFields, fetchShippingMethods, fetchPaymentMethods]);
 
     useEffect(() => {
         if (!cart?.cartId) {

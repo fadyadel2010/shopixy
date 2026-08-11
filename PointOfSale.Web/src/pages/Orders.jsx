@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, Package, RefreshCw, X } from 'lucide-react'
-import { getAdminOrderDetails, getAdminOrders, updateAdminOrderStatus } from '../services/adminOrdersApi'
+import { downloadAdminOrderCheckoutAttachment, getAdminOrderDetails, getAdminOrders, updateAdminOrderStatus } from '../services/adminOrdersApi'
+import { presentOrderCheckoutFields } from './orderCheckoutFieldPresentation'
 import { useAuthStore } from '../store/authStore'
 import {
     requireBackendAffiliateAttributionAuthority,
@@ -178,10 +180,15 @@ function SectionCard({ title, children }) {
 }
 
 function OrderDetailsPanel({ order, isLoading, isError, error, onClose, onRetry, onStatusChange, isStatusUpdating, statusUpdateError }) {
+    const { t } = useTranslation()
     const [statusCandidate, setStatusCandidate] = useState(order?.status || '')
     const [statusReason, setStatusReason] = useState('')
 
     const canSubmitStatusCandidate = Boolean(order?.rowVersion && statusCandidate)
+    const checkoutFieldItems = presentOrderCheckoutFields(order?.checkoutFieldSnapshots)
+    const downloadAttachmentMutation = useMutation({
+        mutationFn: ({ attachmentId, fileName }) => downloadAdminOrderCheckoutAttachment(order.orderId, attachmentId, fileName),
+    })
 
     function handleSubmitStatus(event) {
         event.preventDefault()
@@ -540,6 +547,42 @@ function OrderDetailsPanel({ order, isLoading, isError, error, onClose, onRetry,
                                     ) : null}
                                 </div>
                             </SectionCard>
+
+                            {checkoutFieldItems.length > 0 ? (
+                                <SectionCard title="Checkout details">
+                                    <dl className="space-y-4">
+                                        {checkoutFieldItems.map((item) => (
+                                            <div key={item.fieldId}>
+                                                <dt className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</dt>
+                                                <dd className="mt-2 whitespace-pre-wrap text-sm font-medium text-slate-900">{item.displayValue}</dd>
+                                                {item.attachments.map((attachment) => (
+                                                    <div key={attachment.attachmentId} className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                                                        <span>
+                                                            {attachment.contentType || 'File'}{attachment.sizeBytes > 0 ? `, ${attachment.sizeBytes} bytes` : ''}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => downloadAttachmentMutation.mutate({
+                                                                attachmentId: attachment.attachmentId,
+                                                                fileName: attachment.fileName,
+                                                            })}
+                                                            disabled={downloadAttachmentMutation.isPending}
+                                                            className="rounded-full border border-slate-200 px-3 py-1 font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {t('checkoutFields.viewDownload', 'View / Download')}
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                                {downloadAttachmentMutation.isError ? (
+                                                    <p className="mt-2 text-xs text-rose-600">
+                                                        {downloadAttachmentMutation.error?.message || t('checkoutFields.downloadFailed', 'Unable to download this attachment right now.')}
+                                                    </p>
+                                                ) : null}
+                                            </div>
+                                        ))}
+                                    </dl>
+                                </SectionCard>
+                            ) : null}
                         </div>
                     ) : null}
                 </div>

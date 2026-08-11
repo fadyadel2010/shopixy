@@ -165,6 +165,8 @@ public class ApplicationDbContext : DbContext
     // E-commerce Orders
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<CheckoutAttachment> CheckoutAttachments => Set<CheckoutAttachment>();
+    public DbSet<OrderCheckoutFieldSnapshot> OrderCheckoutFieldSnapshots => Set<OrderCheckoutFieldSnapshot>();
     public DbSet<OrderRefund> OrderRefunds => Set<OrderRefund>();
     public DbSet<OrderRefundLine> OrderRefundLines => Set<OrderRefundLine>();
     public DbSet<OrderRequestIdempotency> OrderRequestIdempotencyRecords => Set<OrderRequestIdempotency>();
@@ -300,6 +302,13 @@ public class ApplicationDbContext : DbContext
     // Store Config Audit Trail (Phase P3 - Hardening)
     public DbSet<StoreConfigAuditEntry> StoreConfigAuditEntries => Set<StoreConfigAuditEntry>();
     
+    // Custom Domains Persistence (DOMAIN-2C)
+    public DbSet<Domain> Domains => Set<Domain>();
+    public DbSet<DomainVerification> DomainVerifications => Set<DomainVerification>();
+    public DbSet<SslCertificate> SslCertificates => Set<SslCertificate>();
+    public DbSet<SslCertificateOperation> SslCertificateOperations => Set<SslCertificateOperation>();
+    public DbSet<DomainAuditEntry> DomainAuditEntries => Set<DomainAuditEntry>();
+
     // Theme Presets (Phase 9.3)
     public DbSet<ThemePreset> ThemePresets => Set<ThemePreset>();
 
@@ -364,6 +373,9 @@ public class ApplicationDbContext : DbContext
     // Captures partially completed checkout attempts for recovery
     // NOT an Order — never touches inventory or payments
     public DbSet<CheckoutSession> CheckoutSessions => Set<CheckoutSession>();
+
+    // POS-managed dynamic checkout field configuration.
+    public DbSet<CheckoutFieldDefinition> CheckoutFieldDefinitions => Set<CheckoutFieldDefinition>();
 
     // Tenant-scoped storefront phone blocking profiles (Phase 1)
     public DbSet<PhoneRiskProfile> PhoneRiskProfiles => Set<PhoneRiskProfile>();
@@ -939,6 +951,41 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<TenantPaymentMethod>().HasQueryFilter(e =>
             e.TenantId == CurrentTenantId);
 
+        modelBuilder.Entity<CheckoutFieldDefinition>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<CheckoutAttachment>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        // -------------------------------------------------------------------------
+        // Custom Domains (DOMAIN-2C)
+        // CPD-5: Domain implements ITenantOwned with System/Development exemption.
+        // System and Development domain types are platform-global — exempt from
+        // tenant filtering. All other types are filtered by TenantId AND IsDeleted.
+        // -------------------------------------------------------------------------
+        modelBuilder.Entity<Domain>().HasQueryFilter(e =>
+            !e.IsDeleted &&
+            (e.DomainType == DomainType.System ||
+             e.DomainType == DomainType.Development ||
+             e.TenantId == CurrentTenantId));
+
+        // DomainVerification: cascade soft-delete through parent Domain
+        modelBuilder.Entity<DomainVerification>().HasQueryFilter(e =>
+            !e.IsDeleted &&
+            !e.Domain.IsDeleted &&
+            e.Domain.TenantId == CurrentTenantId);
+
+        // SslCertificate: explicit tenant isolation plus soft-delete.
+        modelBuilder.Entity<SslCertificate>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        // SslCertificateOperation: durable idempotency/lease records are tenant-scoped.
+        modelBuilder.Entity<SslCertificateOperation>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        // DomainAuditEntry: CPD-4 tenant isolation (ITenantOwned)
+        modelBuilder.Entity<DomainAuditEntry>().HasQueryFilter(e =>
+            e.TenantId == CurrentTenantId);
+
         // Storefront phone blocking profiles (Phase 1)
         modelBuilder.Entity<PhoneRiskProfile>().HasQueryFilter(e =>
             e.TenantId == CurrentTenantId);
@@ -1254,6 +1301,8 @@ public class ApplicationDbContext : DbContext
             !e.PosCart.IsDeleted &&
             e.PosCart.TenantId == CurrentTenantId);
         modelBuilder.Entity<OrderItem>().HasQueryFilter(e => !e.IsDeleted);
+        modelBuilder.Entity<OrderCheckoutFieldSnapshot>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
         
         // -------------------------------------------------------------------------
         // Bank unique index (needs to be per-tenant now)
@@ -3437,6 +3486,7 @@ public class ApplicationDbContext : DbContext
         GuardCarrierAdministrationAuditAuthority();
         GuardGeographicBusinessSnapshotPersistence();
         GuardStorefrontOrderHistoricalSnapshotImmutability();
+        GuardOrderCheckoutFieldSnapshotImmutability();
         IncrementMarketplaceProjectionMutationVersions();
         ResetCommerceHubProjectionMarkersForBusinessMutations();
         IncrementRowVersionForNonPostgreSQL();
@@ -3870,6 +3920,24 @@ public class ApplicationDbContext : DbContext
             nameof(OrderRefundLine.OrderId),
             nameof(OrderRefundLine.OrderItemId),
             nameof(OrderRefundLine.Amount));
+    }
+
+    private void GuardOrderCheckoutFieldSnapshotImmutability()
+    {
+        foreach (var entry in ChangeTracker.Entries<OrderCheckoutFieldSnapshot>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException(
+                    $"{nameof(OrderCheckoutFieldSnapshot)} records are immutable order-history evidence and cannot be deleted after creation.");
+            }
+
+            if (entry.State == EntityState.Modified)
+            {
+                throw new InvalidOperationException(
+                    $"{nameof(OrderCheckoutFieldSnapshot)} records are immutable order-history evidence and cannot be updated after creation.");
+            }
+        }
     }
 
     private static void ValidateShipmentGeographicSnapshot(Shipment shipment)
@@ -6450,6 +6518,7 @@ public class ApplicationDbContext : DbContext
         GuardAppendOnlyEvidence<CommerceHubMerchantLifecycleLedgerEntry>();
         GuardAppendOnlyEvidence<CommerceHubRecoveryOperationLedgerEntry>();
         GuardAppendOnlyEvidence<CommerceHubCustomerIdentityEvent>();
+        GuardAppendOnlyEvidence<DomainAuditEntry>();
     }
 
     private void GuardTreasuryCashAuthority()

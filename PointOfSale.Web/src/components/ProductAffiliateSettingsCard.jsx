@@ -3,6 +3,7 @@ import adminProductAffiliateApi from '../services/adminProductAffiliateApi'
 import { useAuthStore } from '../store/authStore'
 import { useAffiliateReadiness } from '../hooks/useAffiliateReadiness'
 import AffiliateReadinessWarning from './AffiliateReadinessWarning'
+import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 
 /**
  * AF-4C + AF-30A + AF-30B: Affiliate Settings Card — embedded in ProductForm.
@@ -26,6 +27,7 @@ import AffiliateReadinessWarning from './AffiliateReadinessWarning'
  */
 export default function ProductAffiliateSettingsCard({ productId }) {
     const user = useAuthStore(state => state.user)
+    const { confirm } = useConfirmDialog()
     const [loading, setLoading] = useState(true)
     const [saving, setSaving] = useState(false)
     const [error, setError] = useState('')
@@ -270,14 +272,32 @@ export default function ProductAffiliateSettingsCard({ productId }) {
 
         window.history.pushState({ affiliateUnsavedChangesGuard: true }, '', window.location.href)
 
+        let confirmationPending = false
+
         const handlePopState = () => {
-            if (window.confirm(unsavedChangesMessage)) {
-                window.removeEventListener('popstate', handlePopState)
-                setTimeout(() => window.history.back(), 0)
+            if (confirmationPending) {
+                window.history.pushState({ affiliateUnsavedChangesGuard: true }, '', window.location.href)
                 return
             }
 
-            window.history.pushState({ affiliateUnsavedChangesGuard: true }, '', window.location.href)
+            confirmationPending = true
+            void confirm({
+                cancelLabel: 'Stay',
+                confirmLabel: 'Leave',
+                description: unsavedChangesMessage,
+                title: 'Unsaved affiliate changes',
+                variant: 'warning',
+            }).then((confirmed) => {
+                confirmationPending = false
+
+                if (confirmed) {
+                    window.removeEventListener('popstate', handlePopState)
+                    setTimeout(() => window.history.back(), 0)
+                    return
+                }
+
+                window.history.pushState({ affiliateUnsavedChangesGuard: true }, '', window.location.href)
+            })
         }
 
         window.addEventListener('popstate', handlePopState)
@@ -285,7 +305,7 @@ export default function ProductAffiliateSettingsCard({ productId }) {
         return () => {
             window.removeEventListener('popstate', handlePopState)
         }
-    }, [isDirty, unsavedChangesMessage])
+    }, [confirm, isDirty, unsavedChangesMessage])
 
     // ─── Reconcile: always re-fetch after any mutation ────────────
     const reconcileAfterMutation = async () => {

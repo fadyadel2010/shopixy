@@ -122,3 +122,23 @@ export async function updateAdminOrderStatus(orderId, { newStatus, reason, rowVe
         throw new Error(getSafeApiErrorMessage(error, 'Unable to update order status right now.'))
     }
 }
+
+export async function downloadAdminOrderCheckoutAttachment(orderId, attachmentId, fileName) {
+    try {
+        const response = await api.get(`/admin/orders/${orderId}/checkout-attachments/${attachmentId}/download`, {
+            headers: buildTenantHeaders(),
+            responseType: 'blob',
+        })
+
+        const blobUrl = window.URL.createObjectURL(response.data)
+        const link = document.createElement('a')
+        link.href = blobUrl
+        link.download = fileName || 'checkout-attachment'
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.URL.revokeObjectURL(blobUrl)
+    } catch (error) {
+        throw new Error(getSafeApiErrorMessage(error, 'Unable to download this attachment right now.'))
+    }
+}

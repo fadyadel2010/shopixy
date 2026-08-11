@@ -43,4 +43,12 @@ public interface IShippingMethodService
         string correlationId,
         Guid? warehouseId = null,
         CancellationToken cancellationToken = default);
+
+    Task<ShippingMethodsListResponseDto> GetShippingMethodsAvailabilityAsync(
+        Guid tenantId,
+        decimal cartSubtotal,
+        decimal totalWeight,
+        string correlationId,
+        Guid? warehouseId = null,
+        CancellationToken cancellationToken = default);
 }

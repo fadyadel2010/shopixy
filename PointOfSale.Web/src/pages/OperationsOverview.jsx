@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { useAuthStore } from '../store/authStore'
+import { StorefrontBreadcrumbs } from '../modules/storefront/informationArchitecture'
 
 /**
  * OperationsOverview
@@ -57,25 +57,10 @@ const OPERATIONS_TILES = [
 
 export default function OperationsOverview() {
     const { t } = useTranslation()
-    const { user } = useAuthStore()
-
-    const breadcrumbs = [
-        { label: t('storefront.operations', 'Operations') },
-        { label: t('storefront.operationsOverview', 'Overview') },
-    ]
 
     return (
         <div className="operations-overview container mx-auto py-10">
-            <nav aria-label="Breadcrumb" className="mb-6">
-                <ol className="flex items-center space-x-2 text-sm text-gray-500">
-                    {breadcrumbs.map((crumb, index) => (
-                        <li key={index} className="flex items-center">
-                            {index > 0 && <span className="mx-2" aria-hidden="true">/</span>}
-                            <span>{crumb.label}</span>
-                        </li>
-                    ))}
-                </ol>
-            </nav>
+            <StorefrontBreadcrumbs className="mb-6" />
 
             <h1 className="text-2xl font-bold mb-6">{t('storefront.operationsOverview', 'Overview')}</h1>
 

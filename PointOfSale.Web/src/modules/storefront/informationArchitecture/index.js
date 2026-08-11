@@ -2,6 +2,7 @@ export { StorefrontAdminFrame } from './StorefrontAdminFrame'
 export { StorefrontBreadcrumbs } from './StorefrontBreadcrumbs'
 export {
     OPERATIONS_NAVIGATION,
+    SCREENS,
     STOREFRONT_NAVIGATION,
     STOREFRONT_PRODUCT_NAVIGATION,
     STOREFRONT_ROUTE_COMPATIBILITY,

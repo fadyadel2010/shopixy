@@ -52,7 +52,7 @@ interface AuthState {
 
     // Actions
     login: (request: LoginRequest) => Promise<void>;
-    register: (request: RegisterRequest) => Promise<void>;
+    register: (request: RegisterRequest) => Promise<OnlineCustomer>;
     logout: () => Promise<void>;
     checkAuth: (options?: { silent?: boolean; reason?: string }) => Promise<void>;
     refreshAuth: (options?: { source?: string }) => Promise<AuthRefreshResult>;
@@ -219,7 +219,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
         try {
             const response = await authApi.register(request);
-            get().setAuthenticated(response);
+            resetAuthRecoveryState();
+            clearAuthenticatedContext();
+            set({
+                status: 'unauthenticated',
+                customer: null,
+                error: null,
+                isLoading: false,
+            });
+            return response.customer;
         } catch (error) {
             const authError = authApi.normalizeAuthError(error);
             clearAuthenticatedContext();

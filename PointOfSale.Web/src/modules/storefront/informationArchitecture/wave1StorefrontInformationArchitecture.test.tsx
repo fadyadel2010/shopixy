@@ -15,7 +15,7 @@
  * Source of truth: ONLINE_STORE_CANONICAL_BLUEPRINT.md §8.1 (Canonical Storefront Hierarchy)
  */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
@@ -25,6 +25,7 @@ import Sidebar from '../../../components/Sidebar'
 import { useAuthStore } from '../../../store/authStore'
 import {
     OPERATIONS_NAVIGATION,
+    STOREFRONT_PRODUCT_NAVIGATION,
     resolveStorefrontScreen,
 } from './storefrontInformationArchitecture'
 
@@ -112,6 +113,24 @@ const collectLeafNodes = (tree) => {
     return leaves
 }
 
+const canonicalStorefrontModules = [
+    ['Storefront Dashboard', 'StorefrontDashboard.jsx', '/storefront', 'overview'],
+    ['Storefront Settings', 'StorefrontSettings.jsx', '/storefront/status', 'status'],
+    ['Orders', 'Orders.jsx', '/ecommerce/orders', 'orders'],
+    ['Coupons', 'Coupons.jsx', '/ecommerce/coupons', 'coupons'],
+    ['Promotions', 'Promotions.jsx', '/ecommerce/promotions', 'promotions'],
+    ['Smart Offers', 'SmartOffersPage.jsx', '/ecommerce/smart-offers', 'smart-offers'],
+    ['Commerce AI', 'CommerceAI.jsx', '/ecommerce/commerce-ai', 'commerce-ai'],
+    ['Payment Methods', 'PaymentMethods.jsx', '/ecommerce/payment-methods', 'payment-methods'],
+    ['Manual Payments', 'ManualPayments.jsx', '/ecommerce/manual-payments', 'manual-payments'],
+    ['Shipping Methods', 'ShippingMethods.jsx', '/ecommerce/shipping-methods', 'shipping-methods'],
+    ['Abandoned Checkouts', 'AbandonedCheckouts.jsx', '/ecommerce/abandoned-checkouts', 'abandoned-checkouts'],
+    ['Abandoned Cart Recovery', 'AbandonedCartRecovery.jsx', '/ecommerce/cart-recovery', 'cart-recovery'],
+    ['Blocked Phones', 'BlockedPhones.jsx', '/ecommerce/blocked-phones', 'blocked-phones'],
+    ['Analytics Settings', 'AnalyticsSettings.jsx', '/settings/analytics', 'analytics-settings'],
+    ['Storefront Analytics', 'StorefrontAnalyticsDashboard.jsx', '/analytics/storefront', 'storefront-analytics'],
+]
+
 describe('Wave 1 — Storefront Information Architecture Migration', () => {
     beforeEach(async () => {
         window.localStorage.clear()
@@ -139,7 +158,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
                 'operations-marketing',
                 undefined, // Commerce AI (leaf, no key)
                 undefined, // Auth Providers (leaf, no key)
-                'operations-settings',
+                'operations-analytics',
             ]
 
             const actualKeys = rootNode.children.map((c) => c.key)
@@ -152,6 +171,28 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             const overview = findNodeByPath(rootNode, '/ecommerce/overview')
             expect(overview).toBeDefined()
             expect(overview.screenIds).toContain('operations-overview')
+        })
+
+        it('registers every canonical E-Commerce / Storefront module through component, route, navigation, screen, and Owner/Admin permission', () => {
+            const app = readFileSync(resolve(process.cwd(), 'src/App.jsx'), 'utf8')
+
+            for (const [label, componentFile, routePath, screenId] of canonicalStorefrontModules) {
+                const componentPath = resolve(process.cwd(), 'src/pages', componentFile)
+                const routePathForApp = routePath.replace(/^\//, '')
+                const routePathWithoutQuery = routePathForApp.split('?')[0]
+                const navigationNode = findNodeByPath(STOREFRONT_PRODUCT_NAVIGATION, routePath)
+                const screen = resolveStorefrontScreen(routePath)
+
+                expect(existsSync(componentPath), `${label} component file exists`).toBe(true)
+                expect(app, `${label} component is imported/registered`).toContain(componentFile.replace(/\.jsx$/, ''))
+                expect(app, `${label} route is registered`).toContain(`path="${routePathWithoutQuery}"`)
+                expect(navigationNode, `${label} navigation node exists`).toBeDefined()
+                expect(navigationNode.fallbackLabel, `${label} navigation label`).toBe(label)
+                expect(screen?.id, `${label} route resolves to screen`).toBe(screenId)
+                expect(navigationNode.capability, `${label} is not CommerceHub capability-filtered`).toBeUndefined()
+            }
+
+            expect(app).toContain("roles={['Owner', 'Admin']}")
         })
     })
 
@@ -207,9 +248,10 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(findNodeByPath(rootNode, '/analytics/attribution/roi')).toBeDefined()
         })
 
-        it('places Analytics Providers under Settings (not Marketing)', () => {
-            const settingsGroup = findNodeByKey(rootNode, 'operations-settings')
-            expect(settingsGroup).toBeDefined()
+        it('places Storefront Analytics and Analytics Settings under Analytics (not Marketing)', () => {
+            const analyticsGroup = findNodeByKey(rootNode, 'operations-analytics')
+            expect(analyticsGroup).toBeDefined()
+            expect(findNodeByPath(rootNode, '/analytics/storefront')).toBeDefined()
             expect(findNodeByPath(rootNode, '/settings/analytics')).toBeDefined()
             const analyticsNode = findNodeByPath(rootNode, '/settings/analytics')
             expect(analyticsNode.screenIds).toContain('analytics-settings')
@@ -229,10 +271,10 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(duplicates).toHaveLength(0)
         })
 
-        it('does not duplicate Analytics Providers under both Marketing and Settings', () => {
+        it('does not duplicate Analytics Settings under both Marketing and Analytics', () => {
             // The canonical blueprint §11.8 says "Each screen has exactly one
             // canonical sidebar entry point." The /settings/analytics route
-            // must appear only under Settings.
+            // must appear only under Analytics.
             const allPaths = collectAllPaths(rootNode)
             const analyticsSettingsCount = allPaths.filter((p) => p === '/settings/analytics').length
             expect(analyticsSettingsCount).toBe(1)
@@ -240,7 +282,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
     })
 
     describe('4. Correct ordering', () => {
-        it('follows the canonical top-level order: Overview, Orders, Payments, Catalog, Shipping, Marketing, Commerce AI, Auth Providers, Settings', () => {
+        it('follows the canonical top-level order: Overview, Orders, Payments, Catalog, Shipping, Marketing, Commerce AI, Auth Providers, Analytics', () => {
             const labels = rootNode.children.map((c) => c.fallbackLabel)
             expect(labels).toEqual([
                 'Overview',
@@ -251,15 +293,15 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
                 'Marketing',
                 'Commerce AI',
                 'Auth Providers',
-                'Settings',
+                'Analytics',
             ])
         })
 
-        it('orders Orders children canonically: All Orders, Abandoned Checkouts, Abandoned Cart Recovery, Blocked Phones, Online Customers, WhatsApp Settings', () => {
+        it('orders Orders children canonically: Orders, Abandoned Checkouts, Abandoned Cart Recovery, Blocked Phones, Online Customers, WhatsApp Settings', () => {
             const ordersGroup = findNodeByKey(rootNode, 'operations-orders')
             const labels = ordersGroup.children.map((c) => c.fallbackLabel)
             expect(labels).toEqual([
-                'All Orders',
+                'Orders',
                 'Abandoned Checkouts',
                 'Abandoned Cart Recovery',
                 'Blocked Phones',
@@ -320,6 +362,12 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(screen.id).toBe('analytics-settings')
         })
 
+        it('resolves /analytics/storefront to the storefront-analytics screen', () => {
+            const screen = resolveStorefrontScreen('/analytics/storefront')
+            expect(screen).toBeDefined()
+            expect(screen.id).toBe('storefront-analytics')
+        })
+
         it('resolves /ecommerce/overview with query params', () => {
             const screen = resolveStorefrontScreen('/ecommerce/overview?tab=settings')
             expect(screen).toBeDefined()
@@ -333,14 +381,14 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
     })
 
     describe('6. Correct breadcrumbs', () => {
-        it('renders breadcrumbs for /ecommerce/orders as Storefront > Operations > Orders > All Orders', () => {
+        it('renders breadcrumbs for /ecommerce/orders as Storefront > Operations > Orders > Orders', () => {
             const screen = resolveStorefrontScreen('/ecommerce/orders')
             expect(screen).toBeDefined()
             expect(screen.breadcrumbs).toHaveLength(4)
             expect(screen.breadcrumbs[0].fallbackLabel).toBe('Storefront')
             expect(screen.breadcrumbs[1].fallbackLabel).toBe('Operations')
             expect(screen.breadcrumbs[2].fallbackLabel).toBe('Orders')
-            expect(screen.breadcrumbs[3].fallbackLabel).toBe('All Orders')
+            expect(screen.breadcrumbs[3].fallbackLabel).toBe('Orders')
         })
 
         it('renders breadcrumbs for /analytics/attribution/costs with Marketing Attribution parent', () => {
@@ -356,14 +404,14 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(screen.breadcrumbs[5].fallbackLabel).toBe('Campaign Costs')
         })
 
-        it('renders breadcrumbs for /settings/analytics as Storefront > Operations > Settings > Analytics Providers', () => {
+        it('renders breadcrumbs for /settings/analytics as Storefront > Operations > Analytics > Analytics Settings', () => {
             const screen = resolveStorefrontScreen('/settings/analytics')
             expect(screen).toBeDefined()
             expect(screen.breadcrumbs).toHaveLength(4)
             expect(screen.breadcrumbs[0].fallbackLabel).toBe('Storefront')
             expect(screen.breadcrumbs[1].fallbackLabel).toBe('Operations')
-            expect(screen.breadcrumbs[2].fallbackLabel).toBe('Settings')
-            expect(screen.breadcrumbs[3].fallbackLabel).toBe('Analytics Providers')
+            expect(screen.breadcrumbs[2].fallbackLabel).toBe('Analytics')
+            expect(screen.breadcrumbs[3].fallbackLabel).toBe('Analytics Settings')
         })
 
         it('renders breadcrumbs for /ecommerce/overview as Storefront > Overview', () => {
@@ -395,12 +443,14 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
 
             // Navigate to /ecommerce/orders — this should auto-expand parent groups
             // The Orders group button should be rendered (expanded by the auto-expand effect)
-            const ordersGroup = await screen.findByRole('button', { name: 'Orders' })
+            const ordersGroup = (await screen.findAllByRole('button', { name: 'Orders' }))
+                .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-operations-orders')
             expect(ordersGroup).toBeInTheDocument()
 
-            // All Orders link should be visible within the expanded Orders group
-            const allOrdersLink = await screen.findByRole('link', { name: 'All Orders' })
-            expect(allOrdersLink).toBeInTheDocument()
+            // Orders link should be visible within the expanded Orders group
+            const ordersLink = (await screen.findAllByRole('link', { name: 'Orders' }))
+                .find((el) => el.getAttribute('href') === '/ecommerce/orders')
+            expect(ordersLink).toBeInTheDocument()
         })
 
         it('renders canonical sub-group buttons after expanding the Storefront section', async () => {
@@ -435,12 +485,14 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             const operationsGroup = await screen.findByRole('button', { name: 'Operations' })
             fireEvent.click(operationsGroup)
 
-            const ordersGroup = await screen.findByRole('button', { name: 'Orders' })
+            const ordersGroup = (await screen.findAllByRole('button', { name: 'Orders' }))
+                .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-operations-orders')
             fireEvent.click(ordersGroup)
 
             // Clicking should toggle — now children should be visible
-            const allOrdersLink = await screen.findByRole('link', { name: 'All Orders' })
-            expect(allOrdersLink).toBeInTheDocument()
+            const ordersLink = (await screen.findAllByRole('link', { name: 'Orders' }))
+                .find((el) => el.getAttribute('href') === '/ecommerce/orders')
+            expect(ordersLink).toBeInTheDocument()
 
             // Clicking again should hide children
             fireEvent.click(ordersGroup)
@@ -485,9 +537,40 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(app).toContain('path="ecommerce/overview"')
             expect(app).toContain('OperationsOverview')
         })
+
+        it('App.jsx registers the dedicated Storefront Analytics route', () => {
+            const app = readFileSync(resolve(process.cwd(), 'src/App.jsx'), 'utf8')
+            expect(app).toContain('path="analytics/storefront"')
+            expect(app).toContain('StorefrontAnalyticsDashboard')
+        })
     })
 
-    describe('9. i18n keys for canonical Operations labels', () => {
+    describe('9. POS Admin permissions regression protection', () => {
+        it('renders canonical Storefront Operations screens for an Owner without CommerceHub vendor capabilities', async () => {
+            useAuthStore.setState({
+                user: { ...ownerUser, navigationCapabilities: [], vendorLifecycleAuthority: null },
+                isAuthenticated: true,
+                hasHydrated: true,
+            })
+
+            render(
+                <MemoryRouter initialEntries={['/ecommerce/orders']}>
+                    <Sidebar isOpen onClose={() => {}} />
+                </MemoryRouter>,
+            )
+
+            expect(await screen.findByRole('button', { name: 'Storefront' })).toBeInTheDocument()
+            expect(await screen.findByRole('button', { name: 'Operations' })).toBeInTheDocument()
+            const ordersLink = (await screen.findAllByRole('link', { name: 'Orders' }))
+                .find((el) => el.getAttribute('href') === '/ecommerce/orders')
+            expect(ordersLink).toHaveAttribute('href', '/ecommerce/orders')
+            expect(await screen.findByRole('link', { name: 'Payment Methods' })).toHaveAttribute('href', '/ecommerce/payment-methods')
+            expect(await screen.findByRole('link', { name: 'Coupons' })).toHaveAttribute('href', '/ecommerce/coupons')
+            expect(await screen.findByRole('link', { name: 'Storefront Analytics' })).toHaveAttribute('href', '/analytics/storefront')
+        })
+    })
+
+    describe('10. i18n keys for canonical Operations labels', () => {
         it('includes all canonical storefront.operations* keys', () => {
             const en = readFileSync(
                 resolve(process.cwd(), 'src/i18n/locales/en.json'),
@@ -501,6 +584,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(en).toContain('"operationsShipping": "Shipping"')
             expect(en).toContain('"operationsMarketing": "Marketing"')
             expect(en).toContain('"operationsMarketingAttribution": "Marketing Attribution"')
+            expect(en).toContain('"operationsAnalytics": "Analytics"')
             expect(en).toContain('"operationsSettings": "Settings"')
         })
 

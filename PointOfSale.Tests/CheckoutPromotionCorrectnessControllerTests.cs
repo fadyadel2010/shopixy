@@ -37,6 +37,7 @@ public sealed class CheckoutPromotionCorrectnessControllerTests
 
         var controller = new CheckoutController(
             checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -75,6 +76,7 @@ public sealed class CheckoutPromotionCorrectnessControllerTests
 
         var controller = new CheckoutController(
             checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -128,6 +130,7 @@ public sealed class CheckoutPromotionCorrectnessControllerTests
 
         var controller = new CheckoutController(
             checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext

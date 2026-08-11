@@ -17,6 +17,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using PointOfSale.Core.Events;
 using PointOfSale.API.DTOs.Cart;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.Controllers;
@@ -44,6 +45,45 @@ namespace PointOfSale.Tests.Security;
 
 public sealed class StorefrontProductionBlockerFixTests
 {
+    [Fact]
+    public async Task StorefrontRefreshTokenService_IssueToken_QueuesIssuedEventBeforeCommit()
+    {
+        var tenantId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        await using var dbContext = CreateInMemoryDbContext(tenantId);
+
+        dbContext.OnlineCustomers.Add(new OnlineCustomer
+        {
+            Id = customerId,
+            TenantId = tenantId,
+            Email = "checkout.customer@example.test",
+            NormalizedEmail = "checkout.customer@example.test",
+            Provider = AuthProvider.Local,
+            IsActive = true,
+            EmailVerified = true,
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var eventPublisher = new SessionEventPublisherBoundaryProbe(dbContext);
+        var service = CreateStorefrontRefreshTokenService(dbContext, eventPublisher);
+
+        var result = await service.IssueTokenAsync(
+            tenantId,
+            customerId,
+            "127.0.0.1",
+            "test-agent",
+            accessTokenJti: Guid.NewGuid().ToString("D"),
+            accessTokenExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
+            cancellationToken: CancellationToken.None);
+
+        Assert.True(result.Success, result.Error ?? result.Message);
+        Assert.True(eventPublisher.IssuedEventSawPendingToken);
+        Assert.NotNull(result.RawRefreshToken);
+        Assert.True(result.ExpiresAtUtc > DateTime.UtcNow);
+        Assert.Equal(customerId, (await dbContext.OnlineCustomerRefreshTokens.SingleAsync()).OnlineCustomerId);
+    }
+
     [Fact]
     public async Task CheckoutSessionController_Recovery_ReturnsStructuredCheckoutState()
     {
@@ -852,6 +892,7 @@ public sealed class StorefrontProductionBlockerFixTests
 
         return new CheckoutController(
             checkoutService,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -957,6 +998,66 @@ public sealed class StorefrontProductionBlockerFixTests
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
         return new ApplicationDbContext(options, tenantContext);
+    }
+
+    private static StorefrontRefreshTokenService CreateStorefrontRefreshTokenService(
+        ApplicationDbContext dbContext,
+        IEventPublisher eventPublisher)
+    {
+        var jwtBlacklist = new Mock<IStorefrontJwtBlacklist>();
+        var rateLimiter = new Mock<IStorefrontAuthRateLimiter>();
+        var phoneRiskProfileService = new Mock<IPhoneRiskProfileService>();
+
+        return new StorefrontRefreshTokenService(
+            dbContext,
+            Options.Create(new StorefrontJwtSettings
+            {
+                Secret = new string('s', 64),
+                Issuer = "StorefrontAPI",
+                Audience = "StorefrontClient",
+                AccessTokenExpirationMinutes = 30,
+                RefreshTokenExpirationDays = 7
+            }),
+            jwtBlacklist.Object,
+            rateLimiter.Object,
+            eventPublisher,
+            phoneRiskProfileService.Object,
+            NullLogger<StorefrontRefreshTokenService>.Instance);
+    }
+
+    private sealed class SessionEventPublisherBoundaryProbe(ApplicationDbContext dbContext) : IEventPublisher
+    {
+        public bool IssuedEventSawPendingToken { get; private set; }
+
+        public Task PublishAsync<T>(T @event, CancellationToken cancellationToken = default)
+            where T : IntegrationEvent
+        {
+            if (@event is OnlineCustomerRefreshTokenIssuedEvent issuedEvent)
+            {
+                IssuedEventSawPendingToken = dbContext.ChangeTracker
+                    .Entries<OnlineCustomerRefreshToken>()
+                    .Any(entry => entry.Entity.Id == issuedEvent.TokenId && entry.State == EntityState.Added);
+
+                if (!IssuedEventSawPendingToken)
+                {
+                    throw new InvalidOperationException("Refresh-token issued event was not queued before the token mutation was committed.");
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public async Task PublishBatchAsync<T>(IEnumerable<T> events, CancellationToken cancellationToken = default)
+            where T : IntegrationEvent
+        {
+            foreach (var @event in events)
+            {
+                await PublishAsync(@event, cancellationToken);
+            }
+        }
+
+        public Task PublishSensitiveAsync<T>(T @event, CancellationToken cancellationToken = default)
+            where T : IntegrationEvent, ISensitiveIntegrationEvent => PublishAsync(@event, cancellationToken);
     }
 
     private static IServiceProvider CreateTenantRequestServices(Guid tenantId)

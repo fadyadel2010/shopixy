@@ -184,6 +184,63 @@ public class AdminOrdersController : ControllerBase
         }
     }
 
+    [HttpGet("{orderId:guid}/checkout-attachments/{attachmentId:guid}/download")]
+    [Authorize(Roles = "Owner,Admin")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> DownloadCheckoutAttachment(
+        [FromRoute] Guid orderId,
+        [FromRoute] Guid attachmentId,
+        CancellationToken cancellationToken = default)
+    {
+        var traceId = GetTraceId();
+        var validation = ValidateTenantHeader(traceId);
+
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            var result = await _adminOrderService.OpenCheckoutAttachmentDownloadAsync(
+                validation.TenantId!.Value,
+                orderId,
+                attachmentId,
+                traceId,
+                cancellationToken);
+
+            return File(result.Content, result.ContentType, result.FileName, enableRangeProcessing: false);
+        }
+        catch (AdminOrderNotFoundException)
+        {
+            return NotFound(AdminApiErrorResponse.OrderNotFound(traceId));
+        }
+        catch (AdminOrderAttachmentNotFoundException ex)
+        {
+            return NotFound(new AdminApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (AdminOrderAttachmentNotDownloadableException ex)
+        {
+            return BadRequest(new AdminApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (AdminOrderAttachmentIntegrityException ex)
+        {
+            return Conflict(new AdminApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex,
+                "DownloadCheckoutAttachment | TenantId: {TenantId} | OrderId: {OrderId} | AttachmentId: {AttachmentId} | Error | TraceId: {TraceId}",
+                validation.TenantId,
+                orderId,
+                attachmentId,
+                traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new AdminApiErrorResponse("ATTACHMENT_DOWNLOAD_UNAVAILABLE", "Attachment download is temporarily unavailable.", traceId));
+        }
+    }
+
     /// <summary>
     /// Update order status (manual admin override).
     /// 

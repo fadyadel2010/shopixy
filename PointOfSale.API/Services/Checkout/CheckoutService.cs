@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.Data;
+using System.Globalization;
+using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -132,6 +134,7 @@ namespace PointOfSale.API.Services.Checkout;
 /// </summary>
 public class CheckoutService : ICheckoutService
 {
+    private const NumberStyles CanonicalCheckoutNumberStyles = NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint;
     private sealed class CheckoutContext
     {
         public bool PromotionCalculationFailed { get; set; }
@@ -245,6 +248,7 @@ public class CheckoutService : ICheckoutService
     private readonly ICheckoutExecutionLockManager _checkoutExecutionLockManager;
     private readonly ICheckoutRequestIdempotencyCoordinator _checkoutRequestIdempotencyCoordinator;
     private readonly ICheckoutSessionTokenService _checkoutSessionTokenService;
+    private readonly ICheckoutAttachmentService _checkoutAttachmentService;
     private readonly IDataProtector _dataProtector;
     private readonly IPaymentIntentClientSecretProtector _clientSecretProtector;
     private readonly IPaymobSensitiveArtifactProtector _paymobArtifactProtector;
@@ -315,6 +319,7 @@ public class CheckoutService : ICheckoutService
         IPaymentIntentClientSecretProtector clientSecretProtector,
         IPaymobSensitiveArtifactProtector paymobArtifactProtector,
         ICheckoutSessionTokenService checkoutSessionTokenService,
+        ICheckoutAttachmentService checkoutAttachmentService,
         IOptions<R2Options> r2Options,
         IOptions<PaymentLifecycleSettings> paymentLifecycleSettings,
         ILogger<CheckoutService> logger,
@@ -345,6 +350,7 @@ public class CheckoutService : ICheckoutService
         _checkoutExecutionLockManager = checkoutExecutionLockManager;
         _checkoutRequestIdempotencyCoordinator = checkoutRequestIdempotencyCoordinator;
         _checkoutSessionTokenService = checkoutSessionTokenService;
+        _checkoutAttachmentService = checkoutAttachmentService;
         _r2Options = r2Options.Value;
         _marketplaceEventOutbox = marketplaceEventOutbox;
         _phoneRiskProfileService = phoneRiskProfileService;
@@ -413,24 +419,6 @@ public class CheckoutService : ICheckoutService
             request.ShippingAddress == null,
             "CHECKOUT_SHIPPING_ADDRESS_REQUIRED",
             "Checkout requires a shipping address.");
-        
-        // Validate shipping address fields used in idempotency hashing
-        DomainGuard.Against(
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Name),
-            "CHECKOUT_SHIPPING_NAME_REQUIRED",
-            "Shipping address requires a recipient name.");
-        DomainGuard.Against(
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Phone),
-            "CHECKOUT_SHIPPING_PHONE_REQUIRED",
-            "Shipping address requires a phone number.");
-        DomainGuard.Against(
-            string.IsNullOrWhiteSpace(request.ShippingAddress.Street),
-            "CHECKOUT_SHIPPING_STREET_REQUIRED",
-            "Shipping address requires a street address.");
-        DomainGuard.Against(
-            string.IsNullOrWhiteSpace(request.ShippingAddress.City),
-            "CHECKOUT_SHIPPING_CITY_REQUIRED",
-            "Shipping address requires a city.");
         DomainGuard.Against(
             string.IsNullOrWhiteSpace(request.ShippingAddress.Country),
             "CHECKOUT_SHIPPING_COUNTRY_REQUIRED",
@@ -439,22 +427,6 @@ public class CheckoutService : ICheckoutService
         // Validate billing address if provided (used in idempotency hashing)
         if (request.BillingAddress != null)
         {
-            DomainGuard.Against(
-                string.IsNullOrWhiteSpace(request.BillingAddress.Name),
-                "CHECKOUT_BILLING_NAME_REQUIRED",
-                "Billing address requires a recipient name.");
-            DomainGuard.Against(
-                string.IsNullOrWhiteSpace(request.BillingAddress.Phone),
-                "CHECKOUT_BILLING_PHONE_REQUIRED",
-                "Billing address requires a phone number.");
-            DomainGuard.Against(
-                string.IsNullOrWhiteSpace(request.BillingAddress.Street),
-                "CHECKOUT_BILLING_STREET_REQUIRED",
-                "Billing address requires a street address.");
-            DomainGuard.Against(
-                string.IsNullOrWhiteSpace(request.BillingAddress.City),
-                "CHECKOUT_BILLING_CITY_REQUIRED",
-                "Billing address requires a city.");
             DomainGuard.Against(
                 string.IsNullOrWhiteSpace(request.BillingAddress.Country),
                 "CHECKOUT_BILLING_COUNTRY_REQUIRED",
@@ -792,6 +764,12 @@ public class CheckoutService : ICheckoutService
                         durableReplay.CheckoutId ?? checkoutId,
                         correlationId,
                         cancellationToken);
+                case CheckoutIdempotencyClaimStatus.PayloadConflict:
+                    throw new CheckoutIdempotencyConflictException(
+                        durableReplay.CheckoutId ?? checkoutId,
+                        durableReplay.ConflictMessage);
+                case CheckoutIdempotencyClaimStatus.InProgress:
+                    throw new CheckoutIdempotencyInProgressException(durableReplay.CheckoutId ?? checkoutId);
             }
 
             // Completed idempotent replays above do not create new authority.
@@ -801,6 +779,17 @@ public class CheckoutService : ICheckoutService
                 tenantId,
                 correlationId,
                 lockAuthorityRow: false,
+                cancellationToken);
+
+            activeStep = "CheckoutDynamicFieldValidation";
+            await ValidateCheckoutFieldDefinitionsAsync(
+                tenantId,
+                ownerId,
+                ownerType,
+                sessionId,
+                customerId,
+                request,
+                orderId: null,
                 cancellationToken);
 
             steps.Add(new CheckoutStepResult
@@ -2143,9 +2132,682 @@ public class CheckoutService : ICheckoutService
             ProofFileKey = normalizedProofFileKey?.Trim(),
             CustomerNotes = request.CustomerNotes?.Trim(),
             AffiliateReferralCode = request.AffiliateReferralCode?.Trim().ToUpperInvariant(),
+            CustomFields = BuildCustomFieldFingerprint(request.CustomFields),
             ShippingAddress = BuildAddressFingerprint(request.ShippingAddress),
             BillingAddress = request.BillingAddress == null ? null : BuildAddressFingerprint(request.BillingAddress)
         });
+    }
+
+    private async Task<CheckoutFieldSnapshotAdmission> ValidateCheckoutFieldDefinitionsAsync(
+        Guid tenantId,
+        string ownerId,
+        string ownerType,
+        string? sessionId,
+        Guid? customerId,
+        CheckoutRequestDto request,
+        Guid? orderId,
+        CancellationToken cancellationToken)
+    {
+        var definitions = await _dbContext.CheckoutFieldDefinitions
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(field => field.TenantId == tenantId && !field.IsDeleted)
+            .OrderBy(field => field.DisplayOrder)
+            .ThenBy(field => field.CreatedAt)
+            .ThenBy(field => field.Id)
+            .ToListAsync(cancellationToken);
+
+        if (definitions.Count == 0)
+        {
+            _logger.LogInformation(
+                "Checkout dynamic field configuration loaded | TenantId: {TenantId} | CartId: {CartId} | TotalCount: 0 | EnabledCount: 0 | Status: LEGACY_FALLBACK",
+                tenantId,
+                request.CartId);
+            ValidateLegacyRequiredAddressContract(request);
+            return CheckoutFieldSnapshotAdmission.Empty;
+        }
+
+        _logger.LogInformation(
+            "Checkout dynamic field configuration loaded | TenantId: {TenantId} | CartId: {CartId} | TotalCount: {TotalCount} | EnabledCount: {EnabledCount} | CustomCount: {CustomCount} | SystemCount: {SystemCount} | Status: AVAILABLE",
+            tenantId,
+            request.CartId,
+            definitions.Count,
+            definitions.Count(field => field.IsEnabled),
+            definitions.Count(field => field.FieldKind == CheckoutFieldKind.Custom),
+            definitions.Count(field => field.FieldKind == CheckoutFieldKind.System));
+
+        var customDefinitions = definitions
+            .Where(field => field.FieldKind == CheckoutFieldKind.Custom)
+            .ToDictionary(field => field.Id);
+        var submitted = new Dictionary<Guid, CheckoutCustomFieldValueDto>(customDefinitions.Count);
+
+        foreach (var item in request.CustomFields ?? new List<CheckoutCustomFieldValueDto>())
+        {
+            if (item.FieldId == Guid.Empty)
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    null,
+                    null,
+                    "CUSTOM_FIELD_ID_INVALID",
+                    "validation",
+                    "Custom checkout field identifiers must be non-empty GUIDs.");
+            }
+
+            if (!submitted.TryAdd(item.FieldId, item))
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    item.FieldId,
+                    null,
+                    "CUSTOM_FIELD_DUPLICATE",
+                    "validation",
+                    "Custom checkout fields must not be submitted more than once.");
+            }
+        }
+
+        try
+        {
+            CheckoutFieldRuleEngine.ValidateRules(
+                definitions,
+                (code, message) => LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    null,
+                    null,
+                    code,
+                    "rule_validation",
+                    message));
+        }
+        catch (JsonException)
+        {
+            throw LogDynamicFieldRejection(
+                tenantId,
+                request.CartId,
+                null,
+                null,
+                "CHECKOUT_FIELD_CONFIGURATION_INVALID",
+                "rule_configuration",
+                "Checkout field conditional rule configuration is invalid. Please contact the store.");
+        }
+
+        var submittedValues = BuildCheckoutFieldSubmittedValues(definitions, submitted, request);
+        var effectiveStates = CheckoutFieldRuleEngine.Evaluate(definitions, submittedValues);
+
+        foreach (var hiddenSystemField in definitions.Where(field =>
+                     field.FieldKind == CheckoutFieldKind.System &&
+                     !IsEffectivelyVisible(field, effectiveStates)))
+        {
+            if (!string.IsNullOrWhiteSpace(GetSystemFieldSubmittedValue(request, hiddenSystemField.SystemFieldKey)))
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    hiddenSystemField.Id,
+                    hiddenSystemField.FieldType,
+                    "SYSTEM_FIELD_HIDDEN",
+                    "validation",
+                    "Submitted checkout data contains a system field that is not applicable to this checkout.");
+            }
+        }
+
+        var visibleSystemFields = definitions
+            .Where(field => field.FieldKind == CheckoutFieldKind.System && IsEffectivelyVisible(field, effectiveStates))
+            .ToDictionary(field => field.SystemFieldKey ?? string.Empty, StringComparer.OrdinalIgnoreCase);
+
+        ValidateSystemField(visibleSystemFields, effectiveStates, "full_name", request.ShippingAddress.Name);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "phone", request.ShippingAddress.Phone);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "email", request.ShippingAddress.Email);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "city", request.ShippingAddress.City);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "area", request.ShippingAddress.State);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "street_address", request.ShippingAddress.Street);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "building", request.ShippingAddress.Building);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "apartment", request.ShippingAddress.Apartment);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "postal_code", request.ShippingAddress.ZipCode);
+        ValidateSystemField(visibleSystemFields, effectiveStates, "order_notes", request.CustomerNotes);
+
+        if (request.BillingAddress != null)
+        {
+            RequireSystemValue(request.BillingAddress.Name, "CHECKOUT_BILLING_NAME_REQUIRED", "Billing address requires a recipient name.");
+            RequireSystemValue(request.BillingAddress.Phone, "CHECKOUT_BILLING_PHONE_REQUIRED", "Billing address requires a phone number.");
+            RequireSystemValue(request.BillingAddress.Street, "CHECKOUT_BILLING_STREET_REQUIRED", "Billing address requires a street address.");
+            RequireSystemValue(request.BillingAddress.City, "CHECKOUT_BILLING_CITY_REQUIRED", "Billing address requires a city.");
+        }
+
+        foreach (var item in request.CustomFields ?? new List<CheckoutCustomFieldValueDto>())
+        {
+
+            if (!customDefinitions.TryGetValue(item.FieldId, out var definition))
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    item.FieldId,
+                    null,
+                    "CUSTOM_FIELD_UNKNOWN",
+                    "authorization",
+                    "Submitted custom checkout field is not valid for this store.");
+            }
+
+            if (!definition.IsEnabled)
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    definition.Id,
+                    definition.FieldType,
+                    "CUSTOM_FIELD_DISABLED",
+                    "invalid_state",
+                    "Submitted custom checkout field is disabled for this store.");
+            }
+
+            if (!IsEffectivelyVisible(definition, effectiveStates))
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    definition.Id,
+                    definition.FieldType,
+                    "CUSTOM_FIELD_HIDDEN",
+                    "validation",
+                    "Submitted custom checkout field is not applicable for this checkout.");
+            }
+
+            try
+            {
+                if (IsUploadField(definition.FieldType))
+                {
+                    ValidateUploadFieldReferenceCount(definition, item.AttachmentIds);
+                }
+                else
+                {
+                    ValidateCustomFieldValue(definition, item.Value);
+                }
+            }
+            catch (CheckoutDynamicFieldValidationException ex)
+            {
+                LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    definition.Id,
+                    definition.FieldType,
+                    ex.ErrorCode,
+                    IsUploadField(definition.FieldType) ? "attachment_validation" : "validation",
+                    ex.Message);
+                throw;
+            }
+        }
+
+        foreach (var requiredField in customDefinitions.Values.Where(field => IsEffectivelyRequired(field, effectiveStates)))
+        {
+            if (!submitted.TryGetValue(requiredField.Id, out var submittedField) || IsEmptyCustomFieldValue(requiredField, submittedField))
+            {
+                throw LogDynamicFieldRejection(
+                    tenantId,
+                    request.CartId,
+                    requiredField.Id,
+                    requiredField.FieldType,
+                    "CUSTOM_FIELD_REQUIRED",
+                    "validation",
+                    $"{requiredField.Label} is required.");
+            }
+        }
+
+        var snapshots = new List<CheckoutFieldSnapshotDraft>();
+        foreach (var definition in visibleSystemFields.Values.OrderBy(field => field.DisplayOrder).ThenBy(field => field.CreatedAt).ThenBy(field => field.Id))
+        {
+            snapshots.Add(BuildCheckoutFieldSnapshotDraft(
+                definition,
+                GetSystemFieldSubmittedValue(request, definition.SystemFieldKey),
+                effectiveStates[definition.Id]));
+        }
+
+        foreach (var definition in customDefinitions.Values
+                     .Where(field => IsEffectivelyVisible(field, effectiveStates))
+                     .OrderBy(field => field.DisplayOrder)
+                     .ThenBy(field => field.CreatedAt)
+                     .ThenBy(field => field.Id))
+        {
+            submitted.TryGetValue(definition.Id, out var item);
+            var effectiveState = effectiveStates[definition.Id];
+
+            if (IsUploadField(definition.FieldType))
+            {
+                var attachmentIds = item?.AttachmentIds ?? new List<Guid>();
+                if (attachmentIds.Count == 0)
+                {
+                    snapshots.Add(BuildCheckoutFieldSnapshotDraftFromJson(definition, "[]", effectiveState));
+                    continue;
+                }
+
+                if (!orderId.HasValue)
+                {
+                    snapshots.Add(BuildCheckoutFieldSnapshotDraftFromJson(definition, BuildAttachmentIdsValueJson(attachmentIds), effectiveState));
+                    continue;
+                }
+
+                var attachments = await _checkoutAttachmentService.ValidateAndAttachAsync(
+                    tenantId,
+                    ownerId,
+                    ownerType,
+                    sessionId,
+                    customerId,
+                    request.CartId,
+                    orderId.Value,
+                    definition,
+                    attachmentIds,
+                    cancellationToken);
+                snapshots.Add(BuildCheckoutFieldSnapshotDraftFromJson(definition, BuildAttachmentSnapshotValueJson(attachments), effectiveState));
+                continue;
+            }
+
+            snapshots.Add(BuildCheckoutFieldSnapshotDraft(definition, item?.Value, effectiveState));
+        }
+
+        return new CheckoutFieldSnapshotAdmission(
+            snapshots
+                .OrderBy(snapshot => snapshot.DisplayOrder)
+                .ThenBy(snapshot => snapshot.CheckoutFieldDefinitionId)
+                .ToArray());
+    }
+
+    private CheckoutDynamicFieldValidationException LogDynamicFieldRejection(
+        Guid tenantId,
+        Guid cartId,
+        Guid? fieldId,
+        CheckoutFieldType? fieldType,
+        string errorCode,
+        string reasonCategory,
+        string message)
+    {
+        _logger.LogWarning(
+            "Checkout dynamic field rejected | TenantId: {TenantId} | CartId: {CartId} | FieldId: {FieldId} | FieldType: {FieldType} | ErrorCode: {ErrorCode} | ReasonCategory: {ReasonCategory}",
+            tenantId,
+            cartId,
+            fieldId,
+            fieldType?.ToString(),
+            errorCode,
+            reasonCategory);
+
+        return new CheckoutDynamicFieldValidationException(errorCode, message);
+    }
+
+    private static IReadOnlyDictionary<Guid, CheckoutFieldSubmittedValue> BuildCheckoutFieldSubmittedValues(
+        IReadOnlyList<CheckoutFieldDefinition> definitions,
+        IReadOnlyDictionary<Guid, CheckoutCustomFieldValueDto> submittedCustomFields,
+        CheckoutRequestDto request)
+    {
+        var values = new Dictionary<Guid, CheckoutFieldSubmittedValue>(definitions.Count);
+        foreach (var definition in definitions)
+        {
+            if (definition.FieldKind == CheckoutFieldKind.System)
+            {
+                values[definition.Id] = new CheckoutFieldSubmittedValue(GetSystemFieldSubmittedValue(request, definition.SystemFieldKey));
+                continue;
+            }
+
+            if (submittedCustomFields.TryGetValue(definition.Id, out var submitted))
+            {
+                values[definition.Id] = IsUploadField(definition.FieldType)
+                    ? new CheckoutFieldSubmittedValue(null, submitted.AttachmentIds)
+                    : new CheckoutFieldSubmittedValue(submitted.Value);
+                continue;
+            }
+
+            values[definition.Id] = new CheckoutFieldSubmittedValue(null);
+        }
+
+        return values;
+    }
+
+    private static bool IsEffectivelyVisible(
+        CheckoutFieldDefinition definition,
+        IReadOnlyDictionary<Guid, CheckoutFieldEffectiveState> effectiveStates) =>
+        effectiveStates.TryGetValue(definition.Id, out var state) ? state.Visible : definition.IsEnabled;
+
+    private static bool IsEffectivelyRequired(
+        CheckoutFieldDefinition definition,
+        IReadOnlyDictionary<Guid, CheckoutFieldEffectiveState> effectiveStates) =>
+        effectiveStates.TryGetValue(definition.Id, out var state)
+            ? state.Visible && state.Required
+            : definition.IsEnabled && definition.IsRequired;
+
+    private static CheckoutFieldSnapshotDraft BuildCheckoutFieldSnapshotDraft(
+        CheckoutFieldDefinition definition,
+        string? submittedValue,
+        CheckoutFieldEffectiveState effectiveState)
+    {
+        return BuildCheckoutFieldSnapshotDraftFromJson(
+            definition,
+            BuildCheckoutFieldValueJson(definition.FieldType, submittedValue),
+            effectiveState);
+    }
+
+    private static CheckoutFieldSnapshotDraft BuildCheckoutFieldSnapshotDraftFromJson(
+        CheckoutFieldDefinition definition,
+        string valueJson,
+        CheckoutFieldEffectiveState effectiveState)
+    {
+        return new CheckoutFieldSnapshotDraft(
+            definition.Id,
+            definition.FieldKind,
+            definition.FieldType,
+            definition.SystemFieldKey,
+            definition.Label,
+            definition.HelpText,
+            effectiveState.Required,
+            effectiveState.Visible,
+            definition.DisplayOrder,
+            definition.ConfigurationSchemaVersion,
+            string.IsNullOrWhiteSpace(definition.ConfigurationJson) ? "{}" : definition.ConfigurationJson,
+            valueJson);
+    }
+
+    private static string? GetSystemFieldSubmittedValue(CheckoutRequestDto request, string? systemFieldKey)
+    {
+        return systemFieldKey?.Trim().ToLowerInvariant() switch
+        {
+            "full_name" => request.ShippingAddress.Name,
+            "phone" => request.ShippingAddress.Phone,
+            "email" => request.ShippingAddress.Email,
+            "city" => request.ShippingAddress.City,
+            "area" => request.ShippingAddress.State,
+            "street_address" => request.ShippingAddress.Street,
+            "building" => request.ShippingAddress.Building,
+            "apartment" => request.ShippingAddress.Apartment,
+            "postal_code" => request.ShippingAddress.ZipCode,
+            "order_notes" => request.CustomerNotes,
+            _ => null
+        };
+    }
+
+    private static string BuildCheckoutFieldValueJson(CheckoutFieldType fieldType, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "null";
+        }
+
+        var trimmedValue = value.Trim();
+        object? canonicalValue = fieldType switch
+        {
+            CheckoutFieldType.Number when decimal.TryParse(trimmedValue, CanonicalCheckoutNumberStyles, CultureInfo.InvariantCulture, out var number) => number,
+            CheckoutFieldType.Checkbox when IsBooleanValue(trimmedValue) => IsTruthyCheckboxValue(trimmedValue),
+            CheckoutFieldType.Date when DateOnly.TryParseExact(trimmedValue, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) =>
+                date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            _ => trimmedValue
+        };
+
+        return JsonSerializer.Serialize(canonicalValue);
+    }
+
+    private static void ValidateLegacyRequiredAddressContract(CheckoutRequestDto request)
+    {
+        RequireSystemValue(request.ShippingAddress.Name, "CHECKOUT_SHIPPING_NAME_REQUIRED", "Shipping address requires a recipient name.");
+        RequireSystemValue(request.ShippingAddress.Phone, "CHECKOUT_SHIPPING_PHONE_REQUIRED", "Shipping address requires a phone number.");
+        RequireSystemValue(request.ShippingAddress.Street, "CHECKOUT_SHIPPING_STREET_REQUIRED", "Shipping address requires a street address.");
+        RequireSystemValue(request.ShippingAddress.City, "CHECKOUT_SHIPPING_CITY_REQUIRED", "Shipping address requires a city.");
+
+        if (request.BillingAddress != null)
+        {
+            RequireSystemValue(request.BillingAddress.Name, "CHECKOUT_BILLING_NAME_REQUIRED", "Billing address requires a recipient name.");
+            RequireSystemValue(request.BillingAddress.Phone, "CHECKOUT_BILLING_PHONE_REQUIRED", "Billing address requires a phone number.");
+            RequireSystemValue(request.BillingAddress.Street, "CHECKOUT_BILLING_STREET_REQUIRED", "Billing address requires a street address.");
+            RequireSystemValue(request.BillingAddress.City, "CHECKOUT_BILLING_CITY_REQUIRED", "Billing address requires a city.");
+        }
+    }
+
+    private static void ValidateSystemField(
+        IReadOnlyDictionary<string, CheckoutFieldDefinition> enabledSystemFields,
+        IReadOnlyDictionary<Guid, CheckoutFieldEffectiveState> effectiveStates,
+        string key,
+        string? value)
+    {
+        if (!enabledSystemFields.TryGetValue(key, out var field) || !IsEffectivelyRequired(field, effectiveStates))
+        {
+            if (enabledSystemFields.TryGetValue(key, out field))
+            {
+                ValidateCustomFieldValue(field, value);
+            }
+            return;
+        }
+
+        RequireSystemValue(value, "SYSTEM_FIELD_REQUIRED", $"{field.Label} is required.");
+        ValidateCustomFieldValue(field, value);
+    }
+
+    private static void RequireSystemValue(string? value, string errorCode, string message)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            throw new CheckoutDynamicFieldValidationException(errorCode, message);
+        }
+    }
+
+    private static void ValidateCustomFieldValue(CheckoutFieldDefinition definition, string? value)
+    {
+        if (IsEmptyFieldValue(definition.FieldType, value))
+        {
+            return;
+        }
+
+        if (value!.Contains('\0'))
+        {
+            throw new CheckoutDynamicFieldValidationException(
+                "CUSTOM_FIELD_INVALID_CHARACTER",
+                $"{definition.Label} contains an unsupported character.");
+        }
+
+        var configuration = DeserializeCheckoutFieldConfiguration(definition.ConfigurationJson);
+        switch (definition.FieldType)
+        {
+            case CheckoutFieldType.Text:
+            case CheckoutFieldType.Textarea:
+            case CheckoutFieldType.Phone:
+                ValidateLength(value!, configuration, definition.Label, definition.FieldType == CheckoutFieldType.Textarea ? 5000 : 1000);
+                if (definition.FieldType == CheckoutFieldType.Phone && !IsValidPhone(value!))
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} format is invalid.");
+                }
+                break;
+
+            case CheckoutFieldType.Email:
+                ValidateLength(value!, configuration, definition.Label, 1000);
+                ValidateEmailIfPresent(value, "CUSTOM_FIELD_INVALID", $"{definition.Label} format is invalid.");
+                break;
+
+            case CheckoutFieldType.Number:
+                if (!decimal.TryParse(value, CanonicalCheckoutNumberStyles, CultureInfo.InvariantCulture, out var numericValue))
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} must be a valid number.");
+                }
+                if (configuration.Min.HasValue && numericValue < configuration.Min.Value)
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} is below the allowed minimum.");
+                }
+                if (configuration.Max.HasValue && numericValue > configuration.Max.Value)
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} is above the allowed maximum.");
+                }
+                break;
+
+            case CheckoutFieldType.Select:
+            case CheckoutFieldType.Radio:
+                ValidateOptionValue(definition, configuration, value!);
+                break;
+
+            case CheckoutFieldType.Checkbox:
+                if (!IsBooleanValue(value!))
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} must be true or false.");
+                }
+                break;
+
+            case CheckoutFieldType.Date:
+                if (!DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                {
+                    throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{definition.Label} must be a valid date.");
+                }
+                break;
+
+            case CheckoutFieldType.Image:
+            case CheckoutFieldType.File:
+            case CheckoutFieldType.MultiImage:
+                break;
+        }
+    }
+
+    private static bool IsUploadField(CheckoutFieldType fieldType) =>
+        fieldType is CheckoutFieldType.Image or CheckoutFieldType.File or CheckoutFieldType.MultiImage;
+
+    private static bool IsEmptyCustomFieldValue(CheckoutFieldDefinition definition, CheckoutCustomFieldValueDto submitted) =>
+        IsUploadField(definition.FieldType)
+            ? submitted.AttachmentIds == null || submitted.AttachmentIds.Count == 0
+            : IsEmptyFieldValue(definition.FieldType, submitted.Value);
+
+    private static void ValidateUploadFieldReferenceCount(CheckoutFieldDefinition definition, IReadOnlyCollection<Guid>? attachmentIds)
+    {
+        if (attachmentIds == null || attachmentIds.Count == 0)
+        {
+            return;
+        }
+
+        if (attachmentIds.Any(id => id == Guid.Empty))
+        {
+            throw new CheckoutDynamicFieldValidationException("CHECKOUT_ATTACHMENT_ID_INVALID", "Uploaded file identifiers must be non-empty GUIDs.");
+        }
+
+        var configuration = DeserializeCheckoutFieldConfiguration(definition.ConfigurationJson);
+        var maxFiles = definition.FieldType == CheckoutFieldType.MultiImage
+            ? Math.Clamp(configuration.MaxFiles ?? 5, 1, 50)
+            : 1;
+        if (attachmentIds.Count > maxFiles)
+        {
+            throw new CheckoutDynamicFieldValidationException("CHECKOUT_ATTACHMENT_TOO_MANY", $"{definition.Label} allows at most {maxFiles} file(s).");
+        }
+    }
+
+    private static string BuildAttachmentIdsValueJson(IReadOnlyCollection<Guid> attachmentIds) =>
+        JsonSerializer.Serialize(attachmentIds.Select(id => new { attachmentId = id }).ToArray());
+
+    private static string BuildAttachmentSnapshotValueJson(IReadOnlyList<CheckoutAttachment> attachments) =>
+        JsonSerializer.Serialize(attachments.Select(attachment => new
+        {
+            attachmentId = attachment.Id,
+            fileName = attachment.OriginalFileName,
+            contentType = attachment.ContentType,
+            sizeBytes = attachment.SizeBytes,
+            mediaType = attachment.MediaType,
+            uploadedAtUtc = attachment.UploadedAtUtc,
+            finalizedAtUtc = attachment.FinalizedAtUtc,
+            finalETag = attachment.FinalETag,
+            finalChecksumSha256 = attachment.FinalChecksumSha256
+        }).ToArray());
+
+    private static void ValidateLength(
+        string value,
+        StorefrontCheckoutFieldConfigurationDto configuration,
+        string label,
+        int absoluteMaxLength)
+    {
+        var length = value.Trim().Length;
+        if (configuration.MinLength.HasValue && length < configuration.MinLength.Value)
+        {
+            throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{label} is shorter than the allowed minimum.");
+        }
+        var maxLength = Math.Min(configuration.MaxLength ?? absoluteMaxLength, absoluteMaxLength);
+        if (length > maxLength)
+        {
+            throw new CheckoutDynamicFieldValidationException("CUSTOM_FIELD_INVALID", $"{label} is longer than the allowed maximum.");
+        }
+    }
+
+    private static void ValidateOptionValue(
+        CheckoutFieldDefinition definition,
+        StorefrontCheckoutFieldConfigurationDto configuration,
+        string value)
+    {
+        var options = configuration.Options ?? Array.Empty<StorefrontCheckoutFieldOptionDto>();
+        if (!options.Any(option => string.Equals(option.Value, value, StringComparison.Ordinal)))
+        {
+            throw new CheckoutDynamicFieldValidationException(
+                "CUSTOM_FIELD_INVALID_OPTION",
+                $"{definition.Label} contains an option that is not valid for this store.");
+        }
+    }
+
+    private static void ValidateEmailIfPresent(string? value, string errorCode, string message)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+
+        try
+        {
+            _ = new MailAddress(value.Trim());
+        }
+        catch (FormatException)
+        {
+            throw new CheckoutDynamicFieldValidationException(errorCode, message);
+        }
+    }
+
+    private static bool IsValidPhone(string value)
+    {
+        var digitCount = value.Count(char.IsDigit);
+        return digitCount is >= 7 and <= 20 && value.All(ch => char.IsDigit(ch) || char.IsWhiteSpace(ch) || ch is '+' or '-' or '(' or ')');
+    }
+
+    private static bool IsBooleanValue(string value) =>
+        bool.TryParse(value, out _) || value == "1" || value == "0";
+
+    private static bool IsTruthyCheckboxValue(string? value) =>
+        string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) || value == "1";
+
+    private static bool IsEmptyFieldValue(CheckoutFieldType fieldType, string? value) =>
+        fieldType == CheckoutFieldType.Checkbox
+            ? !IsTruthyCheckboxValue(value)
+            : string.IsNullOrWhiteSpace(value);
+
+    private static StorefrontCheckoutFieldConfigurationDto DeserializeCheckoutFieldConfiguration(string? configurationJson)
+    {
+        if (string.IsNullOrWhiteSpace(configurationJson))
+        {
+            return new StorefrontCheckoutFieldConfigurationDto();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<StorefrontCheckoutFieldConfigurationDto>(configurationJson, CaseInsensitiveJsonOptions)
+                ?? new StorefrontCheckoutFieldConfigurationDto();
+        }
+        catch (JsonException)
+        {
+            throw new CheckoutDynamicFieldValidationException(
+                "CHECKOUT_FIELD_CONFIGURATION_INVALID",
+                "Checkout field configuration is invalid. Please contact the store.");
+        }
+    }
+
+    private static object? BuildCustomFieldFingerprint(List<CheckoutCustomFieldValueDto>? customFields)
+    {
+        if (customFields == null || customFields.Count == 0)
+        {
+            return null;
+        }
+
+        return customFields
+            .OrderBy(field => field.FieldId)
+            .Select(field => new
+            {
+                field.FieldId,
+                Value = field.Value?.Trim(),
+                AttachmentIds = field.AttachmentIds == null ? null : field.AttachmentIds.OrderBy(id => id).ToArray()
+            })
+            .ToArray();
     }
 
     private static object BuildAddressFingerprint(AddressDto address) => new
@@ -5258,7 +5920,28 @@ public class CheckoutService : ICheckoutService
         CartSnapshot Snapshot,
         ShippingMethodDocument ShippingMethod,
         PaymentMethodDocument PaymentMethod,
-        StorefrontPricingBreakdown Pricing);
+        StorefrontPricingBreakdown Pricing,
+        CheckoutFieldSnapshotAdmission CheckoutFieldSnapshots);
+
+    private sealed record CheckoutFieldSnapshotAdmission(
+        IReadOnlyList<CheckoutFieldSnapshotDraft> Snapshots)
+    {
+        public static CheckoutFieldSnapshotAdmission Empty { get; } = new(Array.Empty<CheckoutFieldSnapshotDraft>());
+    }
+
+    private sealed record CheckoutFieldSnapshotDraft(
+        Guid CheckoutFieldDefinitionId,
+        CheckoutFieldKind FieldKind,
+        CheckoutFieldType FieldType,
+        string? SystemFieldKey,
+        string Label,
+        string? HelpText,
+        bool IsRequired,
+        bool IsEnabled,
+        int DisplayOrder,
+        int ConfigurationSchemaVersion,
+        string ConfigurationJson,
+        string ValueJson);
 
     private async Task<OrderCreationResult> CreateOrderAsync(
         Guid orderId,
@@ -5670,6 +6353,10 @@ public class CheckoutService : ICheckoutService
             var transactionScopedAuthority = await RevalidateCheckoutAuthorityInsideTransactionAsync(
                 tenantId,
                 customerId,
+                ownerId,
+                ownerType,
+                sessionId,
+                order.Id,
                 snapshot,
                 request,
                 correlationId,
@@ -5726,6 +6413,9 @@ public class CheckoutService : ICheckoutService
                 pricing.Tax,
                 affiliateOrderLineAdmissions,
                 resolvedAffiliateAuthority != null);
+            RefreshOrderCheckoutFieldSnapshots(
+                order,
+                transactionScopedAuthority.CheckoutFieldSnapshots);
 
             inventoryReservation = await ValidateAndReserveInventoryAsync(
                 snapshot,
@@ -6492,6 +7182,10 @@ public class CheckoutService : ICheckoutService
     private async Task<TransactionScopedCheckoutAuthoritySnapshot> RevalidateCheckoutAuthorityInsideTransactionAsync(
         Guid tenantId,
         Guid? customerId,
+        string ownerId,
+        string ownerType,
+        string? sessionId,
+        Guid orderId,
         CartSnapshot snapshot,
         CheckoutRequestDto request,
         string correlationId,
@@ -6554,15 +7248,26 @@ public class CheckoutService : ICheckoutService
         _logger.LogInformation(
             "Checkout authority revalidated inside final order transaction | ShippingMethodId: {ShippingMethodId} | PaymentMethodCode: {PaymentMethodCode} | Total: {Total} | CorrelationId: {CorrelationId}",
             shippingMethod.ShippingMethodId,
-            paymentMethod.Code,
-            pricing.FinalTotal,
-            correlationId);
+                paymentMethod.Code,
+                pricing.FinalTotal,
+                correlationId);
+
+        var checkoutFieldSnapshots = await ValidateCheckoutFieldDefinitionsAsync(
+            tenantId,
+            ownerId,
+            ownerType,
+            sessionId,
+            customerId,
+            request,
+            orderId,
+            cancellationToken);
 
         return new TransactionScopedCheckoutAuthoritySnapshot(
             authoritativeSnapshot,
             shippingMethod,
             paymentMethod,
-            pricing);
+            pricing,
+            checkoutFieldSnapshots);
     }
 
     private void RefreshOrderAuthoritySnapshot(
@@ -6699,6 +7404,36 @@ public class CheckoutService : ICheckoutService
             orderItem.AffiliateCommissionBaseAmountSnapshot = shouldPersistAffiliateCommissionSnapshot ? lineTotal : null;
             orderItem.AffiliateCommissionAmountSnapshot = shouldPersistAffiliateCommissionSnapshot ? affiliateCommissionAmount : null;
             orderItem.AffiliateCommissionSnapshotCapturedAtUtc = shouldPersistAffiliateCommissionSnapshot ? affiliateSnapshotCapturedAtUtc : null;
+        }
+    }
+
+    private static void RefreshOrderCheckoutFieldSnapshots(
+        Order order,
+        CheckoutFieldSnapshotAdmission admission)
+    {
+        order.CheckoutFieldSnapshots.Clear();
+
+        foreach (var snapshot in admission.Snapshots)
+        {
+            order.CheckoutFieldSnapshots.Add(new OrderCheckoutFieldSnapshot
+            {
+                Id = Guid.NewGuid(),
+                TenantId = order.TenantId,
+                OrderId = order.Id,
+                CheckoutFieldDefinitionId = snapshot.CheckoutFieldDefinitionId,
+                FieldKind = snapshot.FieldKind,
+                FieldType = snapshot.FieldType,
+                SystemFieldKey = snapshot.SystemFieldKey,
+                Label = snapshot.Label,
+                HelpText = snapshot.HelpText,
+                IsRequired = snapshot.IsRequired,
+                IsEnabled = snapshot.IsEnabled,
+                DisplayOrder = snapshot.DisplayOrder,
+                ConfigurationSchemaVersion = snapshot.ConfigurationSchemaVersion,
+                ConfigurationJson = snapshot.ConfigurationJson,
+                ValueJson = snapshot.ValueJson,
+                CreatedAt = DateTime.UtcNow
+            });
         }
     }
 

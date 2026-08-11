@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using PointOfSale.Core.Enums;
 
 namespace PointOfSale.API.DTOs.Storefront;
 
@@ -769,10 +770,364 @@ public class CategoryTreeDto
     /// </summary>
     public string? PromotionBannerStyle { get; set; }
 }
+    // =====================================================================
+    // DOMAIN Management READ DTOs (DOMAIN-3.1-B: Storefront Domain Management)
+    // =====================================================================
+
+    public class DomainSummaryDto
+    {
+        public Guid Id { get; set; }
+        public string HostName { get; set; } = string.Empty;
+        public DomainType DomainType { get; set; }
+        public DomainLifecycleState LifecycleState { get; set; }
+        public RedirectType RedirectType { get; set; }
+        public CertificateStatus SslStatus { get; set; }
+        public string? SslExpiryDate { get; set; }
+        public bool IsVerified { get; set; }
+        public bool IsPrimary { get; set; }
+        public int Version { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+        public DateTime? UpdatedAtUtc { get; set; }
+        public string? CanonicalUrl { get; set; }
+    }
+
+    /// <summary>
+    /// Detailed view of a single domain including related sub-resources.
+    /// </summary>
+    public class DomainDetailDto
+    {
+        public Guid Id { get; set; }
+        public string HostName { get; set; } = string.Empty;
+        public string NormalizedHostName { get; set; } = string.Empty;
+        public DomainType DomainType { get; set; }
+        public DomainLifecycleState LifecycleState { get; set; }
+        public bool IsPrimary { get; set; }
+        public int Version { get; set; }
+        public RedirectType RedirectType { get; set; }
+        public Guid? RedirectTargetDomainId { get; set; }
+        public string? RedirectTargetHost { get; set; }
+        public CanonicalPolicy CanonicalPolicy { get; set; }
+        public string? SslCertificateThumbprint { get; set; }
+        public Guid? SslCertificateId { get; set; }
+        public bool IsVerified { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+        public DateTime? VerifiedAtUtc { get; set; }
+        public DateTime? SslActivatedAtUtc { get; set; }
+        public DateTime? UpdatedAtUtc { get; set; }
+        public string? CanonicalUrl { get; set; }
+    }
+
+    /// <summary>
+    /// DNS/HTTP verification details for a domain.
+    /// </summary>
+    public class DomainVerificationDto
+    {
+        public Guid DomainId { get; set; }
+        public int Version { get; set; }
+        public string HostName { get; set; } = string.Empty;
+        public string NormalizedHostName { get; set; } = string.Empty;
+        public VerificationStatus Status { get; set; }
+        public VerificationMethod Method { get; set; }
+        public string? VerificationToken { get; set; }
+        public DateTime? VerifiedAtUtc { get; set; }
+        public string? DnsRecordType { get; set; }
+        public string? DnsRecordName { get; set; }
+        public string? DnsRecordValue { get; set; }
+        public string? DnsRecordHost { get; set; }
+        public string? HttpVerificationUrl { get; set; }
+    }
+
+    /// <summary>
+    /// SSL certificate details for a domain.
+    /// </summary>
+    public class DomainSslDto
+    {
+        public Guid? DomainId { get; set; }
+        public Guid? CertificateId { get; set; }
+        public ProviderType Provider { get; set; }
+        public CertificateStatus Status { get; set; }
+        public string? Thumbprint { get; set; }
+        public string? NotBefore { get; set; }
+        public string? NotAfter { get; set; }
+        public DateTime? NotAfterUtc { get; set; }
+        public bool AutoRenewEnabled { get; set; }
+        public DateTime? NextRenewalUtc { get; set; }
+        public DateTime? ActivatedAtUtc { get; set; }
+        public List<string> SANs { get; set; } = new();
+        public bool ExpiringSoon { get; set; }
+        public int DaysUntilExpiry { get; set; }
+    }
+
+    /// <summary>
+    /// Request body for DOMAIN-5.4 certificate provisioning admission.
+    /// </summary>
+    public class CertificateProvisioningRequest
+    {
+        public string? IdempotencyKey { get; set; }
+    }
+
+    /// <summary>
+    /// Safe provisioning response. It exposes lifecycle state and opaque provider
+    /// references only; it never contains certificate material or challenge secrets.
+    /// </summary>
+    public class CertificateProvisioningResponse
+    {
+        public Guid DomainId { get; set; }
+        public Guid CertificateId { get; set; }
+        public Guid OperationId { get; set; }
+        public CertificateOperationType OperationType { get; set; }
+        public CertificateOperationStatus OperationStatus { get; set; }
+        public CertificateOperationPhase OperationPhase { get; set; }
+        public CertificateStatus CertificateStatus { get; set; }
+        public int Generation { get; set; }
+        public string NormalizedHostName { get; set; } = string.Empty;
+        public ProviderType Provider { get; set; }
+        public string? ProviderEnvironment { get; set; }
+        public string? ProviderRequestReference { get; set; }
+        public string? OrderReference { get; set; }
+        public bool Retryable { get; set; }
+        public string? FailureCode { get; set; }
+        public string? SafeFailureReason { get; set; }
+        public string NextAction { get; set; } = string.Empty;
+        public string Outcome { get; set; } = string.Empty;
+        public string CorrelationId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request body for DOMAIN-5.5 certificate edge activation.
+    /// </summary>
+    public class CertificateActivationRequest
+    {
+        public string? IdempotencyKey { get; set; }
+        public Guid? CertificateId { get; set; }
+    }
+
+    /// <summary>
+    /// Safe activation response. It reports edge proof state only; it never
+    /// contains certificate material, private keys, Caddy credentials, or raw
+    /// Caddy configuration.
+    /// </summary>
+    public class CertificateActivationResponse
+    {
+        public Guid DomainId { get; set; }
+        public Guid CertificateId { get; set; }
+        public Guid OperationId { get; set; }
+        public CertificateOperationType OperationType { get; set; }
+        public CertificateOperationStatus OperationStatus { get; set; }
+        public CertificateOperationPhase OperationPhase { get; set; }
+        public CertificateStatus CertificateStatus { get; set; }
+        public DomainLifecycleState DomainLifecycleState { get; set; }
+        public int Generation { get; set; }
+        public string NormalizedHostName { get; set; } = string.Empty;
+        public string? EdgeIdentifier { get; set; }
+        public string? LastObservedThumbprint { get; set; }
+        public bool Retryable { get; set; }
+        public string? FailureCode { get; set; }
+        public string? SafeFailureReason { get; set; }
+        public string NextAction { get; set; } = string.Empty;
+        public string Outcome { get; set; } = string.Empty;
+        public string CorrelationId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Request body for manual DOMAIN-5.8 certificate renewal/reconciliation.
+    /// </summary>
+    public class CertificateRenewalCommandRequest
+    {
+        public Guid? CertificateId { get; set; }
+        public string? IdempotencyKey { get; set; }
+    }
+
+    /// <summary>
+    /// Request body for DOMAIN-5.8 certificate revocation.
+    /// </summary>
+    public class CertificateRevocationCommandRequest
+    {
+        public Guid CertificateId { get; set; }
+        public string Reason { get; set; } = string.Empty;
+        public string? IdempotencyKey { get; set; }
+    }
+
+    /// <summary>
+    /// Request body for retrying a failed certificate operation.
+    /// </summary>
+    public class CertificateRetryCommandRequest
+    {
+        public Guid OperationId { get; set; }
+        public string? IdempotencyKey { get; set; }
+    }
+
+    /// <summary>
+    /// Request body for refreshing/reconciling certificate state.
+    /// </summary>
+    public class CertificateRefreshCommandRequest
+    {
+        public Guid? CertificateId { get; set; }
+        public string? IdempotencyKey { get; set; }
+    }
+
+    /// <summary>
+    /// Safe DOMAIN-5.8 certificate command response.
+    /// </summary>
+    public class CertificateCommandResponse
+    {
+        public Guid DomainId { get; set; }
+        public Guid? CertificateId { get; set; }
+        public Guid OperationId { get; set; }
+        public CertificateOperationType OperationType { get; set; }
+        public CertificateOperationStatus OperationStatus { get; set; }
+        public CertificateOperationPhase OperationPhase { get; set; }
+        public CertificateStatus? CertificateStatus { get; set; }
+        public int? Generation { get; set; }
+        public string Outcome { get; set; } = string.Empty;
+        public bool Retryable { get; set; }
+        public string? FailureCode { get; set; }
+        public string? SafeFailureReason { get; set; }
+        public DateTime? RetryAfterUtc { get; set; }
+        public string NextAction { get; set; } = string.Empty;
+        public string CorrelationId { get; set; } = string.Empty;
+    }
+
+    /// <summary>
+    /// Safe metadata-only certificate read model.
+    /// </summary>
+    public class DomainCertificateDto
+    {
+        public Guid DomainId { get; set; }
+        public Guid? CertificateId { get; set; }
+        public int? Generation { get; set; }
+        public ProviderType? Provider { get; set; }
+        public CertificateStatus Status { get; set; }
+        public CertificateOperationPhase OperationPhase { get; set; }
+        public string? Issuer { get; set; }
+        public string? SerialNumber { get; set; }
+        public string? Thumbprint { get; set; }
+        public string? Fingerprint { get; set; }
+        public DateTime? NotBeforeUtc { get; set; }
+        public DateTime? NotAfterUtc { get; set; }
+        public DateTime? ActivatedAtUtc { get; set; }
+        public DateTime? NextRenewalUtc { get; set; }
+        public bool RenewalEligible { get; set; }
+        public bool Retryable { get; set; }
+        public string? FailureCode { get; set; }
+        public string? SafeFailureReason { get; set; }
+        public Guid? LastOperationId { get; set; }
+        public CertificateOperationStatus? LastOperationStatus { get; set; }
+        public CertificateOperationPhase? LastOperationPhase { get; set; }
+        public DateTime? LastOperationUpdatedAtUtc { get; set; }
+        public bool Degraded { get; set; }
+    }
+
+    /// <summary>
+    /// Safe certificate operation read model.
+    /// </summary>
+    public class CertificateOperationDto
+    {
+        public Guid OperationId { get; set; }
+        public Guid DomainId { get; set; }
+        public Guid? CertificateId { get; set; }
+        public CertificateOperationType OperationType { get; set; }
+        public CertificateOperationStatus Status { get; set; }
+        public CertificateOperationPhase Phase { get; set; }
+        public bool Retryable { get; set; }
+        public string? FailureCode { get; set; }
+        public string? SafeFailureReason { get; set; }
+        public DateTime? RetryAfterUtc { get; set; }
+        public int AttemptCount { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+        public DateTime? UpdatedAtUtc { get; set; }
+        public DateTime? CompletedAtUtc { get; set; }
+        public string? CorrelationId { get; set; }
+    }
+
+    /// <summary>
+    /// Bounded page of certificate operations.
+    /// </summary>
+    public class CertificateOperationPageDto
+    {
+        public List<CertificateOperationDto> Items { get; set; } = new();
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
+        public int TotalPages { get; set; }
+        public bool HasNextPage { get; set; }
+        public bool HasPreviousPage { get; set; }
+    }
+
 /// <summary>
-/// Standard API error response format.
+/// A single redirect rule for a domain.
 /// </summary>
-public class ApiErrorResponse
+    public class DomainRedirectDto
+    {
+        public Guid Id { get; set; }
+        public Guid DomainId { get; set; }
+        public string Source { get; set; } = string.Empty;
+        public string Target { get; set; } = string.Empty;
+        public RedirectType Type { get; set; }
+        public bool IsActive { get; set; }
+        public DateTime CreatedAtUtc { get; set; }
+    }
+
+    /// <summary>
+    /// Append-only audit log entry for a domain.
+    /// </summary>
+    public class DomainHistoryEntryDto
+    {
+        public Guid Id { get; set; }
+        public Guid DomainId { get; set; }
+        public string Action { get; set; } = string.Empty;
+        public ActorType ActorType { get; set; }
+        public Guid? ActorUserId { get; set; }
+        public string? BeforeSnapshotJson { get; set; }
+        public string AfterSnapshotJson { get; set; } = string.Empty;
+        public string? TraceId { get; set; }
+        public string? IpAddress { get; set; }
+        public DateTime TimestampUtc { get; set; }
+    }
+
+    /// <summary>
+    /// Dashboard summary for the domain management overview (D01).
+    /// </summary>
+    public class DomainDashboardSummaryDto
+    {
+        public DomainSummaryDto? PrimaryDomain { get; set; }
+        public int TotalDomains { get; set; }
+        public int SslExpiringSoon { get; set; }
+        public int PendingVerification { get; set; }
+        public int DraftCount { get; set; }
+        public List<DomainSummaryDto> RecentDomains { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Background job activity entry for a domain.
+    /// </summary>
+    public class DomainActivityEntryDto
+    {
+        public Guid Id { get; set; }
+        public Guid DomainId { get; set; }
+        public string HostName { get; set; } = string.Empty;
+        public string EventType { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string? Details { get; set; }
+        public DateTime TimestampUtc { get; set; }
+        public DateTime? CompletedAtUtc { get; set; }
+    }
+
+    /// <summary>
+    /// Activity dashboard summary for the domain management activity page (D09).
+    /// </summary>
+    public class DomainActivitySummaryDto
+    {
+        public int JobsRunning { get; set; }
+        public int JobsSucceeded { get; set; }
+        public int JobsFailed { get; set; }
+        public List<DomainActivityEntryDto> RecentActivity { get; set; } = new();
+    }
+
+    /// <summary>
+    /// Standard API error response format.
+    /// </summary>
+    public class ApiErrorResponse
 {
     /// <summary>
     /// Error code for programmatic handling
@@ -846,6 +1201,12 @@ public class ApiErrorResponse
 
     public static ApiErrorResponse InvalidToken(string? correlationId = null) =>
         new("INVALID_TOKEN", "Invalid authentication token", correlationId);
+
+    /// <summary>
+    /// Internal server error — for unexpected failures during request processing.
+    /// </summary>
+    public static ApiErrorResponse InternalError(string? correlationId = null) =>
+        new("INTERNAL_ERROR", "An internal error occurred. Please try again later.", correlationId);
 }
 
 /// <summary>
@@ -874,6 +1235,276 @@ public class PagedResult<T>
         HasNextPage = page < TotalPages;
         HasPreviousPage = page > 1;
     }
+}
+
+/// <summary>
+/// Page wrapper for the domain list endpoint (D04).
+/// Separates pagination metadata from the PagedResult generic type
+/// to allow future filtering/sorting context fields.
+/// </summary>
+public class DomainListPageDto
+{
+    public List<DomainSummaryDto> Items { get; set; } = new();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalCount { get; set; }
+    public int TotalPages { get; set; }
+    public bool HasNextPage { get; set; }
+    public bool HasPreviousPage { get; set; }
+}
+
+/// <summary>
+/// Page wrapper for the domain history endpoint (D08).
+/// </summary>
+public class DomainHistoryPageDto
+{
+    public List<DomainHistoryEntryDto> Items { get; set; } = new();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalCount { get; set; }
+    public int TotalPages { get; set; }
+    public bool HasNextPage { get; set; }
+    public bool HasPreviousPage { get; set; }
+}
+
+// =====================================================================
+// DOMAIN Management WRITE DTOs (DOMAIN-3.1-C: Storefront Domain Management)
+// =====================================================================
+
+/// <summary>
+/// Request body for creating a new domain.
+/// POST /api/admin/storefront/domains
+/// </summary>
+public class CreateDomainRequest
+{
+    /// <summary>
+    /// Original hostname as entered by the merchant (preserves case).
+    /// Max 253 characters per RFC 1035.
+    /// </summary>
+    public string HostName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Domain type (Primary, Alias, Preview, Development).
+    /// Redirect and Temporary types must not be set at creation.
+    /// </summary>
+    public DomainType DomainType { get; set; }
+
+    /// <summary>
+    /// Redirect type for redirect domains. None for non-redirect types.
+    /// </summary>
+    public RedirectType RedirectType { get; set; } = RedirectType.None;
+
+    /// <summary>
+    /// Target domain ID for redirect domains. Null for non-redirect types.
+    /// </summary>
+    public Guid? RedirectTargetDomainId { get; set; }
+
+    /// <summary>
+    /// Canonical URL policy for alias domains.
+    /// </summary>
+    public CanonicalPolicy CanonicalPolicy { get; set; } = CanonicalPolicy.UseAsPrimary;
+
+    /// <summary>
+    /// Idempotency key for safe retries. If a domain with this key was
+    /// already created, the existing domain is returned.
+    /// </summary>
+    public string? IdempotencyKey { get; set; }
+}
+
+/// <summary>
+/// Response body for domain mutation commands (Create, Update, Archive, Restore, Delete, PromotePrimary).
+/// </summary>
+public class DomainMutationResponse
+{
+    public Guid DomainId { get; set; }
+    public string HostName { get; set; } = string.Empty;
+    public string NormalizedHostName { get; set; } = string.Empty;
+    public DomainType DomainType { get; set; }
+    public DomainLifecycleState LifecycleState { get; set; }
+    public DomainLifecycleState? PreviousState { get; set; }
+    public int Version { get; set; }
+    public DateTime UpdatedAtUtc { get; set; }
+    public string? AuditEntryId { get; set; }
+    public string CorrelationId { get; set; } = string.Empty;
+    public bool WasChanged { get; set; } = true;
+}
+
+/// <summary>
+/// Request body for explicitly starting ownership verification.
+/// PUT /api/admin/storefront/domains/{id}/verification/start
+/// </summary>
+public class StartDomainVerificationRequest
+{
+    /// <summary>
+    /// Optional verification method. Null keeps the domain's existing method
+    /// or uses DNS TXT for domains that do not yet have a method.
+    /// </summary>
+    public VerificationMethod? VerificationMethod { get; set; }
+
+    /// <summary>
+    /// Optimistic concurrency token. If provided, must match current domain Version.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Request body for executing a manual verification attempt.
+/// PUT /api/admin/storefront/domains/{id}/verification/verify
+/// </summary>
+public class VerifyDomainNowRequest
+{
+    /// <summary>
+    /// Optimistic concurrency token. Reserved for clients that already have
+    /// the current domain detail version.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Request body for retrying a failed verification attempt.
+/// PUT /api/admin/storefront/domains/{id}/verification/retry
+/// </summary>
+public class RetryDomainVerificationRequest
+{
+    /// <summary>
+    /// Optimistic concurrency token. Reserved for clients that already have
+    /// the current domain detail version.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Request body for refreshing a verification token before ownership is proven.
+/// PUT /api/admin/storefront/domains/{id}/verification/token
+/// </summary>
+public class RefreshDomainVerificationTokenRequest
+{
+    /// <summary>
+    /// Optional verification method to use with the refreshed token.
+    /// Null preserves the current method or defaults to DNS TXT.
+    /// </summary>
+    public VerificationMethod? VerificationMethod { get; set; }
+
+    /// <summary>
+    /// Optimistic concurrency token. If provided, must match current domain Version.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Safe, deterministic result for verification commands.
+/// Does not expose raw DNS/HTTP responses or expected values.
+/// </summary>
+public class DomainVerificationCommandResponse
+{
+    public Guid DomainId { get; set; }
+    public string Operation { get; set; } = string.Empty;
+    public VerificationStatus Status { get; set; }
+    public DomainLifecycleState? LifecycleState { get; set; }
+    public VerificationMethod? Method { get; set; }
+    public string Outcome { get; set; } = string.Empty;
+    public string? FailureReason { get; set; }
+    public bool RetryEligible { get; set; }
+    public DateTime? RetryAfterUtc { get; set; }
+    public int? AttemptNumber { get; set; }
+    public string NextAction { get; set; } = string.Empty;
+    public DomainVerificationDto? Instructions { get; set; }
+    public string CorrelationId { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Request body for partial domain update.
+/// PATCH /api/admin/storefront/domains/{id}
+/// </summary>
+public class UpdateDomainRequest
+{
+    /// <summary>
+    /// Hostname to update. Null = no change.
+    /// </summary>
+    public string? HostName { get; set; }
+
+    /// <summary>
+    /// Canonical policy to update. Null = no change.
+    /// </summary>
+    public CanonicalPolicy? CanonicalPolicy { get; set; }
+
+    /// <summary>
+    /// Redirect type to update. Null = no change.
+    /// </summary>
+    public RedirectType? RedirectType { get; set; }
+
+    /// <summary>
+    /// Redirect target domain ID to update. Null = no change.
+    /// </summary>
+    public Guid? RedirectTargetDomainId { get; set; }
+
+    /// <summary>
+    /// Optimistic concurrency token. If provided, must match current domain Version.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Request body for promoting a domain to Primary.
+/// PUT /api/admin/storefront/domains/{id}/primary
+/// </summary>
+public class PromotePrimaryDomainRequest
+{
+    /// <summary>
+    /// Optimistic concurrency token for the domain being promoted.
+    /// </summary>
+    public int? ExpectedVersion { get; set; }
+
+    /// <summary>
+    /// Optimistic concurrency token for the current primary domain being demoted.
+    /// If null, the server reads the current primary's version.
+    /// </summary>
+    public int? PreviousPrimaryExpectedVersion { get; set; }
+}
+
+/// <summary>
+/// Query parameters for restore operation.
+/// PUT /api/admin/storefront/domains/{id}/restore
+/// </summary>
+public class RestoreDomainRequest
+{
+    public int? ExpectedVersion { get; set; }
+
+    /// <summary>
+    /// Optional reason for the restore operation.
+    /// Recorded in the audit trail.
+    /// </summary>
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Query parameters for archive operation.
+/// PUT /api/admin/storefront/domains/{id}/archive
+/// </summary>
+public class ArchiveDomainRequest
+{
+    public int? ExpectedVersion { get; set; }
+
+    /// <summary>
+    /// Reason for archiving the domain.
+    /// Recorded in the audit trail.
+    /// </summary>
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// Request body for delete operation.
+/// DELETE /api/admin/storefront/domains/{id}
+/// </summary>
+public class DeleteDomainRequest
+{
+    public int? ExpectedVersion { get; set; }
+
+    /// <summary>
+    /// Reason for soft-deleting the domain.
+    /// Recorded in the audit trail.
+    /// </summary>
+    public string? Reason { get; set; }
 }
 
 /// <summary>

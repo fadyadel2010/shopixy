@@ -693,5 +693,6 @@ public class Order : BaseEntity, ITenantOwned, IProjectionVersioned
     
     // Navigation
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
+    public ICollection<OrderCheckoutFieldSnapshot> CheckoutFieldSnapshots { get; set; } = new List<OrderCheckoutFieldSnapshot>();
     public ICollection<OrderRefund> Refunds { get; set; } = new List<OrderRefund>();
 }

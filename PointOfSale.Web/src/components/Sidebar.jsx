@@ -28,6 +28,7 @@ import {
     ShoppingBag,
     ShoppingBasket,
     Store,
+    Globe,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useRTL } from '../hooks/useRTL'
@@ -70,6 +71,7 @@ const STOREFRONT_ICONS = {
     ShoppingBag,
     ShoppingBasket,
     Store,
+    Globe,
 }
 
 const readExpandedMenus = () => {
@@ -346,17 +348,35 @@ export default function Sidebar({ isOpen, onClose }) {
     const userRole = user?.role
     const STOREFRONT_PRODUCT_KEYS = new Set(['storefront', 'storefront-design', 'operations'])
 
+    const createStorefrontAccessPlaceholder = (item) => ({
+        ...item,
+        children: [{
+            path: item.path || '#',
+            label: t('storefront.accessPlaceholder', 'Request access to this workspace'),
+            icon: '🔒',
+            placeholder: true,
+            onClick: () => {
+                const url = `/support?context=${encodeURIComponent(item.label || item.key)}`
+                window.open(url, '_blank', 'noopener,noreferrer')
+            },
+        }],
+    })
+
     const filterMenuNode = (item) => {
         if (item.requiresMarketplaceActor && !isServiceMarketplaceWorkflowActor(user, true)) {
             return null
         }
 
         if (item.requiredRoles?.length && !item.requiredRoles.includes(userRole)) {
-            return null
+            return STOREFRONT_PRODUCT_KEYS.has(item.key)
+                ? createStorefrontAccessPlaceholder(item)
+                : null
         }
 
         if (item.capability && !canAccessCommerceHubVendorNavigationCapability(user, item.capability)) {
-            return null
+            return STOREFRONT_PRODUCT_KEYS.has(item.key)
+                ? createStorefrontAccessPlaceholder(item)
+                : null
         }
 
         const children = item.children?.map(filterMenuNode).filter(Boolean)
@@ -364,19 +384,7 @@ export default function Sidebar({ isOpen, onClose }) {
             // Storefront product sections must never vanish — render a placeholder
             // (ONLINE_STORE_CANONICAL_BLUEPRINT.md §12.6, §17 Law 16)
             if (STOREFRONT_PRODUCT_KEYS.has(item.key)) {
-                return {
-                    ...item,
-                    children: [{
-                        path: item.path || '#',
-                        label: t('storefront.accessPlaceholder', 'Request access to this workspace'),
-                        icon: '🔒',
-                        placeholder: true,
-                        onClick: () => {
-                            const url = `/support?context=${encodeURIComponent(item.label || item.key)}`
-                            window.open(url, '_blank', 'noopener,noreferrer')
-                        },
-                    }],
-                }
+                return createStorefrontAccessPlaceholder(item)
             }
             return null
         }

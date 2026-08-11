@@ -1,3 +1,5 @@
+using PointOfSale.Tests.Infrastructure;
+
 namespace PointOfSale.Tests.Architecture;
 
 public sealed class PosTenantAuthorityCertificationTests
@@ -89,7 +91,7 @@ public sealed class PosTenantAuthorityCertificationTests
     private static string ProjectPath(string project, params string[] parts) =>
         Path.GetFullPath(
             Path.Combine(
-                new[] { AppContext.BaseDirectory, "..", "..", "..", "..", project }
+                new[] { TestConfiguration.GetSolutionRoot(), project }
                     .Concat(parts)
                     .ToArray()));
 }

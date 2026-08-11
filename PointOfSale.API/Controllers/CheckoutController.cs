@@ -58,6 +58,7 @@ public class CheckoutController : ControllerBase
     };
 
     private readonly ICheckoutService _checkoutService;
+    private readonly ICheckoutAttachmentService _checkoutAttachmentService;
     private readonly ILogger<CheckoutController> _logger;
 
     private const string TenantIdHeader = "X-Tenant-Id";
@@ -70,9 +71,11 @@ public class CheckoutController : ControllerBase
 
     public CheckoutController(
         ICheckoutService checkoutService,
+        ICheckoutAttachmentService checkoutAttachmentService,
         ILogger<CheckoutController> logger)
     {
         _checkoutService = checkoutService;
+        _checkoutAttachmentService = checkoutAttachmentService;
         _logger = logger;
     }
 
@@ -242,6 +245,13 @@ public class CheckoutController : ControllerBase
             _logger.LogWarning(
                 "Checkout cart invalid | CartId: {CartId} | TraceId: {TraceId}",
                 ex.CartId, traceId);
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (CheckoutDynamicFieldValidationException ex)
+        {
+            _logger.LogWarning(
+                "Checkout dynamic field validation failed | ErrorCode: {ErrorCode} | TenantId: {TenantId} | TraceId: {TraceId}",
+                ex.ErrorCode, validation.TenantId, traceId);
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
         catch (CheckoutPriceChangedException ex)
@@ -465,6 +475,146 @@ public class CheckoutController : ControllerBase
                 "Checkout pricing preview failed | TenantId: {TenantId} | CartId: {CartId} | TraceId: {TraceId}",
                 validation.TenantId,
                 request.CartId,
+                traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
+    [HttpPost("attachments/upload-lease")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(CheckoutAttachmentUploadLeaseResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    [EnableRateLimiting("checkout")]
+    public async Task<IActionResult> CreateAttachmentUploadLease(
+        [FromBody] CheckoutAttachmentUploadLeaseRequestDto? request,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var validation = await ValidateHeadersAsync(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        if (request == null)
+        {
+            return BadRequest(new ApiErrorResponse("INVALID_REQUEST", "Request body is required", traceId));
+        }
+
+        try
+        {
+            var response = await _checkoutAttachmentService.CreateUploadLeaseAsync(
+                validation.TenantId!.Value,
+                validation.OwnerId!,
+                validation.OwnerType!,
+                validation.SessionId,
+                validation.CustomerId,
+                request,
+                cancellationToken);
+            return Ok(response);
+        }
+        catch (CheckoutDynamicFieldValidationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Checkout attachment upload lease failed | TenantId: {TenantId} | CartId: {CartId} | TraceId: {TraceId}", validation.TenantId, request.CartId, traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
+    [HttpPost("attachments/confirm")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(typeof(CheckoutAttachmentDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    [EnableRateLimiting("checkout")]
+    public async Task<IActionResult> ConfirmAttachmentUpload(
+        [FromBody] CheckoutAttachmentConfirmRequestDto? request,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var validation = await ValidateHeadersAsync(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        if (request == null)
+        {
+            return BadRequest(new ApiErrorResponse("INVALID_REQUEST", "Request body is required", traceId));
+        }
+
+        try
+        {
+            var response = await _checkoutAttachmentService.ConfirmUploadAsync(
+                validation.TenantId!.Value,
+                validation.OwnerId!,
+                validation.OwnerType!,
+                validation.SessionId,
+                validation.CustomerId,
+                request,
+                cancellationToken);
+            return Ok(response);
+        }
+        catch (CheckoutDynamicFieldValidationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Checkout attachment confirmation failed | TenantId: {TenantId} | CartId: {CartId} | AttachmentId: {AttachmentId} | TraceId: {TraceId}", validation.TenantId, request.CartId, request.AttachmentId, traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
+    [HttpDelete("attachments/{attachmentId:guid}")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    [EnableRateLimiting("checkout")]
+    public async Task<IActionResult> RemoveAttachment(
+        Guid attachmentId,
+        [FromQuery] Guid cartId,
+        [FromQuery] Guid fieldId,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var validation = await ValidateHeadersAsync(traceId);
+        if (validation.Error != null)
+        {
+            return validation.Error;
+        }
+
+        try
+        {
+            await _checkoutAttachmentService.RemovePendingAttachmentAsync(
+                validation.TenantId!.Value,
+                validation.OwnerId!,
+                validation.OwnerType!,
+                validation.SessionId,
+                validation.CustomerId,
+                cartId,
+                fieldId,
+                attachmentId,
+                cancellationToken);
+            return NoContent();
+        }
+        catch (CheckoutDynamicFieldValidationException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(
+                ex,
+                "Checkout attachment removal failed | TenantId: {TenantId} | CartId: {CartId} | AttachmentId: {AttachmentId} | TraceId: {TraceId}",
+                validation.TenantId,
+                cartId,
+                attachmentId,
                 traceId);
             return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
         }

@@ -250,9 +250,9 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
             };
 
             _dbContext.OnlineCustomerRefreshTokens.Add(token);
-            await _dbContext.SaveChangesAsync(cancellationToken);
 
-            // Publish event
+            // Queue the authoritative session event before committing so the
+            // MassTransit outbox row is atomic with the refresh-token authority.
             await _eventPublisher.PublishAsync(new OnlineCustomerRefreshTokenIssuedEvent
             {
                 TenantId = tenantId,
@@ -263,6 +263,8 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
                 CreatedByIp = ipAddress ?? "unknown",
                 CreatedByUserAgent = token.CreatedByUserAgent
             }, cancellationToken);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
                 "[RefreshToken] {Action} success | TenantId: {TenantId} | CustomerId: {CustomerId} | TokenId: {TokenId} | TraceId: {TraceId}",
@@ -519,9 +521,9 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
             var accessToken = GenerateAccessToken(customer, accessTokenExpiresAt, accessTokenJti);
 
             _dbContext.OnlineCustomerRefreshTokens.Add(newToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
 
-            // Publish events
+            // Queue authoritative session events before committing token
+            // rotation so the outbox and SQL session authority cannot diverge.
             await _eventPublisher.PublishAsync(new OnlineCustomerRefreshTokenRevokedEvent
             {
                 TenantId = tenantId,
@@ -541,6 +543,8 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
                 CreatedByIp = ipAddress ?? "unknown",
                 CreatedByUserAgent = newToken.CreatedByUserAgent
             }, cancellationToken);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
 
             _logger.LogInformation(
                 "[RefreshToken] {Action} success | TenantId: {TenantId} | CustomerId: {CustomerId} | OldTokenId: {OldTokenId} | NewTokenId: {NewTokenId} | TraceId: {TraceId}",
@@ -605,6 +609,16 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
             }
 
             token.Revoke(reason);
+
+            await _eventPublisher.PublishAsync(new OnlineCustomerRefreshTokenRevokedEvent
+            {
+                TenantId = tenantId,
+                CustomerId = token.OnlineCustomerId,
+                TokenId = token.Id,
+                Reason = reason,
+                RevokedAtUtc = token.RevokedAtUtc ?? DateTime.UtcNow
+            }, cancellationToken);
+
             await _dbContext.SaveChangesAsync(cancellationToken);
 
             if (!string.IsNullOrWhiteSpace(token.CurrentAccessTokenJti) &&
@@ -616,15 +630,6 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
                     token.CurrentAccessTokenExpiresAtUtc.Value,
                     cancellationToken);
             }
-
-            await _eventPublisher.PublishAsync(new OnlineCustomerRefreshTokenRevokedEvent
-            {
-                TenantId = tenantId,
-                CustomerId = token.OnlineCustomerId,
-                TokenId = token.Id,
-                Reason = reason,
-                RevokedAtUtc = token.RevokedAtUtc ?? DateTime.UtcNow
-            }, cancellationToken);
 
             _logger.LogInformation(
                 "[RefreshToken] {Action} | TenantId: {TenantId} | CustomerId: {CustomerId} | TokenId: {TokenId} | Reason: {Reason} | TraceId: {TraceId}",
@@ -677,14 +682,6 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
                 token.Revoke(reason);
             }
 
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            await _jwtBlacklist.BlacklistCustomerAsync(
-                tenantId,
-                customerId,
-                TimeSpan.FromMinutes(_jwtSettings.AccessTokenExpirationMinutes),
-                cancellationToken);
-
             await _eventPublisher.PublishAsync(new OnlineCustomerAllTokensRevokedEvent
             {
                 TenantId = tenantId,
@@ -693,6 +690,14 @@ public class StorefrontRefreshTokenService : IStorefrontRefreshTokenService
                 TokensRevoked = tokens.Count,
                 RevokedAtUtc = DateTime.UtcNow
             }, cancellationToken);
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            await _jwtBlacklist.BlacklistCustomerAsync(
+                tenantId,
+                customerId,
+                TimeSpan.FromMinutes(_jwtSettings.AccessTokenExpirationMinutes),
+                cancellationToken);
 
             _logger.LogWarning(
                 "[RefreshToken] {Action} | TenantId: {TenantId} | CustomerId: {CustomerId} | TokensRevoked: {Count} | Reason: {Reason} | TraceId: {TraceId}",

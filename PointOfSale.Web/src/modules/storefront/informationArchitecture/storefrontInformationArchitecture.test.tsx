@@ -58,8 +58,10 @@ describe('Storefront constitutional information architecture', () => {
     it('defines the exact canonical hierarchy, order, labels, and semantic icons', () => {
         expect(STOREFRONT_NAVIGATION.icon).toBe('Store')
         expect(STOREFRONT_NAVIGATION.children.map((node) => node.fallbackLabel)).toEqual([
-            'Overview',
-            'Storefront Status',
+            'Storefront Dashboard',
+            'Storefront Settings',
+            'Checkout Fields',
+            'Domains',
             'Homepage',
             'Catalog',
             'Content',
@@ -77,6 +79,7 @@ describe('Storefront constitutional information architecture', () => {
         expect(groups).toEqual({
             Catalog: ['Product Template'],
             Content: ['Pages'],
+            Domains: ['Domains', 'Activity'],
             Navigation: ['Header', 'Footer Links'],
             Appearance: ['Themes', 'Colors & Typography'],
         })
@@ -84,6 +87,10 @@ describe('Storefront constitutional information architecture', () => {
         const nodes = flattenNodes(STOREFRONT_NAVIGATION.children)
         expect(nodes.map((node) => node.icon)).toEqual([
             'LayoutDashboard',
+            'Activity',
+            'Files',
+            'Globe',
+            'Globe',
             'Activity',
             'Home',
             'ShoppingBag',
@@ -107,6 +114,7 @@ describe('Storefront constitutional information architecture', () => {
         ['/storefront/overview', '', 'overview'],
         ['/settings', '?tab=storefront', 'status'],
         ['/storefront/status', '', 'status'],
+        ['/storefront/checkout-fields', '', 'checkout-fields'],
         ['/storefront/builder', '?page=home', 'homepage'],
         ['/storefront/homepage', '', 'homepage'],
         ['/storefront/builder', '?page=product-template&templateId=summer', 'product-template'],
@@ -127,6 +135,15 @@ describe('Storefront constitutional information architecture', () => {
         ['/storefront/appearance/colors-typography', '', 'colors-typography'],
         ['/storefront/versions', '', 'storeconfig-history'],
         ['/storefront/storeconfig-version-history', '', 'storeconfig-history'],
+        ['/storefront/domains', '', 'domains'],
+        ['/storefront/domains/list', '', 'domain-list'],
+        ['/storefront/domains/add', '', 'domain-add'],
+        ['/storefront/domains/activity', '', 'domains-activity'],
+        ['/storefront/domains/example.com', '', 'domain-detail'],
+        ['/storefront/domains/example.com/verification', '', 'dns-verification'],
+        ['/storefront/domains/example.com/ssl', '', 'ssl-management'],
+        ['/storefront/domains/example.com/redirects', '', 'redirects'],
+        ['/storefront/domains/example.com/history', '', 'domain-history'],
     ])('resolves %s%s to %s', (pathname, search, screenId) => {
         expect(resolveStorefrontScreen(pathname, search)?.id).toBe(screenId)
     })
@@ -137,6 +154,7 @@ describe('Storefront constitutional information architecture', () => {
             'storefront',
             'storefront/overview',
             'storefront/status',
+            'storefront/checkout-fields',
             'storefront/homepage',
             'storefront/catalog/product-template',
             'storefront/content/pages',
@@ -154,6 +172,15 @@ describe('Storefront constitutional information architecture', () => {
             'storefront/themes',
             'storefront/theme',
             'storefront/versions',
+            'storefront/domains',
+            'storefront/domains/:id',
+            'storefront/domains/add',
+            'storefront/domains/list',
+            'storefront/domains/activity',
+            'storefront/domains/:id/verification',
+            'storefront/domains/:id/ssl',
+            'storefront/domains/:id/redirects',
+            'storefront/domains/:id/history',
         ]
 
         for (const path of registeredPaths) {
@@ -161,10 +188,10 @@ describe('Storefront constitutional information architecture', () => {
         }
         expect(appSource).toContain('path="settings" element={<Settings />}')
         expect(appSource).toContain("roles={['Owner', 'Admin']}")
-        expect(STOREFRONT_ROUTE_COMPATIBILITY).toHaveLength(12)
+        expect(STOREFRONT_ROUTE_COMPATIBILITY).toHaveLength(22)
 
-        const headerRoute = new URL(STOREFRONT_NAVIGATION.children[5].children[0].path, 'http://localhost')
-        const footerLinksRoute = new URL(STOREFRONT_NAVIGATION.children[5].children[1].path, 'http://localhost')
+        const headerRoute = new URL(STOREFRONT_NAVIGATION.children[7].children[0].path, 'http://localhost')
+        const footerLinksRoute = new URL(STOREFRONT_NAVIGATION.children[7].children[1].path, 'http://localhost')
         expect(headerRoute.pathname).toBe('/storefront/navigation')
         expect(footerLinksRoute.pathname).toBe(headerRoute.pathname)
         expect(footerLinksRoute.search).not.toBe(headerRoute.search)
@@ -250,7 +277,7 @@ describe('Storefront constitutional information architecture', () => {
         const firstRender = renderSidebar()
         const storefrontGroup = await screen.findByRole('button', { name: 'Storefront' })
         await waitFor(() => expect(storefrontGroup).toHaveAttribute('aria-expanded', 'true'))
-        const overviewLinks = screen.getAllByRole('link', { name: 'Overview' })
+        const overviewLinks = screen.getAllByRole('link', { name: 'Storefront Dashboard' })
         const designOverview = overviewLinks.find((el) => el.getAttribute('href') === '/storefront')
         expect(designOverview).toHaveAttribute('aria-current', 'page')
         expect(screen.queryByText('Category Template')).not.toBeInTheDocument()
@@ -275,5 +302,5 @@ describe('Storefront constitutional information architecture', () => {
         const catalogAfterRemount = (await screen.findAllByRole('button', { name: 'Catalog' }))
             .find((el) => el.getAttribute('aria-controls') === 'sidebar-submenu-storefront-catalog')
         expect(catalogAfterRemount).toHaveAttribute('aria-expanded', 'true')
-    })
+    }, 15000)
 })

@@ -9,6 +9,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Reliability;
+using PointOfSale.Infrastructure.Utilities;
 
 namespace PointOfSale.API.Controllers;
 
@@ -191,10 +192,11 @@ public class AdminDataSyncController : ControllerBase
                 .Where(s => s.TenantId == tenantId)
                 .OrderBy(s => s.Id)
                 .ToListAsync(cancellationToken);
+            var tenantCurrency = await ResolveTenantCurrencyAsync(tenantId, cancellationToken);
 
             foreach (var shippingMethod in shippingMethods)
             {
-                writeModels.Add(BuildShippingMethodUpsert(shippingMethod));
+                writeModels.Add(BuildShippingMethodUpsert(shippingMethod, tenantCurrency));
 
                 if (writeModels.Count < SyncBatchSize)
                 {
@@ -304,7 +306,7 @@ public class AdminDataSyncController : ControllerBase
         };
     }
 
-    private static WriteModel<ShippingMethodDocument> BuildShippingMethodUpsert(ShippingMethod shippingMethod)
+    private static WriteModel<ShippingMethodDocument> BuildShippingMethodUpsert(ShippingMethod shippingMethod, string tenantCurrency)
     {
         var authorityTimestamp = shippingMethod.UpdatedAt ?? shippingMethod.CreatedAt;
         if (authorityTimestamp == default)
@@ -326,6 +328,7 @@ public class AdminDataSyncController : ControllerBase
             .Set(d => d.BaseRate, shippingMethod.BaseRate)
             .Set(d => d.PerKgRate, shippingMethod.PerKgRate)
             .Set(d => d.FreeShippingThreshold, shippingMethod.FreeShippingThreshold)
+            .Set(d => d.Currency, tenantCurrency)
             .Set(d => d.EstimatedDeliveryDaysMin, shippingMethod.EstimatedDeliveryDaysMin)
             .Set(d => d.EstimatedDeliveryDaysMax, shippingMethod.EstimatedDeliveryDaysMax)
             .Set(d => d.IsActive, isActive)
@@ -342,6 +345,20 @@ public class AdminDataSyncController : ControllerBase
         {
             IsUpsert = true
         };
+    }
+
+    private async Task<string> ResolveTenantCurrencyAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenantCurrency = await _sqlContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(tenant => tenant.Id == tenantId)
+            .Select(tenant => tenant.Currency)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return CurrencyNormalizationHelper.NormalizeCurrencyOrThrow(
+            tenantCurrency,
+            $"Controller: {nameof(AdminDataSyncController)}, Method: {nameof(SyncShippingMethods)}, TenantId: {tenantId}");
     }
 
     private static async Task<int> FlushSyncBatchAsync<TDocument>(

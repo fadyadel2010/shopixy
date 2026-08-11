@@ -38,6 +38,7 @@ using PointOfSale.Infrastructure.Redis;
 using PointOfSale.Infrastructure.Elasticsearch;
 using PointOfSale.Infrastructure.Configuration;
 using PointOfSale.Infrastructure.Accounting;
+using PointOfSale.Infrastructure.Certificates;
 using PointOfSale.Infrastructure.Extensions;
 using PointOfSale.Infrastructure.Payments.Runtime;
 using PointOfSale.API.Services.Payments.Stripe;
@@ -97,22 +98,22 @@ builder.Logging.AddDebug();
 builder.Logging.AddEventSourceLogger();
 
 // Configure forwarded headers for proper client IP resolution behind proxies/load balancers
+// DOMAIN-2A: X-Forwarded-Host added per DOMAIN-1.6 Section 3.1 and DOMAIN-1 Architecture Law #11.
+// This ensures Request.Host reflects the true customer domain behind Caddy/NGINX/Cloudflare.
+// X-Forwarded-For and X-Forwarded-Proto remain unchanged — no proxy behavior invented.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost;
     
     // Clear default networks/proxies and configure based on your infrastructure
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
     
-    // Add your load balancer/reverse proxy IPs here
-    // Example: options.KnownProxies.Add(IPAddress.Parse("10.0.0.100"));
-    // For development/testing with localhost proxies:
-    if (builder.Environment.IsDevelopment())
-    {
-        options.KnownProxies.Add(System.Net.IPAddress.Parse("127.0.0.1"));
-        options.KnownProxies.Add(System.Net.IPAddress.Parse("::1"));
-    }
+    // Caddy is deployed as a loopback reverse proxy in the supported topology.
+    // Keeping these entries in every environment prevents an empty allowlist
+    // from becoming a trust-all configuration on affected framework versions.
+    options.KnownProxies.Add(System.Net.IPAddress.Loopback);
+    options.KnownProxies.Add(System.Net.IPAddress.IPv6Loopback);
     
     // In production, configure known proxy IPs from configuration
     var knownProxiesConfig = builder.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>();
@@ -353,6 +354,90 @@ builder.Services.AddMemoryCache();
 // AF-16D: Storefront URL resolver — single source of truth for promotion link URLs
 builder.Services.AddSingleton<PointOfSale.API.Services.StorefrontUrlResolver>();
 
+// DOMAIN-2A: Host Resolution Middleware foundation services.
+// IHostNormalizer — pure-syntactic host normalization (lowercase, port strip,
+// trailing dot removal, IPv6 bracket handling). No DNS, no database.
+// IHostResolutionContext — per-request scoped container for the normalized host.
+// These are registered as scoped so each request gets its own context instance.
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IHostNormalizer, PointOfSale.API.Middleware.HostNormalizer>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IHostResolutionContext, PointOfSale.API.Middleware.HostResolutionContext>();
+
+// DOMAIN-2C: Persistence-backed Domain Resolution.
+// IDomainResolver — Host → Domain resolution contract.
+// Activates persistence-backed resolution. Queries the Domains table by NormalizedHostName via
+// IDomainRepository. No tenant resolution, no StoreConfig/Theme/CMS lookup.
+//
+// Resolution pipeline (DOMAIN-2C):
+//   NormalizedHost → IDomainRepository → Domain Entity → DomainResolutionResult → STOP
+//
+// IDomainResolutionCache — cache abstraction only; runtime caching is disabled.
+// NoOpDomainResolutionCache keeps caching disabled explicitly (always miss, no storage).
+// Future domain-cache waves may replace this with Redis/MemoryCache.
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainRepository, PointOfSale.Infrastructure.Data.Repositories.DomainRepository>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainResolver, PointOfSale.Infrastructure.Data.Repositories.PersistenceDomainResolver>();
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainResolutionCache, PointOfSale.API.Middleware.NoOpDomainResolutionCache>();
+
+// DOMAIN-4.2A: DNS Resolver Foundation for domain ownership verification.
+// IDnsResolver — DNS/HTTP lookup abstraction for TXT, CNAME, and HTTP file verification.
+// Provides provider-agnostic DNS resolution with error normalization, caching, and health checks.
+// Implementation uses DnsClient.NET with configurable nameservers and timeouts.
+//
+// Configuration binding from appsettings.json "DnsVerification" section.
+// DnsResolverOptions validation ensures valid nameserver IPs and timeout ranges.
+//
+// ILookupClient (DnsClient.NET) — configured with nameservers from DnsResolverOptions.
+// Registered as singleton for connection pooling and performance.
+//
+// HttpClient for verification — separate named client with 30s timeout for HTTP file verification.
+// Constitutional Law #7: Verification engine depends ONLY on IDnsResolver, never DNS libraries directly.
+builder.Services.Configure<PointOfSale.Infrastructure.Configuration.DnsResolverOptions>(
+    builder.Configuration.GetSection(PointOfSale.Infrastructure.Configuration.DnsResolverOptions.SectionName));
+builder.Services.AddOptions<PointOfSale.API.Configuration.DomainVerificationSchedulerOptions>()
+    .Bind(builder.Configuration.GetSection(PointOfSale.API.Configuration.DomainVerificationSchedulerOptions.SectionName))
+    .Validate(options => options.Validate(out _), "Invalid DnsVerification:Scheduler configuration.")
+    .ValidateOnStart();
+builder.Services.AddOptions<PointOfSale.API.Configuration.CertificateRenewalSchedulerOptions>()
+    .Bind(builder.Configuration.GetSection(PointOfSale.API.Configuration.CertificateRenewalSchedulerOptions.SectionName))
+    .Validate(options => options.Validate(out _), "Invalid CertificateRenewalScheduler configuration.")
+    .ValidateOnStart();
+builder.Services.AddOptions<PointOfSale.API.Configuration.CertificateProvisioningSchedulerOptions>()
+    .Bind(builder.Configuration.GetSection(PointOfSale.API.Configuration.CertificateProvisioningSchedulerOptions.SectionName))
+    .Validate(options => options.Validate(out _), "Invalid CertificateProvisioningScheduler configuration.")
+    .ValidateOnStart();
+
+builder.Services.AddSingleton<DnsClient.ILookupClient>(sp =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PointOfSale.Infrastructure.Configuration.DnsResolverOptions>>().Value;
+    options.Validate();
+
+    var nameServers = options.NameServers
+        .Select(ns => System.Net.IPAddress.Parse(ns))
+        .Select(ip => new System.Net.IPEndPoint(ip, 53))
+        .ToArray();
+
+    var lookupClientOptions = new DnsClient.LookupClientOptions(nameServers)
+    {
+        Timeout = TimeSpan.FromSeconds(options.Timeout),
+        UseCache = false, // Caching handled by DnsClientResolver via IMemoryCache
+        Retries = options.RetryAttempts,
+        ThrowDnsErrors = false, // Return errors as DnsResponseException for normalization
+        ContinueOnDnsError = false,
+        EnableAuditTrail = options.EnableDetailedLogging
+    };
+
+    return new DnsClient.LookupClient(lookupClientOptions);
+});
+
+builder.Services.AddHttpClient("DnsVerification", (sp, client) =>
+{
+    var options = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<PointOfSale.Infrastructure.Configuration.DnsResolverOptions>>().Value;
+    client.Timeout = TimeSpan.FromSeconds(options.HttpTimeout);
+    client.DefaultRequestHeaders.Add("User-Agent", "Shopixy-DNS-Verification/1.0");
+})
+.ConfigurePrimaryHttpMessageHandler(PointOfSale.Infrastructure.Services.Dns.PublicEndpointHttpMessageHandler.Create);
+
+builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDnsResolver, PointOfSale.Infrastructure.Services.Dns.DnsClientResolver>();
+
 // AF-16E: Reindex service for backfilling StorefrontBaseUrl in affiliate products
 builder.Services.AddScoped<PointOfSale.Infrastructure.Scripts.AF16E_ReindexAffiliateProductsWithStorefrontUrl>();
 
@@ -370,6 +455,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.IProductMediaService, PointO
 builder.Services.AddScoped<PointOfSale.API.Services.IR2StorageService, PointOfSale.API.Services.R2StorageService>();
 builder.Services.AddScoped<PointOfSale.Core.Abstractions.IChatAttachmentReferenceVerifier, PointOfSale.API.Services.ChatAttachmentReferenceVerifier>();
 builder.Services.AddScoped<PointOfSale.API.Services.IFileValidationService, PointOfSale.API.Services.FileValidationService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Checkout.ICheckoutAttachmentService, PointOfSale.API.Services.Checkout.CheckoutAttachmentService>();
 // NOTE: FinancialAccountService was removed - Visa accounts are now created per-tenant in TenantRegistrationService
 builder.Services.AddScoped<PointOfSale.API.Services.IValidationService, PointOfSale.API.Services.ValidationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IGeographicAdministrationService, PointOfSale.API.Services.Admin.GeographicAdministrationService>();
@@ -434,6 +520,23 @@ builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageReadService, Poi
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPageService, PointOfSale.API.Services.Cms.CmsPageService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Cms.ICmsPagePreviewTokenService, PointOfSale.API.Services.Cms.CmsPagePreviewTokenService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontFooterReadService, PointOfSale.API.Services.Storefront.StorefrontFooterReadService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontCheckoutFieldDefinitionService, PointOfSale.API.Services.Storefront.StorefrontCheckoutFieldDefinitionService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IDomainReadService, PointOfSale.API.Services.Storefront.DomainReadService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IDomainWriteService, PointOfSale.API.Services.Storefront.DomainWriteService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IDomainVerificationService, PointOfSale.API.Services.Storefront.DomainVerificationService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IDomainVerificationSchedulerCandidateQuery, PointOfSale.API.Services.Storefront.DomainVerificationSchedulerCandidateQuery>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.DomainVerificationSchedulerJob>();
+builder.Services.AddCertificateProviderFoundation(builder.Configuration);
+builder.Services.AddCaddyEdgeIntegration(builder.Configuration);
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateProvisioningService, PointOfSale.API.Services.Storefront.CertificateProvisioningService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateProvisioningSchedulerCandidateQuery, PointOfSale.API.Services.Storefront.CertificateProvisioningSchedulerCandidateQuery>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.CertificateProvisioningSchedulerJob>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateActivationService, PointOfSale.API.Services.Storefront.CertificateActivationService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateRenewalSchedulerCandidateQuery, PointOfSale.API.Services.Storefront.CertificateRenewalSchedulerCandidateQuery>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateRenewalService, PointOfSale.API.Services.Storefront.CertificateRenewalService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateRevocationService, PointOfSale.API.Services.Storefront.CertificateRevocationService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ICertificateAdminCommandService, PointOfSale.API.Services.Storefront.CertificateAdminCommandService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.CertificateRenewalSchedulerJob>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageContentValidator, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageContentValidator>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageCacheService, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageCacheService>();
 builder.Services.AddScoped<PointOfSale.API.Services.MarketplaceCms.IMarketplaceCmsPageReadService, PointOfSale.API.Services.MarketplaceCms.MarketplaceCmsPageReadService>();
@@ -828,6 +931,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminInventoryService
 // =============================================================================
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminStoreConfigService, PointOfSale.API.Services.Admin.AdminStoreConfigService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IAdminThemeActivationService, PointOfSale.API.Services.Admin.AdminThemeActivationService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Admin.ICheckoutFieldDefinitionService, PointOfSale.API.Services.Admin.CheckoutFieldDefinitionService>();
 
 // =============================================================================
 // ADMIN CMS SERVICE (Phase 9.11 - Static CMS Pages & Navigation Engine)
@@ -2090,6 +2194,8 @@ builder.Services.AddSingleton<PointOfSale.Infrastructure.Instrumentation.Analyti
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Instrumentation.AbandonedCartRecoveryTelemetry>();
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Instrumentation.StorefrontPublishTelemetry>();
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Instrumentation.CommerceReliabilityTelemetry>();
+builder.Services.AddSingleton<PointOfSale.API.Instrumentation.DomainVerificationSchedulerTelemetry>();
+builder.Services.AddSingleton<PointOfSale.API.Instrumentation.CertificateRenewalTelemetry>();
 builder.Services.AddSingleton<PointOfSale.API.Instrumentation.PaymobOperationalTelemetry>();
 builder.Services.AddSingleton<PointOfSale.API.Instrumentation.StripeOperationalTelemetry>();
 builder.Services.AddSingleton<PointOfSale.API.Instrumentation.FawryOperationalTelemetry>();
@@ -2127,6 +2233,8 @@ builder.Services.AddOpenTelemetry()
             .AddMeter(PointOfSale.Infrastructure.Instrumentation.AbandonedCartRecoveryTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Instrumentation.StorefrontPublishTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Instrumentation.CommerceReliabilityTelemetry.MeterName)
+            .AddMeter(PointOfSale.API.Instrumentation.DomainVerificationSchedulerTelemetry.MeterName)
+            .AddMeter(PointOfSale.API.Instrumentation.CertificateRenewalTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Instrumentation.InventoryReservationTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Instrumentation.OperationalConvergenceTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Accounting.AccountingMetrics.MeterName)
@@ -3216,6 +3324,10 @@ builder.Services.AddHealthChecks()
     .AddCheck<PointOfSale.API.HealthChecks.ElasticsearchDependencyHealthCheck>("elasticsearch", tags: new[] { "elasticsearch", "search", "ready", "dependency" })
     .AddCheck<PointOfSale.API.HealthChecks.RabbitMqDependencyHealthCheck>("rabbitmq", tags: new[] { "messaging", "rabbitmq", "ready", "dependency" })
     .AddCheck<PointOfSale.API.HealthChecks.R2DependencyHealthCheck>("r2", tags: new[] { "storage", "r2", "ready", "dependency" })
+    .AddCheck<PointOfSale.Infrastructure.HealthChecks.DnsResolverHealthCheck>("dns_resolver", tags: new[] { "dns", "verification", "ready", "dependency" })
+    .AddCheck<PointOfSale.Infrastructure.Certificates.CertificateProviderHealthCheck>("certificate_provider", tags: new[] { "acme", "certificate", "tls", "ready" })
+    .AddCheck<PointOfSale.Infrastructure.Certificates.CaddyEdgeHealthCheck>("caddy_edge", tags: new[] { "caddy", "edge", "tls", "ready" })
+    .AddCheck<PointOfSale.API.HealthChecks.CertificateRenewalHealthCheck>("certificate_renewal", tags: new[] { "tls", "renewal", "ready" })
     .AddCheck<PointOfSale.API.HealthChecks.PaymobFoundationHealthCheck>("paymob_foundation", tags: new[] { "payments", "paymob", "configuration", "ready" })
     .AddCheck<PointOfSale.API.HealthChecks.PaymobOperationalReadinessHealthCheck>("paymob_operational_readiness", tags: new[] { "payments", "paymob", "ready", "operational" })
     .AddCheck<PointOfSale.API.HealthChecks.StripeFoundationHealthCheck>("stripe_foundation", tags: new[] { "payments", "stripe", "configuration" })
@@ -3336,6 +3448,28 @@ app.UseAuthentication();
 // storefront preview requests and never trusts tenant query/header input.
 // =============================================================================
 app.UseMiddleware<PointOfSale.API.Middleware.ThemePreviewAuthorityMiddleware>();
+
+// =============================================================================
+// HOST RESOLUTION MIDDLEWARE (DOMAIN-2A/2C)
+//
+// Inserted between Authentication/ThemePreviewAuthority and TenantResolution
+// per DOMAIN-1.6 Section 3.9 and DOMAIN-1 Section 7.2 pipeline ordering:
+//   - AFTER UseForwardedHeaders (Request.Host is the true customer host)
+//   - AFTER Authentication (JWT claims available for cross-check)
+//   - AFTER ThemePreviewAuthorityMiddleware (preview tokens bypass host resolution)
+//   - BEFORE TenantResolutionMiddleware (provides NormalizedHost for downstream)
+//
+// DOMAIN-2C: This is now persistence-backed host-to-domain resolution.
+// It normalizes the request host, stores the normalized host in the
+// per-request HostResolutionContext, performs a read-only Domain registry
+// lookup by NormalizedHostName, stores the runtime-only DomainResolutionResult,
+// and may short-circuit redirect domains. It performs NO tenant entity
+// resolution, NO StoreConfig lookup, NO caching, NO theme/CMS lookup, and
+// NO DNS/SSL verification.
+// =============================================================================
+app.UseWhen(
+    context => !IsTestAuthEndpoint(context.Request.Path) && !IsHealthEndpoint(context.Request.Path),
+    branch => branch.UseMiddleware<PointOfSale.API.Middleware.HostResolutionMiddleware>());
 
 // =============================================================================
 // TENANT RESOLUTION MIDDLEWARE

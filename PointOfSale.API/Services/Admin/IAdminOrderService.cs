@@ -41,6 +41,13 @@ public interface IAdminOrderService
         string correlationId,
         CancellationToken cancellationToken = default);
 
+    Task<AdminOrderAttachmentDownloadResult> OpenCheckoutAttachmentDownloadAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid attachmentId,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
     /// <summary>
     /// Updates order status (manual override).
     /// 
@@ -74,6 +81,12 @@ public interface IAdminOrderService
         string correlationId,
         CancellationToken cancellationToken = default);
 }
+
+public sealed record AdminOrderAttachmentDownloadResult(
+    Stream Content,
+    string FileName,
+    string ContentType,
+    long SizeBytes);
 
 #region Admin Order Exceptions
 
@@ -109,6 +122,39 @@ public class AdminOrderNotFoundException : AdminOrderException
         : base("ORDER_NOT_FOUND", $"Order {orderId} not found")
     {
         OrderId = orderId;
+    }
+}
+
+public class AdminOrderAttachmentNotFoundException : AdminOrderException
+{
+    public Guid AttachmentId { get; }
+
+    public AdminOrderAttachmentNotFoundException(Guid attachmentId)
+        : base("ATTACHMENT_NOT_FOUND", $"Attachment {attachmentId} was not found for this order.")
+    {
+        AttachmentId = attachmentId;
+    }
+}
+
+public class AdminOrderAttachmentNotDownloadableException : AdminOrderException
+{
+    public Guid AttachmentId { get; }
+
+    public AdminOrderAttachmentNotDownloadableException(Guid attachmentId)
+        : base("ATTACHMENT_NOT_DOWNLOADABLE", "Attachment is not available for download.")
+    {
+        AttachmentId = attachmentId;
+    }
+}
+
+public class AdminOrderAttachmentIntegrityException : AdminOrderException
+{
+    public Guid AttachmentId { get; }
+
+    public AdminOrderAttachmentIntegrityException(Guid attachmentId, Exception innerException)
+        : base("ATTACHMENT_INTEGRITY_CHECK_FAILED", "Attachment could not be verified for download.", innerException)
+    {
+        AttachmentId = attachmentId;
     }
 }
 

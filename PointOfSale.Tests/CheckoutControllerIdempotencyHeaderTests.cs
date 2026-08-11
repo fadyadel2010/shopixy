@@ -50,6 +50,7 @@ public sealed class CheckoutControllerIdempotencyHeaderTests
 
         var controller = new CheckoutController(
             checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -88,6 +89,7 @@ public sealed class CheckoutControllerIdempotencyHeaderTests
 
         var controller = new CheckoutController(
             checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext

@@ -713,7 +713,13 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             return message
         }
 
+        let allowConfirmedNavigation = false
+
         const handleDocumentClick = (event) => {
+            if (allowConfirmedNavigation) {
+                return
+            }
+
             const anchor = event.target?.closest?.('a[href]')
             if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) {
                 return
@@ -724,10 +730,26 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                 return
             }
 
-            if (!window.confirm(message)) {
-                event.preventDefault()
-                event.stopPropagation()
-            }
+            event.preventDefault()
+            event.stopPropagation()
+
+            void confirm({
+                cancelLabel: tx('common.stay', 'Stay'),
+                confirmLabel: tx('common.leave', 'Leave'),
+                description: message,
+                title: tx('variants.unsavedChangesTitle', 'Unsaved variant changes'),
+                variant: 'warning',
+            }).then((confirmed) => {
+                if (!confirmed) {
+                    return
+                }
+
+                allowConfirmedNavigation = true
+                anchor.click()
+                window.setTimeout(() => {
+                    allowConfirmedNavigation = false
+                }, 0)
+            })
         }
 
         window.addEventListener('beforeunload', handleBeforeUnload)
@@ -737,7 +759,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             window.removeEventListener('beforeunload', handleBeforeUnload)
             document.removeEventListener('click', handleDocumentClick, true)
         }
-    }, [hasUnsavedChanges, tx])
+    }, [confirm, hasUnsavedChanges, tx])
 
     const handleRowChange = (key, patch) => {
         setRowDrafts(prev => ({

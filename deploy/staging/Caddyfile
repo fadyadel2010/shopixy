@@ -1,8 +1,9 @@
 {
     email {$ACME_EMAIL}
+    acme_ca {$ACME_CA:https://acme-staging-v02.api.letsencrypt.org/directory}
 }
 
-(staging_security_headers) {
+(shopixy_security_headers) {
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
@@ -19,8 +20,13 @@
     }
 }
 
+# DOMAIN-5.5: tenant custom-domain routes are written as one managed Caddyfile
+# per hostname by Shopixy's Caddy edge integration. The imported files must only
+# contain routes admitted by the application and must preserve the original Host.
+import {$CADDY_CUSTOM_DOMAIN_IMPORT:C:\srv\pointofsale\staging\caddy\custom-domains\*.caddy}
+
 api-staging.yourdomain.com {
-    import staging_security_headers
+    import shopixy_security_headers
     encode zstd gzip
     log {
         output file {$STAGING_LOG_ROOT:C:\srv\pointofsale\staging\logs}\api-access.log
@@ -30,7 +36,7 @@ api-staging.yourdomain.com {
 }
 
 app-staging.yourdomain.com {
-    import staging_security_headers
+    import shopixy_security_headers
     encode zstd gzip
     root * {$POS_WEB_ROOT:C:\srv\pointofsale\staging\web}
 
@@ -51,7 +57,7 @@ app-staging.yourdomain.com {
 }
 
 *.app-staging.yourdomain.com {
-    import staging_security_headers
+    import shopixy_security_headers
     encode zstd gzip
     root * {$STOREFRONT_ROOT:C:\srv\pointofsale\staging\storefront}
 

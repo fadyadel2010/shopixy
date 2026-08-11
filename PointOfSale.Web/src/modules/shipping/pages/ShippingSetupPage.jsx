@@ -37,6 +37,7 @@ import {
 } from 'lucide-react'
 
 import { useSettings } from '../../../contexts/SettingsContext'
+import { useConfirmDialog } from '../../../common/confirm/ConfirmDialogProvider'
 import {
     useCarrierConfigurations,
     useShippingOptions,
@@ -57,6 +58,7 @@ import { CarrierBadge } from '../index'
 export default function ShippingSetupPage() {
     const { t, i18n } = useTranslation()
     const navigate = useNavigate()
+    const { confirm } = useConfirmDialog()
     const { formatCurrency, settings } = useSettings()
     const isRTL = i18n.language === 'ar'
 
@@ -192,7 +194,14 @@ export default function ShippingSetupPage() {
 
     // Delete handler
     const handleDeleteOption = async (option) => {
-        if (!window.confirm(t('common.deleteConfirm', { item: option.name }))) return
+        const confirmed = await confirm({
+            confirmLabel: t('common.delete', 'Delete'),
+            description: t('common.deleteConfirm', { item: option.name }),
+            title: t('common.warning', 'Warning'),
+            variant: 'danger',
+        })
+
+        if (!confirmed) return
 
         const result = await deleteOption(option.id)
         if (result.success) {

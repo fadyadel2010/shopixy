@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Infrastructure.Utilities;
 
 namespace PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -131,7 +132,11 @@ public class ShippingMethodReadRepository : IShippingMethodReadRepository
                 tenantId, methods.Count);
         }
 
-        return methods.Select(MapToDocument).ToList();
+        var tenantCurrency = methods.Count == 0
+            ? string.Empty
+            : await ResolveTenantCurrencyAsync(tenantId, cancellationToken);
+
+        return methods.Select(method => MapToDocument(method, tenantCurrency)).ToList();
     }
 
     /// <inheritdoc />
@@ -195,7 +200,13 @@ public class ShippingMethodReadRepository : IShippingMethodReadRepository
                 shippingMethodId);
         }
 
-        return method == null ? null : MapToDocument(method);
+        if (method == null)
+        {
+            return null;
+        }
+
+        var tenantCurrency = await ResolveTenantCurrencyAsync(tenantId, cancellationToken);
+        return MapToDocument(method, tenantCurrency);
     }
 
     /// <inheritdoc />
@@ -343,7 +354,21 @@ public class ShippingMethodReadRepository : IShippingMethodReadRepository
         }
     }
 
-    private static ShippingMethodDocument MapToDocument(ShippingMethod method)
+    private async Task<string> ResolveTenantCurrencyAsync(Guid tenantId, CancellationToken cancellationToken)
+    {
+        var tenantCurrency = await _dbContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(tenant => tenant.Id == tenantId)
+            .Select(tenant => tenant.Currency)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return CurrencyNormalizationHelper.NormalizeCurrencyOrThrow(
+            tenantCurrency,
+            $"Repository: {nameof(ShippingMethodReadRepository)}, Method: {nameof(ResolveTenantCurrencyAsync)}, TenantId: {tenantId}");
+    }
+
+    private static ShippingMethodDocument MapToDocument(ShippingMethod method, string tenantCurrency)
     {
         return new ShippingMethodDocument
         {
@@ -355,6 +380,7 @@ public class ShippingMethodReadRepository : IShippingMethodReadRepository
             BaseRate = method.BaseRate,
             PerKgRate = method.PerKgRate,
             FreeShippingThreshold = method.FreeShippingThreshold,
+            Currency = tenantCurrency,
             EstimatedDeliveryDaysMin = method.EstimatedDeliveryDaysMin,
             EstimatedDeliveryDaysMax = method.EstimatedDeliveryDaysMax,
             IsActive = method.IsActive,

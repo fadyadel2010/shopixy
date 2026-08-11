@@ -23,6 +23,7 @@ import {
     ArrowLeft, RefreshCw, X, AlertCircle
 } from 'lucide-react'
 import { useSettings } from '../../../../contexts/SettingsContext'
+import { useConfirmDialog } from '../../../../common/confirm/ConfirmDialogProvider'
 import {
     useCampaignCosts,
     useCreateCampaignCost,
@@ -39,6 +40,7 @@ const PERIOD_OPTIONS = [
 
 export default function CampaignCostsPage() {
     const { t } = useTranslation()
+    const { confirm } = useConfirmDialog()
     const { formatCurrency } = useSettings()
     const [period, setPeriod] = useState('last_30_days')
     const [showModal, setShowModal] = useState(false)
@@ -59,9 +61,17 @@ export default function CampaignCostsPage() {
     }
 
     const handleDelete = async (id) => {
-        if (!window.confirm(t('campaignCost.deleteConfirm', 'Are you sure you want to delete this campaign cost?'))) {
+        const confirmed = await confirm({
+            confirmLabel: t('common.delete', 'Delete'),
+            description: t('campaignCost.deleteConfirm', 'Are you sure you want to delete this campaign cost?'),
+            title: t('common.warning', 'Warning'),
+            variant: 'danger',
+        })
+
+        if (!confirmed) {
             return
         }
+
         try {
             await deleteCost(id)
             refetch()

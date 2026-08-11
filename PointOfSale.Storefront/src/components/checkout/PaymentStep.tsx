@@ -19,6 +19,7 @@ import { useCurrency } from '@/hooks';
 import {
     useCheckoutStore,
     selectPaymentMethods,
+    selectPaymentMethodsStatus,
     selectSelectedPaymentMethodCode,
     selectPaymentMethodsLoading,
     selectPaymentMethodsError,
@@ -229,6 +230,7 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
 
     // Store state
     const paymentMethods = useCheckoutStore(selectPaymentMethods);
+    const paymentMethodsStatus = useCheckoutStore(selectPaymentMethodsStatus);
     const selectedCode = useCheckoutStore(selectSelectedPaymentMethodCode);
     const selectedMethod = useCheckoutStore(selectSelectedPaymentMethod);
     const isLoading = useCheckoutStore(selectPaymentMethodsLoading);
@@ -307,9 +309,9 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                 {isLoading && <PaymentMethodSkeleton />}
 
                 {/* Error State */}
-                {error && !isLoading && (
+                {(paymentMethodsStatus === 'UNAVAILABLE' || paymentMethodsStatus === 'ERROR') && !isLoading && (
                     <div className="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
-                        <p>{error}</p>
+                        <p>{error || (isRTL ? 'تعذر تحميل طرق الدفع' : 'Payment methods could not be loaded.')}</p>
                         <button
                             onClick={() => fetchPaymentMethods()}
                             className="mt-2 text-sm underline hover:no-underline"
@@ -319,20 +321,34 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
                     </div>
                 )}
 
+                {paymentMethodsStatus === 'VALIDATION_REQUIRED' && !isLoading && (
+                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-800">
+                        <p className="font-medium">
+                            {isRTL ? 'تحتاج طرق الدفع إلى بيانات الدفع أولاً' : 'Payment options need checkout context before they can load.'}
+                        </p>
+                        <p className="mt-1 text-sm text-amber-700">
+                            {error || (isRTL ? 'راجع بيانات الطلب وحاول مرة أخرى.' : 'Review your checkout details and try again.')}
+                        </p>
+                    </div>
+                )}
+
                 {/* Empty State */}
-                {!isLoading && !error && paymentMethods.length === 0 && (
+                {!isLoading && paymentMethodsStatus === 'EMPTY' && paymentMethods.length === 0 && (
                     <div className="p-6 bg-muted/5 border border-muted/20 rounded-xl text-center">
                         <svg className="w-12 h-12 mx-auto text-muted mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
                         </svg>
                         <p className="text-muted">
-                            {isRTL ? 'لا توجد طرق دفع متاحة' : 'No payment methods available'}
+                            {isRTL ? 'لا توجد طرق دفع مفعلة لهذا المتجر' : 'No payment methods are currently enabled for this store.'}
+                        </p>
+                        <p className="mt-2 text-sm text-muted">
+                            {isRTL ? 'لا يمكن إكمال الدفع حتى يفعّل المتجر طريقة دفع.' : 'Checkout cannot continue until the store enables a payment method.'}
                         </p>
                     </div>
                 )}
 
                 {/* Payment Methods List */}
-                {!isLoading && !error && paymentMethods.length > 0 && (
+                {!isLoading && paymentMethodsStatus === 'AVAILABLE' && paymentMethods.length > 0 && (
                     <div className="space-y-3">
                         {paymentSelectionStatus === 'stale' && stalePaymentSelection && (
                             <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">

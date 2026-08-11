@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AxiosAdapter, AxiosResponse } from 'axios';
+import { readFileSync } from 'node:fs';
 
 vi.mock('@/features/checkout/checkoutSelectionTelemetry', () => ({
     emitCheckoutSelectionInvalidated: vi.fn(),
@@ -26,7 +27,8 @@ import {
 import { sendAnalyticsEvent } from '@/analytics/AnalyticsClient';
 import { AnalyticsEventType, type AnalyticsEvent } from '@/analytics/eventTypes';
 import { httpClient, isAuthEndpoint } from '@/services/api/httpClient';
-import { useCheckoutStore } from '@/store/checkoutStore';
+import { useCheckoutStore, validateAddress, validateCustomCheckoutFields } from '@/store/checkoutStore';
+import type { CheckoutFieldDefinition } from '@/types/checkout';
 import type { CartDto } from '@/types';
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
@@ -112,6 +114,30 @@ function createCartEchoAdapter(captured: string[]): AxiosAdapter {
     };
 }
 
+function createCheckoutDependencyAdapter(dataByUrl: Record<string, unknown>): AxiosAdapter {
+    return async (config) => {
+        const response: AxiosResponse<unknown> = {
+            data: dataByUrl[String(config.url)],
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config,
+        };
+
+        return response;
+    };
+}
+
+function createNetworkFailureAdapter(): AxiosAdapter {
+    return async (config) => {
+        throw Object.assign(new Error('Network Error'), {
+            config,
+            isAxiosError: true,
+            toJSON: () => ({}),
+        });
+    };
+}
+
 beforeEach(() => {
     vi.restoreAllMocks();
     vi.stubGlobal('localStorage', new MemoryStorage());
@@ -123,13 +149,74 @@ beforeEach(() => {
     })));
     clearResolvedTenant();
     useCheckoutStore.setState({
+        shippingMethods: [],
+        shippingMethodsStatus: 'IDLE',
+        shippingMethodsError: null,
         paymentMethods: [],
+        paymentMethodsStatus: 'IDLE',
+        paymentMethodsError: null,
         selectedPaymentMethodCode: null,
         paymentMethod: null,
         paymentSelectionStatus: 'none',
         stalePaymentSelection: null,
+        checkoutFields: [],
+        checkoutFieldsStatus: 'IDLE',
+        checkoutFieldsError: null,
+        checkoutFieldsTotalCount: 0,
+        customFieldValues: {},
+        touchedCustomFields: new Set(),
     });
 });
+
+const requiredPhoneField: CheckoutFieldDefinition = {
+    id: '77777777-7777-4777-8777-777777777777',
+    fieldKind: 'SYSTEM',
+    fieldType: 'PHONE',
+    systemFieldKey: 'phone',
+    label: 'Mobile Number',
+    helpText: null,
+    isEnabled: true,
+    isRequired: true,
+    displayOrder: 10,
+    configuration: { schemaVersion: 1, minLength: null, maxLength: null },
+};
+
+const customSelectField: CheckoutFieldDefinition = {
+    id: '88888888-8888-4888-8888-888888888888',
+    fieldKind: 'CUSTOM',
+    fieldType: 'SELECT',
+    systemFieldKey: null,
+    label: 'T-Shirt Size',
+    helpText: null,
+    isEnabled: true,
+    isRequired: true,
+    displayOrder: 20,
+    configuration: {
+        schemaVersion: 1,
+        options: [
+            { value: 'large', label: 'Large' },
+            { value: 'small', label: 'Small' },
+        ],
+    },
+};
+
+const customImageField: CheckoutFieldDefinition = {
+    id: '99999999-9999-4999-8999-999999999999',
+    fieldKind: 'CUSTOM',
+    fieldType: 'IMAGE',
+    systemFieldKey: null,
+    label: 'Prescription Image',
+    helpText: null,
+    isEnabled: true,
+    isRequired: true,
+    displayOrder: 30,
+    configuration: {
+        schemaVersion: 1,
+        allowedMimeTypes: ['image/jpeg', 'image/png'],
+        maxFileSize: 5 * 1024 * 1024,
+        maxFiles: 1,
+    },
+};
 
 describe('commerce authority certification', () => {
     it('fails closed when tenant context is unknown', () => {
@@ -238,5 +325,306 @@ describe('commerce authority certification', () => {
         expect(useCheckoutStore.getState().paymentMethod).toBeNull();
         expect(useCheckoutStore.getState().selectedPaymentMethodCode).toBeNull();
         expect(useCheckoutStore.getState().paymentSelectionStatus).toBe('stale');
+    });
+
+    it('classifies active checkout shipping methods as available', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/shipping-methods': {
+                status: 'AVAILABLE',
+                shippingMethods: [
+                    {
+                        tenantId: TENANT_A,
+                        id: '55555555-5555-4555-8555-555555555555',
+                        name: 'Standard shipping',
+                        price: 20,
+                        currency: 'USD',
+                        estimatedDays: 3,
+                    },
+                ],
+            },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchShippingMethods();
+
+        expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('AVAILABLE');
+        expect(useCheckoutStore.getState().shippingMethods).toHaveLength(1);
+        expect(useCheckoutStore.getState().shippingMethodsError).toBeNull();
+    });
+
+    it('classifies zero checkout shipping methods as empty instead of load failed', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/shipping-methods': {
+                status: 'EMPTY',
+                shippingMethods: [],
+                configuredCount: 0,
+                activeCount: 0,
+                applicableCount: 0,
+            },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchShippingMethods();
+
+        expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('EMPTY');
+        expect(useCheckoutStore.getState().shippingMethods).toEqual([]);
+        expect(useCheckoutStore.getState().shippingMethodsError).toBeNull();
+    });
+
+    it('classifies non-applicable checkout shipping methods separately from empty configuration', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/shipping-methods': {
+                status: 'NOT_APPLICABLE',
+                shippingMethods: [],
+                configuredCount: 1,
+                activeCount: 1,
+                applicableCount: 0,
+            },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchShippingMethods();
+
+        expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('NOT_APPLICABLE');
+        expect(useCheckoutStore.getState().shippingMethodsError).toBeNull();
+    });
+
+    it('classifies checkout shipping backend failures as unavailable', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createNetworkFailureAdapter();
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchShippingMethods();
+
+        expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('UNAVAILABLE');
+        expect(useCheckoutStore.getState().shippingMethodsError).toMatch(/temporarily unavailable/i);
+    });
+
+    it('classifies malformed checkout shipping responses as errors', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/shipping-methods': { status: 'AVAILABLE', shippingMethods: [{ id: 'bad' }] },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchShippingMethods();
+
+        expect(useCheckoutStore.getState().shippingMethodsStatus).toBe('ERROR');
+        expect(useCheckoutStore.getState().shippingMethodsError).toMatch(/missing tenantId|could not be loaded/i);
+    });
+
+    it('classifies active and empty checkout payment methods without collapsing empty into failure', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        let payload: unknown = {
+            status: 'AVAILABLE',
+            paymentMethods: [
+                {
+                    id: '66666666-6666-4666-8666-666666666666',
+                    code: 'COD',
+                    displayName: 'Cash on delivery',
+                    supportsOnline: false,
+                    supportsOffline: true,
+                    fee: 0,
+                    feeType: 'fixed',
+                    sortOrder: 1,
+                    isAvailable: true,
+                    unavailableReasonCode: null,
+                },
+            ],
+        };
+        const adapter: AxiosAdapter = async (config) => ({
+            data: payload,
+            status: 200,
+            statusText: 'OK',
+            headers: {},
+            config,
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchPaymentMethods();
+        expect(useCheckoutStore.getState().paymentMethodsStatus).toBe('AVAILABLE');
+        expect(useCheckoutStore.getState().paymentMethods).toHaveLength(1);
+
+        payload = { status: 'EMPTY', paymentMethods: [], configuredCount: 0, enabledCount: 0, availableCount: 0 };
+        useCheckoutStore.setState({ paymentMethods: [], selectedPaymentMethodCode: null, paymentMethod: null });
+
+        await useCheckoutStore.getState().fetchPaymentMethods();
+        expect(useCheckoutStore.getState().paymentMethodsStatus).toBe('EMPTY');
+        expect(useCheckoutStore.getState().paymentMethodsError).toBeNull();
+    });
+
+    it('loads checkout field configuration and preserves server display order', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/checkout-fields': {
+                status: 'AVAILABLE',
+                fields: [customSelectField, requiredPhoneField],
+                totalCount: 2,
+                enabledCount: 2,
+            },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchCheckoutFields();
+
+        expect(
+            useCheckoutStore.getState().checkoutFieldsStatus,
+            useCheckoutStore.getState().checkoutFieldsError || undefined,
+        ).toBe('AVAILABLE');
+        expect(useCheckoutStore.getState().checkoutFields.map((field) => field.id)).toEqual([
+            requiredPhoneField.id,
+            customSelectField.id,
+        ]);
+    });
+
+    it('treats empty checkout field configuration as compatibility mode', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/checkout-fields': { status: 'EMPTY', fields: [], totalCount: 0, enabledCount: 0 },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchCheckoutFields();
+
+        expect(useCheckoutStore.getState().checkoutFieldsStatus).toBe('EMPTY');
+        expect(useCheckoutStore.getState().checkoutFieldsError).toBeNull();
+        expect(validateAddress({ fullName: '', phone: '', city: '', area: '', addressLine: '' }).fullName).toMatch(/required/i);
+    });
+
+    it('distinguishes configured-empty checkout fields from legacy compatibility mode', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/checkout-fields': { status: 'EMPTY', fields: [], totalCount: 10, enabledCount: 0 },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchCheckoutFields();
+
+        expect(useCheckoutStore.getState().checkoutFieldsStatus).toBe('EMPTY');
+        expect(useCheckoutStore.getState().checkoutFieldsTotalCount).toBe(10);
+        expect(useCheckoutStore.getState().isStepValid('shipping')).toBe(false);
+    });
+
+    it('rejects contradictory checkout field response evidence', async () => {
+        setResolvedTenant(TENANT_A, { overwrite: true });
+        setSessionId(SESSION_A);
+        const adapter = createCheckoutDependencyAdapter({
+            '/api/storefront/checkout-fields': { status: 'AVAILABLE', fields: [], totalCount: 0, enabledCount: 0 },
+        });
+        vi.spyOn(httpClient, 'get').mockImplementation((url, config) => httpClient.request({ ...config, url, method: 'get', adapter }) as any);
+
+        await useCheckoutStore.getState().fetchCheckoutFields();
+
+        expect(useCheckoutStore.getState().checkoutFieldsStatus).toBe('ERROR');
+        expect(useCheckoutStore.getState().checkoutFields).toEqual([]);
+    });
+
+    it('applies system field required and optional validation to canonical address state', () => {
+        const optionalEmail: CheckoutFieldDefinition = {
+            ...requiredPhoneField,
+            id: '99999999-9999-4999-8999-999999999999',
+            fieldType: 'EMAIL',
+            systemFieldKey: 'email',
+            label: 'Email',
+            isRequired: false,
+            displayOrder: 11,
+        };
+
+        const errors = validateAddress(
+            { fullName: '', phone: '', city: '', area: '', addressLine: '', email: '' },
+            [requiredPhoneField, optionalEmail]
+        );
+
+        expect(errors.phone).toMatch(/mobile number is required/i);
+        expect(errors.email).toBeUndefined();
+    });
+
+    it('matches backend phone digit-count and system length admission', () => {
+        const constrainedPhone: CheckoutFieldDefinition = {
+            ...requiredPhoneField,
+            configuration: { schemaVersion: 1, minLength: 7, maxLength: 20 },
+        };
+
+        expect(validateAddress(
+            { fullName: '', phone: '1234567', city: '', area: '', addressLine: '' },
+            [constrainedPhone],
+        ).phone).toBeUndefined();
+        expect(validateAddress(
+            { fullName: '', phone: '++++++++', city: '', area: '', addressLine: '' },
+            [constrainedPhone],
+        ).phone).toMatch(/valid/i);
+        expect(validateAddress(
+            { fullName: '', phone: '123456789012345678901', city: '', area: '', addressLine: '' },
+            [constrainedPhone],
+        ).phone).toBeDefined();
+    });
+
+    it('validates custom fields by field id and rejects invalid option values', () => {
+        expect(validateCustomCheckoutFields([customSelectField], {})).toMatchObject({
+            [customSelectField.id]: expect.stringMatching(/required/i),
+        });
+
+        expect(validateCustomCheckoutFields([customSelectField], { [customSelectField.id]: 'medium' })).toMatchObject({
+            [customSelectField.id]: expect.stringMatching(/valid/i),
+        });
+
+        expect(validateCustomCheckoutFields([customSelectField], { [customSelectField.id]: 'large' })).toEqual({});
+    });
+
+    it('enforces backend absolute text bounds when no custom maximum is configured', () => {
+        const textField: CheckoutFieldDefinition = {
+            ...customSelectField,
+            id: '77777777-7777-4777-8777-777777777777',
+            fieldType: 'TEXT',
+            isRequired: false,
+            configuration: { schemaVersion: 1 },
+        };
+
+        expect(validateCustomCheckoutFields([textField], { [textField.id]: 'x'.repeat(1001) }))
+            .toMatchObject({ [textField.id]: expect.stringMatching(/long/i) });
+    });
+
+    it('validates required upload checkout fields by attachment metadata', () => {
+        expect(validateCustomCheckoutFields([customImageField], {})).toMatchObject({
+            [customImageField.id]: expect.stringMatching(/required/i),
+        });
+
+        const attachmentValue = JSON.stringify([
+            {
+                attachmentId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                fieldId: customImageField.id,
+                fileName: 'safe.jpg',
+                contentType: 'image/jpeg',
+                sizeBytes: 1024,
+                status: 'UPLOADED',
+            },
+        ]);
+
+        expect(validateCustomCheckoutFields([customImageField], { [customImageField.id]: attachmentValue })).toEqual({});
+    });
+
+    it('keeps upload UI resource-specific and avoids base64 checkout submission', async () => {
+        const source = await import('./components/checkout/ShippingStep');
+        expect(source).toBeTruthy();
+        const moduleText = readFileSync(new URL('./components/checkout/ShippingStep.tsx', import.meta.url), 'utf8');
+        expect(moduleText).toContain("type=\"file\"");
+        expect(moduleText).toContain('/api/storefront/checkout/attachments/upload-lease');
+        expect(moduleText).toContain('/api/storefront/checkout/attachments/confirm');
+        expect(moduleText).toContain('getCheckoutFieldLayoutClass');
+        expect(moduleText).toContain("field.systemFieldKey === 'street_address'");
+        expect(moduleText).toContain("field.fieldType === 'TEXTAREA'");
+        expect(moduleText).not.toContain('base64');
     });
 });

@@ -1,6 +1,10 @@
+using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
+using System.Text.Json;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.Services;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
@@ -41,6 +45,7 @@ public class AdminOrderService : IAdminOrderService
     private readonly ICouponValidationService _couponValidationService;
     private readonly IPaymentLifecycleService _paymentLifecycleService;
     private readonly IProductVariantStockRepository _stockRepository;
+    private readonly IR2StorageService _storageService;
     private readonly ILogger<AdminOrderService> _logger;
 
     public AdminOrderService(
@@ -50,6 +55,7 @@ public class AdminOrderService : IAdminOrderService
         ICouponValidationService couponValidationService,
         IPaymentLifecycleService paymentLifecycleService,
         IProductVariantStockRepository stockRepository,
+        IR2StorageService storageService,
         ILogger<AdminOrderService> logger)
     {
         _context = context;
@@ -58,6 +64,7 @@ public class AdminOrderService : IAdminOrderService
         _couponValidationService = couponValidationService;
         _paymentLifecycleService = paymentLifecycleService;
         _stockRepository = stockRepository;
+        _storageService = storageService;
         _logger = logger;
     }
 
@@ -297,6 +304,7 @@ public class AdminOrderService : IAdminOrderService
             .Where(o => o.Id == orderId)
             .Include(o => o.Customer)
             .Include(o => o.Items)
+            .Include(o => o.CheckoutFieldSnapshots)
             .Include(o => o.Coupon)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -329,6 +337,85 @@ public class AdminOrderService : IAdminOrderService
             tenantId, orderId, order.OrderNumber, order.Status, correlationId);
 
         return orderDetails;
+    }
+
+    public async Task<AdminOrderAttachmentDownloadResult> OpenCheckoutAttachmentDownloadAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid attachmentId,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        var orderExists = await VerifyOrderOwnershipAsync(tenantId, orderId, cancellationToken);
+        if (!orderExists)
+        {
+            _logger.LogWarning(
+                "OpenCheckoutAttachmentDownload | TenantId: {TenantId} | OrderId: {OrderId} | AttachmentId: {AttachmentId} | ErrorCode: ORDER_NOT_FOUND | ErrorCategory: authorization | CorrelationId: {CorrelationId}",
+                tenantId,
+                orderId,
+                attachmentId,
+                correlationId);
+            throw new AdminOrderNotFoundException(orderId);
+        }
+
+        var attachment = await _context.CheckoutAttachments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item =>
+                item.Id == attachmentId &&
+                item.OrderId == orderId &&
+                item.TenantId == tenantId &&
+                !item.IsDeleted,
+                cancellationToken);
+
+        if (attachment == null)
+        {
+            _logger.LogWarning(
+                "OpenCheckoutAttachmentDownload | TenantId: {TenantId} | OrderId: {OrderId} | AttachmentId: {AttachmentId} | ErrorCode: CHECKOUT_ATTACHMENT_NOT_FOUND | ErrorCategory: authorization | CorrelationId: {CorrelationId}",
+                tenantId,
+                orderId,
+                attachmentId,
+                correlationId);
+            throw new AdminOrderAttachmentNotFoundException(attachmentId);
+        }
+
+        if (attachment.Status != CheckoutAttachmentStatus.Attached ||
+            string.IsNullOrWhiteSpace(attachment.FinalObjectKey))
+        {
+            _logger.LogWarning(
+                "OpenCheckoutAttachmentDownload | TenantId: {TenantId} | OrderId: {OrderId} | AttachmentId: {AttachmentId} | Status: {Status} | ErrorCode: CHECKOUT_ATTACHMENT_NOT_DOWNLOADABLE | ErrorCategory: invalid_state | CorrelationId: {CorrelationId}",
+                tenantId,
+                orderId,
+                attachmentId,
+                attachment.Status,
+                correlationId);
+            throw new AdminOrderAttachmentNotDownloadableException(attachmentId);
+        }
+
+        try
+        {
+            var download = await _storageService.DownloadObjectAsync(
+                attachment.FinalObjectKey,
+                attachment.FinalETag,
+                cancellationToken);
+
+            return new AdminOrderAttachmentDownloadResult(
+                download.Content,
+                attachment.OriginalFileName,
+                string.IsNullOrWhiteSpace(download.ContentType) ? attachment.ContentType : download.ContentType,
+                attachment.SizeBytes);
+        }
+        catch (AmazonS3Exception ex) when (ex.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.PreconditionFailed)
+        {
+            _logger.LogWarning(
+                ex,
+                "OpenCheckoutAttachmentDownload | TenantId: {TenantId} | OrderId: {OrderId} | AttachmentId: {AttachmentId} | INTEGRITY_CHECK_FAILED | CorrelationId: {CorrelationId}",
+                tenantId,
+                orderId,
+                attachmentId,
+                correlationId);
+            throw new AdminOrderAttachmentIntegrityException(attachmentId, ex);
+        }
     }
 
     /// <inheritdoc />
@@ -1045,6 +1132,30 @@ public class AdminOrderService : IAdminOrderService
         return _context.Entry(order).Property<uint>("xmin").CurrentValue;
     }
 
+    private static string ToApiValue(CheckoutFieldKind kind) => kind switch
+    {
+        CheckoutFieldKind.System => "SYSTEM",
+        CheckoutFieldKind.Custom => "CUSTOM",
+        _ => kind.ToString().ToUpperInvariant()
+    };
+
+    private static string ToApiValue(CheckoutFieldType type) => type switch
+    {
+        CheckoutFieldType.Text => "TEXT",
+        CheckoutFieldType.Textarea => "TEXTAREA",
+        CheckoutFieldType.Number => "NUMBER",
+        CheckoutFieldType.Email => "EMAIL",
+        CheckoutFieldType.Phone => "PHONE",
+        CheckoutFieldType.Select => "SELECT",
+        CheckoutFieldType.Radio => "RADIO",
+        CheckoutFieldType.Checkbox => "CHECKBOX",
+        CheckoutFieldType.Date => "DATE",
+        CheckoutFieldType.Image => "IMAGE",
+        CheckoutFieldType.File => "FILE",
+        CheckoutFieldType.MultiImage => "MULTI_IMAGE",
+        _ => type.ToString().ToUpperInvariant()
+    };
+
     /// <summary>
     /// Maps order entity to admin details DTO.
     /// </summary>
@@ -1077,6 +1188,29 @@ public class AdminOrderService : IAdminOrderService
                 TaxAmount = i.TaxAmount,
                 Total = i.Total
             }).ToList(),
+            CheckoutFieldSnapshots = order.CheckoutFieldSnapshots
+                .OrderBy(snapshot => snapshot.DisplayOrder)
+                .ThenBy(snapshot => snapshot.CreatedAt)
+                .ThenBy(snapshot => snapshot.Id)
+                .Select(snapshot => new AdminOrderCheckoutFieldSnapshotDto
+                {
+                    SnapshotId = snapshot.Id,
+                    FieldId = snapshot.CheckoutFieldDefinitionId,
+                    FieldKind = ToApiValue(snapshot.FieldKind),
+                    FieldType = ToApiValue(snapshot.FieldType),
+                    SystemFieldKey = snapshot.SystemFieldKey,
+                    Label = snapshot.Label,
+                    HelpText = snapshot.HelpText,
+                    IsRequired = snapshot.IsRequired,
+                    IsVisible = snapshot.IsEnabled,
+                    DisplayOrder = snapshot.DisplayOrder,
+                    ConfigurationSchemaVersion = snapshot.ConfigurationSchemaVersion,
+                    Configuration = BuildCheckoutFieldConfigurationPresentation(snapshot),
+                    SubmittedValue = BuildCheckoutFieldSubmittedValuePresentation(snapshot),
+                    ConfigurationJson = snapshot.ConfigurationJson,
+                    ValueJson = BuildSafeCheckoutFieldValueJson(snapshot)
+                })
+                .ToList(),
             Payments = paymentIntents.Select(pi => new AdminPaymentIntentDto
             {
                 PaymentIntentId = pi.Id,
@@ -1437,6 +1571,349 @@ public class AdminOrderService : IAdminOrderService
             BillingAddress = null
         };
     }
+
+    private static AdminOrderCheckoutFieldConfigurationPresentationDto BuildCheckoutFieldConfigurationPresentation(
+        OrderCheckoutFieldSnapshot snapshot)
+    {
+        var result = new AdminOrderCheckoutFieldConfigurationPresentationDto
+        {
+            SchemaVersion = snapshot.ConfigurationSchemaVersion
+        };
+
+        if (string.IsNullOrWhiteSpace(snapshot.ConfigurationJson))
+        {
+            return result;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(snapshot.ConfigurationJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                result.HasAdditionalConfiguration = true;
+                return result;
+            }
+
+            var root = document.RootElement;
+            if (root.TryGetProperty("schemaVersion", out var schemaVersion) &&
+                schemaVersion.TryGetInt32(out var parsedSchemaVersion))
+            {
+                result.SchemaVersion = parsedSchemaVersion;
+            }
+
+            if (root.TryGetProperty("options", out var options) &&
+                options.ValueKind == JsonValueKind.Array)
+            {
+                result.Options = options.EnumerateArray()
+                    .Where(option => option.ValueKind == JsonValueKind.Object)
+                    .Select(option => new AdminOrderCheckoutFieldOptionDto
+                    {
+                        Value = ReadString(option, "value") ?? string.Empty,
+                        Label = ReadString(option, "label") ?? ReadString(option, "value") ?? string.Empty
+                    })
+                    .Where(option => !string.IsNullOrWhiteSpace(option.Value))
+                    .ToList();
+            }
+
+            var allowedMimeTypes = ReadStringArray(root, "allowedMimeTypes");
+            var maxFileSize = ReadNullableInt64(root, "maxFileSize");
+            var maxFiles = ReadNullableInt32(root, "maxFiles");
+            if (allowedMimeTypes.Count > 0 || maxFileSize.HasValue || maxFiles.HasValue)
+            {
+                result.UploadPolicy = new AdminOrderCheckoutFieldUploadPolicyDto
+                {
+                    AllowedMimeTypes = allowedMimeTypes,
+                    MaxFileSize = maxFileSize,
+                    MaxFiles = maxFiles
+                };
+            }
+
+            if (root.TryGetProperty("conditionalRules", out var rules) &&
+                rules.ValueKind == JsonValueKind.Array)
+            {
+                result.ConditionalRules = rules.EnumerateArray()
+                    .Where(rule => rule.ValueKind == JsonValueKind.Object)
+                    .Select(MapConditionalRule)
+                    .ToList();
+            }
+
+            var knownProperties = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "schemaVersion",
+                "options",
+                "allowedMimeTypes",
+                "maxFileSize",
+                "maxFiles",
+                "conditionalRules"
+            };
+            result.HasAdditionalConfiguration = root.EnumerateObject()
+                .Any(property => !knownProperties.Contains(property.Name));
+        }
+        catch (JsonException)
+        {
+            result.HasAdditionalConfiguration = true;
+        }
+
+        return result;
+    }
+
+    private static AdminOrderCheckoutFieldConditionalRuleDto MapConditionalRule(JsonElement rule) => new()
+    {
+        RuleId = ReadString(rule, "ruleId") ?? string.Empty,
+        ConditionMode = ReadString(rule, "conditionMode") ?? string.Empty,
+        Actions = ReadStringArray(rule, "actions"),
+        Conditions = rule.TryGetProperty("conditions", out var conditions) &&
+                     conditions.ValueKind == JsonValueKind.Array
+            ? conditions.EnumerateArray()
+                .Where(condition => condition.ValueKind == JsonValueKind.Object)
+                .Select(condition => new AdminOrderCheckoutFieldRuleConditionDto
+                {
+                    SourceFieldId = ReadGuid(condition, "sourceFieldId") ?? Guid.Empty,
+                    Operator = ReadString(condition, "operator") ?? string.Empty,
+                    ComparisonValue = ReadString(condition, "comparisonValue")
+                })
+                .Where(condition => condition.SourceFieldId != Guid.Empty)
+                .ToList()
+            : new List<AdminOrderCheckoutFieldRuleConditionDto>()
+    };
+
+    private static AdminOrderCheckoutFieldSubmittedValueDto BuildCheckoutFieldSubmittedValuePresentation(
+        OrderCheckoutFieldSnapshot snapshot)
+    {
+        AdminOrderCheckoutFieldConfigurationPresentationDto? configuration = null;
+        JsonElement value;
+        try
+        {
+            using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(snapshot.ValueJson) ? "null" : snapshot.ValueJson);
+            value = document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "INVALID",
+                DisplayValue = "Invalid stored value"
+            };
+        }
+
+        if (value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return new AdminOrderCheckoutFieldSubmittedValueDto();
+        }
+
+        if (IsUploadField(snapshot.FieldType))
+        {
+            var attachments = value.ValueKind == JsonValueKind.Array
+                ? value.EnumerateArray()
+                    .Where(item => item.ValueKind == JsonValueKind.Object && ReadGuid(item, "attachmentId").HasValue)
+                    .Select(item => new AdminOrderCheckoutAttachmentPresentationDto
+                    {
+                        AttachmentId = ReadGuid(item, "attachmentId")!.Value,
+                        FileName = ReadString(item, "fileName") ?? string.Empty,
+                        ContentType = ReadString(item, "contentType") ?? string.Empty,
+                        SizeBytes = ReadNullableInt64(item, "sizeBytes") ?? 0,
+                        MediaType = ReadString(item, "mediaType"),
+                        UploadedAtUtc = ReadNullableDateTime(item, "uploadedAtUtc"),
+                        FinalizedAtUtc = ReadNullableDateTime(item, "finalizedAtUtc"),
+                        FinalETag = ReadString(item, "finalETag"),
+                        FinalChecksumSha256 = ReadString(item, "finalChecksumSha256")
+                    })
+                    .ToList()
+                : new List<AdminOrderCheckoutAttachmentPresentationDto>();
+
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "ATTACHMENTS",
+                DisplayValue = attachments.Count == 0
+                    ? "Not provided"
+                    : string.Join(", ", attachments.Select(attachment => attachment.FileName).Where(name => !string.IsNullOrWhiteSpace(name))),
+                Attachments = attachments
+            };
+        }
+
+        if (snapshot.FieldType is CheckoutFieldType.Select or CheckoutFieldType.Radio)
+        {
+            var optionValue = ValueAsString(value);
+            configuration ??= BuildCheckoutFieldConfigurationPresentation(snapshot);
+            var optionLabel = configuration.Options
+                .FirstOrDefault(option => string.Equals(option.Value, optionValue, StringComparison.Ordinal))
+                ?.Label;
+
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "OPTION",
+                DisplayValue = string.IsNullOrWhiteSpace(optionLabel)
+                    ? optionValue ?? "Not provided"
+                    : optionLabel,
+                OptionValue = optionValue,
+                OptionLabel = optionLabel
+            };
+        }
+
+        if (snapshot.FieldType == CheckoutFieldType.Checkbox)
+        {
+            bool? booleanValue = value.ValueKind == JsonValueKind.True
+                ? true
+                : value.ValueKind == JsonValueKind.False
+                    ? false
+                    : bool.TryParse(ValueAsString(value), out var parsed) ? parsed : null;
+
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "BOOLEAN",
+                DisplayValue = booleanValue == true ? "Yes" : "No",
+                BooleanValue = booleanValue
+            };
+        }
+
+        if (snapshot.FieldType == CheckoutFieldType.Number)
+        {
+            decimal? numberValue = value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var parsedNumber)
+                ? parsedNumber
+                : decimal.TryParse(ValueAsString(value), NumberStyles.AllowLeadingSign | NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var parsedTextNumber)
+                    ? parsedTextNumber
+                    : null;
+
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "NUMBER",
+                DisplayValue = numberValue?.ToString(CultureInfo.InvariantCulture) ?? "Not provided",
+                NumberValue = numberValue
+            };
+        }
+
+        if (snapshot.FieldType == CheckoutFieldType.Date)
+        {
+            var dateValue = ValueAsString(value);
+            return new AdminOrderCheckoutFieldSubmittedValueDto
+            {
+                Kind = "DATE",
+                DisplayValue = string.IsNullOrWhiteSpace(dateValue) ? "Not provided" : dateValue,
+                DateValue = dateValue
+            };
+        }
+
+        var textValue = ValueAsString(value);
+        return new AdminOrderCheckoutFieldSubmittedValueDto
+        {
+            Kind = "TEXT",
+            DisplayValue = string.IsNullOrWhiteSpace(textValue) ? "Not provided" : textValue,
+            TextValue = textValue
+        };
+    }
+
+    private static string BuildSafeCheckoutFieldValueJson(OrderCheckoutFieldSnapshot snapshot)
+    {
+        if (!IsUploadField(snapshot.FieldType))
+        {
+            return snapshot.ValueJson;
+        }
+
+        var submittedValue = BuildCheckoutFieldSubmittedValuePresentation(snapshot);
+        if (submittedValue.Kind == "INVALID")
+        {
+            return "null";
+        }
+
+        return JsonSerializer.Serialize(submittedValue.Attachments.Select(attachment => new
+        {
+            attachmentId = attachment.AttachmentId,
+            fileName = attachment.FileName,
+            contentType = attachment.ContentType,
+            sizeBytes = attachment.SizeBytes,
+            mediaType = attachment.MediaType,
+            uploadedAtUtc = attachment.UploadedAtUtc,
+            finalizedAtUtc = attachment.FinalizedAtUtc,
+            finalETag = attachment.FinalETag,
+            finalChecksumSha256 = attachment.FinalChecksumSha256
+        }));
+    }
+
+    private static bool IsUploadField(CheckoutFieldType fieldType) =>
+        fieldType is CheckoutFieldType.Image or CheckoutFieldType.File or CheckoutFieldType.MultiImage;
+
+    private static string? ReadString(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : value.ToString();
+    }
+
+    private static List<string> ReadStringArray(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return new List<string>();
+        }
+
+        return value.EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : item.ToString())
+            .Where(item => !string.IsNullOrWhiteSpace(item))
+            .Select(item => item!)
+            .ToList();
+    }
+
+    private static Guid? ReadGuid(JsonElement element, string propertyName)
+    {
+        var value = ReadString(element, propertyName);
+        return Guid.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static long? ReadNullableInt64(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+        {
+            return number;
+        }
+
+        return long.TryParse(ReadString(element, propertyName), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static int? ReadNullableInt32(JsonElement element, string propertyName)
+    {
+        if (!element.TryGetProperty(propertyName, out var value))
+        {
+            return null;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+        {
+            return number;
+        }
+
+        return int.TryParse(ReadString(element, propertyName), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static DateTime? ReadNullableDateTime(JsonElement element, string propertyName)
+    {
+        var value = ReadString(element, propertyName);
+        return DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out var parsed)
+            ? parsed
+            : null;
+    }
+
+    private static string? ValueAsString(JsonElement value) => value.ValueKind switch
+    {
+        JsonValueKind.String => value.GetString(),
+        JsonValueKind.Number => value.ToString(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        _ => null
+    };
 
     private const string PendingCancellationAdminNoteMarker = "[admin-cancellation-pending]";
 

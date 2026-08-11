@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
 import PosRoleRouteGuard from './components/PosRoleRouteGuard'
 import { ToastProvider } from './components/Toast'
+import { ConfirmDialogProvider } from './common/confirm/ConfirmDialogProvider'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import VerifyEmail from './pages/VerifyEmail'
@@ -87,12 +88,26 @@ import { StorefrontBuilderPage, ThemeMarketplacePage, ThemeEditorPage, VersionHi
 // CMS Pages & Navigation (Phase 9.11)
 import { CmsPagesList, CmsPageEditor, NavigationEditor, StorefrontFooterSettings } from './modules/storefront/cms'
 import { StorefrontAdminFrame } from './modules/storefront/informationArchitecture'
+import { CheckoutFieldsPage } from './modules/storefront/checkoutFields'
+// Domain Management (DOMAIN-3.1-A skeleton)
+import {
+    DomainsOverviewPage,
+    DomainDetailPage,
+    AddDomainWizardPage,
+    DomainListPage,
+    DnsVerificationPage,
+    SslManagementPage,
+    RedirectsPage,
+    DomainHistoryPage,
+    ActivityPage,
+} from './modules/storefront/domains'
 // Analytics Funnels (Phase 5A)
 import { FunnelsListPage, FunnelDetailsPage } from './modules/analytics'
 // Analytics Attribution (Phase 8A) & Campaign Cost & ROI (Phase 8B)
 import { AttributionOverviewPage, AttributionModelsPage, AttributionOrdersPage, CampaignCostsPage, RoiDashboardPage } from './modules/analytics'
 // Analytics Settings (Phase 6: External Analytics Integration)
 import AnalyticsSettings from './pages/AnalyticsSettings'
+import StorefrontAnalyticsDashboard from './pages/StorefrontAnalyticsDashboard'
 // Shipping Admin Dashboard (Shipping Frontend Phase + Unified Configuration)
 import { ShipmentsListPage, ShipmentDetailsPage, ShippingHealthPage } from './modules/shipping'
 import ShippingAdministrationWorkspace from './modules/shipping-administration/ShippingAdministrationWorkspace'
@@ -175,9 +190,10 @@ function App() {
         <AppErrorBoundary>
             <QueryClientProvider client={queryClient}>
                 <ToastProvider>
-                    <AuthBootstrap />
-                    <SettingsProvider>
-                        <BrowserRouter>
+                    <ConfirmDialogProvider>
+                        <AuthBootstrap />
+                        <SettingsProvider>
+                            <BrowserRouter>
                             <Routes>
                                 <Route path="/login" element={<Login />} />
                                 <Route path="/register" element={<Register />} />
@@ -330,6 +346,7 @@ function App() {
                                             <Route path="analytics/attribution/orders" element={<AttributionOrdersPage />} />
                                             <Route path="analytics/attribution/costs" element={<CampaignCostsPage />} />
                                             <Route path="analytics/attribution/roi" element={<RoiDashboardPage />} />
+                                            <Route path="analytics/storefront" element={<StorefrontAnalyticsDashboard />} />
                                             {/* Settings */}
                                             <Route path="settings/analytics" element={<AnalyticsSettings />} />
                                         </Route>
@@ -347,6 +364,7 @@ function App() {
                                                 <Route path="storefront" element={<StorefrontDashboard />} />
                                                 <Route path="storefront/overview" element={<StorefrontDashboard />} />
                                                 <Route path="storefront/status" element={<StorefrontSettings />} />
+                                                <Route path="storefront/checkout-fields" element={<CheckoutFieldsPage />} />
 
                                                 <Route path="storefront/themes" element={<ThemeMarketplacePage />} />
                                                 <Route path="storefront/appearance/themes" element={<ThemeMarketplacePage />} />
@@ -363,6 +381,17 @@ function App() {
                                                 <Route path="storefront/navigation" element={<NavigationEditor />} />
                                                 <Route path="storefront/cms/footer" element={<StorefrontFooterSettings />} />
                                                 <Route path="storefront/footer-content" element={<StorefrontFooterSettings />} />
+
+                                                {/* Domain Management routes — DOMAIN-3.1-A skeleton */}
+                                                <Route path="storefront/domains" element={<DomainsOverviewPage />} />
+                                                <Route path="storefront/domains/list" element={<DomainListPage />} />
+                                                <Route path="storefront/domains/add" element={<AddDomainWizardPage />} />
+                                                <Route path="storefront/domains/activity" element={<ActivityPage />} />
+                                                <Route path="storefront/domains/:id" element={<DomainDetailPage />} />
+                                                <Route path="storefront/domains/:id/verification" element={<DnsVerificationPage />} />
+                                                <Route path="storefront/domains/:id/ssl" element={<SslManagementPage />} />
+                                                <Route path="storefront/domains/:id/redirects" element={<RedirectsPage />} />
+                                                <Route path="storefront/domains/:id/history" element={<DomainHistoryPage />} />
                                             </Route>
                                         </Route>
                                         {/* Shipping Admin Dashboard (Shipping Frontend Phase + Unified Configuration) */}
@@ -420,8 +449,9 @@ function App() {
                                 </Route>
                                 <Route path="*" element={<Navigate to="/login" replace />} />
                             </Routes>
-                        </BrowserRouter>
-                    </SettingsProvider>
+                            </BrowserRouter>
+                        </SettingsProvider>
+                    </ConfirmDialogProvider>
                 </ToastProvider>
             </QueryClientProvider>
         </AppErrorBoundary>

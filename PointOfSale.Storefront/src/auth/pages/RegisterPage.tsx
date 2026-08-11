@@ -12,7 +12,7 @@ import { useAuthGuard } from '../hooks/useAuthGuard';
 import { RegisterForm } from '../components/RegisterForm';
 import { VerifyEmailBanner } from '../components/VerifyEmailBanner';
 import { useStoreConfigStore, selectStoreName } from '@/store';
-import { useAuthStore, selectCustomer, selectEmailVerified } from '../store';
+import type { OnlineCustomer } from '../types';
 
 /**
  * Register page component
@@ -21,10 +21,9 @@ export const RegisterPage: React.FC = () => {
     const { t, direction } = useTranslation();
     const navigate = useNavigate();
     const storeName = useStoreConfigStore(selectStoreName);
-    const customer = useAuthStore(selectCustomer);
-    const emailVerified = useAuthStore(selectEmailVerified);
 
     const [registrationComplete, setRegistrationComplete] = useState(false);
+    const [registeredCustomer, setRegisteredCustomer] = useState<OnlineCustomer | null>(null);
 
     // Guard: redirect if already authenticated
     const { isLoading, showContent } = useAuthGuard({
@@ -33,8 +32,9 @@ export const RegisterPage: React.FC = () => {
     });
 
     // Handle successful registration
-    const handleSuccess = useCallback(() => {
+    const handleSuccess = useCallback((customer?: OnlineCustomer) => {
         // Show verification banner instead of immediate redirect
+        setRegisteredCustomer(customer ?? null);
         setRegistrationComplete(true);
 
         // After a delay, redirect to home or return URL
@@ -97,7 +97,7 @@ export const RegisterPage: React.FC = () => {
             <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12">
                 <div className="w-full max-w-md">
                     {/* Success state with verify banner */}
-                    {registrationComplete && customer && !emailVerified ? (
+                    {registrationComplete && registeredCustomer && !registeredCustomer.emailVerified ? (
                         <div className="bg-white rounded-2xl shadow-xl p-8 sm:p-10">
                             <div className="text-center mb-6">
                                 <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
@@ -115,7 +115,7 @@ export const RegisterPage: React.FC = () => {
                                 </p>
                             </div>
 
-                            <VerifyEmailBanner email={customer.email} />
+                            <VerifyEmailBanner email={registeredCustomer.email} />
 
                             <p className="text-center text-sm text-gray-500 mt-6">
                                 {t('auth.register.redirecting', {

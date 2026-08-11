@@ -3,6 +3,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using PointOfSale.API.Configuration;
+using PointOfSale.API.Services.Storefront;
 using PointOfSale.Infrastructure.Instrumentation;
 
 namespace PointOfSale.API.Jobs;
@@ -211,6 +213,11 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
             job => job.RunAsync(System.Threading.CancellationToken.None),
             Cron.Hourly);
 
+        RecurringJob.AddOrUpdate<CheckoutAttachmentCleanupJob>(
+            "checkout-attachment-cleanup",
+            job => job.RunAsync(System.Threading.CancellationToken.None),
+            Cron.Hourly);
+
         // =============================================================================
         // WHATSAPP BACKGROUND JOBS (Phase 13)
         // =============================================================================
@@ -321,7 +328,211 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
             job => job.ExecuteAsync(System.Threading.CancellationToken.None),
             Cron.HourInterval(6));
 
+        var domainVerificationSchedulerOptions = _configuration
+            .GetSection(DomainVerificationSchedulerOptions.SectionName)
+            .Get<DomainVerificationSchedulerOptions>() ?? new DomainVerificationSchedulerOptions();
+
+        if (domainVerificationSchedulerOptions.Enabled)
+        {
+            RecurringJob.AddOrUpdate<DomainVerificationSchedulerJob>(
+                DomainVerificationSchedulerJob.RecurringJobId,
+                job => job.ExecuteAsync(null, System.Threading.CancellationToken.None),
+                BuildSecondsOrMinutesSchedulerCron(
+                    DomainVerificationSchedulerJob.RecurringJobId,
+                    "DnsVerification:Scheduler:PollIntervalSeconds",
+                    domainVerificationSchedulerOptions.PollIntervalSeconds));
+        }
+
+        var certificateProvisioningSchedulerOptions = _configuration
+            .GetSection(CertificateProvisioningSchedulerOptions.SectionName)
+            .Get<CertificateProvisioningSchedulerOptions>() ?? new CertificateProvisioningSchedulerOptions();
+
+        if (certificateProvisioningSchedulerOptions.Enabled)
+        {
+            RecurringJob.AddOrUpdate<CertificateProvisioningSchedulerJob>(
+                CertificateProvisioningSchedulerJob.RecurringJobId,
+                job => job.ExecuteAsync(null, System.Threading.CancellationToken.None),
+                BuildSecondsOrMinutesSchedulerCron(
+                    CertificateProvisioningSchedulerJob.RecurringJobId,
+                    "CertificateProvisioningScheduler:ScanIntervalSeconds",
+                    certificateProvisioningSchedulerOptions.ScanIntervalSeconds));
+        }
+
+        var certificateRenewalSchedulerOptions = _configuration
+            .GetSection(CertificateRenewalSchedulerOptions.SectionName)
+            .Get<CertificateRenewalSchedulerOptions>() ?? new CertificateRenewalSchedulerOptions();
+
+        if (certificateRenewalSchedulerOptions.Enabled)
+        {
+            RecurringJob.AddOrUpdate<CertificateRenewalSchedulerJob>(
+                CertificateRenewalSchedulerJob.RecurringJobId,
+                job => job.ExecuteAsync(null, System.Threading.CancellationToken.None),
+                BuildCertificateRenewalSchedulerCron(certificateRenewalSchedulerOptions.ScanIntervalMinutes));
+        }
+
         _logger.LogInformation("All Hangfire recurring jobs registered successfully.");
+    }
+
+    internal static string BuildSecondsOrMinutesSchedulerCron(
+        string jobId,
+        string configurationKey,
+        int intervalSeconds)
+    {
+        if (intervalSeconds <= 0)
+        {
+            throw BuildInvalidCronConfigurationException(
+                jobId,
+                configurationKey,
+                intervalSeconds,
+                "a positive number of seconds that either divides evenly into one minute or is a whole number of minutes");
+        }
+
+        if (intervalSeconds < 60)
+        {
+            if (60 % intervalSeconds != 0)
+            {
+                throw BuildInvalidCronConfigurationException(
+                    jobId,
+                    configurationKey,
+                    intervalSeconds,
+                    "a value below 60 that divides evenly into one minute");
+            }
+
+            return ValidateCronExpression(
+                jobId,
+                configurationKey,
+                intervalSeconds,
+                $"*/{intervalSeconds} * * * * *");
+        }
+
+        if (intervalSeconds % 60 == 0)
+        {
+            return ValidateCronExpression(
+                jobId,
+                configurationKey,
+                intervalSeconds,
+                Cron.MinuteInterval(intervalSeconds / 60));
+        }
+
+        throw BuildInvalidCronConfigurationException(
+            jobId,
+            configurationKey,
+            intervalSeconds,
+            "a value of 60 or more that is a whole number of minutes");
+    }
+
+    internal static string BuildCertificateRenewalSchedulerCron(int scanIntervalMinutes)
+    {
+        if (scanIntervalMinutes <= 0)
+        {
+            throw BuildInvalidCronConfigurationException(
+                CertificateRenewalSchedulerJob.RecurringJobId,
+                "CertificateRenewalScheduler:ScanIntervalMinutes",
+                scanIntervalMinutes,
+                CertificateRenewalSchedulerOptions.ScanIntervalMinutesExpectedRange);
+        }
+
+        if (scanIntervalMinutes < 60)
+        {
+            if (60 % scanIntervalMinutes != 0)
+            {
+                throw BuildInvalidCronConfigurationException(
+                    CertificateRenewalSchedulerJob.RecurringJobId,
+                    "CertificateRenewalScheduler:ScanIntervalMinutes",
+                    scanIntervalMinutes,
+                    CertificateRenewalSchedulerOptions.ScanIntervalMinutesExpectedRange);
+            }
+
+            return ValidateCronExpression(
+                CertificateRenewalSchedulerJob.RecurringJobId,
+                "CertificateRenewalScheduler:ScanIntervalMinutes",
+                scanIntervalMinutes,
+                Cron.MinuteInterval(scanIntervalMinutes));
+        }
+
+        if (scanIntervalMinutes == 1440)
+        {
+            return ValidateCronExpression(
+                CertificateRenewalSchedulerJob.RecurringJobId,
+                "CertificateRenewalScheduler:ScanIntervalMinutes",
+                scanIntervalMinutes,
+                Cron.Daily());
+        }
+
+        if (scanIntervalMinutes % 60 == 0)
+        {
+            var hours = scanIntervalMinutes / 60;
+            if (hours is >= 1 and < 24 && 24 % hours == 0)
+            {
+                return ValidateCronExpression(
+                    CertificateRenewalSchedulerJob.RecurringJobId,
+                    "CertificateRenewalScheduler:ScanIntervalMinutes",
+                    scanIntervalMinutes,
+                    Cron.HourInterval(hours));
+            }
+        }
+
+        throw BuildInvalidCronConfigurationException(
+            CertificateRenewalSchedulerJob.RecurringJobId,
+            "CertificateRenewalScheduler:ScanIntervalMinutes",
+            scanIntervalMinutes,
+            CertificateRenewalSchedulerOptions.ScanIntervalMinutesExpectedRange);
+    }
+
+    internal static string ValidateCronExpression(
+        string jobId,
+        string configurationKey,
+        object configurationValue,
+        string cronExpression)
+    {
+        try
+        {
+            var cronExpressionType = typeof(Cron).Assembly.GetType("Cronos.CronExpression", throwOnError: true)!;
+            var cronFormatType = typeof(Cron).Assembly.GetType("Cronos.CronFormat", throwOnError: true)!;
+            var fieldCount = cronExpression
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Length;
+
+            if (fieldCount == 6)
+            {
+                var includeSeconds = Enum.Parse(cronFormatType, "IncludeSeconds");
+                var parseWithFormat = cronExpressionType.GetMethod(
+                    "Parse",
+                    [typeof(string), cronFormatType])!;
+
+                parseWithFormat.Invoke(null, [cronExpression, includeSeconds]);
+            }
+            else
+            {
+                var parseStandard = cronExpressionType.GetMethod(
+                    "Parse",
+                    [typeof(string)])!;
+
+                parseStandard.Invoke(null, [cronExpression]);
+            }
+
+            return cronExpression;
+        }
+        catch (System.Reflection.TargetInvocationException ex)
+            when (ex.InnerException?.GetType().FullName == "Cronos.CronFormatException")
+        {
+            throw new InvalidOperationException(
+                $"Hangfire recurring job '{jobId}' has invalid CRON expression '{cronExpression}' " +
+                $"from configuration key '{configurationKey}' value '{configurationValue}'. " +
+                "Expected a CRON expression valid for Hangfire/Cronos.",
+                ex.InnerException);
+        }
+    }
+
+    private static InvalidOperationException BuildInvalidCronConfigurationException(
+        string jobId,
+        string configurationKey,
+        object configurationValue,
+        string expected)
+    {
+        return new InvalidOperationException(
+            $"Hangfire recurring job '{jobId}' has invalid scheduling configuration. " +
+            $"Configuration key '{configurationKey}' value '{configurationValue}' is invalid. Expected {expected}.");
     }
 
     public void Dispose()

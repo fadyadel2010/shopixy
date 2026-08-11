@@ -17,7 +17,7 @@ import {
     selectAvailableProviders,
     selectEmailVerified,
 } from '../store/authStore';
-import type { LoginRequest, RegisterRequest, AuthError } from '../types';
+import type { LoginRequest, RegisterRequest, AuthError, OnlineCustomer } from '../types';
 
 export interface UseAuthReturn {
     // State
@@ -38,7 +38,7 @@ export interface UseAuthReturn {
 
     // Actions
     login: (request: LoginRequest) => Promise<void>;
-    register: (request: RegisterRequest) => Promise<void>;
+    register: (request: RegisterRequest) => Promise<OnlineCustomer>;
     logout: () => Promise<void>;
     googleLogin: (idToken: string) => Promise<void>;
     facebookLogin: (accessToken: string) => Promise<void>;
@@ -98,7 +98,7 @@ export function useAuth(): UseAuthReturn {
     }, [storeLogin]);
 
     const register = useCallback(async (request: RegisterRequest) => {
-        await storeRegister(request);
+        return await storeRegister(request);
     }, [storeRegister]);
 
     const logout = useCallback(async () => {

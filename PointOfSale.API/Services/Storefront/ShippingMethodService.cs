@@ -138,6 +138,45 @@ public class ShippingMethodService : IShippingMethodService
         return shippingMethods;
     }
 
+    public async Task<ShippingMethodsListResponseDto> GetShippingMethodsAvailabilityAsync(
+        Guid tenantId,
+        decimal cartSubtotal,
+        decimal totalWeight,
+        string correlationId,
+        Guid? warehouseId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var configuredCount = await _dbContext.ShippingMethods
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .CountAsync(method => method.TenantId == tenantId && !method.IsDeleted, cancellationToken);
+
+        var activeCount = await _dbContext.ShippingMethods
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .CountAsync(method => method.TenantId == tenantId && method.IsActive && !method.IsDeleted, cancellationToken);
+
+        var methods = await GetShippingMethodsAsync(
+            tenantId,
+            cartSubtotal,
+            totalWeight,
+            correlationId,
+            warehouseId,
+            cancellationToken);
+
+        var status = ResolveShippingMethodsStatus(configuredCount, activeCount, methods.Count);
+
+        return new ShippingMethodsListResponseDto
+        {
+            Status = status,
+            ShippingMethods = methods,
+            TotalCount = methods.Count,
+            ConfiguredCount = configuredCount,
+            ActiveCount = activeCount,
+            ApplicableCount = methods.Count
+        };
+    }
+
     #region Helper Methods
 
     private async Task<List<ShippingMethodDocument>> ApplyWarehouseAssignmentFilterAsync(
@@ -346,6 +385,21 @@ public class ShippingMethodService : IShippingMethodService
             CarrierName = doc.CarrierName,
             SortOrder = doc.SortOrder
         }).ToList();
+    }
+
+    private static string ResolveShippingMethodsStatus(int configuredCount, int activeCount, int applicableCount)
+    {
+        if (applicableCount > 0)
+        {
+            return "AVAILABLE";
+        }
+
+        if (configuredCount == 0 || activeCount == 0)
+        {
+            return "EMPTY";
+        }
+
+        return "NOT_APPLICABLE";
     }
 
     private static string? NormalizeCurrency(string? currency)

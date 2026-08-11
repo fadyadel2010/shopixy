@@ -6,6 +6,7 @@ using Microsoft.Extensions.Primitives;
 using PointOfSale.API.Attributes;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Models;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MultiTenancy;
@@ -16,7 +17,9 @@ namespace PointOfSale.API.Middleware;
 /// Resolves tenant context from trusted request metadata only.
 /// Server-authoritative order:
 /// 1. Authenticated tenant claim
-/// 2. Verified storefront/custom-domain host (server-controlled Host header only)
+/// 2. Resolved Domain (from DomainResolutionResult produced by HostResolutionMiddleware)
+/// 3. Verified storefront/custom-domain host (server-controlled Host header only)
+/// 4. Slug extraction from Storefront:UrlTemplate (fallback)
 /// 
 /// SECURITY: Origin and Referer headers are NEVER trusted as they are client-controlled
 /// and can be spoofed by attackers to access other tenants' data.
@@ -204,6 +207,8 @@ public class TenantResolutionMiddleware
     }
 
     /// <summary>
+    /// Extracts the authenticated tenant claim from the current principal.
+    /// </summary>
     private static bool TryGetAuthenticatedTenantId(ClaimsPrincipal user, out Guid tenantId)
     {
         tenantId = Guid.Empty;
@@ -244,6 +249,21 @@ public class TenantResolutionMiddleware
         ApplicationDbContext dbContext,
         CancellationToken cancellationToken)
     {
+        // DOMAIN-2D: Consume the DomainResolutionResult produced by
+        // HostResolutionMiddleware (which ran earlier in the pipeline per
+        // DOMAIN-1.6 Section 3.9 ordering). If a Domain was resolved
+        // (Status == Found with TenantId), use that TenantId directly —
+        // no additional host normalization, no additional Domain lookup,
+        // no additional repository access. The TenantId was already
+        // passed through from the Domain entity by PersistenceDomainResolver.
+        if (context.Items.TryGetValue(HostResolutionContextKeys.DomainResolutionResultItemKey, out var existingResult) &&
+            existingResult is DomainResolutionResult domainResolutionResult &&
+            domainResolutionResult.Status == DomainResolutionStatus.Found &&
+            domainResolutionResult.TenantId.HasValue)
+        {
+            return await ResolveTenantByIdAsync(domainResolutionResult.TenantId.Value, dbContext, cancellationToken);
+        }
+
         foreach (var candidateUri in GetTenantCandidateUris(context))
         {
             var tenant = await ResolveTenantFromCandidateUriAsync(candidateUri, dbContext, cancellationToken);
@@ -254,6 +274,26 @@ public class TenantResolutionMiddleware
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Resolves a Tenant entity by its primary key with the same
+    /// active/tenant-safety guards used by all other resolution paths.
+    /// Used when the Domain resolution has already carried the TenantId.
+    /// </summary>
+    private static async Task<Tenant?> ResolveTenantByIdAsync(
+        Guid tenantId,
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken)
+    {
+        return await dbContext.Tenants
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                tenant => tenant.Id == tenantId &&
+                          tenant.IsActive &&
+                          tenant.Status == TenantStatus.Active &&
+                          tenant.DeletedAtUtc == null,
+                cancellationToken);
     }
 
     private IEnumerable<Uri> GetTenantCandidateUris(HttpContext context)

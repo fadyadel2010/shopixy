@@ -24,6 +24,30 @@ public sealed class StorefrontCurrencyAuthorityArchitectureTests
     }
 
     [Fact]
+    public void ShippingMethodSqlFallback_MustPreserveTenantCurrencyAuthority()
+    {
+        var source = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "ShippingMethodReadRepository.cs"));
+
+        Assert.Contains("ResolveTenantCurrencyAsync", source, StringComparison.Ordinal);
+        Assert.Contains(".Select(tenant => tenant.Currency)", source, StringComparison.Ordinal);
+        Assert.Contains("Currency = tenantCurrency", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Currency = \"USD\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Currency = \"EGP\"", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AdminShippingMethodProjectionRepair_MustPreserveTenantCurrencyAuthority()
+    {
+        var source = File.ReadAllText(ApiPath("Controllers", "AdminDataSyncController.cs"));
+
+        Assert.Contains("ResolveTenantCurrencyAsync", source, StringComparison.Ordinal);
+        Assert.Contains("BuildShippingMethodUpsert(shippingMethod, tenantCurrency)", source, StringComparison.Ordinal);
+        Assert.Contains(".Set(d => d.Currency, tenantCurrency)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Currency = \"USD\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("Currency = \"EGP\"", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StorefrontConfigProjectionConsumer_MustUseTenantCurrencyWithoutEgpFallback()
     {
         var source = File.ReadAllText(InfrastructurePath("Consumers", "StorefrontConfigProjectionConsumer.cs"));

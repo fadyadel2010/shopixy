@@ -24,6 +24,7 @@ import { requireStorefrontPaymentSessionAuthority } from '@/features/checkout/pa
 import { emitCheckoutSelectionInvalidated } from '@/features/checkout/checkoutSelectionTelemetry';
 import { getRequestHeaders } from '@/bootstrap/requestContext';
 import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
+import { getEffectiveCheckoutFields } from '@/utils/checkoutFieldRules';
 import type {
     CheckoutStep,
     ShippingAddress,
@@ -32,9 +33,14 @@ import type {
     ShippingMethod,
     CheckoutRequest,
     CheckoutResponse,
+    CheckoutDependencyStatus,
     CheckoutExpectedPricing,
     CheckoutPricingBreakdown,
     CheckoutPricingPreviewRequest,
+    CheckoutFieldDefinition,
+    CheckoutFieldDefinitionsResponse,
+    CheckoutFieldType,
+    CheckoutAttachment,
     AddressValidationErrors,
     ManualWalletUploadConfig,
     ManualWalletTypeOption,
@@ -57,6 +63,10 @@ const CHECKOUT_ENDPOINTS = {
     PRICING: '/api/storefront/checkout/pricing',
     SHIPPING_METHODS: '/api/storefront/shipping-methods',
     PAYMENT_METHODS: '/api/storefront/payment-methods',
+    CHECKOUT_FIELDS: '/api/storefront/checkout-fields',
+    CHECKOUT_ATTACHMENT_LEASE: '/api/storefront/checkout/attachments/upload-lease',
+    CHECKOUT_ATTACHMENT_CONFIRM: '/api/storefront/checkout/attachments/confirm',
+    CHECKOUT_ATTACHMENT_REMOVE: (id: string) => `/api/storefront/checkout/attachments/${id}`,
     // Phase: Abandoned Checkout — autosave session endpoints
     CHECKOUT_SESSION: '/api/storefront/checkout-session',
     CHECKOUT_SESSION_UPDATE: (id: string) => `/api/storefront/checkout-session/${id}`,
@@ -64,6 +74,15 @@ const CHECKOUT_ENDPOINTS = {
 
 export type CheckoutAutosaveStatus = 'idle' | 'unsaved' | 'saving' | 'saved' | 'error';
 export type CheckoutSelectionStatus = 'none' | 'valid' | 'stale';
+
+const CHECKOUT_DEPENDENCY_STATUSES = new Set<CheckoutDependencyStatus>([
+    'AVAILABLE',
+    'EMPTY',
+    'NOT_APPLICABLE',
+    'VALIDATION_REQUIRED',
+    'UNAVAILABLE',
+    'ERROR',
+]);
 
 interface StaleCheckoutSelection {
     value: string;
@@ -83,6 +102,8 @@ let checkoutSessionInitPromise: Promise<string | null> | null = null;
 let checkoutSessionInitAbortController: AbortController | null = null;
 let pricingPreviewAbortController: AbortController | null = null;
 let pricingPreviewRequestSequence = 0;
+let checkoutFieldsAbortController: AbortController | null = null;
+let checkoutFieldsRequestSequence = 0;
 const STALE_SELECTION_ERROR_KEY = 'checkout.staleSelection';
 
 function clearCheckoutAutosaveTimer(): void {
@@ -474,7 +495,13 @@ function scheduleCheckoutAutosave(): void {
 // Validation
 // ============================================================================
 
-const PHONE_REGEX = /^[\d\s\-+()]{8,20}$/;
+const PHONE_ALLOWED_CHARACTERS_REGEX = /^[\d\s\-+()]+$/;
+const hasPhoneDigitCount = (value: string, minimum: number) => {
+    const digitCount = Array.from(value).filter((character) => /\d/.test(character)).length;
+    return digitCount >= minimum && digitCount <= 20 && PHONE_ALLOWED_CHARACTERS_REGEX.test(value);
+};
+const isValidCheckoutPhone = (value: string) => hasPhoneDigitCount(value.trim(), 7);
+const isValidManualWalletPhone = (value: string) => hasPhoneDigitCount(value.trim(), 8);
 const PAYMENT_METHOD_CODE_REGEX = /^[A-Z0-9_]{2,50}$/;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHIPPING_CURRENCY_REGEX = /^[A-Z]{3}$/;
@@ -523,7 +550,7 @@ export function validateManualWalletFields(values: {
         errors.walletPhoneNumber = {
             code: 'MANUAL_WALLET_PHONE_REQUIRED',
         };
-    } else if (!PHONE_REGEX.test(values.walletPhoneNumber.trim())) {
+    } else if (!isValidManualWalletPhone(values.walletPhoneNumber)) {
         errors.walletPhoneNumber = {
             code: 'INVALID_MANUAL_WALLET_PHONE',
         };
@@ -566,6 +593,12 @@ function isManualWalletSelectionValid(values: {
         ...values,
         requireKnownWalletType: true,
     })).length === 0;
+}
+
+function cancelCheckoutFieldsRequest(): void {
+    checkoutFieldsAbortController?.abort();
+    checkoutFieldsAbortController = null;
+    checkoutFieldsRequestSequence += 1;
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -626,7 +659,40 @@ function optionalEstimatedDays(value: unknown): number | undefined {
     return value;
 }
 
-function admitStorefrontShippingMethods(payload: unknown): ShippingMethod[] {
+function normalizeCheckoutDependencyStatus(value: unknown, fallback: CheckoutDependencyStatus): CheckoutDependencyStatus {
+    if (typeof value !== 'string') {
+        return fallback;
+    }
+
+    const normalized = value.trim().toUpperCase() as CheckoutDependencyStatus;
+    return CHECKOUT_DEPENDENCY_STATUSES.has(normalized) ? normalized : fallback;
+}
+
+function classifyCheckoutMethodLoadFailure(error: unknown): { status: CheckoutDependencyStatus; message: string } {
+    const normalized = normalizeError(error as any);
+    const candidate = error as { code?: string; message?: string };
+
+    if (normalized.status === 400 || normalized.status === 401 || normalized.status === 403) {
+        return {
+            status: 'VALIDATION_REQUIRED',
+            message: normalized.message || 'Checkout needs more information before loading options.',
+        };
+    }
+
+    if (normalized.retryable || candidate.code === 'ECONNABORTED' || /timeout/i.test(candidate.message || '')) {
+        return {
+            status: 'UNAVAILABLE',
+            message: 'Checkout options are temporarily unavailable. Please retry.',
+        };
+    }
+
+    return {
+        status: 'ERROR',
+        message: normalized.message || candidate.message || 'Checkout options could not be loaded.',
+    };
+}
+
+function admitStorefrontShippingMethodList(payload: unknown): ShippingMethod[] {
     if (!Array.isArray(payload)) {
         throw new Error('Shipping method response failed admission.');
     }
@@ -679,7 +745,29 @@ function admitStorefrontShippingMethods(payload: unknown): ShippingMethod[] {
     });
 }
 
-function admitStorefrontPaymentMethods(payload: unknown): PaymentMethodDto[] {
+function admitStorefrontShippingMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: ShippingMethod[] } {
+    if (Array.isArray(payload)) {
+        const methods = admitStorefrontShippingMethodList(payload);
+        return {
+            status: methods.length > 0 ? 'AVAILABLE' : 'EMPTY',
+            methods,
+        };
+    }
+
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Shipping method response failed admission.');
+    }
+
+    const candidate = payload as { status?: unknown; shippingMethods?: unknown };
+    const methods = admitStorefrontShippingMethodList(candidate.shippingMethods);
+
+    return {
+        status: normalizeCheckoutDependencyStatus(candidate.status, methods.length > 0 ? 'AVAILABLE' : 'EMPTY'),
+        methods,
+    };
+}
+
+function admitStorefrontPaymentMethodList(payload: unknown): PaymentMethodDto[] {
     if (!Array.isArray(payload)) {
         throw new Error('Payment method response was not a list.');
     }
@@ -763,6 +851,202 @@ function admitStorefrontPaymentMethods(payload: unknown): PaymentMethodDto[] {
     return admitted;
 }
 
+function admitStorefrontPaymentMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: PaymentMethodDto[] } {
+    if (Array.isArray(payload)) {
+        const methods = admitStorefrontPaymentMethodList(payload);
+        return {
+            status: methods.length > 0 ? 'AVAILABLE' : 'EMPTY',
+            methods,
+        };
+    }
+
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Payment method response failed admission.');
+    }
+
+    const candidate = payload as { status?: unknown; paymentMethods?: unknown };
+    const methods = admitStorefrontPaymentMethodList(candidate.paymentMethods);
+
+    return {
+        status: normalizeCheckoutDependencyStatus(candidate.status, methods.length > 0 ? 'AVAILABLE' : 'EMPTY'),
+        methods,
+    };
+}
+
+const CHECKOUT_FIELD_TYPES = new Set<CheckoutFieldType>([
+    'TEXT',
+    'TEXTAREA',
+    'NUMBER',
+    'EMAIL',
+    'PHONE',
+    'SELECT',
+    'RADIO',
+    'CHECKBOX',
+    'DATE',
+    'IMAGE',
+    'FILE',
+    'MULTI_IMAGE',
+]);
+const CHECKOUT_FIELD_RULE_OPERATORS = new Set([
+    'EQUALS', 'NOT_EQUALS', 'CONTAINS', 'NOT_CONTAINS', 'IS_EMPTY', 'IS_NOT_EMPTY',
+    'GREATER_THAN', 'GREATER_THAN_OR_EQUAL', 'LESS_THAN', 'LESS_THAN_OR_EQUAL',
+]);
+const CHECKOUT_FIELD_RULE_ACTIONS = new Set(['SHOW', 'HIDE', 'REQUIRE', 'OPTIONAL']);
+
+function admitConditionalRules(configuration: any) {
+    if (!Array.isArray(configuration.conditionalRules)) return null;
+    if (configuration.conditionalRules.length > 25) throw new Error('Checkout field response contains too many rules.');
+    const seenRuleIds = new Set<string>();
+    return configuration.conditionalRules.map((rule: any) => {
+        if (!rule || typeof rule !== 'object' || typeof rule.ruleId !== 'string' || !rule.ruleId.trim() || seenRuleIds.has(rule.ruleId) ||
+            (rule.conditionMode !== 'ALL' && rule.conditionMode !== 'ANY') || !Array.isArray(rule.actions) ||
+            rule.actions.length < 1 || rule.actions.length > 2 || !rule.actions.every((action: unknown) => CHECKOUT_FIELD_RULE_ACTIONS.has(String(action))) ||
+            !Array.isArray(rule.conditions) || rule.conditions.length < 1 || rule.conditions.length > 5) {
+            throw new Error('Checkout field response contains malformed conditional rules.');
+        }
+        seenRuleIds.add(rule.ruleId);
+        const actions = Array.from(new Set(rule.actions.map(String)));
+        if ((actions.includes('SHOW') && actions.includes('HIDE')) || (actions.includes('REQUIRE') && actions.includes('OPTIONAL'))) {
+            throw new Error('Checkout field response contains conflicting rule actions.');
+        }
+        const conditions = rule.conditions.map((condition: any) => {
+            const operator = String(condition?.operator || '').toUpperCase();
+            if (!condition || !UUID_REGEX.test(String(condition.sourceFieldId || '')) || !CHECKOUT_FIELD_RULE_OPERATORS.has(operator) ||
+                (!['IS_EMPTY', 'IS_NOT_EMPTY'].includes(operator) && typeof condition.comparisonValue !== 'string')) {
+                throw new Error('Checkout field response contains malformed rule conditions.');
+            }
+            return {
+                sourceFieldId: String(condition.sourceFieldId),
+                operator,
+                comparisonValue: typeof condition.comparisonValue === 'string' ? condition.comparisonValue : null,
+            };
+        });
+        return { ruleId: rule.ruleId, conditionMode: rule.conditionMode, actions, conditions };
+    });
+}
+
+function admitCheckoutFieldList(payload: unknown): CheckoutFieldDefinition[] {
+    if (!Array.isArray(payload)) {
+        throw new Error('Checkout field response failed admission.');
+    }
+
+    const seenIds = new Set<string>();
+    const seenSystemKeys = new Set<string>();
+
+    return payload.map((item) => {
+        if (!item || typeof item !== 'object') {
+            throw new Error('Checkout field response contained malformed evidence.');
+        }
+
+        const candidate = item as Partial<CheckoutFieldDefinition>;
+        const id = typeof candidate.id === 'string' ? candidate.id.trim() : '';
+        const fieldKind = candidate.fieldKind;
+        const fieldType = candidate.fieldType;
+        const label = typeof candidate.label === 'string' ? candidate.label.trim() : '';
+        const displayOrder = candidate.displayOrder;
+
+        if (
+            !UUID_REGEX.test(id) ||
+            seenIds.has(id) ||
+            (fieldKind !== 'SYSTEM' && fieldKind !== 'CUSTOM') ||
+            !fieldType ||
+            !CHECKOUT_FIELD_TYPES.has(fieldType) ||
+            !label ||
+            typeof candidate.isEnabled !== 'boolean' ||
+            typeof candidate.isRequired !== 'boolean' ||
+            !Number.isInteger(displayOrder) ||
+            typeof displayOrder !== 'number' ||
+            displayOrder < 0 ||
+            !isOptionalString(candidate.systemFieldKey) ||
+            !isOptionalString(candidate.helpText)
+        ) {
+            throw new Error('Checkout field response failed admission.');
+        }
+        const systemFieldKey = candidate.systemFieldKey?.trim() ?? '';
+        if ((fieldKind === 'SYSTEM' && (!systemFieldKey || seenSystemKeys.has(systemFieldKey.toLowerCase()))) ||
+            (fieldKind === 'CUSTOM' && systemFieldKey)) {
+            throw new Error('Checkout field response contained invalid system field identity.');
+        }
+
+        seenIds.add(id);
+        if (systemFieldKey) seenSystemKeys.add(systemFieldKey.toLowerCase());
+
+        if (!candidate.configuration || typeof candidate.configuration !== 'object') {
+            throw new Error('Checkout field response contained malformed configuration.');
+        }
+        const configuration = candidate.configuration;
+        if (configuration.schemaVersion !== 1 || (candidate.isRequired && !candidate.isEnabled)) {
+            throw new Error('Checkout field response contained unsupported configuration.');
+        }
+        const options = configuration.options;
+        if ((fieldType === 'SELECT' || fieldType === 'RADIO') && (!Array.isArray(options) || options.length === 0)) {
+            throw new Error('Checkout option field response did not contain options.');
+        }
+        if (Array.isArray(options)) {
+            const optionValues = new Set<string>();
+            for (const option of options) {
+                if (!option || typeof option.value !== 'string' || !option.value.trim() || typeof option.label !== 'string' || !option.label.trim() || optionValues.has(option.value.toLowerCase())) {
+                    throw new Error('Checkout field response contained malformed options.');
+                }
+                optionValues.add(option.value.toLowerCase());
+            }
+        }
+
+        return {
+            id,
+            fieldKind,
+            fieldType,
+            systemFieldKey: systemFieldKey || null,
+            label,
+            helpText: candidate.helpText ?? null,
+            isEnabled: candidate.isEnabled,
+            isRequired: candidate.isRequired,
+            displayOrder,
+            configuration: {
+                schemaVersion: typeof configuration.schemaVersion === 'number' ? configuration.schemaVersion : 1,
+                options: Array.isArray(configuration.options)
+                    ? configuration.options.map((option) => ({ value: option.value, label: option.label }))
+                    : null,
+                conditionalRules: admitConditionalRules(configuration),
+                min: typeof configuration.min === 'number' ? configuration.min : null,
+                max: typeof configuration.max === 'number' ? configuration.max : null,
+                minLength: typeof configuration.minLength === 'number' ? configuration.minLength : null,
+                maxLength: typeof configuration.maxLength === 'number' ? configuration.maxLength : null,
+                allowedMimeTypes: Array.isArray(configuration.allowedMimeTypes)
+                    ? configuration.allowedMimeTypes.filter((value) => typeof value === 'string')
+                    : null,
+                maxFileSize: typeof configuration.maxFileSize === 'number' ? configuration.maxFileSize : null,
+                maxFiles: typeof configuration.maxFiles === 'number' ? configuration.maxFiles : null,
+            },
+        };
+    }).sort((a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
+}
+
+function admitCheckoutFields(payload: unknown): { status: CheckoutDependencyStatus; fields: CheckoutFieldDefinition[]; totalCount: number; enabledCount: number } {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Checkout field response failed admission.');
+    }
+
+    const candidate = payload as CheckoutFieldDefinitionsResponse;
+    const fields = admitCheckoutFieldList(candidate.fields);
+    if (!Number.isInteger(candidate.totalCount) || candidate.totalCount < 0 ||
+        !Number.isInteger(candidate.enabledCount) || candidate.enabledCount < 0 ||
+        candidate.enabledCount !== fields.length || candidate.totalCount < candidate.enabledCount) {
+        throw new Error('Checkout field response contained contradictory counts.');
+    }
+    const status = normalizeCheckoutDependencyStatus(candidate.status, fields.length > 0 ? 'AVAILABLE' : 'EMPTY');
+    if ((status === 'AVAILABLE') !== (fields.length > 0)) {
+        throw new Error('Checkout field response contained a contradictory status.');
+    }
+
+    return {
+        status,
+        fields,
+        totalCount: candidate.totalCount,
+        enabledCount: candidate.enabledCount,
+    };
+}
+
 function findAdmittedAvailablePaymentMethod(
     methods: PaymentMethodDto[],
     code: string | null | undefined
@@ -778,8 +1062,86 @@ function findAdmittedAvailablePaymentMethod(
 /**
  * Validate shipping address
  */
-export function validateAddress(address: ShippingAddress): AddressValidationErrors {
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isCanonicalCheckoutDate = (value: string) => {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+    if (!match) return false;
+    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+    return date.toISOString().slice(0, 10) === value;
+};
+
+const SYSTEM_FIELD_ADDRESS_KEY_MAP: Record<string, keyof ShippingAddress | 'notes'> = {
+    full_name: 'fullName',
+    phone: 'phone',
+    email: 'email',
+    city: 'city',
+    area: 'area',
+    street_address: 'addressLine',
+    building: 'building',
+    apartment: 'apartment',
+    postal_code: 'postalCode',
+    order_notes: 'notes',
+};
+
+function isDynamicCheckoutFieldsAvailable(fields?: CheckoutFieldDefinition[]): fields is CheckoutFieldDefinition[] {
+    return Array.isArray(fields) && fields.length > 0;
+}
+
+function isUploadCheckoutField(fieldType: CheckoutFieldType): boolean {
+    return fieldType === 'IMAGE' || fieldType === 'FILE' || fieldType === 'MULTI_IMAGE';
+}
+
+function parseCheckoutAttachments(value?: string): CheckoutAttachment[] {
+    if (!value?.trim()) return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed.filter((item) => item?.attachmentId) : [];
+    } catch {
+        return [];
+    }
+}
+
+export function validateAddress(address: ShippingAddress, checkoutFields?: CheckoutFieldDefinition[]): AddressValidationErrors {
     const errors: AddressValidationErrors = {};
+
+    if (isDynamicCheckoutFieldsAvailable(checkoutFields)) {
+        for (const field of checkoutFields) {
+            if (field.fieldKind !== 'SYSTEM' || !field.isEnabled || !field.systemFieldKey) {
+                continue;
+            }
+
+            const addressKey = SYSTEM_FIELD_ADDRESS_KEY_MAP[field.systemFieldKey];
+            if (!addressKey) {
+                continue;
+            }
+
+            const value = (address[addressKey as keyof ShippingAddress] ?? '') as string;
+            if (field.isRequired && !value.trim()) {
+                errors[addressKey as keyof AddressValidationErrors] = `${field.label} is required`;
+                continue;
+            }
+
+            if (value.trim()) {
+                const absoluteMax = field.fieldType === 'TEXTAREA' ? 5000 : 1000;
+                const maxLength = Math.min(field.configuration.maxLength ?? absoluteMax, absoluteMax);
+                if (field.configuration.minLength != null && value.trim().length < field.configuration.minLength) {
+                    errors[addressKey as keyof AddressValidationErrors] = `${field.label} is too short`;
+                } else if (value.trim().length > maxLength) {
+                    errors[addressKey as keyof AddressValidationErrors] = `${field.label} is too long`;
+                }
+            }
+        }
+
+        if (address.email?.trim() && !EMAIL_REGEX.test(address.email.trim())) {
+            errors.email = 'Please enter a valid email address';
+        }
+
+        if (address.phone?.trim() && !isValidCheckoutPhone(address.phone)) {
+            errors.phone = 'Please enter a valid phone number';
+        }
+
+        return errors;
+    }
 
     if (!address.fullName.trim()) {
         errors.fullName = 'Full name is required';
@@ -789,7 +1151,7 @@ export function validateAddress(address: ShippingAddress): AddressValidationErro
 
     if (!address.phone.trim()) {
         errors.phone = 'Phone number is required';
-    } else if (!PHONE_REGEX.test(address.phone)) {
+    } else if (!isValidCheckoutPhone(address.phone)) {
         errors.phone = 'Please enter a valid phone number';
     }
 
@@ -810,12 +1172,92 @@ export function validateAddress(address: ShippingAddress): AddressValidationErro
     return errors;
 }
 
+export function validateCustomCheckoutFields(
+    fields: CheckoutFieldDefinition[],
+    values: Record<string, string>
+): Record<string, string> {
+    const errors: Record<string, string> = {};
+
+    for (const field of fields) {
+        if (field.fieldKind !== 'CUSTOM' || !field.isEnabled) {
+            continue;
+        }
+
+        const rawValue = values[field.id] ?? '';
+        if (isUploadCheckoutField(field.fieldType)) {
+            const attachments = parseCheckoutAttachments(rawValue);
+            const maxFiles = field.fieldType === 'MULTI_IMAGE' ? (field.configuration.maxFiles ?? 5) : 1;
+            if (field.isRequired && attachments.length === 0) {
+                errors[field.id] = `${field.label} is required`;
+            } else if (attachments.length > maxFiles) {
+                errors[field.id] = `${field.label} allows at most ${maxFiles} file(s)`;
+            }
+            continue;
+        }
+
+        const value = rawValue.trim();
+        const isEmpty = field.fieldType === 'CHECKBOX'
+            ? rawValue !== 'true'
+            : !value;
+
+        if (field.isRequired && isEmpty) {
+            errors[field.id] = `${field.label} is required`;
+            continue;
+        }
+
+        if (isEmpty) {
+            continue;
+        }
+
+        const absoluteMax = field.fieldType === 'TEXTAREA' ? 5000 : 1000;
+        const maxLength = Math.min(field.configuration.maxLength ?? absoluteMax, absoluteMax);
+        if (field.configuration.minLength != null && value.length < field.configuration.minLength) {
+            errors[field.id] = `${field.label} is too short`;
+        } else if (value.length > maxLength) {
+            errors[field.id] = `${field.label} is too long`;
+        } else if (field.fieldType === 'EMAIL' && !EMAIL_REGEX.test(value)) {
+            errors[field.id] = `Please enter a valid ${field.label.toLowerCase()}`;
+        } else if (field.fieldType === 'PHONE' && !isValidCheckoutPhone(value)) {
+            errors[field.id] = `Please enter a valid ${field.label.toLowerCase()}`;
+        } else if (field.fieldType === 'NUMBER') {
+            const numericValue = /^[-+]?\d+(?:\.\d+)?$/.test(value) ? Number(value) : Number.NaN;
+            if (!Number.isFinite(numericValue)) {
+                errors[field.id] = `${field.label} must be a valid number`;
+            } else if (field.configuration.min != null && numericValue < field.configuration.min) {
+                errors[field.id] = `${field.label} is below the allowed minimum`;
+            } else if (field.configuration.max != null && numericValue > field.configuration.max) {
+                errors[field.id] = `${field.label} is above the allowed maximum`;
+            }
+        } else if (field.fieldType === 'SELECT' || field.fieldType === 'RADIO') {
+            const optionValues = new Set((field.configuration.options ?? []).map((option) => option.value));
+            if (!optionValues.has(value)) {
+                errors[field.id] = `Please choose a valid ${field.label.toLowerCase()}`;
+            }
+        } else if (field.fieldType === 'DATE' && !isCanonicalCheckoutDate(value)) {
+            errors[field.id] = `${field.label} must be a valid date`;
+        }
+    }
+
+    return errors;
+}
+
 /**
  * Check if address is valid
  */
-export function isAddressValid(address: ShippingAddress): boolean {
-    const errors = validateAddress(address);
+export function isAddressValid(address: ShippingAddress, checkoutFields?: CheckoutFieldDefinition[]): boolean {
+    const errors = validateAddress(address, checkoutFields);
     return Object.keys(errors).length === 0;
+}
+
+function getEffectiveFieldsForState(state: CheckoutState): CheckoutFieldDefinition[] | undefined {
+    return state.checkoutFieldsStatus === 'AVAILABLE' ||
+        (state.checkoutFieldsStatus === 'EMPTY' && state.checkoutFieldsTotalCount > 0)
+        ? getEffectiveCheckoutFields(state.checkoutFields, state.address, state.customFieldValues)
+        : undefined;
+}
+
+function checkoutFieldsAreReady(state: CheckoutState): boolean {
+    return state.checkoutFieldsStatus === 'AVAILABLE' || state.checkoutFieldsStatus === 'EMPTY';
 }
 
 // ============================================================================
@@ -834,6 +1276,7 @@ export interface CheckoutState {
     shippingSelectionStatus: CheckoutSelectionStatus;
     staleShippingSelection: StaleCheckoutSelection | null;
     shippingMethods: ShippingMethod[];
+    shippingMethodsStatus: CheckoutDependencyStatus;
     shippingMethodsLoading: boolean;
     shippingMethodsError: string | null;
 
@@ -844,6 +1287,7 @@ export interface CheckoutState {
 
     // Payment methods from POS Admin (Phase 10.4.D2)
     paymentMethods: PaymentMethodDto[];
+    paymentMethodsStatus: CheckoutDependencyStatus;
     selectedPaymentMethodCode: string | null;
     paymentMethodsLoading: boolean;
     paymentMethodsError: string | null;
@@ -853,6 +1297,15 @@ export interface CheckoutState {
     pricingLoading: boolean;
     pricingError: string | null;
     hasRequestedPricing: boolean;
+
+    // Dynamic checkout fields
+    checkoutFields: CheckoutFieldDefinition[];
+    checkoutFieldsStatus: CheckoutDependencyStatus;
+    checkoutFieldsLoading: boolean;
+    checkoutFieldsError: string | null;
+    checkoutFieldsTotalCount: number;
+    customFieldValues: Record<string, string>;
+    touchedCustomFields: Set<string>;
 
     // Submission state
     isSubmitting: boolean;
@@ -900,6 +1353,10 @@ export interface CheckoutActions {
     selectPaymentMethod: (code: string) => void;
     resetPaymentMethod: () => void;
     refreshPricingPreview: () => Promise<void>;
+    fetchCheckoutFields: (force?: boolean) => Promise<void>;
+    setCustomFieldValue: (fieldId: string, value: string) => void;
+    touchCustomField: (fieldId: string) => void;
+    getCustomFieldError: (fieldId: string) => string | undefined;
 
     // Navigation actions
     goToStep: (step: CheckoutStep) => void;
@@ -949,12 +1406,14 @@ const INITIAL_ADDRESS: ShippingAddress = {
 
 interface SensitiveCheckoutStateSnapshot {
     address: ShippingAddress;
+    customFieldValues: Record<string, string>;
 }
 
 function cloneShippingAddress(address: ShippingAddress): ShippingAddress {
     return {
         fullName: address.fullName,
         phone: address.phone,
+        email: address.email,
         city: address.city,
         area: address.area,
         addressLine: address.addressLine,
@@ -963,6 +1422,7 @@ function cloneShippingAddress(address: ShippingAddress): ShippingAddress {
         building: address.building,
         floor: address.floor,
         apartment: address.apartment,
+        postalCode: address.postalCode,
         landmark: address.landmark,
         notes: address.notes,
     };
@@ -1032,25 +1492,30 @@ const checkoutStateStorage: StateStorage = {
 
 function buildSensitiveCheckoutStateSnapshot(state: {
     address: ShippingAddress;
+    customFieldValues: Record<string, string>;
 }): SensitiveCheckoutStateSnapshot {
     return {
         address: cloneShippingAddress(state.address),
+        customFieldValues: { ...state.customFieldValues },
     };
 }
 
 function isSensitiveCheckoutStateEmpty(snapshot: SensitiveCheckoutStateSnapshot): boolean {
     return !snapshot.address.fullName.trim() &&
         !snapshot.address.phone.trim() &&
+        !(snapshot.address.email?.trim() ?? '') &&
         !snapshot.address.city.trim() &&
         !snapshot.address.area.trim() &&
         !snapshot.address.addressLine.trim() &&
         !(snapshot.address.building?.trim() ?? '') &&
         !(snapshot.address.floor?.trim() ?? '') &&
         !(snapshot.address.apartment?.trim() ?? '') &&
+        !(snapshot.address.postalCode?.trim() ?? '') &&
         !(snapshot.address.landmark?.trim() ?? '') &&
         !(snapshot.address.notes?.trim() ?? '') &&
         !snapshot.address.country?.trim() &&
-        !snapshot.address.geography;
+        !snapshot.address.geography &&
+        Object.values(snapshot.customFieldValues).every((value) => !value);
 }
 
 function readSensitiveCheckoutSessionStorage(): SensitiveCheckoutStateSnapshot | null {
@@ -1080,6 +1545,7 @@ function readSensitiveCheckoutSessionStorage(): SensitiveCheckoutStateSnapshot |
                 ...INITIAL_ADDRESS,
                 fullName: typeof address.fullName === 'string' ? address.fullName : INITIAL_ADDRESS.fullName,
                 phone: typeof address.phone === 'string' ? address.phone : INITIAL_ADDRESS.phone,
+                email: typeof address.email === 'string' ? address.email : undefined,
                 city: typeof address.city === 'string' ? address.city : INITIAL_ADDRESS.city,
                 area: typeof address.area === 'string' ? address.area : INITIAL_ADDRESS.area,
                 addressLine: typeof address.addressLine === 'string' ? address.addressLine : INITIAL_ADDRESS.addressLine,
@@ -1088,9 +1554,16 @@ function readSensitiveCheckoutSessionStorage(): SensitiveCheckoutStateSnapshot |
                 building: typeof address.building === 'string' ? address.building : undefined,
                 floor: typeof address.floor === 'string' ? address.floor : undefined,
                 apartment: typeof address.apartment === 'string' ? address.apartment : undefined,
+                postalCode: typeof address.postalCode === 'string' ? address.postalCode : undefined,
                 landmark: typeof address.landmark === 'string' ? address.landmark : undefined,
                 notes: typeof address.notes === 'string' ? address.notes : INITIAL_ADDRESS.notes,
             },
+            customFieldValues: parsed.customFieldValues && typeof parsed.customFieldValues === 'object'
+                ? Object.entries(parsed.customFieldValues).reduce<Record<string, string>>((values, [key, value]) => {
+                    if (UUID_REGEX.test(key) && typeof value === 'string') values[key] = value;
+                    return values;
+                }, {})
+                : {},
         };
     } catch {
         return null;
@@ -1162,12 +1635,14 @@ const INITIAL_STATE: CheckoutState = {
     shippingSelectionStatus: 'none',
     staleShippingSelection: null,
     shippingMethods: [],
+    shippingMethodsStatus: 'IDLE',
     shippingMethodsLoading: false,
     shippingMethodsError: null,
     paymentMethod: null,
     paymentSelectionStatus: 'none',
     stalePaymentSelection: null,
     paymentMethods: [],
+    paymentMethodsStatus: 'IDLE',
     selectedPaymentMethodCode: null,
     paymentMethodsLoading: false,
     paymentMethodsError: null,
@@ -1175,6 +1650,13 @@ const INITIAL_STATE: CheckoutState = {
     pricingLoading: false,
     pricingError: null,
     hasRequestedPricing: false,
+    checkoutFields: [],
+    checkoutFieldsStatus: 'IDLE',
+    checkoutFieldsLoading: false,
+    checkoutFieldsError: null,
+    checkoutFieldsTotalCount: 0,
+    customFieldValues: {},
+    touchedCustomFields: new Set(),
     isSubmitting: false,
     error: null,
     errorCode: null,
@@ -1246,7 +1728,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             },
 
             fetchShippingMethods: async () => {
-                set({ shippingMethodsLoading: true, shippingMethodsError: null });
+                set({ shippingMethodsLoading: true, shippingMethodsStatus: 'LOADING', shippingMethodsError: null });
 
                 try {
                     const response = await httpClient.get<ShippingMethod[]>(
@@ -1259,7 +1741,8 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         }
                     );
 
-                    const methods = admitStorefrontShippingMethods(response.data);
+                    const admittedResponse = admitStorefrontShippingMethods(response.data);
+                    const methods = admittedResponse.methods;
 
                     const currentId = get().shippingMethodId;
                     const previousMethods = get().shippingMethods;
@@ -1286,6 +1769,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     set({
                         shippingMethods: methods,
+                        shippingMethodsStatus: admittedResponse.status,
                         shippingMethodsLoading: false,
                         shippingMethodsError: null,
                         shippingMethodId: nextShippingMethodId,
@@ -1301,10 +1785,12 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         emitCheckoutSelectionInvalidated('shipping', 'missing_from_latest_config', currentId);
                     }
                 } catch (error) {
-                    console.error('[CheckoutStore] Failed to fetch shipping methods:', error);
+                    const classifiedFailure = classifyCheckoutMethodLoadFailure(error);
+                    console.error('[CheckoutStore] Failed to fetch shipping methods:', classifiedFailure, error);
                     set({
                         shippingMethodsLoading: false,
-                        shippingMethodsError: 'checkout.shippingMethodsLoadFailed',
+                        shippingMethodsStatus: classifiedFailure.status,
+                        shippingMethodsError: classifiedFailure.message,
                     });
                 }
             },
@@ -1326,7 +1812,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
              * - NO secrets are included
              */
             fetchPaymentMethods: async () => {
-                set({ paymentMethodsLoading: true, paymentMethodsError: null });
+                set({ paymentMethodsLoading: true, paymentMethodsStatus: 'LOADING', paymentMethodsError: null });
 
                 try {
                     const response = await httpClient.get<PaymentMethodDto[]>(
@@ -1339,7 +1825,8 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         }
                     );
 
-                    const methods = admitStorefrontPaymentMethods(response.data);
+                    const admittedResponse = admitStorefrontPaymentMethods(response.data);
+                    const methods = admittedResponse.methods;
                     const currentPaymentMethodCode = get().selectedPaymentMethodCode || get().paymentMethod;
                     const previousMethods = get().paymentMethods;
                     const previousStaleSelection = get().stalePaymentSelection;
@@ -1371,6 +1858,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     set({
                         paymentMethods: methods,
+                        paymentMethodsStatus: admittedResponse.status,
                         paymentMethodsLoading: false,
                         paymentMethodsError: null,
                         selectedPaymentMethodCode: nextPaymentMethodCode,
@@ -1396,10 +1884,12 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     console.log('[CheckoutStore] Payment methods loaded:', methods.length);
                 } catch (error) {
-                    console.error('[CheckoutStore] Failed to fetch payment methods:', error);
+                    const classifiedFailure = classifyCheckoutMethodLoadFailure(error);
+                    console.error('[CheckoutStore] Failed to fetch payment methods:', classifiedFailure, error);
                     set({
                         paymentMethodsLoading: false,
-                        paymentMethodsError: 'checkout.paymentMethodsLoadFailed',
+                        paymentMethodsStatus: classifiedFailure.status,
+                        paymentMethodsError: classifiedFailure.message,
                     });
                 }
             },
@@ -1548,6 +2038,86 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                 }
             },
 
+            fetchCheckoutFields: async (force = false) => {
+                if (!force && (get().checkoutFieldsLoading || get().checkoutFieldsStatus === 'AVAILABLE' || get().checkoutFieldsStatus === 'EMPTY')) {
+                    return;
+                }
+
+                checkoutFieldsAbortController?.abort();
+                const controller = new AbortController();
+                checkoutFieldsAbortController = controller;
+                const sequence = ++checkoutFieldsRequestSequence;
+                set({ checkoutFieldsLoading: true, checkoutFieldsStatus: 'LOADING', checkoutFieldsError: null });
+
+                try {
+                    const response = await httpClient.get<CheckoutFieldDefinitionsResponse>(
+                        CHECKOUT_ENDPOINTS.CHECKOUT_FIELDS,
+                        {
+                            signal: controller.signal,
+                            headers: {
+                                'Cache-Control': 'no-store',
+                                Pragma: 'no-cache',
+                            },
+                        }
+                    );
+
+                    const admitted = admitCheckoutFields(response.data);
+                    if (controller.signal.aborted || sequence !== checkoutFieldsRequestSequence) return;
+                    set((state) => {
+                        const customIds = new Set(admitted.fields.filter((field) => field.fieldKind === 'CUSTOM').map((field) => field.id));
+                        const customFieldValues = Object.entries(state.customFieldValues).reduce<Record<string, string>>((acc, [fieldId, value]) => {
+                            if (customIds.has(fieldId)) {
+                                acc[fieldId] = value;
+                            }
+                            return acc;
+                        }, {});
+
+                        return {
+                            checkoutFields: admitted.fields,
+                            checkoutFieldsStatus: admitted.status,
+                            checkoutFieldsLoading: false,
+                            checkoutFieldsError: null,
+                            checkoutFieldsTotalCount: admitted.totalCount,
+                            customFieldValues,
+                        };
+                    });
+                } catch (error) {
+                    if (isAutosaveAbortError(error) || controller.signal.aborted || sequence !== checkoutFieldsRequestSequence) return;
+                    const normalized = normalizeError(error as any);
+                    set({
+                        checkoutFields: [],
+                        checkoutFieldsStatus: normalized.retryable ? 'UNAVAILABLE' : 'ERROR',
+                        checkoutFieldsLoading: false,
+                        checkoutFieldsError: normalized.message || 'Checkout field configuration could not be loaded.',
+                        checkoutFieldsTotalCount: 0,
+                    });
+                } finally {
+                    if (checkoutFieldsAbortController === controller) checkoutFieldsAbortController = null;
+                }
+            },
+
+            setCustomFieldValue: (fieldId, value) => {
+                set((state) => ({
+                    customFieldValues: { ...state.customFieldValues, [fieldId]: value },
+                    touchedCustomFields: new Set(state.touchedCustomFields).add(fieldId),
+                }));
+            },
+
+            touchCustomField: (fieldId) => {
+                set((state) => ({
+                    touchedCustomFields: new Set(state.touchedCustomFields).add(fieldId),
+                }));
+            },
+
+            getCustomFieldError: (fieldId) => {
+                const state = get();
+                if (!state.showAllErrors && !state.touchedCustomFields.has(fieldId)) {
+                    return undefined;
+                }
+
+                return validateCustomCheckoutFields(getEffectiveFieldsForState(state) ?? [], state.customFieldValues)[fieldId];
+            },
+
             // ================================================================
             // Manual Wallet Actions
             // ================================================================
@@ -1654,8 +2224,18 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                     // Refresh pricing after cart fetch to ensure we have up-to-date totals
                     // (fetchCart may have swapped in a different/merged cart)
                     await get().refreshPricingPreview();
+                    await get().fetchCheckoutFields(true);
                     
                     const latestState = get();
+
+                    if (!checkoutFieldsAreReady(latestState)) {
+                        set({
+                            isSubmitting: false,
+                            error: latestState.checkoutFieldsError || 'Checkout field configuration could not be loaded.',
+                            errorCode: 'CHECKOUT_FIELDS_UNAVAILABLE',
+                        });
+                        return false;
+                    }
 
                     // Get fresh cart from cart store
                     const cart = useCartStore.getState().cart;
@@ -1667,7 +2247,16 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                     console.log('[CheckoutStore] Submitting checkout with cartId:', cart.cartId);
 
                     // Validate
-                    if (!isAddressValid(latestState.address)) {
+                    const dynamicFieldsAvailable = latestState.checkoutFieldsTotalCount > 0;
+                    const effectiveCheckoutFields = dynamicFieldsAvailable
+                        ? getEffectiveCheckoutFields(latestState.checkoutFields, latestState.address, latestState.customFieldValues)
+                        : [];
+                    const addressFields = dynamicFieldsAvailable ? effectiveCheckoutFields : undefined;
+                    const customFieldErrors = dynamicFieldsAvailable
+                        ? validateCustomCheckoutFields(effectiveCheckoutFields, latestState.customFieldValues)
+                        : {};
+
+                    if (!isAddressValid(latestState.address, addressFields) || Object.keys(customFieldErrors).length > 0) {
                         set({ isSubmitting: false, error: 'checkout.addressIncomplete', showAllErrors: true });
                         return false;
                     }
@@ -1767,17 +2356,24 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                     }
 
                     // Map frontend address to backend AddressDto format
+                    const visibleSystemKeys = new Set(effectiveCheckoutFields
+                        .filter((field) => field.fieldKind === 'SYSTEM' && field.systemFieldKey)
+                        .map((field) => field.systemFieldKey));
+                    const dynamicSystemValue = (key: string, value: string | undefined) =>
+                        !dynamicFieldsAvailable || visibleSystemKeys.has(key) ? (value ?? '') : '';
                     const shippingAddress = {
-                        name: latestState.address.fullName,
-                        phone: latestState.address.phone,
-                        street: latestState.address.addressLine,
-                        city: latestState.address.city,
-                        state: latestState.address.area,
+                        name: dynamicSystemValue('full_name', latestState.address.fullName),
+                        phone: dynamicSystemValue('phone', latestState.address.phone),
+                        email: dynamicSystemValue('email', latestState.address.email),
+                        street: dynamicSystemValue('street_address', latestState.address.addressLine),
+                        city: dynamicSystemValue('city', latestState.address.city),
+                        state: dynamicSystemValue('area', latestState.address.area),
+                        zipCode: dynamicSystemValue('postal_code', latestState.address.postalCode),
                         country: resolvedCountryCode,
                         geography: latestState.address.geography,
-                        building: latestState.address.building,
+                        building: dynamicSystemValue('building', latestState.address.building),
                         floor: latestState.address.floor,
-                        apartment: latestState.address.apartment,
+                        apartment: dynamicSystemValue('apartment', latestState.address.apartment),
                         landmark: latestState.address.landmark,
                     };
                     // Prepare Manual Wallet fields if applicable
@@ -1790,14 +2386,32 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         };
                     }
 
+                    const customFields = dynamicFieldsAvailable
+                        ? effectiveCheckoutFields
+                            .filter((field) => field.fieldKind === 'CUSTOM' && field.isEnabled)
+                            .map((field) => {
+                                if (isUploadCheckoutField(field.fieldType)) {
+                                    const attachmentIds = parseCheckoutAttachments(latestState.customFieldValues[field.id]).map((attachment) => attachment.attachmentId);
+                                    return { fieldId: field.id, attachmentIds };
+                                }
+
+                                return {
+                                    fieldId: field.id,
+                                    value: latestState.customFieldValues[field.id] ?? '',
+                                };
+                            })
+                            .filter((field) => (field.attachmentIds?.length ?? 0) > 0 || field.value?.trim() || field.value === 'true' || field.value === 'false')
+                        : undefined;
+
                     const finalRequest: CheckoutRequest = {
                         cartId: cart.cartId,
                         shippingAddress,
                         shippingMethodId: latestState.shippingMethodId,
                         paymentMethod: latestState.paymentMethod,
                         couponCode: cart.appliedCoupon?.code,
-                        customerNotes: latestState.address.notes,
+                        customerNotes: dynamicSystemValue('order_notes', latestState.address.notes),
                         expectedPricing: buildExpectedPricing(latestState.pricing),
+                        customFields,
                         ...walletFields
                     };
 
@@ -1863,6 +2477,8 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         manualWalletProofFileKey: null,
                         manualWalletUploadToken: null,
                         checkoutSessionId: null,
+                        customFieldValues: {},
+                        touchedCustomFields: new Set(),
                     });
                     persistActiveCheckoutOrderContext({
                         orderId: order.orderId,
@@ -1962,10 +2578,12 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                 cancelCheckoutAutosaveRequest();
                 cancelCheckoutSessionInit();
                 cancelPricingPreviewRequest();
+                cancelCheckoutFieldsRequest();
                 clearSensitiveCheckoutSessionStorage();
                 set({
                     ...INITIAL_STATE,
                     touchedFields: new Set(),
+                    touchedCustomFields: new Set(),
                 });
             },
 
@@ -1974,17 +2592,23 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             // ================================================================
 
             getAddressErrors: () => {
-                return validateAddress(get().address);
+                const state = get();
+                return validateAddress(
+                    state.address,
+                    getEffectiveFieldsForState(state)
+                );
             },
 
             getFieldError: (key) => {
                 const state = get();
-                // Notes field doesn't have validation errors
-                if (key === 'notes') return undefined;
+                if (key === 'notes' && state.checkoutFieldsStatus !== 'AVAILABLE') return undefined;
                 if (!state.showAllErrors && !state.touchedFields.has(key)) {
                     return undefined;
                 }
-                const errors = validateAddress(state.address);
+                const errors = validateAddress(
+                    state.address,
+                    getEffectiveFieldsForState(state)
+                );
                 // Type assertion needed because 'notes' is excluded from AddressValidationErrors
                 return (errors as Record<string, string | undefined>)[key];
             },
@@ -1994,7 +2618,10 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                 switch (step) {
                     case 'shipping':
-                        return isAddressValid(state.address) &&
+                        return checkoutFieldsAreReady(state) &&
+                            isAddressValid(state.address, getEffectiveFieldsForState(state)) &&
+                            (state.checkoutFieldsStatus !== 'AVAILABLE' ||
+                                Object.keys(validateCustomCheckoutFields(getEffectiveFieldsForState(state) ?? [], state.customFieldValues)).length === 0) &&
                             !!state.shippingMethodId &&
                             state.shippingSelectionStatus !== 'stale';
                     case 'payment': {
@@ -2021,7 +2648,10 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         return !!state.paymentMethod;
                     }
                     case 'review': {
-                        const baseValid = isAddressValid(state.address) &&
+                        const baseValid = checkoutFieldsAreReady(state) &&
+                            isAddressValid(state.address, getEffectiveFieldsForState(state)) &&
+                            (state.checkoutFieldsStatus !== 'AVAILABLE' ||
+                                Object.keys(validateCustomCheckoutFields(getEffectiveFieldsForState(state) ?? [], state.customFieldValues)).length === 0) &&
                             !!state.shippingMethodId &&
                             !!state.paymentMethod &&
                             state.shippingSelectionStatus !== 'stale' &&
@@ -2116,6 +2746,7 @@ const sensitiveCheckoutState = readSensitiveCheckoutSessionStorage();
 if (sensitiveCheckoutState) {
     useCheckoutStore.setState({
         address: cloneShippingAddress(sensitiveCheckoutState.address),
+        customFieldValues: sensitiveCheckoutState.customFieldValues,
     });
 }
 
@@ -2146,6 +2777,7 @@ export const selectShippingMethodId = (state: CheckoutState) => state.shippingMe
 export const selectShippingSelectionStatus = (state: CheckoutState) => state.shippingSelectionStatus;
 export const selectStaleShippingSelection = (state: CheckoutState) => state.staleShippingSelection;
 export const selectShippingMethods = (state: CheckoutState) => state.shippingMethods;
+export const selectShippingMethodsStatus = (state: CheckoutState) => state.shippingMethodsStatus;
 export const selectPaymentMethod = (state: CheckoutState) => state.paymentMethod;
 export const selectIsSubmitting = (state: CheckoutState) => state.isSubmitting;
 export const selectCheckoutError = (state: CheckoutState) => state.error;
@@ -2163,6 +2795,12 @@ export const selectHasRequestedPricing = (state: CheckoutState) => state.hasRequ
 export const selectManualWalletConfig = (state: CheckoutState) => state.manualWalletConfig;
 export const selectManualWalletConfigError = (state: CheckoutState) => state.manualWalletConfigError;
 export const selectCheckoutShowAllErrors = (state: CheckoutState) => state.showAllErrors;
+export const selectCheckoutFields = (state: CheckoutState) => state.checkoutFields;
+export const selectCheckoutFieldsStatus = (state: CheckoutState) => state.checkoutFieldsStatus;
+export const selectCheckoutFieldsLoading = (state: CheckoutState) => state.checkoutFieldsLoading;
+export const selectCheckoutFieldsError = (state: CheckoutState) => state.checkoutFieldsError;
+export const selectCheckoutFieldsTotalCount = (state: CheckoutState) => state.checkoutFieldsTotalCount;
+export const selectCustomFieldValues = (state: CheckoutState) => state.customFieldValues;
 
 /**
  * Get selected shipping method
@@ -2184,6 +2822,7 @@ export const selectShippingCost = (state: CheckoutState): number => {
 // ============================================================================
 
 export const selectPaymentMethods = (state: CheckoutState) => state.paymentMethods;
+export const selectPaymentMethodsStatus = (state: CheckoutState) => state.paymentMethodsStatus;
 export const selectSelectedPaymentMethodCode = (state: CheckoutState) => state.selectedPaymentMethodCode;
 export const selectPaymentSelectionStatus = (state: CheckoutState) => state.paymentSelectionStatus;
 export const selectStalePaymentSelection = (state: CheckoutState) => state.stalePaymentSelection;

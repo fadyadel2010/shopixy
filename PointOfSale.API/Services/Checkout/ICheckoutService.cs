@@ -268,6 +268,14 @@ public class CheckoutOutOfStockException : CheckoutException
     }
 }
 
+public class CheckoutDynamicFieldValidationException : CheckoutException
+{
+    public CheckoutDynamicFieldValidationException(string errorCode, string message)
+        : base(errorCode, message, "CheckoutDynamicFields")
+    {
+    }
+}
+
 /// <summary>
 /// Thrown when the final authoritative checkout commit loses a serializable race.
 /// HTTP 409 Conflict - CHECKOUT_CONCURRENCY_CONFLICT

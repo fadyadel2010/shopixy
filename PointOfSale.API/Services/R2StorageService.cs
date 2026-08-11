@@ -39,6 +39,17 @@ public interface IR2StorageService
         string objectKey,
         CancellationToken cancellationToken = default);
 
+    Task<R2ObjectMetadata> CopyObjectAsync(
+        string sourceObjectKey,
+        string destinationObjectKey,
+        string contentType,
+        CancellationToken cancellationToken = default);
+
+    Task<R2DownloadObjectResult> DownloadObjectAsync(
+        string objectKey,
+        string? ifMatchETag,
+        CancellationToken cancellationToken = default);
+
     Task<R2UploadResult> UploadFileAsync(
         Stream file,
         string contentType,
@@ -54,8 +65,9 @@ public sealed record R2UploadUrlResult(
     string HttpMethod,
     string ContentType);
 public sealed record R2ObjectMetadata(string ContentType, long ContentLength, string? ChecksumSha256, string? ETag);
+public sealed record R2DownloadObjectResult(Stream Content, string ContentType, long ContentLength, string? ETag);
 
-public class R2StorageService : IR2StorageService
+public class R2StorageService : IR2StorageService, IDisposable
 {
     private static readonly IReadOnlyDictionary<string, string> ContentTypeExtensions =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -356,6 +368,90 @@ public class R2StorageService : IR2StorageService
         }
     }
 
+    public async Task<R2ObjectMetadata> CopyObjectAsync(
+        string sourceObjectKey,
+        string destinationObjectKey,
+        string contentType,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            EnsureConfigured();
+
+            var request = new CopyObjectRequest
+            {
+                SourceBucket = _options.Bucket,
+                SourceKey = sourceObjectKey,
+                DestinationBucket = _options.Bucket,
+                DestinationKey = destinationObjectKey,
+                MetadataDirective = S3MetadataDirective.REPLACE,
+                ContentType = NormalizeContentType(contentType)
+            };
+
+            await GetOrCreateClient().CopyObjectAsync(request, cancellationToken);
+            return await GetObjectMetadataAsync(destinationObjectKey, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "R2 object copy failed | Bucket: {Bucket} | SourceObjectKey: {SourceObjectKey} | DestinationObjectKey: {DestinationObjectKey}",
+                _options.Bucket,
+                sourceObjectKey,
+                destinationObjectKey);
+            throw;
+        }
+    }
+
+    public async Task<R2DownloadObjectResult> DownloadObjectAsync(
+        string objectKey,
+        string? ifMatchETag,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            EnsureConfigured();
+
+            var request = new GetObjectRequest
+            {
+                BucketName = _options.Bucket,
+                Key = objectKey
+            };
+
+            if (!string.IsNullOrWhiteSpace(ifMatchETag))
+            {
+                request.EtagToMatch = ifMatchETag;
+            }
+
+            var response = await GetOrCreateClient().GetObjectAsync(request, cancellationToken);
+            return new R2DownloadObjectResult(
+                response.ResponseStream,
+                NormalizeContentType(response.Headers.ContentType),
+                response.Headers.ContentLength,
+                response.ETag);
+        }
+        catch (Exception ex)
+        when (ex is AmazonS3Exception { StatusCode: HttpStatusCode.NotFound or HttpStatusCode.PreconditionFailed })
+        {
+            _logger.LogInformation(
+                ex,
+                "R2 object download returned expected S3 status | Bucket: {Bucket} | ObjectKey: {ObjectKey} | StatusCode: {StatusCode}",
+                _options.Bucket,
+                objectKey,
+                ((AmazonS3Exception)ex).StatusCode);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "R2 object download failed | Bucket: {Bucket} | ObjectKey: {ObjectKey}",
+                _options.Bucket,
+                objectKey);
+            throw;
+        }
+    }
+
     private void EnsureConfigured()
     {
         if (_options.IsConfigured)
@@ -400,6 +496,16 @@ public class R2StorageService : IR2StorageService
             _s3Client = new AmazonS3Client(credentials, config);
             return _s3Client;
         }
+    }
+
+    public void Dispose()
+    {
+        lock (_clientLock)
+        {
+            _s3Client?.Dispose();
+            _s3Client = null;
+        }
+        GC.SuppressFinalize(this);
     }
 
     private string BuildPublicUrl(string objectKey)

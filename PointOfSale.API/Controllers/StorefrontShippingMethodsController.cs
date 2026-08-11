@@ -63,7 +63,7 @@ public class StorefrontShippingMethodsController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>List of active shipping methods</returns>
     [HttpGet]
-    [ProducesResponseType(typeof(List<ShippingMethodDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ShippingMethodsListResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetShippingMethods([FromQuery] Guid? warehouseId, CancellationToken cancellationToken)
@@ -92,7 +92,7 @@ public class StorefrontShippingMethodsController : ControllerBase
                 traceId,
                 cancellationToken);
 
-            var shippingMethods = await _shippingMethodService.GetShippingMethodsAsync(
+            var response = await _shippingMethodService.GetShippingMethodsAvailabilityAsync(
                 tenantId,
                 cart.Subtotal,
                 cart.TotalWeight,
@@ -101,10 +101,10 @@ public class StorefrontShippingMethodsController : ControllerBase
                 cancellationToken);
 
             _logger.LogDebug(
-                "GetShippingMethods | TenantId: {TenantId} | Count: {Count} | TraceId: {TraceId}",
-                tenantId, shippingMethods.Count, traceId);
+                "GetShippingMethods | TenantId: {TenantId} | Status: {Status} | Count: {Count} | TraceId: {TraceId}",
+                tenantId, response.Status, response.TotalCount, traceId);
 
-            return Ok(shippingMethods);
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
         {

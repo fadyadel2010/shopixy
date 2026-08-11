@@ -25,6 +25,7 @@ export type CheckoutStep = 'shipping' | 'payment' | 'review';
 export interface ShippingAddress {
     fullName: string;
     phone: string;
+    email?: string;
     city: string;
     area: string;
     addressLine: string;
@@ -33,6 +34,7 @@ export interface ShippingAddress {
     building?: string;
     floor?: string;
     apartment?: string;
+    postalCode?: string;
     landmark?: string;
     notes?: string;
 }
@@ -79,6 +81,16 @@ export interface ShippingMethod {
     currency: string;
     estimatedDays?: number;
 }
+
+export type CheckoutDependencyStatus =
+    | 'IDLE'
+    | 'LOADING'
+    | 'AVAILABLE'
+    | 'EMPTY'
+    | 'NOT_APPLICABLE'
+    | 'VALIDATION_REQUIRED'
+    | 'UNAVAILABLE'
+    | 'ERROR';
 
 // ============================================================================
 // Payment Types
@@ -173,6 +185,91 @@ export interface CheckoutRequest {
     walletType?: string;
     walletPhoneNumber?: string;
     proofFileKey?: string;
+    customFields?: CheckoutCustomFieldValue[];
+}
+
+export type CheckoutFieldKind = 'SYSTEM' | 'CUSTOM';
+export type CheckoutFieldType = 'TEXT' | 'TEXTAREA' | 'NUMBER' | 'EMAIL' | 'PHONE' | 'SELECT' | 'RADIO' | 'CHECKBOX' | 'DATE' | 'IMAGE' | 'FILE' | 'MULTI_IMAGE';
+
+export interface CheckoutFieldOption {
+    value: string;
+    label: string;
+}
+
+export interface CheckoutFieldConfiguration {
+    schemaVersion: number;
+    options?: CheckoutFieldOption[] | null;
+    conditionalRules?: CheckoutFieldRule[] | null;
+    min?: number | null;
+    max?: number | null;
+    minLength?: number | null;
+    maxLength?: number | null;
+    allowedMimeTypes?: string[] | null;
+    maxFileSize?: number | null;
+    maxFiles?: number | null;
+}
+
+export type CheckoutFieldRuleConditionMode = 'ALL' | 'ANY';
+export type CheckoutFieldRuleAction = 'SHOW' | 'HIDE' | 'REQUIRE' | 'OPTIONAL';
+export type CheckoutFieldRuleOperator =
+    | 'EQUALS'
+    | 'NOT_EQUALS'
+    | 'CONTAINS'
+    | 'NOT_CONTAINS'
+    | 'IS_EMPTY'
+    | 'IS_NOT_EMPTY'
+    | 'GREATER_THAN'
+    | 'GREATER_THAN_OR_EQUAL'
+    | 'LESS_THAN'
+    | 'LESS_THAN_OR_EQUAL';
+
+export interface CheckoutFieldRule {
+    ruleId: string;
+    conditionMode: CheckoutFieldRuleConditionMode;
+    conditions: CheckoutFieldRuleCondition[];
+    actions: CheckoutFieldRuleAction[];
+}
+
+export interface CheckoutFieldRuleCondition {
+    sourceFieldId: string;
+    operator: CheckoutFieldRuleOperator;
+    comparisonValue?: string | null;
+}
+
+export interface CheckoutFieldDefinition {
+    id: string;
+    fieldKind: CheckoutFieldKind;
+    fieldType: CheckoutFieldType;
+    systemFieldKey?: string | null;
+    label: string;
+    helpText?: string | null;
+    isEnabled: boolean;
+    isRequired: boolean;
+    displayOrder: number;
+    configuration: CheckoutFieldConfiguration;
+}
+
+export interface CheckoutFieldDefinitionsResponse {
+    status: CheckoutDependencyStatus;
+    fields: CheckoutFieldDefinition[];
+    totalCount: number;
+    enabledCount: number;
+}
+
+export interface CheckoutCustomFieldValue {
+    fieldId: string;
+    value?: string;
+    attachmentIds?: string[];
+}
+
+export interface CheckoutAttachment {
+    attachmentId: string;
+    fieldId: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+    status: string;
+    uploadedAtUtc?: string | null;
 }
 
 export interface CheckoutPricingPreviewRequest {
@@ -345,9 +442,14 @@ export interface CodConfirmResponse {
 export interface AddressValidationErrors {
     fullName?: string;
     phone?: string;
+    email?: string;
     city?: string;
     area?: string;
     addressLine?: string;
+    building?: string;
+    apartment?: string;
+    postalCode?: string;
+    notes?: string;
 }
 
 // ============================================================================

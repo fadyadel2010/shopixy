@@ -206,6 +206,129 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
         Assert.Empty(result);
     }
 
+    [Fact]
+    public async Task GetShippingMethodsAvailabilityAsync_WithActiveMethods_ReturnsAvailable()
+    {
+        var tenantId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m)
+            });
+
+        await using var dbContext = CreateDbContext();
+        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true));
+        await dbContext.SaveChangesAsync();
+        var service = CreateService(repository.Object, dbContext);
+
+        var result = await service.GetShippingMethodsAvailabilityAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "shipping-available",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("AVAILABLE", result.Status);
+        Assert.Single(result.ShippingMethods);
+        Assert.Equal(1, result.ConfiguredCount);
+        Assert.Equal(1, result.ActiveCount);
+        Assert.Equal(1, result.ApplicableCount);
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAvailabilityAsync_WithZeroConfiguredMethods_ReturnsEmpty()
+    {
+        var tenantId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>());
+
+        await using var dbContext = CreateDbContext();
+        var service = CreateService(repository.Object, dbContext);
+
+        var result = await service.GetShippingMethodsAvailabilityAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "shipping-empty",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("EMPTY", result.Status);
+        Assert.Empty(result.ShippingMethods);
+        Assert.Equal(0, result.ConfiguredCount);
+        Assert.Equal(0, result.ActiveCount);
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAvailabilityAsync_WithOnlyDisabledMethods_ReturnsEmptyWithConfiguredEvidence()
+    {
+        var tenantId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>());
+
+        await using var dbContext = CreateDbContext();
+        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, false));
+        await dbContext.SaveChangesAsync();
+        var service = CreateService(repository.Object, dbContext);
+
+        var result = await service.GetShippingMethodsAvailabilityAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "shipping-disabled",
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("EMPTY", result.Status);
+        Assert.Empty(result.ShippingMethods);
+        Assert.Equal(1, result.ConfiguredCount);
+        Assert.Equal(0, result.ActiveCount);
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAvailabilityAsync_WithActiveButNotApplicableMethods_ReturnsNotApplicable()
+    {
+        var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx)
+            });
+
+        await using var dbContext = CreateDbContext();
+        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true));
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        await dbContext.SaveChangesAsync();
+        var service = CreateService(repository.Object, dbContext);
+
+        var result = await service.GetShippingMethodsAvailabilityAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "shipping-not-applicable",
+            warehouseId: warehouseId,
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal("NOT_APPLICABLE", result.Status);
+        Assert.Empty(result.ShippingMethods);
+        Assert.Equal(1, result.ConfiguredCount);
+        Assert.Equal(1, result.ActiveCount);
+        Assert.Equal(0, result.ApplicableCount);
+    }
+
     private static ShippingMethodDocument CreateShippingMethod(
         Guid tenantId,
         string currency,
@@ -231,6 +354,35 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
                 _ => null
             }
         };
+    }
+
+    private static ShippingMethod CreateConfiguredShippingMethod(Guid tenantId, bool isActive)
+    {
+        return new ShippingMethod
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = isActive ? "Standard" : "Disabled Standard",
+            BaseRate = 20m,
+            PerKgRate = 0m,
+            IsActive = isActive,
+            SortOrder = 1,
+            EstimatedDeliveryDaysMin = 1,
+            EstimatedDeliveryDaysMax = 3,
+        };
+    }
+
+    private static ShippingMethodService CreateService(
+        IShippingMethodReadRepository repository,
+        ApplicationDbContext dbContext)
+    {
+        return new ShippingMethodService(
+            repository,
+            dbContext,
+            CreatePassThroughCache(),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance);
     }
 
     private static ApplicationDbContext CreateDbContext()

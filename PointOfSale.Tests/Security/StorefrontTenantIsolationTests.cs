@@ -550,6 +550,7 @@ public sealed class StorefrontTenantIsolationTests
             Mock.Of<IPaymentIntentClientSecretProtector>(),
             Mock.Of<PointOfSale.API.Services.Payments.Paymob.IPaymobSensitiveArtifactProtector>(),
             Mock.Of<ICheckoutSessionTokenService>(),
+            Mock.Of<ICheckoutAttachmentService>(),
             Options.Create(new R2Options()),
             Options.Create(new PaymentLifecycleSettings { RequireRowLevelLocking = false }),
             NullLogger<CheckoutService>.Instance,
@@ -662,6 +663,7 @@ public sealed class StorefrontTenantIsolationTests
 
         return new CheckoutController(
             checkoutService,
+            Mock.Of<ICheckoutAttachmentService>(),
             NullLogger<CheckoutController>.Instance)
         {
             ControllerContext = new ControllerContext

@@ -94,6 +94,11 @@ public class ShippingMethodDto
 public class ShippingMethodsListResponseDto
 {
     /// <summary>
+    /// Canonical checkout availability state for the returned methods.
+    /// </summary>
+    public string Status { get; set; } = "AVAILABLE";
+
+    /// <summary>
     /// List of shipping methods.
     /// </summary>
     public List<ShippingMethodDto> ShippingMethods { get; set; } = new();
@@ -102,4 +107,19 @@ public class ShippingMethodsListResponseDto
     /// Total count.
     /// </summary>
     public int TotalCount { get; set; }
+
+    /// <summary>
+    /// Total configured methods, including disabled methods hidden from Storefront.
+    /// </summary>
+    public int ConfiguredCount { get; set; }
+
+    /// <summary>
+    /// Active methods before cart/address/warehouse applicability filters.
+    /// </summary>
+    public int ActiveCount { get; set; }
+
+    /// <summary>
+    /// Active methods applicable to the current cart/address context.
+    /// </summary>
+    public int ApplicableCount { get; set; }
 }
