@@ -68,7 +68,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteCarrierForExistingShipmentAsync_WhenShipmentAlreadyHasExternalReference_ReconcilesWithoutCarrierCall()
+    public async Task ExecuteCarrierForExistingShipmentAsync_WhenMethodWasChangedAndDeactivated_UsesPurchasedExpressSnapshot()
     {
         var tenantId = Guid.NewGuid();
         var shipmentId = Guid.NewGuid();
@@ -102,6 +102,10 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         Assert.Equal(ShipmentStatus.ReadyForPickup, shipment.Status);
         Assert.Equal("TRACK-EXISTING-1", order.TrackingNumber);
         Assert.Equal("TRACK-EXISTING-1", result.TrackingNumber);
+        Assert.Equal("express", shipment.ServiceLevel);
+        var currentMethod = await db.ShippingMethods.IgnoreQueryFilters().SingleAsync();
+        Assert.False(currentMethod.IsActive);
+        Assert.Equal("standard", currentMethod.ServiceLevel);
     }
 
     [Fact]
@@ -209,6 +213,28 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
                     },
                     null));
 
+        var capabilityRegistry = new Mock<ICarrierCapabilityRegistry>(MockBehavior.Strict);
+        capabilityRegistry.Setup(service => service.GetCapability(It.IsAny<string>()))
+            .Returns((string code) => new CarrierCapabilityDescriptor(
+                CarrierCodes.Normalize(code),
+                "Deterministic Carrier",
+                CarrierProductionCapability.ProductionReady,
+                new[] { new CarrierCredentialFieldDescriptor("apiKey", "API key", true, true, "ApiKey") },
+                EnvironmentSupported: true,
+                ConnectionTestSupported: false,
+                CarrierConnectionTestMode.Unsupported,
+                new[] { "standard", "express" },
+                RequiresOriginReadiness: false,
+                RequiresGeographyMapping: true,
+                SupportsWebhooks: false,
+                Array.Empty<string>()));
+        var authority = new CarrierIntegrationAuthority(
+            db,
+            registry.Object,
+            capabilityRegistry.Object,
+            encryption.Object,
+            NullLogger<CarrierIntegrationAuthority>.Instance);
+
         return new CarrierShipmentService(
             db,
             registry.Object,
@@ -219,7 +245,8 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             tenantContext,
             Mock.Of<ICustomsEvidenceAdmissionService>(),
             geographicMapping.Object,
-            NullLogger<CarrierShipmentService>.Instance);
+            NullLogger<CarrierShipmentService>.Instance,
+            authority);
     }
 
     private static ApplicationDbContext CreateDbContext(Guid tenantId)
@@ -247,6 +274,7 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         string? externalRegistrationState = null)
     {
         var orderId = Guid.NewGuid();
+        var shippingMethodId = Guid.NewGuid();
         var warehouseId = Guid.NewGuid();
         var catalogReleaseId = Guid.NewGuid();
         var countryPlaceId = Guid.NewGuid();
@@ -339,6 +367,11 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             PaymentMethodCode = "COD",
             Total = 150m,
             ShippingCost = 25m,
+            ShippingMethodId = shippingMethodId,
+            ShippingMethodName = carrierCode == CarrierCodes.Dhl ? "Purchased Express" : "Purchased Standard",
+            ShippingServiceLevel = carrierCode == CarrierCodes.Dhl ? "express" : "standard",
+            FulfillmentMode = FulfillmentMode.Carrier,
+            FulfillmentCarrierCode = carrierCode,
             Status = OrderStatus.Pending,
             PaymentStatus = PaymentStatus.Pending,
             CreatedAt = DateTime.UtcNow
@@ -349,7 +382,10 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             Id = shipmentId,
             TenantId = tenantId,
             OrderId = orderId,
+            ShippingMethodId = shippingMethodId,
+            ShippingMethodName = carrierCode == CarrierCodes.Dhl ? "Purchased Express" : "Purchased Standard",
             CarrierCode = carrierCode,
+            ServiceLevel = carrierCode == CarrierCodes.Dhl ? "express" : "standard",
             ShipmentNumber = "SHP-1",
             Status = shipmentStatus,
             Currency = "EGP",
@@ -371,6 +407,19 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
             ExternalRegistrationRequestedAtUtc = DateTime.UtcNow,
             ExternalRegistrationAttemptCount = externalRegistrationAttemptCount,
             ExternalRegistrationState = externalRegistrationState,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        // Current method state deliberately differs from the immutable order/shipment
+        // snapshot and is inactive. Historical execution must not reload it.
+        db.ShippingMethods.Add(new ShippingMethod
+        {
+            Id = shippingMethodId,
+            TenantId = tenantId,
+            Name = "Admin-mutated method",
+            CarrierCode = carrierCode,
+            ServiceLevel = "standard",
+            IsActive = false,
             CreatedAt = DateTime.UtcNow
         });
 
@@ -472,7 +521,11 @@ public sealed class ShipmentExternalRegistrationSafetyTests : IDisposable
         public Task<CarrierValidationResult> ValidateCredentialsAsync(CarrierCredentials credentials, CancellationToken cancellationToken = default) =>
             Task.FromResult(new CarrierValidationResult { Success = true });
 
-        public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels() => [];
+        public IReadOnlyList<ServiceLevelInfo> GetSupportedServiceLevels() =>
+        [
+            new() { Code = "standard", Name = "Standard" },
+            new() { Code = "express", Name = "Express" }
+        ];
 
         public WebhookParseResult? ParseWebhook(string payload, string? signature, string? webhookSecret) => null;
     }

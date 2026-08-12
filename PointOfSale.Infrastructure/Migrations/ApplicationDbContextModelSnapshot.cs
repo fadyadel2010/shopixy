@@ -2638,6 +2638,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("CredentialConfigurationFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("DefaultServiceLevel")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -2667,6 +2671,10 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.Property<DateTime?>("LastValidatedAtUtc")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastValidatedConfigurationFingerprint")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
 
                     b.Property<string>("LastValidationError")
                         .HasMaxLength(1000)
@@ -2740,8 +2748,8 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("boolean");
 
                     b.Property<string>("WebhookSecret")
-                        .HasMaxLength(256)
-                        .HasColumnType("character varying(256)");
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
 
                     b.Property<string>("WebhookUrl")
                         .HasMaxLength(500)
@@ -3310,6 +3318,9 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("text");
 
                     b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_CheckoutSessions_TenantId_Id");
 
                     b.HasIndex("CartId");
 
@@ -13146,6 +13157,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<string>("ShippingMethodName")
                         .HasColumnType("text");
 
+                    b.Property<string>("ShippingServiceLevel")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
                     b.Property<string>("ShippingState")
                         .HasColumnType("text");
 
@@ -18217,6 +18232,9 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_CarrierAccounts_TenantId_Id");
+
                     b.HasIndex("TenantId", "CarrierCode")
                         .IsUnique()
                         .HasFilter("\"IsDeleted\" = false");
@@ -18535,6 +18553,8 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("TenantId", "WarehouseId");
+
                     b.HasIndex("TenantId", "CarrierAccountId", "WarehouseId")
                         .IsUnique()
                         .HasFilter("\"IsDeleted\" = false");
@@ -18578,6 +18598,9 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<decimal?>("FreeShippingThreshold")
                         .HasColumnType("numeric");
 
+                    b.Property<Guid?>("FulfillmentWarehouseId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -18615,7 +18638,13 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ShippingMethods");
+                    b.HasIndex("TenantId", "FulfillmentWarehouseId")
+                        .HasDatabaseName("IX_ShippingMethods_TenantId_FulfillmentWarehouseId");
+
+                    b.ToTable("ShippingMethods", t =>
+                        {
+                            t.HasCheckConstraint("CK_ShippingMethods_ActiveRequiresFulfillmentWarehouse", "NOT \"IsActive\" OR \"FulfillmentWarehouseId\" IS NOT NULL");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.ShippingWebhookLog", b =>
@@ -21482,7 +21511,140 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_Warehouses_TenantId_Id");
+
                     b.ToTable("Warehouses");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.WarehouseResolution", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AlgorithmCode")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("CartId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CheckoutSessionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ConvertedOrderId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FailureCode")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<string>("InputsSnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("InputsSnapshotJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("InvalidatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("InvalidationReason")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LockedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ResolutionSource")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<int>("ResolutionVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("WarehouseId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InputsSnapshotHash")
+                        .HasDatabaseName("IX_WarehouseResolutions_InputsSnapshotHash");
+
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("TenantId", "CheckoutSessionId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_WarehouseResolutions_TenantId_Session_Active_Unique")
+                        .HasFilter("\"Status\" IN ('Resolved', 'Locked') AND \"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "ConvertedOrderId");
+
+                    b.HasIndex("TenantId", "CartId", "Status")
+                        .HasDatabaseName("IX_WarehouseResolutions_TenantId_Cart_Status");
+
+                    b.HasIndex("TenantId", "CheckoutSessionId", "ResolutionVersion")
+                        .IsUnique()
+                        .HasDatabaseName("UX_WarehouseResolutions_TenantId_Session_Version");
+
+                    b.HasIndex("TenantId", "CheckoutSessionId", "Status")
+                        .HasDatabaseName("IX_WarehouseResolutions_TenantId_Session_Status");
+
+                    b.HasIndex("TenantId", "ExpiresAtUtc", "Status")
+                        .HasDatabaseName("IX_WarehouseResolutions_TenantId_Expires_Status");
+
+                    b.HasIndex("TenantId", "WarehouseId", "Status")
+                        .HasDatabaseName("IX_WarehouseResolutions_TenantId_Warehouse_Status");
+
+                    b.ToTable("WarehouseResolutions", t =>
+                        {
+                            t.HasCheckConstraint("CK_WarehouseResolutions_FailedRequiresCode", "\"Status\" <> 'Failed' OR \"FailureCode\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_WarehouseResolutions_OrderedRequiresOrder", "\"Status\" <> 'Ordered' OR \"ConvertedOrderId\" IS NOT NULL");
+
+                            t.HasCheckConstraint("CK_WarehouseResolutions_ResolutionVersion_Positive", "\"ResolutionVersion\" > 0");
+
+                            t.HasCheckConstraint("CK_WarehouseResolutions_ResolvedStatusesRequireWarehouse", "\"Status\" NOT IN ('Resolved', 'Locked', 'Ordered') OR \"WarehouseId\" IS NOT NULL");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.WarehouseStock", b =>
@@ -24118,6 +24280,34 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("ShippingMethod");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShippingAdministration.CarrierWarehouseAssignment", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.ShippingAdministration.CarrierAccount", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CarrierAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Warehouse", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "WarehouseId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.ShippingMethod", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Warehouse", "FulfillmentWarehouse")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FulfillmentWarehouseId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("FulfillmentWarehouse");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.SslCertificate", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Domain", "Domain")
@@ -24554,6 +24744,34 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasForeignKey("CreatedByUserId");
 
                     b.Navigation("CreatedByUser");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.WarehouseResolution", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.CheckoutSession", "CheckoutSession")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "CheckoutSessionId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Order", "ConvertedOrder")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "ConvertedOrderId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Warehouse", "Warehouse")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "WarehouseId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("CheckoutSession");
+
+                    b.Navigation("ConvertedOrder");
+
+                    b.Navigation("Warehouse");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.WarehouseStock", b =>

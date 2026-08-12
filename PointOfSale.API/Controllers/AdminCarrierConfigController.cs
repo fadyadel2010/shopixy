@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
@@ -27,20 +28,23 @@ public class AdminCarrierConfigController : ControllerBase
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IShippingCarrierRegistry _carrierRegistry;
-    private readonly ICarrierCredentialEncryptionService _credentialEncryption;
+    private readonly ICarrierCapabilityRegistry _carrierCapabilityRegistry;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<AdminCarrierConfigController> _logger;
     
     public AdminCarrierConfigController(
         ApplicationDbContext dbContext,
         IShippingCarrierRegistry carrierRegistry,
-        ICarrierCredentialEncryptionService credentialEncryption,
+        ICarrierCapabilityRegistry carrierCapabilityRegistry,
+        ICarrierIntegrationAuthority carrierIntegrationAuthority,
         ITenantContext tenantContext,
         ILogger<AdminCarrierConfigController> logger)
     {
         _dbContext = dbContext;
         _carrierRegistry = carrierRegistry;
-        _credentialEncryption = credentialEncryption;
+        _carrierCapabilityRegistry = carrierCapabilityRegistry;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority;
         _tenantContext = tenantContext;
         _logger = logger;
     }
@@ -51,20 +55,21 @@ public class AdminCarrierConfigController : ControllerBase
     [HttpGet("supported")]
     public ActionResult<List<SupportedCarrierDto>> GetSupportedCarriers()
     {
-        var adapters = _carrierRegistry.GetAllAdapters();
-        
-        var carriers = adapters.Select(a => new SupportedCarrierDto
+        var carriers = _carrierCapabilityRegistry.GetAllCapabilities().Select(capability =>
         {
-            CarrierCode = a.CarrierCode,
-            DisplayName = a.DisplayName,
-            ServiceLevels = a.GetSupportedServiceLevels().Select(s => new ServiceLevelDto
+            var adapter = _carrierRegistry.GetAdapter(capability.CarrierCode);
+            return new SupportedCarrierDto
             {
-                Code = s.Code,
-                Name = s.Name,
-                Description = s.Description,
-                TypicalDaysMin = s.TypicalDaysMin,
-                TypicalDaysMax = s.TypicalDaysMax
-            }).ToList()
+                CarrierCode = capability.CarrierCode,
+                DisplayName = capability.DisplayName,
+                ProductionCapability = capability.ProductionCapability.ToString(),
+                AccountRequired = RequiresAccount(capability),
+                ConnectionTestSupported = capability.ConnectionTestSupported,
+                ConnectionTestMode = capability.ConnectionTestMode.ToString(),
+                WebhookSupported = capability.SupportsWebhooks,
+                CredentialFields = capability.CredentialFields.Select(MapCredentialField).ToList(),
+                ServiceLevels = adapter?.GetSupportedServiceLevels().Select(MapServiceLevel).ToList() ?? new List<ServiceLevelDto>()
+            };
         }).ToList();
         
         return Ok(carriers);
@@ -86,31 +91,31 @@ public class AdminCarrierConfigController : ControllerBase
         
         // Also include supported carriers not yet configured
         var configuredCodes = configs.Select(c => c.CarrierCode).ToHashSet();
-        var supportedAdapters = _carrierRegistry.GetAllAdapters();
+        var supportedCapabilities = _carrierCapabilityRegistry.GetAllCapabilities();
         
         var result = configs.Select(MapToDto).ToList();
         
         // Add unconfigured carriers as templates
-        foreach (var adapter in supportedAdapters)
+        foreach (var capability in supportedCapabilities)
         {
-            if (!configuredCodes.Contains(adapter.CarrierCode))
+            if (!configuredCodes.Contains(capability.CarrierCode))
             {
+                var adapter = _carrierRegistry.GetAdapter(capability.CarrierCode);
                 result.Add(new CarrierConfigurationDto
                 {
                     Id = null,
-                    CarrierCode = adapter.CarrierCode,
-                    DisplayName = adapter.DisplayName,
+                    CarrierCode = capability.CarrierCode,
+                    DisplayName = capability.DisplayName,
                     IsEnabled = false,
                     IsDefault = false,
                     IsConfigured = false,
-                    ServiceLevels = adapter.GetSupportedServiceLevels().Select(s => new ServiceLevelDto
-                    {
-                        Code = s.Code,
-                        Name = s.Name,
-                        Description = s.Description,
-                        TypicalDaysMin = s.TypicalDaysMin,
-                        TypicalDaysMax = s.TypicalDaysMax
-                    }).ToList()
+                    ProductionCapability = capability.ProductionCapability.ToString(),
+                    AccountRequired = RequiresAccount(capability),
+                    ConnectionTestSupported = capability.ConnectionTestSupported,
+                    ConnectionTestMode = capability.ConnectionTestMode.ToString(),
+                    WebhookSupported = capability.SupportsWebhooks,
+                    CredentialFields = capability.CredentialFields.Select(MapCredentialField).ToList(),
+                    ServiceLevels = adapter?.GetSupportedServiceLevels().Select(MapServiceLevel).ToList() ?? new List<ServiceLevelDto>()
                 });
             }
         }
@@ -134,28 +139,28 @@ public class AdminCarrierConfigController : ControllerBase
         if (config == null)
         {
             // Return template for unconfigured carrier
-            var adapter = _carrierRegistry.GetAdapter(carrierCode);
-            if (adapter == null)
+            var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
+            if (capability == null)
             {
                 return NotFound(new { error = "Carrier not found" });
             }
+            var adapter = _carrierRegistry.GetAdapter(capability.CarrierCode);
             
             return Ok(new CarrierConfigurationDto
             {
                 Id = null,
-                CarrierCode = adapter.CarrierCode,
-                DisplayName = adapter.DisplayName,
+                CarrierCode = capability.CarrierCode,
+                DisplayName = capability.DisplayName,
                 IsEnabled = false,
                 IsDefault = false,
                 IsConfigured = false,
-                ServiceLevels = adapter.GetSupportedServiceLevels().Select(s => new ServiceLevelDto
-                {
-                    Code = s.Code,
-                    Name = s.Name,
-                    Description = s.Description,
-                    TypicalDaysMin = s.TypicalDaysMin,
-                    TypicalDaysMax = s.TypicalDaysMax
-                }).ToList()
+                ProductionCapability = capability.ProductionCapability.ToString(),
+                AccountRequired = RequiresAccount(capability),
+                ConnectionTestSupported = capability.ConnectionTestSupported,
+                ConnectionTestMode = capability.ConnectionTestMode.ToString(),
+                WebhookSupported = capability.SupportsWebhooks,
+                CredentialFields = capability.CredentialFields.Select(MapCredentialField).ToList(),
+                ServiceLevels = adapter?.GetSupportedServiceLevels().Select(MapServiceLevel).ToList() ?? new List<ServiceLevelDto>()
             });
         }
         
@@ -173,108 +178,64 @@ public class AdminCarrierConfigController : ControllerBase
     {
         var tenantId = GetTenantId();
         
-        // Validate carrier exists
-        var adapter = _carrierRegistry.GetAdapter(carrierCode);
-        if (adapter == null)
+        var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
+        if (capability == null || _carrierRegistry.GetAdapter(capability.CarrierCode) == null)
         {
             return BadRequest(new { error = $"Carrier '{carrierCode}' is not supported" });
         }
-        
-        var config = await _dbContext.Set<CarrierConfiguration>()
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == carrierCode, cancellationToken);
-        
-        var isNew = config == null;
-        
-        if (isNew)
+
+        var validationError = ValidateCarrierConfigurationUpdate(capability, request);
+        if (validationError != null)
         {
-            config = new CarrierConfiguration
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenantId,
-                CarrierCode = carrierCode,
-                DisplayName = adapter.DisplayName,
-                CreatedAt = DateTime.UtcNow
-            };
-            _dbContext.Set<CarrierConfiguration>().Add(config);
+            return BadRequest(new { error = validationError });
         }
         
-        // Update fields
-        if (request.DisplayName != null)
-            config!.DisplayName = request.DisplayName;
-        if (request.IsEnabled.HasValue)
-            config!.IsEnabled = request.IsEnabled.Value;
-        if (request.ApiKey != null)
-            config!.ApiKey = _credentialEncryption.Encrypt(request.ApiKey);
-        if (request.ApiSecret != null)
-            config!.ApiSecret = _credentialEncryption.Encrypt(request.ApiSecret);
-        if (request.AccountId != null)
-            config!.AccountId = request.AccountId;
-        if (request.ApiUrl != null)
-            config!.ApiUrl = request.ApiUrl;
-        if (request.UseSandbox.HasValue)
-            config!.UseSandbox = request.UseSandbox.Value;
-        if (request.SupportsCod.HasValue)
-            config!.SupportsCod = request.SupportsCod.Value;
-        if (request.SupportsTracking.HasValue)
-            config!.SupportsTracking = request.SupportsTracking.Value;
-        if (request.SupportsWebhooks.HasValue)
-            config!.SupportsWebhooks = request.SupportsWebhooks.Value;
-        if (request.SupportsLabels.HasValue)
-            config!.SupportsLabels = request.SupportsLabels.Value;
-        if (request.Configuration != null)
-            config!.Configuration = request.Configuration;
-        if (request.PickupAddress != null)
-            config!.PickupAddress = request.PickupAddress;
-        if (request.PickupCity != null)
-            config!.PickupCity = request.PickupCity;
-        if (request.PickupCountry != null)
-            config!.PickupCountry = request.PickupCountry;
-        if (request.PickupPhone != null)
-            config!.PickupPhone = request.PickupPhone;
-        if (request.PickupContactName != null)
-            config!.PickupContactName = request.PickupContactName;
-        if (request.DefaultServiceLevel != null)
-            config!.DefaultServiceLevel = request.DefaultServiceLevel;
-        if (request.UseCarrierRates.HasValue)
-            config!.UseCarrierRates = request.UseCarrierRates.Value;
-        if (request.FixedShippingCost.HasValue)
-            config!.FixedShippingCost = request.FixedShippingCost;
-        if (request.MarkupPercentage.HasValue)
-            config!.MarkupPercentage = request.MarkupPercentage.Value;
-        if (request.FreeShippingThreshold.HasValue)
-            config!.FreeShippingThreshold = request.FreeShippingThreshold;
-        if (request.SortOrder.HasValue)
-            config!.SortOrder = request.SortOrder.Value;
-        if (request.Notes != null)
-            config!.Notes = request.Notes;
-        
-        // Handle default carrier flag
-        if (request.IsDefault.HasValue && request.IsDefault.Value)
+        var existing = await _dbContext.Set<CarrierConfiguration>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == capability.CarrierCode, cancellationToken);
+
+        var result = await _carrierIntegrationAuthority.ValidateAndStoreIntegrationAsync(
+            tenantId,
+            capability.CarrierCode,
+            new CarrierIntegrationUpdate(
+                request.DisplayName,
+                request.IsEnabled,
+                request.IsDefault,
+                request.ApiKey,
+                request.ApiSecret,
+                request.AccountId,
+                request.ApiUrl,
+                request.UseSandbox,
+                request.SupportsCod,
+                request.SupportsTracking,
+                request.SupportsWebhooks,
+                request.SupportsLabels,
+                request.Configuration,
+                request.PickupAddress,
+                request.PickupCity,
+                request.PickupCountry,
+                request.PickupPhone,
+                request.PickupContactName,
+                request.DefaultServiceLevel,
+                request.UseCarrierRates,
+                request.FixedShippingCost,
+                request.MarkupPercentage,
+                request.FreeShippingThreshold,
+                request.SortOrder,
+                request.Notes,
+                request.WebhookSecret),
+            cancellationToken);
+
+        if (!result.Succeeded || result.Configuration == null)
         {
-            // Unset other defaults
-            var others = await _dbContext.Set<CarrierConfiguration>()
-                .Where(c => c.TenantId == tenantId && c.CarrierCode != carrierCode && c.IsDefault)
-                .ToListAsync(cancellationToken);
-            foreach (var other in others)
-            {
-                other.IsDefault = false;
-            }
-            config!.IsDefault = true;
+            return BadRequest(new { error = result.Blockers.FirstOrDefault() ?? "Carrier integration update failed" });
         }
-        else if (request.IsDefault.HasValue)
-        {
-            config!.IsDefault = false;
-        }
-        
-        config!.UpdatedAt = DateTime.UtcNow;
-        
-        await _dbContext.SaveChangesAsync(cancellationToken);
         
         _logger.LogInformation(
             "{Action} carrier configuration for {CarrierCode} (tenant {TenantId})",
-            isNew ? "Created" : "Updated", carrierCode, tenantId);
-        
-        return Ok(MapToDto(config));
+            existing == null ? "Created" : "Updated", capability.CarrierCode, tenantId);
+
+        return Ok(MapToDto(result.Configuration));
     }
     
     /// <summary>
@@ -286,25 +247,64 @@ public class AdminCarrierConfigController : ControllerBase
         CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
+        var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
+        if (capability == null)
+        {
+            return NotFound(new { error = "Carrier configuration not found" });
+        }
+
+        if (IsProductionBlocked(capability))
+        {
+            return BadRequest(new { error = "Carrier is not production activatable." });
+        }
         
         var config = await _dbContext.Set<CarrierConfiguration>()
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == carrierCode, cancellationToken);
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == capability.CarrierCode, cancellationToken);
         
         if (config == null)
         {
             return NotFound(new { error = "Carrier configuration not found" });
         }
         
-        config.IsEnabled = !config.IsEnabled;
-        config.UpdatedAt = DateTime.UtcNow;
-        
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        var result = await _carrierIntegrationAuthority.ValidateAndStoreIntegrationAsync(
+            tenantId,
+            capability.CarrierCode,
+            new CarrierIntegrationUpdate(
+                DisplayName: null,
+                IsEnabled: !config.IsEnabled,
+                IsDefault: null,
+                ApiKey: null,
+                ApiSecret: null,
+                AccountId: null,
+                ApiUrl: null,
+                UseSandbox: null,
+                SupportsCod: null,
+                SupportsTracking: null,
+                SupportsWebhooks: null,
+                SupportsLabels: null,
+                Configuration: null,
+                PickupAddress: null,
+                PickupCity: null,
+                PickupCountry: null,
+                PickupPhone: null,
+                PickupContactName: null,
+                DefaultServiceLevel: null,
+                UseCarrierRates: null,
+                FixedShippingCost: null,
+                MarkupPercentage: null,
+                FreeShippingThreshold: null,
+                SortOrder: null,
+                Notes: null),
+            cancellationToken);
         
         _logger.LogInformation(
             "Toggled carrier {CarrierCode} to {Status} (tenant {TenantId})",
-            carrierCode, config.IsEnabled ? "enabled" : "disabled", tenantId);
-        
-        return Ok(MapToDto(config));
+            capability.CarrierCode, !config.IsEnabled ? "enabled" : "disabled", tenantId);
+
+        return result.Configuration == null
+            ? NotFound(new { error = "Carrier configuration not found" })
+            : Ok(MapToDto(result.Configuration));
     }
     
     /// <summary>
@@ -316,53 +316,21 @@ public class AdminCarrierConfigController : ControllerBase
         CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
-        
-        var config = await _dbContext.Set<CarrierConfiguration>()
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == carrierCode, cancellationToken);
-        
-        if (config == null)
+        var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
+        if (capability == null)
         {
-            return NotFound(new { error = "Carrier configuration not found" });
+            return NotFound(new { error = "Carrier not found" });
         }
-        
-        var adapter = _carrierRegistry.GetAdapter(carrierCode);
-        if (adapter == null)
-        {
-            return BadRequest(new { error = "Carrier adapter not found" });
-        }
-        
-        var credentials = new CarrierCredentials
-        {
-            ApiKey = _credentialEncryption.Decrypt(config.ApiKey),
-            ApiSecret = _credentialEncryption.Decrypt(config.ApiSecret),
-            AccountId = config.AccountId,
-            ApiUrl = config.ApiUrl,
-            UseSandbox = config.UseSandbox
-        };
 
-        if (!string.IsNullOrWhiteSpace(config.Configuration))
+        if (!capability.ConnectionTestSupported || capability.ConnectionTestMode == CarrierConnectionTestMode.Unsupported)
         {
-            try
-            {
-                credentials.ExtraConfig =
-                    System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(config.Configuration)
-                    ?? new Dictionary<string, string>();
-            }
-            catch (System.Text.Json.JsonException)
-            {
-                credentials.ExtraConfig = new Dictionary<string, string>();
-            }
+            return BadRequest(new { error = "Connection test is not supported for this carrier." });
         }
         
-        var result = await adapter.ValidateCredentialsAsync(credentials, cancellationToken);
-        
-        // Update config with validation result
-        config.LastValidatedAtUtc = DateTime.UtcNow;
-        config.LastValidationSucceeded = result.Success;
-        config.LastValidationError = result.ErrorMessage;
-        config.UpdatedAt = DateTime.UtcNow;
-        
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        var result = await _carrierIntegrationAuthority.ValidateResolvedCredentialsAsync(
+            tenantId,
+            capability.CarrierCode,
+            cancellationToken);
         
         return Ok(new ValidateCredentialsResponseDto
         {
@@ -381,18 +349,18 @@ public class AdminCarrierConfigController : ControllerBase
         CancellationToken cancellationToken)
     {
         var tenantId = GetTenantId();
+        var capability = _carrierCapabilityRegistry.GetCapability(carrierCode);
         
-        var config = await _dbContext.Set<CarrierConfiguration>()
-            .FirstOrDefaultAsync(c => c.TenantId == tenantId && c.CarrierCode == carrierCode, cancellationToken);
-        
-        if (config == null)
+        var deleted = await _carrierIntegrationAuthority.DeleteIntegrationAsync(
+            tenantId,
+            capability?.CarrierCode ?? carrierCode,
+            cancellationToken);
+
+        if (!deleted)
         {
             return NotFound(new { error = "Carrier configuration not found" });
         }
-        
-        _dbContext.Set<CarrierConfiguration>().Remove(config);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        
+
         _logger.LogInformation(
             "Deleted carrier configuration for {CarrierCode} (tenant {TenantId})",
             carrierCode, tenantId);
@@ -406,10 +374,68 @@ public class AdminCarrierConfigController : ControllerBase
     {
         return _tenantContext.RequiredTenantId;
     }
+
+    private static ServiceLevelDto MapServiceLevel(ServiceLevelInfo serviceLevel) => new()
+    {
+        Code = serviceLevel.Code,
+        Name = serviceLevel.Name,
+        Description = serviceLevel.Description,
+        TypicalDaysMin = serviceLevel.TypicalDaysMin,
+        TypicalDaysMax = serviceLevel.TypicalDaysMax
+    };
+
+    private static CarrierCredentialFieldMetadataDto MapCredentialField(CarrierCredentialFieldDescriptor field) => new()
+    {
+        Key = field.Key,
+        Label = field.Label,
+        IsSecret = field.IsSecret,
+        Required = field.Required,
+        Target = field.Target
+    };
+
+    private static bool IsProductionBlocked(CarrierCapabilityDescriptor capability) =>
+        capability.ProductionCapability is CarrierProductionCapability.Unavailable or CarrierProductionCapability.NotCertified;
+
+    private static bool RequiresAccount(CarrierCapabilityDescriptor capability) =>
+        !CarrierCodes.IsManual(capability.CarrierCode) && !IsProductionBlocked(capability);
+
+    private static string? ValidateCarrierConfigurationUpdate(CarrierCapabilityDescriptor capability, UpsertCarrierConfigRequest request)
+    {
+        if (CarrierCodes.IsManual(capability.CarrierCode))
+        {
+            return "Manual Fulfillment is managed as a Shipping Method and does not require a carrier configuration.";
+        }
+
+        if (IsProductionBlocked(capability) && request.IsEnabled == true)
+        {
+            return "Carrier is not production activatable.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ApiUrl))
+        {
+            return "ApiUrl is not an advertised runtime credential field for this carrier.";
+        }
+
+        var advertisedTargets = capability.CredentialFields
+            .Select(field => field.Target)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(request.ApiSecret) && !advertisedTargets.Contains("ApiSecret"))
+        {
+            return "ApiSecret is not an advertised runtime credential field for this carrier.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.AccountId) && !advertisedTargets.Contains("AccountId"))
+        {
+            return "AccountId is not an advertised runtime credential field for this carrier.";
+        }
+
+        return null;
+    }
     
     private CarrierConfigurationDto MapToDto(CarrierConfiguration config)
     {
         var adapter = _carrierRegistry.GetAdapter(config.CarrierCode);
+        var capability = _carrierCapabilityRegistry.GetCapability(config.CarrierCode);
         
         return new CarrierConfigurationDto
         {
@@ -440,14 +466,65 @@ public class AdminCarrierConfigController : ControllerBase
             LastValidatedAtUtc = config.LastValidatedAtUtc,
             LastValidationSucceeded = config.LastValidationSucceeded,
             LastValidationError = config.LastValidationError,
-            ServiceLevels = adapter?.GetSupportedServiceLevels().Select(s => new ServiceLevelDto
-            {
-                Code = s.Code,
-                Name = s.Name,
-                Description = s.Description,
-                TypicalDaysMin = s.TypicalDaysMin,
-                TypicalDaysMax = s.TypicalDaysMax
-            }).ToList() ?? new List<ServiceLevelDto>()
+            HasWebhookSecret = !string.IsNullOrWhiteSpace(config.WebhookSecret),
+            ValidationMatchesCurrentConfiguration =
+                !string.IsNullOrWhiteSpace(config.CredentialConfigurationFingerprint) &&
+                string.Equals(
+                    config.CredentialConfigurationFingerprint,
+                    config.LastValidatedConfigurationFingerprint,
+                    StringComparison.Ordinal),
+            ProductionCapability = capability?.ProductionCapability.ToString() ?? "Unavailable",
+            AccountRequired = capability != null && RequiresAccount(capability),
+            ConnectionTestSupported = capability?.ConnectionTestSupported == true,
+            ConnectionTestMode = capability?.ConnectionTestMode.ToString() ?? "Unsupported",
+            WebhookSupported = capability?.SupportsWebhooks == true,
+            CredentialFields = capability?.CredentialFields.Select(MapCredentialField).ToList() ?? new List<CarrierCredentialFieldMetadataDto>(),
+            ServiceLevels = adapter?.GetSupportedServiceLevels().Select(MapServiceLevel).ToList() ?? new List<ServiceLevelDto>()
+        };
+    }
+
+    private CarrierConfigurationDto MapToDto(CarrierIntegrationConfigurationSnapshot config)
+    {
+        var adapter = _carrierRegistry.GetAdapter(config.CarrierCode);
+        var capability = _carrierCapabilityRegistry.GetCapability(config.CarrierCode);
+
+        return new CarrierConfigurationDto
+        {
+            Id = config.Id,
+            CarrierCode = config.CarrierCode,
+            DisplayName = config.DisplayName,
+            IsEnabled = config.IsEnabled,
+            IsDefault = config.IsDefault,
+            IsConfigured = config.HasApiKey,
+            HasApiKey = config.HasApiKey,
+            UseSandbox = config.UseSandbox,
+            SupportsCod = config.SupportsCod,
+            SupportsTracking = config.SupportsTracking,
+            SupportsWebhooks = config.SupportsWebhooks,
+            SupportsLabels = config.SupportsLabels,
+            PickupAddress = config.PickupAddress,
+            PickupCity = config.PickupCity,
+            PickupCountry = config.PickupCountry,
+            PickupPhone = config.PickupPhone,
+            PickupContactName = config.PickupContactName,
+            DefaultServiceLevel = config.DefaultServiceLevel,
+            UseCarrierRates = config.UseCarrierRates,
+            FixedShippingCost = config.FixedShippingCost,
+            MarkupPercentage = config.MarkupPercentage,
+            FreeShippingThreshold = config.FreeShippingThreshold,
+            SortOrder = config.SortOrder,
+            LastValidatedAtUtc = config.LastValidatedAtUtc,
+            LastValidationSucceeded = config.LastValidationSucceeded,
+            LastValidationError = config.LastValidationError,
+            HasWebhookSecret = config.HasWebhookSecret,
+            ValidationMatchesCurrentConfiguration = config.ValidationMatchesCurrentConfiguration,
+            ProductionCapability = capability?.ProductionCapability.ToString() ?? "Unavailable",
+            AccountRequired = capability != null && RequiresAccount(capability),
+            ConnectionTestSupported = capability?.ConnectionTestSupported == true,
+            ConnectionTestMode = capability?.ConnectionTestMode.ToString() ?? "Unsupported",
+            WebhookSupported = capability?.SupportsWebhooks == true,
+            CredentialFields = capability?.CredentialFields.Select(MapCredentialField).ToList() ?? new List<CarrierCredentialFieldMetadataDto>(),
+            ServiceLevels = adapter?.GetSupportedServiceLevels().Select(MapServiceLevel).ToList() ?? new List<ServiceLevelDto>()
         };
     }
     
@@ -460,7 +537,22 @@ public class SupportedCarrierDto
 {
     public required string CarrierCode { get; set; }
     public required string DisplayName { get; set; }
+    public string ProductionCapability { get; set; } = "Partial";
+    public bool AccountRequired { get; set; } = true;
+    public bool ConnectionTestSupported { get; set; } = true;
+    public string ConnectionTestMode { get; set; } = "Remote";
+    public bool WebhookSupported { get; set; }
+    public List<CarrierCredentialFieldMetadataDto> CredentialFields { get; set; } = new();
     public List<ServiceLevelDto> ServiceLevels { get; set; } = new();
+}
+
+public class CarrierCredentialFieldMetadataDto
+{
+    public required string Key { get; set; }
+    public required string Label { get; set; }
+    public bool IsSecret { get; set; }
+    public bool Required { get; set; }
+    public required string Target { get; set; }
 }
 
 public class ServiceLevelDto
@@ -501,6 +593,14 @@ public class CarrierConfigurationDto
     public DateTime? LastValidatedAtUtc { get; set; }
     public bool? LastValidationSucceeded { get; set; }
     public string? LastValidationError { get; set; }
+    public bool HasWebhookSecret { get; set; }
+    public bool ValidationMatchesCurrentConfiguration { get; set; }
+    public string ProductionCapability { get; set; } = "Partial";
+    public bool AccountRequired { get; set; } = true;
+    public bool ConnectionTestSupported { get; set; } = true;
+    public string ConnectionTestMode { get; set; } = "Remote";
+    public bool WebhookSupported { get; set; }
+    public List<CarrierCredentialFieldMetadataDto> CredentialFields { get; set; } = new();
     public List<ServiceLevelDto> ServiceLevels { get; set; } = new();
 }
 
@@ -531,6 +631,7 @@ public class UpsertCarrierConfigRequest
     public decimal? FreeShippingThreshold { get; set; }
     public int? SortOrder { get; set; }
     public string? Notes { get; set; }
+    public string? WebhookSecret { get; set; }
 }
 
 public class ValidateCredentialsResponseDto

@@ -3,8 +3,11 @@ import { useTranslation } from 'react-i18next'
 import { useConfirmDialog } from '../../../common/confirm/ConfirmDialogProvider'
 import api from '../../../services/api'
 import { useSettings } from '../../../contexts/SettingsContext'
+import { fetchSupportedCarriers, getCarrierDisplayName } from '../shippingAdministrationApi'
 
 const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const DEFAULT_CARRIER_CODE = 'manual'
+const DEFAULT_SERVICE_LEVEL = 'standard'
 
 function requireText(value, field) {
     if (typeof value !== 'string' || !value.trim()) {
@@ -84,19 +87,45 @@ export function admitAdminShippingMethods(payload) {
             sortOrder: requireInteger(method.sortOrder, 'display order'),
             carrierName: optionalText(method.carrierName, 'carrier'),
             carrierCode: optionalText(method.carrierCode, 'carrier code'),
+            serviceLevel: optionalText(method.serviceLevel, 'service level') || DEFAULT_SERVICE_LEVEL,
             trackingUrlTemplate: optionalText(method.trackingUrlTemplate, 'tracking URL template'),
             availableCountries: optionalText(method.availableCountries, 'zone assignment'),
         }
     })
 }
 
-export default function ShippingMethodsTab() {
+function normalizeCarrierCode(value) {
+    return typeof value === 'string' && value.trim()
+        ? value.trim().toLowerCase()
+        : DEFAULT_CARRIER_CODE
+}
+
+function findCarrier(supportedCarriers, carrierCode) {
+    return supportedCarriers.find((carrier) => carrier.carrierCode === carrierCode) || null
+}
+
+function getDefaultServiceLevel(carrier) {
+    return carrier?.serviceLevels?.[0]?.code || DEFAULT_SERVICE_LEVEL
+}
+
+function isServiceLevelAllowed(carrier, serviceLevel) {
+    if (!carrier?.serviceLevels?.length) {
+        return serviceLevel === DEFAULT_SERVICE_LEVEL
+    }
+
+    return carrier.serviceLevels.some((level) => level.code === serviceLevel)
+}
+
+export default function ShippingMethodsTab({ warehouses = [] }) {
     const { t, i18n } = useTranslation()
     const { confirm } = useConfirmDialog()
     const { formatCurrency, settings } = useSettings()
     const isRTL = i18n.language === 'ar'
     const [methods, setMethods] = useState([])
+    const [supportedCarriers, setSupportedCarriers] = useState([])
     const [loading, setLoading] = useState(true)
+    const [carriersLoading, setCarriersLoading] = useState(true)
+    const [carrierLoadError, setCarrierLoadError] = useState('')
     const [showModal, setShowModal] = useState(false)
     const [editingMethod, setEditingMethod] = useState(null)
     const [formData, setFormData] = useState({
@@ -110,7 +139,9 @@ export default function ShippingMethodsTab() {
         estimatedDeliveryDaysMax: '5',
         isActive: true,
         sortOrder: '0',
-        carrierName: '',
+        carrierCode: DEFAULT_CARRIER_CODE,
+        serviceLevel: DEFAULT_SERVICE_LEVEL,
+        fulfillmentWarehouseId: '',
         trackingUrlTemplate: '',
     })
     const [error, setError] = useState('')
@@ -133,9 +164,43 @@ export default function ShippingMethodsTab() {
         }
     }
 
+    const fetchCarriers = async () => {
+        try {
+            setCarriersLoading(true)
+            setCarrierLoadError('')
+            setSupportedCarriers(await fetchSupportedCarriers())
+        } catch (err) {
+            setSupportedCarriers([])
+            setCarrierLoadError(err.message || 'Failed to load supported carriers.')
+        } finally {
+            setCarriersLoading(false)
+        }
+    }
+
     useEffect(() => {
         fetchMethods()
+        fetchCarriers()
     }, [])
+
+    const selectedCarrier = findCarrier(supportedCarriers, formData.carrierCode)
+    const selectedCarrierServiceLevels = selectedCarrier?.serviceLevels || []
+    const activeWarehouses = warehouses.filter((warehouse) => warehouse.isActive !== false)
+    const singleActiveWarehouseId = activeWarehouses.length === 1 ? activeWarehouses[0].id : ''
+    const unsupportedLegacyCarrierCode = formData.carrierCode && !selectedCarrier
+        ? formData.carrierCode
+        : ''
+
+    const resolveCarrierDisplayName = (method) => (
+        getCarrierDisplayName(supportedCarriers, normalizeCarrierCode(method.carrierCode))
+        || method.carrierName
+        || normalizeCarrierCode(method.carrierCode)
+    )
+
+    const resolveWarehouseDisplayName = (warehouseId) => {
+        const warehouse = warehouses.find((item) => item.id === warehouseId)
+        if (!warehouse) return 'Not configured'
+        return warehouse.code ? `${warehouse.name} (${warehouse.code})` : warehouse.name
+    }
 
     const resetForm = () => {
         setEditingMethod(null)
@@ -150,8 +215,20 @@ export default function ShippingMethodsTab() {
             estimatedDeliveryDaysMax: '5',
             isActive: true,
             sortOrder: '0',
-            carrierName: '',
+            carrierCode: DEFAULT_CARRIER_CODE,
+            serviceLevel: getDefaultServiceLevel(findCarrier(supportedCarriers, DEFAULT_CARRIER_CODE)),
+            fulfillmentWarehouseId: singleActiveWarehouseId,
             trackingUrlTemplate: '',
+        })
+    }
+
+    const updateCarrierSelection = (carrierCode) => {
+        const normalizedCarrierCode = normalizeCarrierCode(carrierCode)
+        const carrier = findCarrier(supportedCarriers, normalizedCarrierCode)
+        setFormData({
+            ...formData,
+            carrierCode: normalizedCarrierCode,
+            serviceLevel: getDefaultServiceLevel(carrier),
         })
     }
 
@@ -160,8 +237,31 @@ export default function ShippingMethodsTab() {
         setError('')
 
         try {
+            const normalizedCarrierCode = normalizeCarrierCode(formData.carrierCode)
+            const carrier = findCarrier(supportedCarriers, normalizedCarrierCode)
+            if (!carrier) {
+                setError('Select a backend-supported carrier before saving.')
+                return
+            }
+
+            const normalizedServiceLevel = isServiceLevelAllowed(carrier, formData.serviceLevel)
+                ? formData.serviceLevel
+                : getDefaultServiceLevel(carrier)
+
+            if (formData.isActive && !formData.fulfillmentWarehouseId) {
+                setError('Active shipping methods require a fulfillment warehouse.')
+                return
+            }
+
             const data = {
-                ...formData,
+                name: formData.name,
+                nameAr: formData.nameAr,
+                description: formData.description,
+                carrierCode: normalizedCarrierCode,
+                serviceLevel: normalizedServiceLevel,
+                fulfillmentWarehouseId: formData.fulfillmentWarehouseId || null,
+                isActive: formData.isActive,
+                trackingUrlTemplate: formData.trackingUrlTemplate,
                 baseRate: parseFloat(formData.baseRate) || 0,
                 perKgRate: parseFloat(formData.perKgRate) || 0,
                 freeShippingThreshold: formData.freeShippingThreshold ? parseFloat(formData.freeShippingThreshold) : null,
@@ -187,6 +287,9 @@ export default function ShippingMethodsTab() {
     }
 
     const handleEdit = (method) => {
+        const normalizedCarrierCode = normalizeCarrierCode(method.carrierCode)
+        const carrier = findCarrier(supportedCarriers, normalizedCarrierCode)
+        const serviceLevel = method.serviceLevel || getDefaultServiceLevel(carrier)
         setEditingMethod(method)
         setFormData({
             name: method.name,
@@ -199,7 +302,9 @@ export default function ShippingMethodsTab() {
             estimatedDeliveryDaysMax: method.estimatedDeliveryDaysMax.toString(),
             isActive: method.isActive,
             sortOrder: method.sortOrder.toString(),
-            carrierName: method.carrierName || '',
+            carrierCode: normalizedCarrierCode,
+            serviceLevel: isServiceLevelAllowed(carrier, serviceLevel) ? serviceLevel : getDefaultServiceLevel(carrier),
+            fulfillmentWarehouseId: method.fulfillmentWarehouseId || '',
             trackingUrlTemplate: method.trackingUrlTemplate || '',
         })
         setShowModal(true)
@@ -273,6 +378,7 @@ export default function ShippingMethodsTab() {
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.perKgRate')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.freeThreshold')}</th>
                                     <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">{t('shipping.deliveryDays')}</th>
+                                    <th className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase">Fulfillment Warehouse</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.status')}</th>
                                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">{t('common.actions')}</th>
                                 </tr>
@@ -284,9 +390,7 @@ export default function ShippingMethodsTab() {
                                             <div className="font-medium text-gray-900">
                                                 {isRTL && method.nameAr ? method.nameAr : method.name}
                                             </div>
-                                            {method.carrierName && (
-                                                <div className="text-sm text-gray-500">{method.carrierName}</div>
-                                            )}
+                                            <div className="text-sm text-gray-500">{resolveCarrierDisplayName(method)}</div>
                                         </td>
                                         <td className="px-6 py-4 text-gray-900">{formatCurrency(method.baseRate)}</td>
                                         <td className="px-6 py-4 text-gray-900">{formatCurrency(method.perKgRate)}/kg</td>
@@ -298,12 +402,25 @@ export default function ShippingMethodsTab() {
                                         <td className="px-6 py-4 text-gray-900">
                                             {method.estimatedDeliveryDaysMin}-{method.estimatedDeliveryDaysMax} {t('shipping.days')}
                                         </td>
+                                        <td className="px-6 py-4 text-gray-900">
+                                            {method.fulfillmentWarehouseId ? (
+                                                resolveWarehouseDisplayName(method.fulfillmentWarehouseId)
+                                            ) : (
+                                                <span className="text-amber-700">Not configured</span>
+                                            )}
+                                        </td>
                                         <td className="px-6 py-4 text-center">
-                                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${method.isActive
+                                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${method.isActive && method.fulfillmentWarehouseId
                                                 ? 'bg-green-100 text-green-800'
-                                                : 'bg-red-100 text-red-800'
+                                                : method.isActive
+                                                    ? 'bg-amber-100 text-amber-800'
+                                                    : 'bg-red-100 text-red-800'
                                                 }`}>
-                                                {method.isActive ? t('common.active') : t('common.inactive')}
+                                                {method.isActive
+                                                    ? method.fulfillmentWarehouseId
+                                                        ? t('common.active')
+                                                        : 'Active - warehouse required'
+                                                    : t('common.inactive')}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center">
@@ -438,13 +555,38 @@ export default function ShippingMethodsTab() {
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
                                     <label className="label">{t('shipping.carrier')}</label>
-                                    <input
-                                        type="text"
-                                        value={formData.carrierName}
-                                        onChange={(e) => setFormData({ ...formData, carrierName: e.target.value })}
-                                        className="input"
-                                        placeholder="Carrier display name"
-                                    />
+                                    {carriersLoading ? (
+                                        <div className="input flex items-center text-gray-500">Loading carriers...</div>
+                                    ) : carrierLoadError ? (
+                                        <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                            {carrierLoadError}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <select
+                                                value={formData.carrierCode}
+                                                onChange={(e) => updateCarrierSelection(e.target.value)}
+                                                className="input"
+                                                required
+                                            >
+                                                {unsupportedLegacyCarrierCode && (
+                                                    <option value={unsupportedLegacyCarrierCode} disabled>
+                                                        Unsupported legacy carrier: {unsupportedLegacyCarrierCode}
+                                                    </option>
+                                                )}
+                                                {supportedCarriers.map((carrier) => (
+                                                    <option key={carrier.carrierCode} value={carrier.carrierCode}>
+                                                        {carrier.displayName}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {unsupportedLegacyCarrierCode && (
+                                                <p className="mt-1 text-xs text-amber-700">
+                                                    This legacy carrier code is not returned by the backend registry. Select a supported carrier before saving.
+                                                </p>
+                                            )}
+                                        </>
+                                    )}
                                 </div>
                                 <div>
                                     <label className="label">{t('shipping.trackingUrl')}</label>
@@ -456,6 +598,55 @@ export default function ShippingMethodsTab() {
                                         placeholder="https://track.example/{tracking_number}"
                                     />
                                 </div>
+                            </div>
+
+                            <div>
+                                <label className="label">{t('shipping.serviceLevel', 'Service Level')}</label>
+                                {selectedCarrierServiceLevels.length > 0 ? (
+                                    <select
+                                        value={formData.serviceLevel}
+                                        onChange={(e) => setFormData({ ...formData, serviceLevel: e.target.value })}
+                                        className="input"
+                                    >
+                                        {selectedCarrierServiceLevels.map((level) => (
+                                            <option key={level.code} value={level.code}>
+                                                {level.name} ({level.typicalDaysMin}-{level.typicalDaysMax} {t('shipping.days')})
+                                            </option>
+                                        ))}
+                                    </select>
+                                ) : (
+                                    <div className="input flex items-center text-gray-500">
+                                        {selectedCarrier
+                                            ? 'No backend service levels advertised; standard will be used.'
+                                            : 'Select a supported carrier first.'}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div>
+                                <label className="label">Fulfillment Warehouse</label>
+                                <select
+                                    value={formData.fulfillmentWarehouseId}
+                                    onChange={(e) => setFormData({ ...formData, fulfillmentWarehouseId: e.target.value })}
+                                    className="input"
+                                >
+                                    <option value="">Not configured</option>
+                                    {activeWarehouses.map((warehouse) => (
+                                        <option key={warehouse.id} value={warehouse.id}>
+                                            {warehouse.code ? `${warehouse.name} (${warehouse.code})` : warehouse.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                {editingMethod && !formData.fulfillmentWarehouseId && (
+                                    <p className="mt-1 text-xs text-amber-700">
+                                        This legacy method will not appear in Storefront checkout until a warehouse is selected.
+                                    </p>
+                                )}
+                                {formData.isActive && !formData.fulfillmentWarehouseId && (
+                                    <p className="mt-1 text-xs text-red-700">
+                                        Select a warehouse before saving this method as active.
+                                    </p>
+                                )}
                             </div>
 
                             <label className="flex items-center gap-2">
@@ -476,7 +667,11 @@ export default function ShippingMethodsTab() {
                                 >
                                     {t('common.cancel')}
                                 </button>
-                                <button type="submit" className="flex-1 btn-primary">
+                                <button
+                                    type="submit"
+                                    disabled={carriersLoading || !!carrierLoadError || !selectedCarrier}
+                                    className="flex-1 btn-primary"
+                                >
                                     {editingMethod ? t('common.update') : t('common.save')}
                                 </button>
                             </div>

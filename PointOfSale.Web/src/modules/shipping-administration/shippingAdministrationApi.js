@@ -38,6 +38,24 @@ export function admitSupportedCarriers(payload) {
         return {
             carrierCode,
             displayName: requiredString(carrier.displayName, 'carrier display name'),
+            isExternal: carrier.isExternal === true,
+            accountRequired: carrier.accountRequired !== false,
+            readinessRequired: carrier.readinessRequired === true,
+            productionCapability: stringOrNull(carrier.productionCapability) || 'Partial',
+            credentialFields: Array.isArray(carrier.credentialFields) ? carrier.credentialFields.map((field) => ({
+                key: requiredString(field?.key, 'credential field key'),
+                label: requiredString(field?.label, 'credential field label'),
+                isSecret: field?.isSecret === true,
+                required: field?.required === true,
+                target: requiredString(field?.target, 'credential field target'),
+            })) : [],
+            environmentSupported: carrier.environmentSupported !== false,
+            connectionTestSupported: carrier.connectionTestSupported !== false,
+            connectionTestMode: stringOrNull(carrier.connectionTestMode) || 'Remote',
+            requiresOriginReadiness: carrier.requiresOriginReadiness === true,
+            requiresGeographyMapping: carrier.requiresGeographyMapping === true,
+            supportsWebhooks: carrier.supportsWebhooks === true,
+            webhookTrustModes: Array.isArray(carrier.webhookTrustModes) ? carrier.webhookTrustModes.filter((item) => typeof item === 'string') : [],
             serviceLevels: requiredArray(carrier.serviceLevels, 'service levels').map((level) => ({
                 code: requiredString(level?.code, 'service level code'),
                 name: requiredString(level?.name, 'service level name'),
@@ -111,6 +129,18 @@ export function admitCarrierAccounts(payload) {
                 failureReason: stringOrNull(account.lastConnectionTest.failureReason),
                 testedAtUtc: requiredString(account.lastConnectionTest.testedAtUtc, 'connection test timestamp'),
             } : null,
+            integrationReadiness: account.integrationReadiness ? {
+                enabled: account.integrationReadiness.enabled === true,
+                canExecute: account.integrationReadiness.canExecute === true,
+                environment: stringOrNull(account.integrationReadiness.environment),
+                productionCapability: stringOrNull(account.integrationReadiness.productionCapability) || 'Partial',
+                blockers: Array.isArray(account.integrationReadiness.blockers)
+                    ? account.integrationReadiness.blockers.filter((item) => typeof item === 'string')
+                    : [],
+                originReadinessRequired: account.integrationReadiness.originReadinessRequired === true,
+                originReadinessSatisfied: account.integrationReadiness.originReadinessSatisfied === true,
+                credentialAvailability: stringOrNull(account.integrationReadiness.credentialAvailability) || 'Unknown',
+            } : null,
         }
     })
 }
@@ -161,6 +191,42 @@ export async function fetchCarrierAccounts() {
         return admitCarrierAccounts(response.data)
     } catch (error) {
         throw new Error(getSafeApiErrorMessage(error, 'Failed to load carrier accounts.'))
+    }
+}
+
+export function admitWarehouses(payload) {
+    const seen = new Set()
+    return requiredArray(payload, 'warehouses').map((warehouse) => {
+        if (!warehouse || typeof warehouse !== 'object') {
+            throw new Error('Shipping administration DTO rejected malformed warehouse.')
+        }
+
+        const id = requiredString(warehouse.id, 'warehouse identity')
+        if (seen.has(id)) {
+            throw new Error('Shipping administration DTO rejected duplicate warehouse.')
+        }
+        seen.add(id)
+
+        return {
+            id,
+            name: requiredString(warehouse.name, 'warehouse name'),
+            code: stringOrNull(warehouse.code),
+            address: stringOrNull(warehouse.address),
+            phone: stringOrNull(warehouse.phone),
+            isActive: warehouse.isActive === true,
+            isDefault: warehouse.isDefault === true,
+        }
+    })
+}
+
+export async function fetchWarehouses() {
+    try {
+        const response = await api.get('/warehouses', {
+            headers: ADMIN_SHIPPING_READ_HEADERS,
+        })
+        return admitWarehouses(response.data)
+    } catch (error) {
+        throw new Error(getSafeApiErrorMessage(error, 'Failed to load warehouses.'))
     }
 }
 
@@ -237,11 +303,12 @@ export function retireCarrierAccount(carrierAccountId) {
 }
 
 export function createShippingAdministrationSummary(accounts) {
-    const configuredCarriers = accounts.length
-    const activeCarriers = accounts.filter((account) => account.state === 'Active').length
-    const blockedCarriers = accounts.filter((account) => account.healthState === 'Blocked').length
-    const connectionWarnings = accounts.filter((account) => account.lastConnectionTest?.status === 'Failed').length
-    const activationBlockers = accounts.filter((account) => account.healthState === 'Blocked' || account.state === 'CredentialsPending').length
+    const externalAccounts = accounts.filter((account) => account.carrierCode !== 'manual')
+    const configuredCarriers = externalAccounts.length
+    const activeCarriers = externalAccounts.filter((account) => account.integrationReadiness?.canExecute === true).length
+    const blockedCarriers = externalAccounts.filter((account) => account.integrationReadiness?.canExecute === false).length
+    const connectionWarnings = externalAccounts.filter((account) => account.lastConnectionTest?.status === 'Failed').length
+    const activationBlockers = externalAccounts.filter((account) => account.integrationReadiness?.canExecute === false).length
 
     return {
         configuredCarriers,
@@ -252,11 +319,20 @@ export function createShippingAdministrationSummary(accounts) {
         recommendedNextAction: configuredCarriers === 0
             ? 'Create a carrier account from a backend-supported carrier.'
             : activationBlockers > 0
-                ? 'Review backend-reported activation blockers.'
+                ? 'Review provider readiness blockers.'
                 : 'Monitor health and audit for changes.',
     }
 }
 
 export function getCarrierDisplayName(supportedCarriers, carrierCode) {
     return supportedCarriers.find((carrier) => carrier.carrierCode === carrierCode)?.displayName || carrierCode
+}
+
+export function getWarehouseDisplayName(warehouses, warehouseId) {
+    const warehouse = warehouses.find((item) => item.id === warehouseId)
+    if (!warehouse) {
+        return `Unavailable warehouse (${warehouseId})`
+    }
+
+    return warehouse.code ? `${warehouse.name} (${warehouse.code})` : warehouse.name
 }

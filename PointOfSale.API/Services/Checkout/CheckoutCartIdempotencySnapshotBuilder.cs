@@ -14,6 +14,8 @@ public static class CheckoutCartIdempotencySnapshotBuilder
     /// - v1: Initial schema (Items, Discounts without ManualDiscountTotal, ShippingMethodId, PaymentMethodId, AddressHash, CartUpdatedAt)
     /// - v2: Added ManualDiscountTotal to CheckoutCartIdempotencyDiscounts
     /// - v3: Added structured address details and canonical geographic candidates
+    /// - v4: Added WarehouseResolution authority fields
+    /// - v5: Added server-derived unit weight to the canonical cart snapshot
     /// 
     /// IMPORTANT: When incrementing this version:
     /// 1. Document the change in the version history above
@@ -21,11 +23,12 @@ public static class CheckoutCartIdempotencySnapshotBuilder
     /// 3. Old version hashes will not match new version hashes for the same cart state
     /// 4. This is intentional to prevent duplicate orders during schema transitions
     /// </summary>
-    private const int CurrentSnapshotVersion = 3;
+    private const int CurrentSnapshotVersion = 5;
 
     public static CheckoutCartIdempotencySnapshot BuildCanonicalSnapshot(
         CartSnapshot cartSnapshot,
-        CheckoutRequestDto request)
+        CheckoutRequestDto request,
+        Guid? warehouseId = null)
     {
         ArgumentNullException.ThrowIfNull(cartSnapshot);
         ArgumentNullException.ThrowIfNull(request);
@@ -47,7 +50,8 @@ public static class CheckoutCartIdempotencySnapshotBuilder
                 item.ProductId,
                 item.VariantId,
                 item.Quantity,
-                NormalizeCurrency(item.CartPrice)))
+                NormalizeCurrency(item.CartPrice),
+                NormalizeWeight(item.Weight)))
             .ToList();
 
         return new CheckoutCartIdempotencySnapshot(
@@ -63,15 +67,21 @@ public static class CheckoutCartIdempotencySnapshotBuilder
                 cartSnapshot.AppliedPromotionType?.Trim().ToUpperInvariant()),
             ShippingMethodId: request.ShippingMethodId,
             PaymentMethodId: request.PaymentMethod.Trim().ToUpperInvariant(),
+            WarehouseResolution: new CheckoutWarehouseResolutionIdempotencySnapshot(
+                request.CheckoutSessionId,
+                request.WarehouseResolutionId,
+                warehouseId,
+                request.WarehouseResolutionVersion),
             AddressHash: addressHash,
             CartUpdatedAt: EnsureUtc(cartSnapshot.CartUpdatedAtUtc));
     }
 
     public static string BuildHash(
         CartSnapshot cartSnapshot,
-        CheckoutRequestDto request)
+        CheckoutRequestDto request,
+        Guid? warehouseId = null)
     {
-        var snapshot = BuildCanonicalSnapshot(cartSnapshot, request);
+        var snapshot = BuildCanonicalSnapshot(cartSnapshot, request, warehouseId);
         
         // Include version in hash to prevent collisions during schema evolution
         var versionedPayload = new
@@ -111,6 +121,9 @@ public static class CheckoutCartIdempotencySnapshotBuilder
     private static decimal NormalizeCurrency(decimal value) =>
         Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
+    private static decimal NormalizeWeight(decimal value) =>
+        Math.Round(Math.Max(0m, value), 6, MidpointRounding.AwayFromZero);
+
     private static DateTime EnsureUtc(DateTime value)
     {
         if (value.Kind == DateTimeKind.Utc)
@@ -132,14 +145,22 @@ public sealed record CheckoutCartIdempotencySnapshot(
     CheckoutCartIdempotencyDiscounts Discounts,
     Guid ShippingMethodId,
     string PaymentMethodId,
+    CheckoutWarehouseResolutionIdempotencySnapshot WarehouseResolution,
     string AddressHash,
     DateTime CartUpdatedAt);
+
+public sealed record CheckoutWarehouseResolutionIdempotencySnapshot(
+    Guid? CheckoutSessionId,
+    Guid? WarehouseResolutionId,
+    Guid? WarehouseId,
+    int? ResolutionVersion);
 
 public sealed record CheckoutCartIdempotencyItem(
     Guid ProductId,
     Guid? VariantId,
     int Quantity,
-    decimal UnitPrice);
+    decimal UnitPrice,
+    decimal UnitWeightKg);
 
 public sealed record CheckoutCartIdempotencyDiscounts(
     Guid? CouponId,

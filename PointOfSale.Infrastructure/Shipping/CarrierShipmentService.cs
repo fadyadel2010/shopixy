@@ -176,7 +176,7 @@ public class CarrierShipmentService : ICarrierShipmentService
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IShippingCarrierRegistry _carrierRegistry;
-    private readonly ICarrierCredentialEncryptionService _credentialEncryption;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly IEventPublisher _eventPublisher;
     private readonly IOrderFulfillmentService _fulfillmentService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
@@ -195,11 +195,12 @@ public class CarrierShipmentService : ICarrierShipmentService
         ITenantContext tenantContext,
         ICustomsEvidenceAdmissionService customsEvidenceAdmissionService,
         ICarrierGeographicMappingService carrierGeographicMappingService,
-        ILogger<CarrierShipmentService> logger)
+        ILogger<CarrierShipmentService> logger,
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
     {
         _dbContext = dbContext;
         _carrierRegistry = carrierRegistry;
-        _credentialEncryption = credentialEncryption;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
         _eventPublisher = eventPublisher;
         _fulfillmentService = fulfillmentService;
         _reliabilityTelemetry = reliabilityTelemetry;
@@ -262,28 +263,20 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
-            var shippingMethod = await _dbContext.ShippingMethods
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .FirstOrDefaultAsync(
-                    method => method.Id == order.ShippingMethodId.Value &&
-                              method.TenantId == tenantId &&
-                              !method.IsDeleted &&
-                              method.IsActive,
-                    cancellationToken);
-
-            if (shippingMethod == null)
+            if (string.IsNullOrWhiteSpace(order.FulfillmentCarrierCode) ||
+                string.IsNullOrWhiteSpace(order.ShippingServiceLevel) ||
+                string.IsNullOrWhiteSpace(order.ShippingMethodName))
             {
                 return new CarrierShipmentResult
                 {
                     Success = false,
-                    ErrorCode = "ORDER_SHIPPING_METHOD_INELIGIBLE",
-                    ErrorMessage = $"Order {orderId} no longer has an eligible shipping method."
+                    ErrorCode = "ORDER_SHIPPING_EXECUTION_SNAPSHOT_MISSING",
+                    ErrorMessage = $"Order {orderId} does not contain a complete immutable shipping execution snapshot."
                 };
             }
 
             var normalizedCarrierCode = CarrierCodes.Normalize(carrierCode);
-            var authoritativeCarrierCode = CarrierCodes.Normalize(shippingMethod.CarrierCode);
+            var authoritativeCarrierCode = CarrierCodes.Normalize(order.FulfillmentCarrierCode);
             if (CarrierCodes.IsManual(authoritativeCarrierCode) ||
                 !string.Equals(normalizedCarrierCode, authoritativeCarrierCode, StringComparison.Ordinal))
             {
@@ -295,9 +288,23 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
-            // Service level is configuration owned by the selected shipping method.
-            // Preserve the method's value rather than accepting a caller replacement.
-            var authoritativeServiceLevel = shippingMethod.ServiceLevel;
+            // The selected level is immutable order evidence. Caller input remains a
+            // compatibility parameter and cannot redefine what checkout purchased.
+            var authoritativeServiceLevel = order.ShippingServiceLevel.Trim().ToLowerInvariant();
+            var serviceLevelReadiness = await _carrierIntegrationAuthority.GetServiceLevelReadinessAsync(
+                tenantId,
+                authoritativeCarrierCode,
+                authoritativeServiceLevel,
+                cancellationToken);
+            if (!serviceLevelReadiness.CanExecute)
+            {
+                return new CarrierShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = serviceLevelReadiness.Blockers.FirstOrDefault() ?? "SERVICE_LEVEL_UNAVAILABLE",
+                    ErrorMessage = $"Service level '{authoritativeServiceLevel}' is not currently executable."
+                };
+            }
             
             // Check if shipment already exists
             var existingShipment = await _dbContext.Shipments
@@ -313,13 +320,15 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
             
-            // Get carrier configuration
-            var carrierConfig = await _dbContext.Set<CarrierConfiguration>()
-                .FirstOrDefaultAsync(c => c.TenantId == tenantId &&
-                                         c.CarrierCode == authoritativeCarrierCode &&
-                                         c.IsEnabled, cancellationToken);
-            
-            if (carrierConfig == null)
+            var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                tenantId,
+                authoritativeCarrierCode,
+                CarrierIntegrationPurpose.ShipmentCreation,
+                cancellationToken);
+
+            if (!credentialsResolution.Succeeded ||
+                credentialsResolution.Credentials == null ||
+                credentialsResolution.Configuration == null)
             {
                 return new CarrierShipmentResult
                 {
@@ -328,9 +337,9 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ErrorMessage = $"Carrier '{carrierCode}' not configured for this tenant"
                 };
             }
-            
-            // Build credentials
-            var credentials = BuildCredentials(carrierConfig);
+
+            var carrierConfig = credentialsResolution.Configuration;
+            var credentials = credentialsResolution.Credentials;
             
             // STEP 1: Create and persist the local shipment record FIRST to get a stable ID
             var shipmentId = Guid.NewGuid();
@@ -339,8 +348,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                 Id = shipmentId,
                 TenantId = tenantId,
                 OrderId = orderId,
-                ShippingMethodId = shippingMethod.Id,
-                ShippingMethodName = shippingMethod.Name,
+                ShippingMethodId = order.ShippingMethodId.Value,
+                ShippingMethodName = order.ShippingMethodName,
                 
                 CarrierCode = authoritativeCarrierCode,
                 ServiceLevel = authoritativeServiceLevel,
@@ -600,6 +609,33 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
+            var authoritativeServiceLevel = shipment.ServiceLevel?.Trim().ToLowerInvariant();
+            if (string.IsNullOrWhiteSpace(authoritativeServiceLevel))
+            {
+                return new CarrierShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = "ORDER_SHIPPING_EXECUTION_SNAPSHOT_MISSING",
+                    ErrorMessage = $"Shipment {shipmentId} has no immutable service-level snapshot."
+                };
+            }
+
+            serviceLevel = authoritativeServiceLevel;
+            var serviceLevelReadiness = await _carrierIntegrationAuthority.GetServiceLevelReadinessAsync(
+                tenantId,
+                carrierCode,
+                serviceLevel,
+                cancellationToken);
+            if (!serviceLevelReadiness.CanExecute)
+            {
+                return new CarrierShipmentResult
+                {
+                    Success = false,
+                    ErrorCode = serviceLevelReadiness.Blockers.FirstOrDefault() ?? "SERVICE_LEVEL_UNAVAILABLE",
+                    ErrorMessage = $"Service level '{serviceLevel}' is not currently executable."
+                };
+            }
+
             var order = await _dbContext.Orders
                 .FirstOrDefaultAsync(o => o.Id == shipment.OrderId && o.TenantId == tenantId, cancellationToken);
             
@@ -650,12 +686,15 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
-            var carrierConfig = await _dbContext.Set<CarrierConfiguration>()
-                .FirstOrDefaultAsync(c => c.TenantId == tenantId &&
-                                         c.CarrierCode == carrierCode &&
-                                         c.IsEnabled, cancellationToken);
+            var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                tenantId,
+                carrierCode,
+                CarrierIntegrationPurpose.ExternalRegistration,
+                cancellationToken);
 
-            if (carrierConfig == null)
+            if (!credentialsResolution.Succeeded ||
+                credentialsResolution.Credentials == null ||
+                credentialsResolution.Configuration == null)
             {
                 _logger.LogError("Carrier not configured for tenant | CarrierCode: {CarrierCode} | TenantId: {TenantId}",
                     carrierCode, tenantId);
@@ -666,6 +705,8 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ErrorMessage = $"Carrier '{carrierCode}' not configured or not enabled for this tenant"
                 };
             }
+
+            var carrierConfig = credentialsResolution.Configuration;
 
             if (IsShipmentExternallyRegistered(shipment))
             {
@@ -701,7 +742,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
 
-            var credentials = BuildCredentials(carrierConfig);
+            var credentials = credentialsResolution.Credentials;
             var origin = await ResolveOrRestoreShipmentOriginAsync(shipment, order, cancellationToken);
             if (origin is null)
             {
@@ -1011,13 +1052,13 @@ public class CarrierShipmentService : ICarrierShipmentService
                     };
                 }
 
-                var carrierConfig = await _dbContext.Set<CarrierConfiguration>()
-                    .FirstOrDefaultAsync(
-                        c => c.TenantId == tenantId &&
-                             c.CarrierCode == shipment.CarrierCode,
-                        cancellationToken);
+                var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                    tenantId,
+                    shipment.CarrierCode,
+                    CarrierIntegrationPurpose.Cancellation,
+                    cancellationToken);
 
-                if (carrierConfig == null)
+                if (!credentialsResolution.Succeeded || credentialsResolution.Credentials == null)
                 {
                     await MarkCarrierCancellationReconciliationRequiredAsync(
                         shipment,
@@ -1034,10 +1075,9 @@ public class CarrierShipmentService : ICarrierShipmentService
                     };
                 }
 
-                var credentials = BuildCredentials(carrierConfig);
                 var cancelResult = await adapter.CancelShipmentAsync(
                     shipment.TrackingNumber!,
-                    credentials,
+                    credentialsResolution.Credentials,
                     cancellationToken);
 
                 if (!cancelResult.Success)
@@ -1162,11 +1202,13 @@ public class CarrierShipmentService : ICarrierShipmentService
                 };
             }
             
-            var carrierConfig = await _dbContext.Set<CarrierConfiguration>()
-                .FirstOrDefaultAsync(c => c.TenantId == tenantId && 
-                                         c.CarrierCode == shipment.CarrierCode, cancellationToken);
-            
-            if (carrierConfig == null)
+            var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                tenantId,
+                shipment.CarrierCode,
+                CarrierIntegrationPurpose.Tracking,
+                cancellationToken);
+
+            if (!credentialsResolution.Succeeded || credentialsResolution.Credentials == null)
             {
                 return new CarrierSyncResult
                 {
@@ -1175,10 +1217,9 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ErrorMessage = "Carrier configuration not found"
                 };
             }
-            
-            var credentials = BuildCredentials(carrierConfig);
+
             var trackingResult = await adapter.GetTrackingAsync(
-                shipment.TrackingNumber, credentials, cancellationToken);
+                shipment.TrackingNumber, credentialsResolution.Credentials, cancellationToken);
             
             if (!trackingResult.Success)
             {
@@ -1478,16 +1519,12 @@ public class CarrierShipmentService : ICarrierShipmentService
                     shipmentId: shipment.Id);
             }
 
-            var carrierConfig = await _dbContext.CarrierConfigurations
-                .AsNoTracking()
-                .FirstOrDefaultAsync(
-                    config =>
-                        config.TenantId == shipment.TenantId &&
-                        config.CarrierCode == normalizedCarrierCode &&
-                        config.IsEnabled,
-                    cancellationToken);
+            var webhookTrust = await _carrierIntegrationAuthority.ResolveWebhookTrustAsync(
+                shipment.TenantId,
+                normalizedCarrierCode,
+                cancellationToken);
 
-            if (carrierConfig == null || !carrierConfig.SupportsWebhooks)
+            if (!webhookTrust.Succeeded || !webhookTrust.SupportsWebhooks)
             {
                 _logger.LogWarning(
                     "Rejected shipping webhook because carrier is not configured for secure webhooks | CarrierCode: {CarrierCode} | TenantId: {TenantId}",
@@ -1505,8 +1542,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                     shipmentId: shipment.Id);
             }
 
-            var trustPolicy = ResolveWebhookTrustPolicy(normalizedCarrierCode, carrierConfig);
-            var trustValidation = ValidateWebhookTrust(payload, signature, sourceIp, carrierConfig, trustPolicy);
+            var trustValidation = ValidateWebhookTrust(payload, signature, sourceIp, webhookTrust);
             if (!trustValidation.Success)
             {
                 _logger.LogWarning(
@@ -1539,7 +1575,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 return RejectWebhook(
                     normalizedCarrierCode,
                     reason: "validated_payload_parse_failed",
-                    validationMethod: trustPolicy.ValidationMethod,
+                    validationMethod: webhookTrust.ValidationMethod,
                     statusCode: 400,
                     errorCode: "WEBHOOK_INVALID_PAYLOAD",
                     errorMessage: "Webhook payload could not be validated.",
@@ -1560,7 +1596,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 parseResult.TrackingNumber.Trim(),
                 payload,
                 signature,
-                trustPolicy.ValidationMethod,
+                webhookTrust.ValidationMethod,
                 shipment.Id,
                 shipment.OrderId,
                 sourceIp,
@@ -1578,7 +1614,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 return RejectWebhook(
                     normalizedCarrierCode,
                     reason: "webhook_log_unavailable",
-                    validationMethod: trustPolicy.ValidationMethod,
+                    validationMethod: webhookTrust.ValidationMethod,
                     statusCode: 500,
                     errorCode: "WEBHOOK_LOG_FAILURE",
                     errorMessage: "Webhook processing could not be initialized.",
@@ -1632,7 +1668,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                 return RejectWebhook(
                     normalizedCarrierCode,
                     reason: "manual_fulfillment_order",
-                    validationMethod: trustPolicy.ValidationMethod,
+                    validationMethod: webhookTrust.ValidationMethod,
                     statusCode: 403,
                     errorCode: "WEBHOOK_NOT_ALLOWED",
                     errorMessage: "Carrier webhook updates are not allowed for this order.",
@@ -1874,7 +1910,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             existingLog.TrackingNumber = trackingNumber;
             existingLog.PayloadHash = payloadHash;
             existingLog.PayloadSummary = PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload);
-            existingLog.Signature = signature;
+            existingLog.Signature = HashWebhookSignature(signature);
             existingLog.SignatureVerified = true;
             existingLog.ValidationMethod = validationMethod;
             existingLog.ShipmentId = shipmentId;
@@ -1906,7 +1942,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             ShipmentId = shipmentId,
             OrderId = orderId,
             PayloadSummary = PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload),
-            Signature = signature,
+            Signature = HashWebhookSignature(signature),
             SignatureVerified = true,
             ValidationMethod = validationMethod,
             SourceIpPrefix = PointOfSale.Core.Security.WebhookDataRedactor.RedactIpAddress(sourceIp),
@@ -1973,83 +2009,27 @@ public class CarrierShipmentService : ICarrierShipmentService
         return null;
     }
 
-    private ShippingWebhookTrustPolicy ResolveWebhookTrustPolicy(
-        string carrierCode,
-        CarrierConfiguration carrierConfig)
-    {
-        var configuredMethod = ReadCarrierConfigurationValue(carrierConfig, "webhookSignatureMethod")
-            ?.Trim()
-            .ToLowerInvariant();
-
-        var allowlistedIps = ReadCarrierConfigurationStringList(
-            carrierConfig,
-            "webhookIpAllowlist",
-            "webhookAllowedIps");
-
-        return configuredMethod switch
-        {
-            "hmac" or "hmacsha256" or "hmac-sha256" or "sha256" =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.HmacSha256,
-                    "hmac_sha256",
-                    allowlistedIps),
-            "sharedsecret" or "shared-secret" or "token" or "bearer" =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.SharedSecret,
-                    "shared_secret",
-                    allowlistedIps),
-            "ip" or "ipallowlist" or "ip-allowlist" =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.IpAllowlist,
-                    "ip_allowlist",
-                    allowlistedIps),
-            _ when string.Equals(carrierCode, CarrierCodes.Mylerz, StringComparison.Ordinal) ||
-                   string.Equals(carrierCode, CarrierCodes.Dhl, StringComparison.Ordinal) =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.HmacSha256,
-                    "hmac_sha256",
-                    allowlistedIps),
-            _ when string.Equals(carrierCode, CarrierCodes.Bosta, StringComparison.Ordinal) ||
-                   string.Equals(carrierCode, CarrierCodes.Aramex, StringComparison.Ordinal) =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.SharedSecret,
-                    "shared_secret",
-                    allowlistedIps),
-            _ when allowlistedIps.Count > 0 =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.IpAllowlist,
-                    "ip_allowlist",
-                    allowlistedIps),
-            _ =>
-                new ShippingWebhookTrustPolicy(
-                    ShippingWebhookValidationMode.Unsupported,
-                    "unsupported",
-                    allowlistedIps)
-        };
-    }
-
     private ShippingWebhookValidationOutcome ValidateWebhookTrust(
         string payload,
         string? signature,
         string? sourceIp,
-        CarrierConfiguration carrierConfig,
-        ShippingWebhookTrustPolicy trustPolicy)
+        CarrierWebhookTrustResolution trust)
     {
-        return trustPolicy.Mode switch
+        return trust.ValidationMode switch
         {
-            ShippingWebhookValidationMode.HmacSha256 =>
-                ValidateHmacWebhookSignature(payload, signature, carrierConfig.WebhookSecret, trustPolicy.ValidationMethod),
-            ShippingWebhookValidationMode.SharedSecret =>
-                ValidateSharedSecretWebhook(signature, carrierConfig.WebhookSecret, trustPolicy.ValidationMethod),
-            ShippingWebhookValidationMode.IpAllowlist =>
-                ValidateIpAllowlistWebhook(sourceIp, trustPolicy.AllowedIps, trustPolicy.ValidationMethod),
+            CarrierWebhookValidationMode.HmacSha256 =>
+                ValidateHmacWebhookSignature(payload, signature, trust.WebhookSecret, trust.ValidationMethod),
+            CarrierWebhookValidationMode.SharedSecret =>
+                ValidateSharedSecretWebhook(signature, trust.WebhookSecret, trust.ValidationMethod),
+            CarrierWebhookValidationMode.IpAllowlist =>
+                ValidateIpAllowlistWebhook(sourceIp, trust.AllowedIps, trust.ValidationMethod),
             _ => new ShippingWebhookValidationOutcome(
                 false,
                 403,
                 "WEBHOOK_VALIDATION_UNSUPPORTED",
                 "Webhook trust policy is not configured for this carrier.",
                 "unsupported_validation_method",
-                trustPolicy.ValidationMethod)
+                trust.ValidationMethod)
         };
     }
 
@@ -2484,6 +2464,17 @@ public class CarrierShipmentService : ICarrierShipmentService
         }
     }
 
+    private static string? HashWebhookSignature(string? signature)
+    {
+        if (string.IsNullOrWhiteSpace(signature))
+        {
+            return null;
+        }
+
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(signature));
+        return $"sha256:{Convert.ToHexString(digest).ToLowerInvariant()}";
+    }
+
     private static string NormalizeHexSignature(string signature)
     {
         var normalized = signature.Trim();
@@ -2542,108 +2533,6 @@ public class CarrierShipmentService : ICarrierShipmentService
     private static bool IsHexCharacter(char value)
     {
         return value is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
-    }
-
-    private static string? ReadCarrierConfigurationValue(
-        CarrierConfiguration config,
-        params string[] propertyNames)
-    {
-        if (string.IsNullOrWhiteSpace(config.Configuration))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(config.Configuration);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
-
-            foreach (var propertyName in propertyNames)
-            {
-                foreach (var property in document.RootElement.EnumerateObject())
-                {
-                    if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    return property.Value.ValueKind switch
-                    {
-                        JsonValueKind.String => property.Value.GetString(),
-                        JsonValueKind.Number => property.Value.GetRawText(),
-                        JsonValueKind.True => bool.TrueString,
-                        JsonValueKind.False => bool.FalseString,
-                        _ => null
-                    };
-                }
-            }
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-
-        return null;
-    }
-
-    private static IReadOnlyCollection<string> ReadCarrierConfigurationStringList(
-        CarrierConfiguration config,
-        params string[] propertyNames)
-    {
-        if (string.IsNullOrWhiteSpace(config.Configuration))
-        {
-            return Array.Empty<string>();
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(config.Configuration);
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return Array.Empty<string>();
-            }
-
-            foreach (var propertyName in propertyNames)
-            {
-                foreach (var property in document.RootElement.EnumerateObject())
-                {
-                    if (!string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (property.Value.ValueKind == JsonValueKind.Array)
-                    {
-                        return property.Value
-                            .EnumerateArray()
-                            .Where(item => item.ValueKind == JsonValueKind.String)
-                            .Select(item => item.GetString()?.Trim())
-                            .Where(item => !string.IsNullOrWhiteSpace(item))
-                            .Cast<string>()
-                            .ToArray();
-                    }
-
-                    if (property.Value.ValueKind == JsonValueKind.String)
-                    {
-                        return property.Value
-                            .GetString()?
-                            .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                            .Where(item => !string.IsNullOrWhiteSpace(item))
-                            .ToArray()
-                            ?? Array.Empty<string>();
-                    }
-                }
-            }
-        }
-        catch (JsonException)
-        {
-            return Array.Empty<string>();
-        }
-
-        return Array.Empty<string>();
     }
 
     private static bool IsUniqueViolation(DbUpdateException exception) =>
@@ -3812,19 +3701,6 @@ public class CarrierShipmentService : ICarrierShipmentService
         }
     }
     
-    private enum ShippingWebhookValidationMode
-    {
-        HmacSha256,
-        SharedSecret,
-        IpAllowlist,
-        Unsupported
-    }
-
-    private sealed record ShippingWebhookTrustPolicy(
-        ShippingWebhookValidationMode Mode,
-        string ValidationMethod,
-        IReadOnlyCollection<string> AllowedIps);
-
     private sealed record ShippingWebhookValidationOutcome(
         bool Success,
         int StatusCode,
@@ -3873,7 +3749,7 @@ public class CarrierShipmentService : ICarrierShipmentService
         }
 
         // Recovery after a successful provider registration must never reconstruct
-        // origin from live Warehouse or CarrierConfiguration state.
+        // origin from live Warehouse or carrier integration configuration state.
         if (shipment.ExternalRegistrationCompletedAtUtc.HasValue ||
             !string.IsNullOrWhiteSpace(shipment.ExternalReferenceId))
         {
@@ -4125,7 +4001,7 @@ public class CarrierShipmentService : ICarrierShipmentService
 
     private async Task<CarrierGeographicResolutionEvidence> ResolveOrRestoreCarrierGeographyAsync(
         Shipment shipment,
-        CarrierConfiguration carrierConfig,
+        CarrierIntegrationConfigurationSnapshot carrierConfig,
         CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(shipment.CarrierGeographicMappingSnapshotJson))
@@ -4333,32 +4209,6 @@ public class CarrierShipmentService : ICarrierShipmentService
         request.RecipientDistrictId = district?.ProviderGeographicId;
         request.RecipientDistrictName = district?.ProviderGeographicDisplayName;
         request.RecipientZoneId = Find(items, "Zone", "Region")?.ProviderGeographicId;
-    }
-
-    private CarrierCredentials BuildCredentials(CarrierConfiguration config)
-    {
-        var credentials = new CarrierCredentials
-        {
-            // SECURITY: Decrypt credentials in-memory only (P2 hardening)
-            ApiKey = _credentialEncryption.Decrypt(config.ApiKey),
-            ApiSecret = _credentialEncryption.Decrypt(config.ApiSecret),
-            AccountId = config.AccountId,
-            ApiUrl = config.ApiUrl,
-            UseSandbox = config.UseSandbox
-        };
-        
-        if (!string.IsNullOrEmpty(config.Configuration))
-        {
-            try
-            {
-                var extra = JsonSerializer.Deserialize<Dictionary<string, string>>(config.Configuration);
-                if (extra != null)
-                    credentials.ExtraConfig = extra;
-            }
-            catch { }
-        }
-        
-        return credentials;
     }
 
     private sealed record CarrierGeographicSnapshot(

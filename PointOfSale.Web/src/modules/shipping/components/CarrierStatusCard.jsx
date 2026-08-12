@@ -41,6 +41,15 @@ export default function CarrierStatusCard({ carrier, onConfigure, onRefresh }) {
         }
 
         if (!carrier.isConfigured) {
+            if (['Unavailable', 'NotCertified'].includes(carrier.productionCapability)) {
+                return {
+                    status: 'unavailable',
+                    label: carrier.productionCapability,
+                    color: 'gray',
+                    icon: AlertCircle
+                }
+            }
+
             return {
                 status: 'not_configured',
                 label: t('shippingSetup.notConfigured', 'Not Configured'),
@@ -76,7 +85,7 @@ export default function CarrierStatusCard({ carrier, onConfigure, onRefresh }) {
     const StatusIcon = connectionStatus.icon
 
     const handleTestConnection = async () => {
-        if (!carrier.isConfigured) return
+        if (!carrier.isConfigured || carrier.connectionTestSupported === false) return
 
         setValidating(true)
         setValidationResult(null)
@@ -154,14 +163,18 @@ export default function CarrierStatusCard({ carrier, onConfigure, onRefresh }) {
                     </button>
 
                     {/* Test button - only for non-manual carriers that are configured */}
-                    {carrier.isConfigured && carrier.carrierCode !== 'manual' && (
+                    {carrier.isConfigured && carrier.carrierCode !== 'manual' && carrier.connectionTestSupported !== false && !['Unavailable', 'NotCertified'].includes(carrier.productionCapability) && (
                         <button
                             onClick={handleTestConnection}
                             disabled={validating}
                             className="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-50"
                         >
                             <RefreshCw size={16} className={validating ? 'animate-spin' : ''} />
-                            {validating ? t('common.testing', 'Testing...') : t('shippingSetup.testConnection', 'Test')}
+                            {validating
+                                ? t('common.testing', 'Testing...')
+                                : carrier.connectionTestMode === 'LocalOnly'
+                                    ? t('shippingSetup.validateLocally', 'Validate')
+                                    : t('shippingSetup.testConnection', 'Test')}
                         </button>
                     )}
                 </div>

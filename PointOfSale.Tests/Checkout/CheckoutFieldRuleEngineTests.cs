@@ -167,6 +167,28 @@ public sealed class CheckoutFieldRuleEngineTests
         Assert.True(states[targetId].Visible);
     }
 
+    [Theory]
+    [InlineData(".5")]
+    [InlineData("5.")]
+    public void Evaluate_NumberComparison_AcceptsCanonicalDotForms(string value)
+    {
+        var sourceId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        var fields = new[]
+        {
+            CustomField(sourceId, CheckoutFieldType.Number, "Number", true, false, "{\"schemaVersion\":1}"),
+            CustomField(targetId, CheckoutFieldType.Text, "Target", true, false, RuleConfig(sourceId, "EQUALS", value, "SHOW"))
+        };
+
+        var states = CheckoutFieldRuleEngine.Evaluate(fields, new Dictionary<Guid, CheckoutFieldSubmittedValue>
+        {
+            [sourceId] = new(value),
+            [targetId] = new(null)
+        });
+
+        Assert.True(states[targetId].Visible);
+    }
+
     [Fact]
     public void Evaluate_DateComparison_RejectsNonCanonicalOffsetDate()
     {
@@ -185,6 +207,26 @@ public sealed class CheckoutFieldRuleEngineTests
         });
 
         Assert.False(states[targetId].Visible);
+    }
+
+    [Fact]
+    public void Evaluate_DateComparison_AcceptsYearOne()
+    {
+        var sourceId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        var fields = new[]
+        {
+            CustomField(sourceId, CheckoutFieldType.Date, "Date", true, false, "{\"schemaVersion\":1}"),
+            CustomField(targetId, CheckoutFieldType.Text, "Target", true, false, RuleConfig(sourceId, "EQUALS", "0001-01-01", "SHOW"))
+        };
+
+        var states = CheckoutFieldRuleEngine.Evaluate(fields, new Dictionary<Guid, CheckoutFieldSubmittedValue>
+        {
+            [sourceId] = new("0001-01-01"),
+            [targetId] = new(null)
+        });
+
+        Assert.True(states[targetId].Visible);
     }
 
     private static CheckoutFieldDefinition CustomField(Guid id, CheckoutFieldType type, string label, bool enabled, bool required, string configurationJson) => new()

@@ -29,9 +29,17 @@ const parseAttachmentCount = (value?: string): number => {
 const isTruthy = (value?: string | null) => value?.toLowerCase() === 'true' || value === '1';
 
 function compareCanonicalDecimals(left: string, right: string): number | null {
+    const normalize = (value: string) => {
+        let normalized = value;
+        if (normalized.startsWith('.')) normalized = `0${normalized}`;
+        if (normalized.startsWith('+.')) normalized = `+0${normalized.slice(1)}`;
+        if (normalized.startsWith('-.')) normalized = `-0${normalized.slice(1)}`;
+        if (normalized.endsWith('.')) normalized = `${normalized}0`;
+        return normalized;
+    };
     const pattern = /^([+-]?)(\d+)(?:\.(\d+))?$/;
-    const leftMatch = pattern.exec(left);
-    const rightMatch = pattern.exec(right);
+    const leftMatch = pattern.exec(normalize(left));
+    const rightMatch = pattern.exec(normalize(right));
     if (!leftMatch || !rightMatch) return null;
     const leftScale = leftMatch[3]?.length ?? 0;
     const rightScale = rightMatch[3]?.length ?? 0;
@@ -48,8 +56,22 @@ function compareCanonicalDecimals(left: string, right: string): number | null {
 function isCanonicalDate(value: string): boolean {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!match) return false;
-    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-    return date.toISOString().slice(0, 10) === value;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (year < 1 || year > 9999 || month < 1 || month > 12) return false;
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function compareOrdinalIgnoreCase(left: string, right: string, contains: boolean): boolean {
+    const pattern = contains ? escapeRegExp(right) : `^${escapeRegExp(right)}$`;
+    return new RegExp(pattern, 'iu').test(left);
 }
 
 function getFieldValue(field: CheckoutFieldDefinition, address: ShippingAddress, customValues: Record<string, string>): string {
@@ -104,13 +126,12 @@ function compare(field: CheckoutFieldDefinition, value: string, comparisonValue:
     }
 
     const caseSensitive = field.fieldType === 'SELECT' || field.fieldType === 'RADIO';
-    const normalizedLeft = caseSensitive ? left : left.toUpperCase();
-    const normalizedRight = caseSensitive ? right : right.toUpperCase();
-    const equals = normalizedLeft === normalizedRight;
+    const equals = caseSensitive ? left === right : compareOrdinalIgnoreCase(left, right, false);
     if (operator === 'EQUALS') return equals;
     if (operator === 'NOT_EQUALS') return !equals;
-    if (operator === 'CONTAINS') return normalizedLeft.includes(normalizedRight);
-    if (operator === 'NOT_CONTAINS') return !normalizedLeft.includes(normalizedRight);
+    const contains = caseSensitive ? left.includes(right) : compareOrdinalIgnoreCase(left, right, true);
+    if (operator === 'CONTAINS') return contains;
+    if (operator === 'NOT_CONTAINS') return !contains;
     return false;
 }
 

@@ -26,6 +26,21 @@ public class CheckoutRequestDto
     public Guid CartId { get; set; }
 
     /// <summary>
+    /// Server-owned checkout session that scoped warehouse resolution.
+    /// </summary>
+    public Guid? CheckoutSessionId { get; set; }
+
+    /// <summary>
+    /// Server-owned warehouse resolution returned by shipping-method preview.
+    /// </summary>
+    public Guid? WarehouseResolutionId { get; set; }
+
+    /// <summary>
+    /// Warehouse resolution version returned by shipping-method preview.
+    /// </summary>
+    public int? WarehouseResolutionVersion { get; set; }
+
+    /// <summary>
     /// Selected shipping method ID.
     /// </summary>
     public Guid ShippingMethodId { get; set; }
@@ -108,6 +123,21 @@ public class CheckoutRequestDto
         if (CartId == Guid.Empty)
         {
             return ("INVALID_CART_ID", "Cart ID is required");
+        }
+
+        if (!CheckoutSessionId.HasValue || CheckoutSessionId.Value == Guid.Empty)
+        {
+            return ("CHECKOUT_SESSION_REQUIRED", "Checkout session is required.");
+        }
+
+        if (!WarehouseResolutionId.HasValue || WarehouseResolutionId.Value == Guid.Empty)
+        {
+            return ("WAREHOUSE_RESOLUTION_REQUIRED", "Shipping methods must be refreshed before checkout.");
+        }
+
+        if (!WarehouseResolutionVersion.HasValue || WarehouseResolutionVersion.Value <= 0)
+        {
+            return ("WAREHOUSE_RESOLUTION_VERSION_REQUIRED", "Shipping methods must be refreshed before checkout.");
         }
 
         if (ShippingMethodId == Guid.Empty)
@@ -958,6 +988,13 @@ public class CartItemSnapshot
     /// Cost price from Variant (for profit calculation).
     /// </summary>
     public decimal CostPrice { get; set; }
+
+    /// <summary>
+    /// Authoritative unit weight in kilograms captured from the current
+    /// ProductVariant weight, falling back to Product weight.
+    /// Revalidated with price/catalog authority before checkout pricing.
+    /// </summary>
+    public decimal Weight { get; set; }
     
     /// <summary>
     /// Image URL from Variant (or Product fallback).

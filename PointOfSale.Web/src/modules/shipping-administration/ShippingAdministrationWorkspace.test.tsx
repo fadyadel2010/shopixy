@@ -7,9 +7,11 @@ import ShippingAdministrationWorkspace from './ShippingAdministrationWorkspace'
 import {
     admitCarrierAccounts,
     admitSupportedCarriers,
+    admitWarehouses,
     createShippingAdministrationSummary,
     fetchCarrierAccounts,
     fetchSupportedCarriers,
+    fetchWarehouses,
 } from './shippingAdministrationApi'
 import PosRoleRouteGuard from '../../components/PosRoleRouteGuard'
 import { useAuthStore } from '../../store/authStore'
@@ -136,6 +138,37 @@ const carrierAccountPayload = [
             failureReason: null,
             testedAtUtc: '2026-07-08T09:30:00Z',
         },
+        integrationReadiness: {
+            enabled: true,
+            canExecute: true,
+            environment: 'Sandbox',
+            productionCapability: 'Partial',
+            blockers: [],
+            originReadinessRequired: false,
+            originReadinessSatisfied: true,
+            credentialAvailability: 'Available',
+        },
+    },
+]
+
+const warehousePayload = [
+    {
+        id: '33333333-3333-4333-8333-333333333333',
+        name: 'Alexandria Warehouse',
+        code: 'ALEX',
+        address: 'Alexandria',
+        phone: '+20',
+        isActive: true,
+        isDefault: true,
+    },
+    {
+        id: '66666666-6666-4666-8666-666666666666',
+        name: 'مخزن القاهرة',
+        code: null,
+        address: 'Cairo',
+        phone: null,
+        isActive: true,
+        isDefault: false,
     },
 ]
 
@@ -160,6 +193,9 @@ function mockWorkspaceReads() {
         }
         if (url === '/admin/shipping/carrier-accounts') {
             return Promise.resolve({ data: carrierAccountPayload })
+        }
+        if (url === '/warehouses') {
+            return Promise.resolve({ data: warehousePayload })
         }
         if (url === '/admin/shipping/audit') {
             return Promise.resolve({ data: auditPayload })
@@ -207,12 +243,16 @@ describe('ShippingAdministrationWorkspace', () => {
 
         await fetchSupportedCarriers()
         await fetchCarrierAccounts()
+        await fetchWarehouses()
 
         expect(api.get).toHaveBeenCalledWith('/admin/shipping/supported-carriers', expect.objectContaining({
             headers: expect.objectContaining({ 'Cache-Control': 'no-store' }),
         }))
         expect(api.get).toHaveBeenCalledWith('/admin/shipping/carrier-accounts', expect.objectContaining({
             headers: expect.objectContaining({ Pragma: 'no-cache' }),
+        }))
+        expect(api.get).toHaveBeenCalledWith('/warehouses', expect.objectContaining({
+            headers: expect.objectContaining({ 'Cache-Control': 'no-store' }),
         }))
     })
 
@@ -250,13 +290,13 @@ describe('ShippingAdministrationWorkspace', () => {
         cashier.unmount()
     })
 
-    it('renders health reasons and append-only audit without editing controls', async () => {
+    it('renders provider readiness and append-only audit without editing controls', async () => {
         mockWorkspaceReads()
 
         render(<ShippingAdministrationWorkspace initialTab="health" />)
 
-        expect(await screen.findByText('Backend health reason')).toBeInTheDocument()
-        expect(screen.getByText('Customs Readiness Missing')).toBeInTheDocument()
+        expect(await screen.findByText('Provider Readiness States')).toBeInTheDocument()
+        expect(screen.getByText('Credential availability: Available')).toBeInTheDocument()
 
         fireEvent.click(screen.getByRole('button', { name: 'Audit' }))
 
@@ -289,6 +329,74 @@ describe('ShippingAdministrationWorkspace', () => {
         ))
     })
 
+    it('does not expose carrier-account warehouse assignment as merchant-facing shipping authority', async () => {
+        mockWorkspaceReads()
+        mockSuccessfulMutations()
+
+        render(<ShippingAdministrationWorkspace initialTab="carrier-accounts" />)
+
+        await waitFor(() => expect(screen.getAllByText('FedEx').length).toBeGreaterThan(0))
+        expect(screen.queryByLabelText('Warehouse')).not.toBeInTheDocument()
+        expect(screen.queryByPlaceholderText('Warehouse ID')).not.toBeInTheDocument()
+        expect(screen.queryByText('Warehouse Assignment')).not.toBeInTheDocument()
+        expect(screen.queryByRole('option', { name: 'Alexandria Warehouse (ALEX)' })).not.toBeInTheDocument()
+        expect(screen.queryByText('No active warehouses available')).not.toBeInTheDocument()
+        expect(screen.queryByText('Origin readiness published')).not.toBeInTheDocument()
+        expect(screen.queryByPlaceholderText('Readiness evidence reference')).not.toBeInTheDocument()
+        expect(api.put).not.toHaveBeenCalledWith(
+            expect.stringContaining('/warehouse-assignments/'),
+            expect.anything(),
+        )
+    })
+
+    it('keeps legacy warehouse assignments out of the merchant-facing workspace tabs', async () => {
+        mockWorkspaceReads()
+
+        render(<ShippingAdministrationWorkspace />)
+
+        expect(await screen.findByText('Shipping Administration')).toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Warehouses' })).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Policies' })).not.toBeInTheDocument()
+    })
+
+    it('hides legacy manual carrier-account rows from carrier account cards', async () => {
+        api.get.mockImplementation((url) => {
+            if (url === '/admin/shipping/supported-carriers') return Promise.resolve({ data: supportedCarrierPayload })
+            if (url === '/admin/shipping/carrier-accounts') return Promise.resolve({
+                data: [
+                    ...carrierAccountPayload,
+                    {
+                        ...carrierAccountPayload[0],
+                        id: '77777777-7777-4777-8777-777777777777',
+                        carrierCode: 'manual',
+                        state: 'Draft',
+                        operationalState: 'NotReady',
+                        healthState: 'Blocked',
+                        integrationReadiness: {
+                            enabled: true,
+                            canExecute: true,
+                            environment: null,
+                            productionCapability: 'ProductionReady',
+                            blockers: [],
+                            originReadinessRequired: false,
+                            originReadinessSatisfied: true,
+                            credentialAvailability: 'NotRequired',
+                        },
+                    },
+                ],
+            })
+            if (url === '/warehouses') return Promise.resolve({ data: [] })
+            if (url === '/admin/shipping/audit') return Promise.resolve({ data: auditPayload })
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<ShippingAdministrationWorkspace initialTab="carrier-accounts" />)
+
+        await waitFor(() => expect(screen.getAllByText('FedEx').length).toBeGreaterThan(0))
+        expect(screen.queryByText('Manual Fulfillment')).not.toBeInTheDocument()
+        expect(screen.queryByText('Warehouse Missing')).not.toBeInTheDocument()
+    })
+
     it('keeps summary presentation derived from DTO state without activation gate duplication', () => {
         const accounts = admitCarrierAccounts(carrierAccountPayload)
         const summary = createShippingAdministrationSummary(accounts)
@@ -315,5 +423,60 @@ describe('ShippingAdministrationWorkspace', () => {
             expect(combined.toLowerCase()).not.toContain(provider)
         })
         expect(admitSupportedCarriers(supportedCarrierPayload).map((carrier) => carrier.displayName)).toEqual(['Aramex', 'Bosta', 'DHL', 'FedEx'])
+    })
+
+    it('keeps Shipping Methods carrier identity backed by the supported-carrier API', () => {
+        const moduleRoot = resolve(process.cwd(), 'src/modules/shipping-administration')
+        const methodsTab = readFileSync(resolve(moduleRoot, 'components/ShippingMethodsTab.jsx'), 'utf8')
+
+        expect(methodsTab).toContain('fetchSupportedCarriers')
+        expect(methodsTab).toContain('carrierCode: normalizedCarrierCode')
+        expect(methodsTab).toContain('serviceLevel: normalizedServiceLevel')
+        expect(methodsTab).toContain('getCarrierDisplayName(supportedCarriers')
+        expect(methodsTab).not.toContain('placeholder="Carrier display name"')
+        expect(methodsTab).not.toContain('value={formData.carrierName}')
+    })
+
+    it('uses backend metadata to keep Manual Fulfillment out of carrier-account creation', () => {
+        const moduleRoot = resolve(process.cwd(), 'src/modules/shipping-administration')
+        const workspace = readFileSync(resolve(moduleRoot, 'ShippingAdministrationWorkspace.jsx'), 'utf8')
+        const card = readFileSync(resolve(moduleRoot, 'components/CarrierAccountCard.jsx'), 'utf8')
+
+        expect(workspace).toContain('accountRequired !== false')
+        expect(card).toContain('accountRequired')
+        expect(card).toContain('does not require credentials')
+        expect(admitSupportedCarriers([
+            {
+                carrierCode: 'manual',
+                displayName: 'Manual Fulfillment',
+                accountRequired: false,
+                readinessRequired: false,
+                isExternal: false,
+                serviceLevels: [],
+            },
+        ])[0]).toMatchObject({
+            carrierCode: 'manual',
+            accountRequired: false,
+            readinessRequired: false,
+            isExternal: false,
+        })
+    })
+
+    it('admits canonical warehouse API metadata for multilingual selector labels', () => {
+        const warehouses = admitWarehouses(warehousePayload)
+
+        expect(warehouses).toEqual([
+            expect.objectContaining({
+                id: '33333333-3333-4333-8333-333333333333',
+                name: 'Alexandria Warehouse',
+                code: 'ALEX',
+                isActive: true,
+                isDefault: true,
+            }),
+            expect.objectContaining({
+                id: '66666666-6666-4666-8666-666666666666',
+                name: 'مخزن القاهرة',
+            }),
+        ])
     })
 })

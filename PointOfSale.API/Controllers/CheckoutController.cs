@@ -12,6 +12,7 @@ using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.Http;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
+using PointOfSale.API.Services.Storefront;
 
 namespace PointOfSale.API.Controllers;
 
@@ -329,6 +330,14 @@ public class CheckoutController : ControllerBase
                 ex.ErrorCode,
                 traceId);
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (WarehouseResolutionException ex)
+        {
+            _logger.LogWarning(
+                "Checkout warehouse resolution rejected | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                ex.ErrorCode,
+                traceId);
+            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
         catch (CheckoutStorefrontUnavailableException ex)
         {

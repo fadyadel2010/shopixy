@@ -43,6 +43,7 @@ public interface IR2StorageService
         string sourceObjectKey,
         string destinationObjectKey,
         string contentType,
+        string? sourceIfMatchETag,
         CancellationToken cancellationToken = default);
 
     Task<R2DownloadObjectResult> DownloadObjectAsync(
@@ -131,7 +132,7 @@ public class R2StorageService : IR2StorageService, IDisposable
             var publicUrl = string.IsNullOrWhiteSpace(_options.PublicUrl)
                 ? null
                 : BuildPublicUrl(objectKey);
-            _logger.LogInformation("Uploaded file to R2 | Bucket: {Bucket} | Key: {Key}", _options.Bucket, objectKey);
+            _logger.LogInformation("Uploaded file to R2 | ContentType: {ContentType}", NormalizeContentType(contentType));
 
             return new R2UploadResult(publicUrl, fileName, objectKey);
         }
@@ -139,9 +140,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 upload failed | Bucket: {Bucket} | Path: {Path} | ContentType: {ContentType}",
-                _options.Bucket,
-                path,
+                "R2 upload failed | ContentType: {ContentType}",
                 NormalizeContentType(contentType));
             throw;
         }
@@ -183,9 +182,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 presigned upload URL generation failed | Bucket: {Bucket} | Path: {Path} | ContentType: {ContentType}",
-                _options.Bucket,
-                path,
+                "R2 presigned upload URL generation failed | ContentType: {ContentType}",
                 NormalizeContentType(contentType));
             throw;
         }
@@ -216,9 +213,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 presigned download URL generation failed | Bucket: {Bucket} | ObjectKey: {ObjectKey}",
-                _options.Bucket,
-                objectKey);
+                "R2 presigned download URL generation failed");
             throw;
         }
     }
@@ -249,9 +244,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogInformation(
                 ex,
-                "R2 metadata lookup returned expected S3 status | Bucket: {Bucket} | ObjectKey: {ObjectKey} | StatusCode: {StatusCode}",
-                _options.Bucket,
-                objectKey,
+                "R2 metadata lookup returned expected S3 status | StatusCode: {StatusCode}",
                 ((AmazonS3Exception)ex).StatusCode);
             throw;
         }
@@ -259,9 +252,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 metadata lookup failed | Bucket: {Bucket} | ObjectKey: {ObjectKey}",
-                _options.Bucket,
-                objectKey);
+                "R2 metadata lookup failed");
             throw;
         }
     }
@@ -311,9 +302,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogInformation(
                 ex,
-                "R2 object read returned expected S3 status | Bucket: {Bucket} | ObjectKey: {ObjectKey} | MaxBytes: {MaxBytes} | StatusCode: {StatusCode}",
-                _options.Bucket,
-                objectKey,
+                "R2 object read returned expected S3 status | MaxBytes: {MaxBytes} | StatusCode: {StatusCode}",
                 maxBytes,
                 ((AmazonS3Exception)ex).StatusCode);
             throw;
@@ -322,9 +311,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 object read failed | Bucket: {Bucket} | ObjectKey: {ObjectKey} | MaxBytes: {MaxBytes}",
-                _options.Bucket,
-                objectKey,
+                "R2 object read failed | MaxBytes: {MaxBytes}",
                 maxBytes);
             throw;
         }
@@ -351,9 +338,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogInformation(
                 ex,
-                "R2 object delete returned expected S3 status | Bucket: {Bucket} | ObjectKey: {ObjectKey} | StatusCode: {StatusCode}",
-                _options.Bucket,
-                objectKey,
+                "R2 object delete returned expected S3 status | StatusCode: {StatusCode}",
                 ((AmazonS3Exception)ex).StatusCode);
             throw;
         }
@@ -361,9 +346,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 object delete failed | Bucket: {Bucket} | ObjectKey: {ObjectKey}",
-                _options.Bucket,
-                objectKey);
+                "R2 object delete failed");
             throw;
         }
     }
@@ -372,6 +355,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         string sourceObjectKey,
         string destinationObjectKey,
         string contentType,
+        string? sourceIfMatchETag,
         CancellationToken cancellationToken = default)
     {
         try
@@ -385,7 +369,8 @@ public class R2StorageService : IR2StorageService, IDisposable
                 DestinationBucket = _options.Bucket,
                 DestinationKey = destinationObjectKey,
                 MetadataDirective = S3MetadataDirective.REPLACE,
-                ContentType = NormalizeContentType(contentType)
+                ContentType = NormalizeContentType(contentType),
+                ETagToMatch = sourceIfMatchETag
             };
 
             await GetOrCreateClient().CopyObjectAsync(request, cancellationToken);
@@ -395,10 +380,8 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 object copy failed | Bucket: {Bucket} | SourceObjectKey: {SourceObjectKey} | DestinationObjectKey: {DestinationObjectKey}",
-                _options.Bucket,
-                sourceObjectKey,
-                destinationObjectKey);
+                "R2 object copy failed | SourceETagRequired: {SourceETagRequired}",
+                !string.IsNullOrWhiteSpace(sourceIfMatchETag));
             throw;
         }
     }
@@ -435,9 +418,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogInformation(
                 ex,
-                "R2 object download returned expected S3 status | Bucket: {Bucket} | ObjectKey: {ObjectKey} | StatusCode: {StatusCode}",
-                _options.Bucket,
-                objectKey,
+                "R2 object download returned expected S3 status | StatusCode: {StatusCode}",
                 ((AmazonS3Exception)ex).StatusCode);
             throw;
         }
@@ -445,9 +426,7 @@ public class R2StorageService : IR2StorageService, IDisposable
         {
             _logger.LogError(
                 ex,
-                "R2 object download failed | Bucket: {Bucket} | ObjectKey: {ObjectKey}",
-                _options.Bucket,
-                objectKey);
+                "R2 object download failed");
             throw;
         }
     }
@@ -488,10 +467,7 @@ public class R2StorageService : IR2StorageService, IDisposable
                 AuthenticationRegion = "auto"
             };
 
-            _logger.LogInformation(
-                "Initializing R2 S3 client | ServiceUrl: {ServiceUrl} | Bucket: {Bucket}",
-                config.ServiceURL,
-                _options.Bucket);
+            _logger.LogInformation("Initializing R2 S3 client");
 
             _s3Client = new AmazonS3Client(credentials, config);
             return _s3Client;

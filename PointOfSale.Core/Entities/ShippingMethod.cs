@@ -87,6 +87,14 @@ public class ShippingMethod : BaseEntity, ITenantOwned
     /// Used when creating shipments to determine carrier service level.
     /// </summary>
     public string ServiceLevel { get; set; } = "standard";
+
+    /// <summary>
+    /// Tenant-owned warehouse from which this shipping method fulfills orders.
+    /// Nullable for legacy rows until merchants explicitly configure them.
+    /// </summary>
+    public Guid? FulfillmentWarehouseId { get; set; }
+
+    public Warehouse? FulfillmentWarehouse { get; set; }
     
     /// <summary>
     /// Tracking URL template (use {tracking_number} as placeholder)

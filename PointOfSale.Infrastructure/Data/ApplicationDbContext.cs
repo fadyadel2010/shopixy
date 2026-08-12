@@ -165,6 +165,7 @@ public class ApplicationDbContext : DbContext
     // E-commerce Orders
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
+    public DbSet<WarehouseResolution> WarehouseResolutions => Set<WarehouseResolution>();
     public DbSet<CheckoutAttachment> CheckoutAttachments => Set<CheckoutAttachment>();
     public DbSet<OrderCheckoutFieldSnapshot> OrderCheckoutFieldSnapshots => Set<OrderCheckoutFieldSnapshot>();
     public DbSet<OrderRefund> OrderRefunds => Set<OrderRefund>();
@@ -584,6 +585,9 @@ public class ApplicationDbContext : DbContext
             
         modelBuilder.Entity<Warehouse>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<Warehouse>()
+            .HasAlternateKey(e => new { e.TenantId, e.Id })
+            .HasName("AK_Warehouses_TenantId_Id");
             
         modelBuilder.Entity<Supplier>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -661,6 +665,21 @@ public class ApplicationDbContext : DbContext
             
         modelBuilder.Entity<ShippingMethod>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<ShippingMethod>(entity =>
+        {
+            entity.ToTable(table => table.HasCheckConstraint(
+                "CK_ShippingMethods_ActiveRequiresFulfillmentWarehouse",
+                "NOT \"IsActive\" OR \"FulfillmentWarehouseId\" IS NOT NULL"));
+
+            entity.HasIndex(e => new { e.TenantId, e.FulfillmentWarehouseId })
+                .HasDatabaseName("IX_ShippingMethods_TenantId_FulfillmentWarehouseId");
+
+            entity.HasOne(e => e.FulfillmentWarehouse)
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.FulfillmentWarehouseId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+        });
             
         modelBuilder.Entity<Coupon>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -1585,6 +1604,8 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<CheckoutSession>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.HasAlternateKey(e => new { e.TenantId, e.Id })
+                .HasName("AK_CheckoutSessions_TenantId_Id");
             entity.HasIndex(e => e.TenantId);
             entity.HasIndex(e => e.CartId);
             entity.HasIndex(e => new { e.TenantId, e.CartId });
@@ -1627,6 +1648,72 @@ public class ApplicationDbContext : DbContext
             entity.Ignore(e => e.IsDeleted);
             entity.Ignore(e => e.CreatedBy);
             entity.Ignore(e => e.UpdatedBy);
+        });
+
+        modelBuilder.Entity<WarehouseResolution>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+            entity.Property(e => e.Status).HasConversion<string>().HasMaxLength(40);
+            entity.Property(e => e.ResolutionSource).HasConversion<string>().HasMaxLength(80);
+            entity.Property(e => e.AlgorithmCode).HasMaxLength(120).IsRequired();
+            entity.Property(e => e.InputsSnapshotHash).HasMaxLength(128).IsRequired();
+            entity.Property(e => e.FailureCode).HasMaxLength(120);
+            entity.Property(e => e.InvalidationReason).HasMaxLength(200);
+
+            entity.HasIndex(e => e.TenantId);
+            entity.HasIndex(e => new { e.TenantId, e.CheckoutSessionId, e.Status })
+                .HasDatabaseName("IX_WarehouseResolutions_TenantId_Session_Status");
+            entity.HasIndex(e => new { e.TenantId, e.CheckoutSessionId, e.ResolutionVersion })
+                .IsUnique()
+                .HasDatabaseName("UX_WarehouseResolutions_TenantId_Session_Version");
+            entity.HasIndex(e => new { e.TenantId, e.CheckoutSessionId })
+                .IsUnique()
+                .HasFilter("\"Status\" IN ('Resolved', 'Locked') AND \"IsDeleted\" = false")
+                .HasDatabaseName("IX_WarehouseResolutions_TenantId_Session_Active_Unique");
+            entity.HasIndex(e => new { e.TenantId, e.CartId, e.Status })
+                .HasDatabaseName("IX_WarehouseResolutions_TenantId_Cart_Status");
+            entity.HasIndex(e => new { e.TenantId, e.WarehouseId, e.Status })
+                .HasDatabaseName("IX_WarehouseResolutions_TenantId_Warehouse_Status");
+            entity.HasIndex(e => new { e.TenantId, e.ExpiresAtUtc, e.Status })
+                .HasDatabaseName("IX_WarehouseResolutions_TenantId_Expires_Status");
+            entity.HasIndex(e => e.InputsSnapshotHash)
+                .HasDatabaseName("IX_WarehouseResolutions_InputsSnapshotHash");
+
+            entity.HasOne(e => e.CheckoutSession)
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.CheckoutSessionId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Warehouse)
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.WarehouseId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ConvertedOrder)
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.ConvertedOrderId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.ToTable(table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_WarehouseResolutions_ResolvedStatusesRequireWarehouse",
+                    "\"Status\" NOT IN ('Resolved', 'Locked', 'Ordered') OR \"WarehouseId\" IS NOT NULL");
+                table.HasCheckConstraint(
+                    "CK_WarehouseResolutions_ResolutionVersion_Positive",
+                    "\"ResolutionVersion\" > 0");
+                table.HasCheckConstraint(
+                    "CK_WarehouseResolutions_OrderedRequiresOrder",
+                    "\"Status\" <> 'Ordered' OR \"ConvertedOrderId\" IS NOT NULL");
+                table.HasCheckConstraint(
+                    "CK_WarehouseResolutions_FailedRequiresCode",
+                    "\"Status\" <> 'Failed' OR \"FailureCode\" IS NOT NULL");
+            });
         });
 
         modelBuilder.Entity<StorefrontCartCouponState>(entity =>
@@ -1877,6 +1964,7 @@ public class ApplicationDbContext : DbContext
             entity.Property(o => o.PaymentFee).HasPrecision(18, 2);
             entity.Property(o => o.Total).HasPrecision(18, 2);
             entity.Property(o => o.PricingSnapshotJson).HasColumnType("text");
+            entity.Property(o => o.ShippingServiceLevel).HasMaxLength(50);
             entity.Property(o => o.FinancialPostingStatus).HasConversion<int>();
             entity.Property(o => o.FinancialPostingFailureReason).HasMaxLength(1000);
             ConfigureOrderGeographicSnapshotProperties(entity);
@@ -3120,7 +3208,9 @@ public class ApplicationDbContext : DbContext
             entity.Property(e => e.AccountId).HasMaxLength(100);
             entity.Property(e => e.ApiUrl).HasMaxLength(500);
             entity.Property(e => e.WebhookUrl).HasMaxLength(500);
-            entity.Property(e => e.WebhookSecret).HasMaxLength(256);
+            entity.Property(e => e.WebhookSecret).HasMaxLength(500);
+            entity.Property(e => e.CredentialConfigurationFingerprint).HasMaxLength(64);
+            entity.Property(e => e.LastValidatedConfigurationFingerprint).HasMaxLength(64);
             entity.Property(e => e.PickupAddress).HasMaxLength(500);
             entity.Property(e => e.PickupCity).HasMaxLength(100);
             entity.Property(e => e.PickupCountry).HasMaxLength(10);
@@ -3142,6 +3232,8 @@ public class ApplicationDbContext : DbContext
         modelBuilder.Entity<CarrierAccount>(entity =>
         {
             entity.HasKey(e => e.Id);
+            entity.HasAlternateKey(e => new { e.TenantId, e.Id })
+                .HasName("AK_CarrierAccounts_TenantId_Id");
             entity.HasQueryFilter(e => !e.IsDeleted && e.TenantId == CurrentTenantId);
             entity.HasIndex(e => new { e.TenantId, e.CarrierCode })
                 .IsUnique()
@@ -3172,6 +3264,16 @@ public class ApplicationDbContext : DbContext
                 .IsUnique()
                 .HasFilter("\"IsDeleted\" = false");
             entity.Property(e => e.ReadinessEvidenceReference).HasMaxLength(300);
+            entity.HasOne<CarrierAccount>()
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.CarrierAccountId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<Warehouse>()
+                .WithMany()
+                .HasForeignKey(e => new { e.TenantId, e.WarehouseId })
+                .HasPrincipalKey(e => new { e.TenantId, e.Id })
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<CarrierAccountPolicy>(entity =>
@@ -3446,6 +3548,7 @@ public class ApplicationDbContext : DbContext
         NormalizeCouponCodes();
         EnsureCanonicalIdentityLinks();
         GuardPosTenantForeignKeyCoOwnership();
+        GuardShippingMethodWarehouseAuthority();
         ApplyAuditAndCommerceHubImmutabilityGuardsCore();
     }
 
@@ -3454,8 +3557,110 @@ public class ApplicationDbContext : DbContext
         NormalizeCouponCodes();
         await EnsureCanonicalIdentityLinksAsync(cancellationToken);
         await GuardPosTenantForeignKeyCoOwnershipAsync(cancellationToken);
+        await GuardShippingMethodWarehouseAuthorityAsync(cancellationToken);
         ApplyAuditAndCommerceHubImmutabilityGuardsCore();
     }
+
+    private void GuardShippingMethodWarehouseAuthority()
+    {
+        foreach (var method in PendingActiveShippingMethods())
+        {
+            if (!method.FulfillmentWarehouseId.HasValue || method.FulfillmentWarehouseId == Guid.Empty)
+            {
+                throw new InvalidOperationException("Active shipping methods require a fulfillment warehouse.");
+            }
+
+            var trackedWarehouse = ChangeTracker.Entries<Warehouse>().FirstOrDefault(entry =>
+                entry.Entity.Id == method.FulfillmentWarehouseId.Value &&
+                entry.Entity.TenantId == method.TenantId);
+            var warehouseIsValid = trackedWarehouse != null
+                ? trackedWarehouse.State != EntityState.Deleted &&
+                  trackedWarehouse.Entity.IsActive &&
+                  !trackedWarehouse.Entity.IsDeleted
+                : Warehouses.IgnoreQueryFilters().Any(warehouse =>
+                    warehouse.Id == method.FulfillmentWarehouseId.Value &&
+                    warehouse.TenantId == method.TenantId &&
+                    warehouse.IsActive &&
+                    !warehouse.IsDeleted);
+            if (!warehouseIsValid)
+            {
+                throw new InvalidOperationException("Active shipping methods require an active tenant-owned fulfillment warehouse.");
+            }
+        }
+
+        GuardWarehousesCannotInvalidateActiveShippingMethods(useAsync: false).GetAwaiter().GetResult();
+    }
+
+    private async Task GuardShippingMethodWarehouseAuthorityAsync(CancellationToken cancellationToken)
+    {
+        foreach (var method in PendingActiveShippingMethods())
+        {
+            if (!method.FulfillmentWarehouseId.HasValue || method.FulfillmentWarehouseId == Guid.Empty)
+            {
+                throw new InvalidOperationException("Active shipping methods require a fulfillment warehouse.");
+            }
+
+            var trackedWarehouse = ChangeTracker.Entries<Warehouse>().FirstOrDefault(entry =>
+                entry.Entity.Id == method.FulfillmentWarehouseId.Value &&
+                entry.Entity.TenantId == method.TenantId);
+            var persistedWarehouseIsValid = trackedWarehouse != null
+                ? trackedWarehouse.State != EntityState.Deleted &&
+                  trackedWarehouse.Entity.IsActive &&
+                  !trackedWarehouse.Entity.IsDeleted
+                : await Warehouses.IgnoreQueryFilters().AnyAsync(warehouse =>
+                    warehouse.Id == method.FulfillmentWarehouseId.Value &&
+                    warehouse.TenantId == method.TenantId &&
+                    warehouse.IsActive &&
+                    !warehouse.IsDeleted,
+                    cancellationToken);
+            if (!persistedWarehouseIsValid)
+            {
+                throw new InvalidOperationException("Active shipping methods require an active tenant-owned fulfillment warehouse.");
+            }
+        }
+
+        await GuardWarehousesCannotInvalidateActiveShippingMethods(useAsync: true, cancellationToken);
+    }
+
+    private async Task GuardWarehousesCannotInvalidateActiveShippingMethods(
+        bool useAsync,
+        CancellationToken cancellationToken = default)
+    {
+        var invalidatedWarehouses = ChangeTracker.Entries<Warehouse>()
+            .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            .Where(entry => entry.State == EntityState.Deleted || !entry.Entity.IsActive || entry.Entity.IsDeleted)
+            .Select(entry => new { entry.Entity.Id, entry.Entity.TenantId })
+            .ToList();
+        var deactivatedMethodIds = ChangeTracker.Entries<ShippingMethod>()
+            .Where(entry => entry.State is EntityState.Modified or EntityState.Deleted)
+            .Where(entry => entry.State == EntityState.Deleted || !entry.Entity.IsActive || entry.Entity.IsDeleted)
+            .Select(entry => entry.Entity.Id)
+            .ToList();
+
+        foreach (var warehouse in invalidatedWarehouses)
+        {
+            var query = ShippingMethods.IgnoreQueryFilters().Where(method =>
+                method.TenantId == warehouse.TenantId &&
+                method.FulfillmentWarehouseId == warehouse.Id &&
+                method.IsActive &&
+                !method.IsDeleted &&
+                !deactivatedMethodIds.Contains(method.Id));
+            var hasDependentActiveMethod = useAsync
+                ? await query.AnyAsync(cancellationToken)
+                : query.Any();
+            if (hasDependentActiveMethod)
+            {
+                throw new InvalidOperationException(
+                    "A warehouse used by an active shipping method cannot be deactivated or deleted.");
+            }
+        }
+    }
+
+    private IEnumerable<ShippingMethod> PendingActiveShippingMethods() =>
+        ChangeTracker.Entries<ShippingMethod>()
+            .Where(entry => entry.State is EntityState.Added or EntityState.Modified)
+            .Select(entry => entry.Entity)
+            .Where(method => method.IsActive && !method.IsDeleted);
 
     /// <summary>
     /// Shared core logic for audit and immutability guards.
@@ -3487,6 +3692,7 @@ public class ApplicationDbContext : DbContext
         GuardGeographicBusinessSnapshotPersistence();
         GuardStorefrontOrderHistoricalSnapshotImmutability();
         GuardOrderCheckoutFieldSnapshotImmutability();
+        GuardWarehouseResolutionAuthority();
         IncrementMarketplaceProjectionMutationVersions();
         ResetCommerceHubProjectionMarkersForBusinessMutations();
         IncrementRowVersionForNonPostgreSQL();
@@ -3842,6 +4048,7 @@ public class ApplicationDbContext : DbContext
             nameof(Order.BillingCountry),
             nameof(Order.ShippingMethodId),
             nameof(Order.ShippingMethodName),
+            nameof(Order.ShippingServiceLevel),
             nameof(Order.ShippingCost),
             nameof(Order.EstimatedDeliveryDays),
             nameof(Order.Subtotal),
@@ -3936,6 +4143,32 @@ public class ApplicationDbContext : DbContext
             {
                 throw new InvalidOperationException(
                     $"{nameof(OrderCheckoutFieldSnapshot)} records are immutable order-history evidence and cannot be updated after creation.");
+            }
+        }
+    }
+
+    private void GuardWarehouseResolutionAuthority()
+    {
+        GuardImmutableProperties<WarehouseResolution>(
+            "Warehouse resolution decision inputs are immutable after creation",
+            nameof(WarehouseResolution.TenantId),
+            nameof(WarehouseResolution.CheckoutSessionId),
+            nameof(WarehouseResolution.CartId),
+            nameof(WarehouseResolution.WarehouseId),
+            nameof(WarehouseResolution.ResolutionSource),
+            nameof(WarehouseResolution.ResolutionVersion),
+            nameof(WarehouseResolution.AlgorithmCode),
+            nameof(WarehouseResolution.InputsSnapshotHash),
+            nameof(WarehouseResolution.InputsSnapshotJson),
+            nameof(WarehouseResolution.CreatedAtUtc));
+
+        foreach (var entry in ChangeTracker.Entries<WarehouseResolution>())
+        {
+            if (entry.State == EntityState.Deleted ||
+                (entry.State == EntityState.Modified && entry.Property(item => item.IsDeleted).IsModified))
+            {
+                throw new InvalidOperationException(
+                    $"{nameof(WarehouseResolution)} records are retained checkout authority and cannot be deleted.");
             }
         }
     }

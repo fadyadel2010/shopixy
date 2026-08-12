@@ -21,7 +21,7 @@ namespace PointOfSale.Tests.Security;
 
 public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDisposable
 {
-    private const string CarrierCode = CarrierCodes.Mylerz;
+    private const string CarrierCode = CarrierCodes.Bosta;
     private const string TrackingNumber = "MYL-TRACK-123";
     private const string WebhookSecret = "topsecret";
 
@@ -62,17 +62,28 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             .ReturnsAsync((Guid orderId, FulfillmentStatus targetStatus, FulfillmentRequestSource source, Guid? shipmentId, string? trackingNumber, string? actor, string? idempotencyKey, CancellationToken ct) =>
                 OrderFulfillmentResult.Succeeded(orderId, "TEST", targetStatus, targetStatus, source, idempotencyKey));
 
+        var encryption = new Mock<ICarrierCredentialEncryptionService>(MockBehavior.Strict);
+        encryption.Setup(service => service.Decrypt(It.IsAny<string?>()))
+            .Returns<string?>(value => value ?? string.Empty);
+        var authority = new CarrierIntegrationAuthority(
+            _db,
+            registry.Object,
+            new CarrierCapabilityRegistry(registry.Object),
+            encryption.Object,
+            NullLogger<CarrierIntegrationAuthority>.Instance);
+
         _service = new CarrierShipmentService(
             _db,
             registry.Object,
-            Mock.Of<ICarrierCredentialEncryptionService>(),
+            encryption.Object,
             new NoOpEventPublisher(),
             fulfillmentService.Object,
             new CommerceReliabilityTelemetry(),
             _tenantContext,
             Mock.Of<ICustomsEvidenceAdmissionService>(),
             Mock.Of<ICarrierGeographicMappingService>(),
-            NullLogger<CarrierShipmentService>.Instance);
+            NullLogger<CarrierShipmentService>.Instance,
+            authority);
     }
 
     [Fact]
@@ -139,7 +150,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             userAgent: "test-suite",
             CancellationToken.None);
 
-        Assert.True(result.Success);
+        Assert.True(result.Success, $"{result.ErrorCode}: {result.ErrorMessage}");
         Assert.True(result.StatusChanged);
         Assert.Equal(_shipmentId, result.ShipmentId);
 
@@ -156,6 +167,8 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
         Assert.Equal("evt_valid", webhookLog.EventId);
         Assert.Equal(CarrierCode, webhookLog.CarrierCode);
         Assert.True(webhookLog.SignatureVerified);
+        Assert.NotEqual(WebhookSecret, webhookLog.Signature);
+        Assert.StartsWith("sha256:", webhookLog.Signature, StringComparison.Ordinal);
         Assert.Equal(WebhookProcessingStatus.Completed, webhookLog.ProcessingStatus);
         Assert.Equal(_shipmentId, webhookLog.ShipmentId);
     }
@@ -182,7 +195,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             userAgent: "test-suite",
             CancellationToken.None);
 
-        Assert.True(firstResult.Success);
+        Assert.True(firstResult.Success, $"{firstResult.ErrorCode}: {firstResult.ErrorMessage}");
         Assert.True(secondResult.Success);
         Assert.True(secondResult.IsDuplicate);
         Assert.False(secondResult.StatusChanged);
@@ -190,20 +203,20 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
     }
 
     [Fact]
-    public async Task ProcessWebhookAsync_UppercaseHexSignature_IsAcceptedCaseInsensitively()
+    public async Task ProcessWebhookAsync_MixedCaseBearerPrefix_IsNormalizedAndAccepted()
     {
         var payload = BuildPayload("evt_uppercase_sig", "delivered");
-        var uppercaseSignature = ComputeSignatureUppercase(payload, WebhookSecret);
+        var bearerSignature = $"bEaReR {WebhookSecret}";
 
         var result = await _service.ProcessWebhookAsync(
             CarrierCode,
             payload,
-            uppercaseSignature,
+            bearerSignature,
             sourceIp: "203.0.113.10",
             userAgent: "test-suite",
             CancellationToken.None);
 
-        Assert.True(result.Success);
+        Assert.True(result.Success, $"{result.ErrorCode}: {result.ErrorMessage}");
         Assert.True(result.StatusChanged);
         Assert.Equal(_shipmentId, result.ShipmentId);
 
@@ -263,7 +276,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             Id = Guid.NewGuid(),
             TenantId = _tenantId,
             CarrierCode = CarrierCode,
-            DisplayName = "Mylerz",
+            DisplayName = "Bosta",
             IsEnabled = true,
             SupportsWebhooks = true,
             WebhookSecret = WebhookSecret,
@@ -288,16 +301,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
     }
 
     private static string ComputeSignature(string payload, string secret)
-    {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
-    }
-
-    private static string ComputeSignatureUppercase(string payload, string secret)
-    {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        return Convert.ToHexString(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
-    }
+        => secret;
 
     public void Dispose()
     {
@@ -311,9 +315,9 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
 
     private sealed class FakeShippingCarrierAdapter : IShippingCarrierAdapter
     {
-        public string CarrierCode => CarrierCodes.Mylerz;
+        public string CarrierCode => CarrierCodes.Bosta;
 
-        public string DisplayName => "Fake Mylerz";
+        public string DisplayName => "Fake Bosta";
 
         public Task<ShippingQuoteResult> GetQuoteAsync(ShippingQuoteRequest request, CarrierCredentials credentials, CancellationToken cancellationToken = default)
         {

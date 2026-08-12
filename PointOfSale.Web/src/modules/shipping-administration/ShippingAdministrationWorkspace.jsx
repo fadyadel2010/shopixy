@@ -8,20 +8,14 @@ const TABS = [
     { key: 'overview', label: 'Overview' },
     { key: 'carrier-accounts', label: 'Carrier Accounts' },
     { key: 'shipping-methods', label: 'Shipping Methods' },
-    { key: 'policies', label: 'Policies' },
-    { key: 'warehouses', label: 'Warehouses' },
     { key: 'health', label: 'Health' },
     { key: 'audit', label: 'Audit' },
 ]
 
-const HEALTH_STATES = ['Healthy', 'Warning', 'Blocked', 'Disabled', 'Retired']
 const ERROR_STATES = [
     'Credential Missing',
     'Connection Failed',
-    'Warehouse Missing',
     'Carrier Mapping Missing',
-    'Origin Readiness Missing',
-    'Customs Readiness Missing',
     'Activation Blocked',
 ]
 
@@ -89,6 +83,11 @@ function CarrierAccountsTab({ accounts, supportedCarriers, onCreated }) {
     const [carrierCode, setCarrierCode] = useState('')
     const [creating, setCreating] = useState(false)
     const [message, setMessage] = useState('')
+    const accountCarriers = supportedCarriers.filter((carrier) => carrier.accountRequired !== false)
+    const visibleAccounts = accounts.filter((account) => {
+        const definition = supportedCarriers.find((carrier) => carrier.carrierCode === account.carrierCode)
+        return definition?.accountRequired !== false
+    })
 
     const createAccount = async (event) => {
         event.preventDefault()
@@ -118,7 +117,7 @@ function CarrierAccountsTab({ accounts, supportedCarriers, onCreated }) {
                         className="input md:max-w-sm"
                     >
                         <option value="">Select backend-supported carrier</option>
-                        {supportedCarriers.map((carrier) => (
+                        {accountCarriers.map((carrier) => (
                             <option key={carrier.carrierCode} value={carrier.carrierCode}>
                                 {carrier.displayName}
                             </option>
@@ -131,14 +130,14 @@ function CarrierAccountsTab({ accounts, supportedCarriers, onCreated }) {
                 {message && <p className="mt-3 text-sm text-red-700">{message}</p>}
             </form>
 
-            {accounts.length === 0 ? (
+            {visibleAccounts.length === 0 ? (
                 <EmptyState
                     title="No carrier accounts configured"
-                    description="Carrier accounts must be created from the certified carriers returned by the backend."
+                    description="External carrier accounts are created from certified provider capabilities. Manual Fulfillment is configured as a Shipping Method."
                 />
             ) : (
                 <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                    {accounts.map((account) => (
+                    {visibleAccounts.map((account) => (
                         <CarrierAccountCard key={account.id} account={account} supportedCarriers={supportedCarriers} onMutated={onCreated} />
                     ))}
                 </div>
@@ -147,86 +146,23 @@ function CarrierAccountsTab({ accounts, supportedCarriers, onCreated }) {
     )
 }
 
-function PoliciesTab({ accounts, supportedCarriers }) {
-    const rows = accounts.flatMap((account) => account.policies.map((policy) => ({
-        key: `${account.id}-${policy.scope}`,
-        carrier: getCarrierDisplayName(supportedCarriers, account.carrierCode),
-        ...policy,
-    })))
-
-    if (rows.length === 0) {
-        return <EmptyState title="No policies configured" description="Policy state will appear here after the backend returns carrier account policies." />
-    }
-
-    return (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-            <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                    <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Carrier</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Scope</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Mode</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Customs Readiness</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-gray-500">Backend Reason</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                    {rows.map((row) => (
-                        <tr key={row.key}>
-                            <td className="px-4 py-3 text-sm text-gray-900">{row.carrier}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{row.scope}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{row.mode}</td>
-                            <td className="px-4 py-3 text-sm text-gray-700">{row.customsReadinessPublished ? 'Ready' : 'Customs Readiness Missing'}</td>
-                            <td className="px-4 py-3 text-sm text-gray-500">{row.readinessEvidenceReference || '-'}</td>
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
-    )
-}
-
-function WarehousesTab({ accounts, supportedCarriers }) {
-    const rows = accounts.flatMap((account) => account.warehouseAssignments.map((assignment) => ({
-        key: `${account.id}-${assignment.warehouseId}`,
-        carrier: getCarrierDisplayName(supportedCarriers, account.carrierCode),
-        ...assignment,
-    })))
-
-    if (rows.length === 0) {
-        return <EmptyState title="No warehouse assignments" description="Assigned warehouse and origin readiness state will appear here from the backend." />
-    }
-
-    return (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {rows.map((row) => (
-                <div key={row.key} className="rounded-lg border border-gray-200 bg-white p-5">
-                    <h3 className="font-semibold text-gray-900">{row.carrier}</h3>
-                    <p className="mt-2 text-sm text-gray-600">Warehouse: {row.warehouseId}</p>
-                    <p className="mt-1 text-sm text-gray-600">Assignment: {row.isEnabled ? 'Enabled' : 'Disabled'}</p>
-                    <p className="mt-1 text-sm text-gray-600">Origin readiness: {row.originReadinessPublished ? 'Ready' : 'Origin Readiness Missing'}</p>
-                    {row.readinessEvidenceReference && <p className="mt-2 text-sm text-gray-500">{row.readinessEvidenceReference}</p>}
-                </div>
-            ))}
-        </div>
-    )
-}
-
 function HealthTab({ accounts, supportedCarriers }) {
-    if (accounts.length === 0) {
-        return <EmptyState title="No health evaluation" description="No carrier account health state has been reported yet." />
+    const visibleAccounts = accounts.filter((account) => account.carrierCode !== 'manual')
+
+    if (visibleAccounts.length === 0) {
+        return <EmptyState title="No carrier readiness" description="External carrier readiness will appear here after a carrier integration is configured." />
     }
 
     return (
         <div className="space-y-4">
             <div className="rounded-lg border border-gray-200 bg-white p-5">
-                <h3 className="font-semibold text-gray-900">Health States</h3>
+                <h3 className="font-semibold text-gray-900">Provider Readiness States</h3>
                 <div className="mt-3 flex flex-wrap gap-2">
-                    {HEALTH_STATES.map((state) => (
+                    {['Ready', 'Blocked', 'NotRequired', 'Missing', 'Unavailable'].map((state) => (
                         <span key={state} className="rounded-full border border-gray-200 px-3 py-1 text-sm text-gray-700">{state}</span>
                     ))}
                 </div>
-                <h3 className="mt-5 font-semibold text-gray-900">Recognized Backend Error States</h3>
+                <h3 className="mt-5 font-semibold text-gray-900">Recognized Provider Outcomes</h3>
                 <div className="mt-3 flex flex-wrap gap-2">
                     {ERROR_STATES.map((state) => (
                         <span key={state} className="rounded-full border border-gray-200 px-3 py-1 text-sm text-gray-700">{state}</span>
@@ -234,14 +170,23 @@ function HealthTab({ accounts, supportedCarriers }) {
                 </div>
             </div>
 
-            {accounts.map((account) => (
+            {visibleAccounts.map((account) => (
                 <div key={account.id} className="rounded-lg border border-gray-200 bg-white p-5">
                     <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                         <h3 className="font-semibold text-gray-900">{getCarrierDisplayName(supportedCarriers, account.carrierCode)}</h3>
-                        <span className="text-sm font-medium text-gray-700">{account.healthState}</span>
+                        <span className="text-sm font-medium text-gray-700">
+                            {account.integrationReadiness?.canExecute ? 'Ready' : 'Blocked'}
+                        </span>
                     </div>
-                    <p className="mt-2 text-sm text-gray-600">{account.healthReason || 'No backend reason reported.'}</p>
-                    <p className="mt-1 text-sm text-gray-500">Last evaluated: {formatDate(account.lastHealthEvaluatedAtUtc)}</p>
+                    <p className="mt-2 text-sm text-gray-600">
+                        Credential availability: {account.integrationReadiness?.credentialAvailability || 'Unknown'}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">
+                        Production capability: {account.integrationReadiness?.productionCapability || 'Unknown'}
+                    </p>
+                    {account.integrationReadiness?.blockers?.length > 0 && (
+                        <p className="mt-2 text-sm text-amber-700">{account.integrationReadiness.blockers.join(', ')}</p>
+                    )}
                     {account.lastConnectionTest?.failureReason && (
                         <p className="mt-2 text-sm text-red-700">{account.lastConnectionTest.failureReason}</p>
                     )}
@@ -300,6 +245,7 @@ export default function ShippingAdministrationWorkspace({ initialTab = 'overview
     const {
         supportedCarriers,
         carrierAccounts,
+        warehouses,
         audit,
         loading,
         error,
@@ -362,9 +308,7 @@ export default function ShippingAdministrationWorkspace({ initialTab = 'overview
                     {activeTab === 'carrier-accounts' && (
                         <CarrierAccountsTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} onCreated={refresh} />
                     )}
-                    {activeTab === 'shipping-methods' && <ShippingMethodsTab />}
-                    {activeTab === 'policies' && <PoliciesTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} />}
-                    {activeTab === 'warehouses' && <WarehousesTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} />}
+                    {activeTab === 'shipping-methods' && <ShippingMethodsTab warehouses={warehouses} />}
                     {activeTab === 'health' && <HealthTab accounts={carrierAccounts} supportedCarriers={supportedCarriers} />}
                     {activeTab === 'audit' && <AuditTab audit={audit} supportedCarriers={supportedCarriers} accounts={carrierAccounts} />}
                 </>

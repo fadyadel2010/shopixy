@@ -23,7 +23,9 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
         Assert.Contains("setShippingMethod: (id) =>", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: id", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingSelectionStatus: 'valid'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const response = await httpClient.get<ShippingMethod[]>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const response = await httpClient.get<unknown>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const expectedTenantId = requireStorefrontShippingTenantScope(candidate.tenantId);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("tenantId.toLowerCase() !== expectedTenantId.toLowerCase()", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("const methodIds = methods.map(m => m.id)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("isCurrentSelectionValid", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingSelectionStatus !== 'stale'", checkoutStore, StringComparison.Ordinal);
@@ -90,7 +92,7 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
         Assert.Contains("ValidateAuthenticatedTenantClaim", controller, StringComparison.Ordinal);
 
         Assert.Contains("GetShippingMethodsAsync(", service, StringComparison.Ordinal);
-        Assert.Contains("TryValidateCachedTenantScope(tenantId, cached", service, StringComparison.Ordinal);
+        Assert.Contains("TryValidateCachedTenantScope(tenantId, documents", service, StringComparison.Ordinal);
         Assert.Contains("GetActiveShippingMethodsAsync(tenantId", service, StringComparison.Ordinal);
         Assert.Contains("ApplyCalculatedPrices(shippingMethods, cartSubtotal, totalWeight)", service, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == tenantId", service, StringComparison.Ordinal);
@@ -100,6 +102,7 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
         Assert.Contains("public Guid Id { get; set; }", dto, StringComparison.Ordinal);
         Assert.Contains("public decimal Price { get; set; }", dto, StringComparison.Ordinal);
         Assert.Contains("public int? EstimatedDays { get; set; }", dto, StringComparison.Ordinal);
+        Assert.Contains("public class ShippingMethodsListResponseDto", dto, StringComparison.Ordinal);
 
         Assert.Contains("baseRate + (perKgRate * Math.Max(0m, totalWeight))", shippingCalculation, StringComparison.Ordinal);
         Assert.Contains("freeShippingThreshold.HasValue && subtotal >= freeShippingThreshold.Value", shippingCalculation, StringComparison.Ordinal);

@@ -349,6 +349,8 @@ public class ShippingMethodProjectionConsumer :
             SortOrder = entity.SortOrder,
             CarrierName = entity.CarrierName,
             CarrierCode = entity.CarrierCode, // CARRIER-AGNOSTIC: Link to carrier adapter
+            ServiceLevel = entity.ServiceLevel,
+            FulfillmentWarehouseId = entity.FulfillmentWarehouseId,
             TrackingUrlTemplate = entity.TrackingUrlTemplate,
             AvailableCountries = entity.AvailableCountries,
             SyncedAtUtc = DateTime.UtcNow,

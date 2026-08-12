@@ -1,4 +1,5 @@
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.DTOs.Cart;
 
 namespace PointOfSale.API.Services.Storefront;
 
@@ -50,5 +51,13 @@ public interface IShippingMethodService
         decimal totalWeight,
         string correlationId,
         Guid? warehouseId = null,
+        CancellationToken cancellationToken = default);
+
+    Task<ShippingMethodsListResponseDto> GetShippingMethodsAvailabilityForConfiguredWarehousesAsync(
+        Guid tenantId,
+        decimal cartSubtotal,
+        decimal totalWeight,
+        IReadOnlyCollection<CartItemDto> cartItems,
+        string correlationId,
         CancellationToken cancellationToken = default);
 }

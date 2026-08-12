@@ -4,6 +4,7 @@ using PointOfSale.API.Services.Pricing;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Shipping;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
 
 namespace PointOfSale.API.Services.CommerceHub;
@@ -46,17 +47,20 @@ public class CommerceHubShippingService : ICommerceHubShippingService
     private readonly ApplicationDbContext _dbContext;
     private readonly IMemoryCache _cache;
     private readonly IShippingCalculationService _shippingCalculationService;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly ILogger<CommerceHubShippingService> _logger;
 
     public CommerceHubShippingService(
         ApplicationDbContext dbContext,
         IMemoryCache cache,
         IShippingCalculationService shippingCalculationService,
-        ILogger<CommerceHubShippingService> logger)
+        ILogger<CommerceHubShippingService> logger,
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
     {
         _dbContext = dbContext;
         _cache = cache;
         _shippingCalculationService = shippingCalculationService;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
         _logger = logger;
     }
 
@@ -219,25 +223,39 @@ public class CommerceHubShippingService : ICommerceHubShippingService
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(method => !method.IsDeleted && method.IsActive && method.TenantId == storeId)
-            .Where(method =>
-                string.IsNullOrEmpty(method.CarrierCode) ||
-                method.CarrierCode == CarrierCodes.Manual ||
-                _dbContext.Set<CarrierConfiguration>().Any(configuration =>
-                    configuration.TenantId == method.TenantId &&
-                    configuration.CarrierCode == method.CarrierCode &&
-                    configuration.IsEnabled))
             .OrderBy(method => method.SortOrder)
             .ThenBy(method => method.Name)
-            .Select(method => new ShippingMethodCacheEntry(
+            .ToListAsync(cancellationToken);
+
+        var admitted = new List<ShippingMethodCacheEntry>(shippingMethods.Count);
+        foreach (var method in shippingMethods)
+        {
+            var carrierCode = CarrierCodes.Normalize(method.CarrierCode);
+            if (!CarrierCodes.IsManual(carrierCode))
+            {
+                var readiness = await _carrierIntegrationAuthority.GetIntegrationReadinessAsync(
+                    method.TenantId,
+                    carrierCode,
+                    method.Id,
+                    method.FulfillmentWarehouseId,
+                    CarrierIntegrationPurpose.CommerceHubAdmission,
+                    cancellationToken);
+                if (!readiness.CanExecute)
+                {
+                    continue;
+                }
+            }
+
+            admitted.Add(new ShippingMethodCacheEntry(
                 method.Id,
                 method.Name,
                 method.BaseRate,
                 method.PerKgRate,
                 method.FreeShippingThreshold,
-                method.SortOrder))
-            .ToListAsync(cancellationToken);
+                method.SortOrder));
+        }
 
-        return shippingMethods;
+        return admitted;
     }
 
     private static string GetShippingOptionsCacheKey(Guid storeId)

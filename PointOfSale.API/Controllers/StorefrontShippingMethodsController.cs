@@ -34,6 +34,7 @@ public class StorefrontShippingMethodsController : ControllerBase
 {
     private readonly ICartService _cartService;
     private readonly IShippingMethodService _shippingMethodService;
+    private readonly IWarehouseResolutionService _warehouseResolutionService;
     private readonly ILogger<StorefrontShippingMethodsController> _logger;
 
     private const string TenantIdHeader = "X-Tenant-Id";
@@ -44,15 +45,19 @@ public class StorefrontShippingMethodsController : ControllerBase
     public StorefrontShippingMethodsController(
         ICartService cartService,
         IShippingMethodService shippingMethodService,
+        IWarehouseResolutionService warehouseResolutionService,
         ILogger<StorefrontShippingMethodsController> logger)
     {
         _cartService = cartService;
         _shippingMethodService = shippingMethodService;
+        _warehouseResolutionService = warehouseResolutionService;
         _logger = logger;
     }
 
     /// <summary>
-    /// Gets all active shipping methods for the tenant.
+    /// Compatibility GET for server-admitted method presentation. The optional
+    /// warehouse filter affects display only; selection and checkout always create
+    /// and validate an opaque WarehouseResolution.
     /// 
     /// Response includes:
     /// - Shipping method details
@@ -69,6 +74,7 @@ public class StorefrontShippingMethodsController : ControllerBase
     public async Task<IActionResult> GetShippingMethods([FromQuery] Guid? warehouseId, CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
+        SetNoStoreHeaders();
 
         // Validate tenant identity securely
         var tenantValidation = ValidateTenantHeader(traceId);
@@ -124,6 +130,184 @@ public class StorefrontShippingMethodsController : ControllerBase
                 "Error getting shipping methods | TenantId: {TenantId} | TraceId: {TraceId}",
                 tenantId, traceId);
 
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
+    [HttpPost("preview")]
+    [ProducesResponseType(typeof(ShippingMethodsPreviewResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> PreviewShippingMethods(
+        [FromBody] ShippingMethodsPreviewRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        SetNoStoreHeaders();
+
+        var tenantValidation = ValidateTenantHeader(traceId);
+        if (tenantValidation.Error != null)
+        {
+            return tenantValidation.Error;
+        }
+        var tenantId = tenantValidation.TenantId!.Value;
+
+        var ownerValidation = await ValidateHeadersAsync(tenantId, traceId);
+        if (ownerValidation.Error != null)
+        {
+            return ownerValidation.Error;
+        }
+
+        if (request == null)
+        {
+            return BadRequest(new ApiErrorResponse("INVALID_REQUEST", "Request body is required", traceId));
+        }
+
+        var (errorCode, errorMessage) = request.Validate();
+        if (errorCode != null)
+        {
+            return BadRequest(new ApiErrorResponse(errorCode, errorMessage!, traceId));
+        }
+
+        try
+        {
+            var cart = await _warehouseResolutionService.LoadPreviewCartAsync(
+                tenantId,
+                ownerValidation.Owner!,
+                request.CheckoutSessionId,
+                traceId,
+                cancellationToken);
+
+            var availability = await _shippingMethodService.GetShippingMethodsAvailabilityForConfiguredWarehousesAsync(
+                tenantId,
+                cart.Subtotal,
+                cart.TotalWeight,
+                cart.Items,
+                traceId,
+                cancellationToken);
+
+            return Ok(new ShippingMethodsPreviewResponseDto
+            {
+                TenantId = tenantId,
+                Status = "PREVIEW",
+                ShippingMethodsStatus = availability.Status,
+                ShippingMethods = availability.ShippingMethods
+            });
+        }
+        catch (WarehouseResolutionException ex)
+        {
+            _logger.LogWarning(
+                "Shipping method preview warehouse resolution failed | TenantId: {TenantId} | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                tenantId,
+                ex.ErrorCode,
+                traceId);
+            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
+        {
+            return Unauthorized(new ApiErrorResponse(
+                TenantErrorCodes.TenantMismatch,
+                "Authenticated customer does not belong to the resolved tenant.",
+                traceId));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Error previewing shipping methods | TenantId: {TenantId} | TraceId: {TraceId}",
+                tenantId, traceId);
+
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(
+                    WarehouseResolutionErrorCodes.WarehouseResolutionServiceUnavailable,
+                    "Shipping methods are temporarily unavailable.",
+                    traceId));
+        }
+    }
+
+    [HttpPost("select")]
+    [ProducesResponseType(typeof(ShippingMethodSelectionResponseDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> SelectShippingMethod(
+        [FromBody] ShippingMethodSelectionRequestDto request,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        SetNoStoreHeaders();
+
+        var tenantValidation = ValidateTenantHeader(traceId);
+        if (tenantValidation.Error != null)
+        {
+            return tenantValidation.Error;
+        }
+        var tenantId = tenantValidation.TenantId!.Value;
+
+        var ownerValidation = await ValidateHeadersAsync(tenantId, traceId);
+        if (ownerValidation.Error != null)
+        {
+            return ownerValidation.Error;
+        }
+
+        if (request == null)
+        {
+            return BadRequest(new ApiErrorResponse("INVALID_REQUEST", "Request body is required", traceId));
+        }
+
+        var (errorCode, errorMessage) = request.Validate();
+        if (errorCode != null)
+        {
+            return BadRequest(new ApiErrorResponse(errorCode, errorMessage!, traceId));
+        }
+
+        try
+        {
+            var resolution = await _warehouseResolutionService.ResolveForSelectedShippingMethodAsync(
+                tenantId,
+                ownerValidation.Owner!,
+                request.CheckoutSessionId,
+                request.ShippingMethodId,
+                traceId,
+                cancellationToken);
+
+            return Ok(new ShippingMethodSelectionResponseDto
+            {
+                TenantId = tenantId,
+                ShippingMethodId = request.ShippingMethodId,
+                WarehouseResolutionId = resolution.Resolution.Id,
+                ResolutionVersion = resolution.Resolution.ResolutionVersion,
+                Status = resolution.Resolution.Status.ToString().ToUpperInvariant(),
+                ExpiresAtUtc = resolution.Resolution.ExpiresAtUtc
+            });
+        }
+        catch (WarehouseResolutionException ex)
+        {
+            _logger.LogWarning(
+                "Shipping method selection warehouse resolution failed | TenantId: {TenantId} | ShippingMethodId: {ShippingMethodId} | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                tenantId,
+                request.ShippingMethodId,
+                ex.ErrorCode,
+                traceId);
+            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
+        {
+            _logger.LogWarning(ex,
+                "SelectShippingMethod rejected due to tenant mismatch | TenantId: {TenantId} | TraceId: {TraceId}",
+                tenantId,
+                traceId);
+            return Forbid();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "SelectShippingMethod failed | TenantId: {TenantId} | TraceId: {TraceId}",
+                tenantId,
+                traceId);
             return StatusCode(StatusCodes.Status503ServiceUnavailable,
                 ApiErrorResponse.ServiceUnavailable(traceId));
         }
@@ -246,6 +430,13 @@ public class StorefrontShippingMethodsController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+    }
+
+    private void SetNoStoreHeaders()
+    {
+        Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
+        Response.Headers["Pragma"] = "no-cache";
+        Response.Headers["Expires"] = "0";
     }
 
     private sealed record ShippingMethodCallerIdentity(ClaimsPrincipal? Principal, Guid? CustomerId);

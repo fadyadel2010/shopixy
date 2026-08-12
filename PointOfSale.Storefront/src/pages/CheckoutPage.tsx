@@ -15,7 +15,7 @@
  * Phase 5A: Analytics tracking (beginCheckout)
  */
 
-import React, { useEffect, useCallback, useRef } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import { Layout } from '@/components/layout';
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import {
@@ -184,6 +184,7 @@ export const CheckoutPage: React.FC = () => {
     const stepContainerRef = useRef<HTMLDivElement>(null);
     const previousStepRef = useRef<CheckoutStep>('shipping');
     const checkoutTrackedRef = useRef(false);
+    const [checkoutCartRefreshCompleted, setCheckoutCartRefreshCompleted] = useState(false);
 
     // PHASE 5A: Analytics for tracking
     const analytics = useAnalytics();
@@ -227,13 +228,24 @@ export const CheckoutPage: React.FC = () => {
     // Fetch cart and payment methods on mount
     // This ensures coupon state and payment options are current
     useEffect(() => {
+        let cancelled = false;
+
         // Always fetch cart when entering checkout to ensure freshness
-        fetchCart();
+        void (async () => {
+            await fetchCart();
+            if (!cancelled) {
+                setCheckoutCartRefreshCompleted(true);
+            }
+        })();
+
         fetchCheckoutFields();
-        fetchShippingMethods();
         // Fetch payment methods from POS Admin (Phase 10.4.D2)
         fetchPaymentMethods();
-    }, [fetchCart, fetchCheckoutFields, fetchShippingMethods, fetchPaymentMethods]);
+
+        return () => {
+            cancelled = true;
+        };
+    }, [fetchCart, fetchCheckoutFields, fetchPaymentMethods]);
 
     useEffect(() => {
         if (!cart?.cartId) {
@@ -250,6 +262,14 @@ export const CheckoutPage: React.FC = () => {
         shippingAddress?.geography,
         refreshPricingPreview
     ]);
+
+    useEffect(() => {
+        if (!checkoutCartRefreshCompleted || isCartLoading || !cart?.cartId) {
+            return;
+        }
+
+        void fetchShippingMethods();
+    }, [checkoutCartRefreshCompleted, isCartLoading, cart?.cartId, cart?.lastUpdatedUtc, fetchShippingMethods]);
 
     // PHASE 5A: Track beginCheckout ONCE when cart is loaded (CRITICAL for funnel)
     useEffect(() => {

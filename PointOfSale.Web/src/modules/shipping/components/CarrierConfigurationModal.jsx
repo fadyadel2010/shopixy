@@ -40,8 +40,9 @@ export default function CarrierConfigurationModal({
         useSandbox: true,
         apiKey: '',
         apiSecret: '',
+        webhookSecret: '',
         accountId: '',
-        configuration: ''
+        extraConfig: {}
     })
 
     // UI state
@@ -51,6 +52,7 @@ export default function CarrierConfigurationModal({
     const [toggling, setToggling] = useState(false)
     const [showApiKey, setShowApiKey] = useState(false)
     const [showApiSecret, setShowApiSecret] = useState(false)
+    const [showWebhookSecret, setShowWebhookSecret] = useState(false)
     const [error, setError] = useState('')
     const [success, setSuccess] = useState('')
     const [testResult, setTestResult] = useState(null)
@@ -59,6 +61,7 @@ export default function CarrierConfigurationModal({
     // Original data (to detect changes)
     const [originalData, setOriginalData] = useState(null)
     const [isConfigured, setIsConfigured] = useState(false)
+    const [configurationMetadata, setConfigurationMetadata] = useState(null)
 
     const carrierInfo = getCarrierInfo(carrierCode)
 
@@ -78,16 +81,19 @@ export default function CarrierConfigurationModal({
             useSandbox: true,
             apiKey: '',
             apiSecret: '',
+            webhookSecret: '',
             accountId: '',
-            configuration: ''
+            extraConfig: {}
         })
         setOriginalData(null)
         setIsConfigured(false)
+        setConfigurationMetadata(null)
         setError('')
         setSuccess('')
         setTestResult(null)
         setShowApiKey(false)
         setShowApiSecret(false)
+        setShowWebhookSecret(false)
         setShowDisableConfirm(false)
     }
 
@@ -101,24 +107,20 @@ export default function CarrierConfigurationModal({
             const carrier = carriers.find(c => c.carrierCode === carrierCode)
 
             if (carrier) {
-                const configJson = carrier.configuration
-                    ? (typeof carrier.configuration === 'string'
-                        ? carrier.configuration
-                        : JSON.stringify(carrier.configuration, null, 2))
-                    : ''
-
                 const data = {
                     isEnabled: carrier.isEnabled || false,
                     useSandbox: carrier.useSandbox ?? true,
                     apiKey: carrier.apiKey || '',
                     apiSecret: carrier.apiSecret || '',
+                    webhookSecret: '',
                     accountId: carrier.accountId || '',
-                    configuration: configJson
+                    extraConfig: {}
                 }
 
                 setFormData(data)
                 setOriginalData(data)
-                setIsConfigured(!!carrier.apiKey)
+                setIsConfigured(carrier.isConfigured === true || carrier.hasApiKey === true)
+                setConfigurationMetadata(carrier)
             }
         } catch (err) {
             console.error('Failed to load carrier configuration:', err)
@@ -135,32 +137,29 @@ export default function CarrierConfigurationModal({
         setSuccess('')
 
         try {
-            // Parse configuration JSON if provided
-            let parsedConfig = null
-            if (formData.configuration.trim()) {
-                try {
-                    parsedConfig = JSON.parse(formData.configuration)
-                } catch (e) {
-                    setError(t('carrierConfig.invalidJson', 'Invalid JSON in configuration'))
-                    setSaving(false)
-                    return
-                }
-            }
+            const extraConfig = Object.fromEntries(
+                Object.entries(formData.extraConfig || {})
+                    .map(([key, value]) => [key, value.trim()])
+                    .filter(([, value]) => !!value)
+            )
 
             const payload = {
                 isEnabled: formData.isEnabled,
                 useSandbox: formData.useSandbox,
                 apiKey: formData.apiKey || null,
                 apiSecret: formData.apiSecret || null,
+                webhookSecret: formData.webhookSecret || null,
+                supportsWebhooks: configurationMetadata?.webhookSupported === true,
                 accountId: formData.accountId || null,
-                configuration: parsedConfig
+                configuration: Object.keys(extraConfig).length ? JSON.stringify(extraConfig) : null
             }
 
             await api.put(`/admin/carriers/${carrierCode}`, payload)
 
             setSuccess(t('carrierConfig.saveSuccess', 'Configuration saved successfully'))
-            setIsConfigured(!!formData.apiKey)
-            setOriginalData({ ...formData })
+            setIsConfigured(configurationCredentialFields.every((field) => !field.required || getCredentialFieldValue(field).trim()))
+            setFormData(prev => ({ ...prev, webhookSecret: '' }))
+            setOriginalData({ ...formData, webhookSecret: '' })
 
             // Notify parent to refresh
             onSaved?.()
@@ -187,8 +186,8 @@ export default function CarrierConfigurationModal({
             const latency = Date.now() - startTime
 
             setTestResult({
-                success: true,
-                message: response.data?.message || t('carrierConfig.connectionSuccess', 'Connection successful'),
+                success: response.data?.success !== false,
+                message: response.data?.errorMessage || response.data?.message || t('carrierConfig.connectionSuccess', 'Connection successful'),
                 latency
             })
 
@@ -242,6 +241,57 @@ export default function CarrierConfigurationModal({
     }
 
     const hasChanges = originalData && JSON.stringify(formData) !== JSON.stringify(originalData)
+    const configurationCredentialFields = configurationMetadata?.credentialFields || []
+    const connectionTestSupported = configurationMetadata?.connectionTestSupported !== false
+    const connectionTestMode = configurationMetadata?.connectionTestMode || 'Remote'
+    const productionBlocked = ['Unavailable', 'NotCertified'].includes(configurationMetadata?.productionCapability)
+    const validationCurrent = configurationMetadata?.validationMatchesCurrentConfiguration === true
+    const connected = configurationMetadata?.lastValidationSucceeded === true && validationCurrent
+    const carrierState = productionBlocked || configurationMetadata?.lastValidationSucceeded === false
+        ? t('carrierConfig.blocked', 'Blocked / provider unavailable')
+        : !isConfigured
+            ? t('carrierConfig.notConfigured', 'Not configured')
+            : !connected
+                ? t('carrierConfig.credentialsSaved', 'Credentials saved')
+                : formData.isEnabled
+                    ? t('carrierConfig.readyForCheckout', 'Ready for checkout')
+                    : t('carrierConfig.connected', 'Connected')
+
+    const getCredentialFieldValue = (field) => {
+        if (field.target === 'ApiKey') return formData.apiKey
+        if (field.target === 'ApiSecret') return formData.apiSecret
+        if (field.target === 'AccountId') return formData.accountId
+        if (field.target?.startsWith('ExtraConfig.')) {
+            return formData.extraConfig?.[field.target.slice('ExtraConfig.'.length)] || ''
+        }
+
+        return ''
+    }
+
+    const setCredentialFieldValue = (field, value) => {
+        if (field.target === 'ApiKey') {
+            setFormData(prev => ({ ...prev, apiKey: value }))
+            return
+        }
+        if (field.target === 'ApiSecret') {
+            setFormData(prev => ({ ...prev, apiSecret: value }))
+            return
+        }
+        if (field.target === 'AccountId') {
+            setFormData(prev => ({ ...prev, accountId: value }))
+            return
+        }
+        if (field.target?.startsWith('ExtraConfig.')) {
+            const key = field.target.slice('ExtraConfig.'.length)
+            setFormData(prev => ({
+                ...prev,
+                extraConfig: {
+                    ...prev.extraConfig,
+                    [key]: value
+                }
+            }))
+        }
+    }
 
     if (!open) return null
 
@@ -282,10 +332,7 @@ export default function CarrierConfigurationModal({
                             ? 'bg-blue-100 text-blue-700'
                             : 'bg-amber-100 text-amber-700'
                             }`}>
-                            {isConfigured
-                                ? t('carrierConfig.configured', 'Configured')
-                                : t('carrierConfig.notConfigured', 'Not Configured')
-                            }
+                            {carrierState}
                         </span>
                         {formData.useSandbox && (
                             <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-700">
@@ -474,9 +521,13 @@ export default function CarrierConfigurationModal({
                                 ) : (
                                     <button
                                         onClick={handleToggle}
-                                        disabled={toggling || !isConfigured}
+                                        disabled={toggling || !isConfigured || productionBlocked}
                                         className="p-1 disabled:opacity-50"
-                                        title={!isConfigured ? t('carrierConfig.configureFirst', 'Configure credentials first') : ''}
+                                        title={productionBlocked
+                                            ? t('carrierConfig.notProductionReady', 'This carrier is unavailable for production activation')
+                                            : !isConfigured
+                                                ? t('carrierConfig.configureFirst', 'Configure credentials first')
+                                                : ''}
                                     >
                                         {toggling ? (
                                             <Loader2 className="animate-spin text-gray-400" size={28} />
@@ -490,6 +541,7 @@ export default function CarrierConfigurationModal({
                             </div>
 
                             {/* Environment Selection */}
+                            {configurationMetadata?.accountRequired !== false && (
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-2">
                                     {t('carrierConfig.environment', 'Environment')}
@@ -519,6 +571,7 @@ export default function CarrierConfigurationModal({
                                     </button>
                                 </div>
                             </div>
+                            )}
 
                             {/* API Credentials */}
                             <div className="space-y-4">
@@ -527,84 +580,82 @@ export default function CarrierConfigurationModal({
                                     {t('carrierConfig.credentials', 'API Credentials')}
                                 </h3>
 
-                                {/* API Key */}
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        {t('carrierConfig.apiKey', 'API Key')} *
-                                    </label>
-                                    <div className="relative">
-                                        <input
-                                            type={showApiKey ? 'text' : 'password'}
-                                            value={formData.apiKey}
-                                            onChange={e => setFormData(prev => ({ ...prev, apiKey: e.target.value }))}
-                                            placeholder={t('carrierConfig.apiKeyPlaceholder', 'Enter your API key')}
-                                            className="w-full px-4 py-2.5 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowApiKey(!showApiKey)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                                        >
-                                            {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
-                                        </button>
+                                {productionBlocked ? (
+                                    <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+                                        {configurationMetadata?.productionCapability || 'Unavailable'}
                                     </div>
-                                </div>
-
-                                {/* API Secret */}
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        {t('carrierConfig.apiSecret', 'API Secret')}
-                                    </label>
-                                    <div className="relative">
-                                        <input
-                                            type={showApiSecret ? 'text' : 'password'}
-                                            value={formData.apiSecret}
-                                            onChange={e => setFormData(prev => ({ ...prev, apiSecret: e.target.value }))}
-                                            placeholder={t('carrierConfig.apiSecretPlaceholder', 'Enter your API secret (if required)')}
-                                            className="w-full px-4 py-2.5 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowApiSecret(!showApiSecret)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                                        >
-                                            {showApiSecret ? <EyeOff size={18} /> : <Eye size={18} />}
-                                        </button>
+                                ) : configurationCredentialFields.length === 0 ? (
+                                    <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-700">
+                                        {t('carrierConfig.noCredentialsRequired', 'No credentials are required for this carrier.')}
                                     </div>
-                                </div>
-
-                                {/* Account ID */}
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                                        {t('carrierConfig.accountId', 'Account / Client ID')}
-                                        <span className="text-gray-400 font-normal ml-1">({t('common.optional', 'Optional')})</span>
-                                    </label>
-                                    <input
-                                        type="text"
-                                        value={formData.accountId}
-                                        onChange={e => setFormData(prev => ({ ...prev, accountId: e.target.value }))}
-                                        placeholder={t('carrierConfig.accountIdPlaceholder', 'Enter account ID if required')}
-                                        className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Extra Configuration */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    {t('carrierConfig.extraConfig', 'Additional Configuration')}
-                                    <span className="text-gray-400 font-normal ml-1">(JSON)</span>
-                                </label>
-                                <textarea
-                                    value={formData.configuration}
-                                    onChange={e => setFormData(prev => ({ ...prev, configuration: e.target.value }))}
-                                    placeholder={`{\n  "pickupCity": "Cairo",\n  "defaultZoneCode": "..."\n}`}
-                                    rows={4}
-                                    className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
-                                />
-                                <p className="text-xs text-gray-500 mt-1">
-                                    {t('carrierConfig.extraConfigHint', 'Carrier-specific settings like pickup address, zone codes, etc.')}
-                                </p>
+                                ) : (
+                                    configurationCredentialFields.map((field) => {
+                                        const showSecret = field.target === 'ApiSecret' ? showApiSecret : showApiKey
+                                        const setShowSecret = field.target === 'ApiSecret' ? setShowApiSecret : setShowApiKey
+                                        return (
+                                            <div key={field.key}>
+                                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                    {field.label}{field.required ? ' *' : ''}
+                                                </label>
+                                                <div className="relative">
+                                                    <input
+                                                        type={field.isSecret && !showSecret ? 'password' : 'text'}
+                                                        value={getCredentialFieldValue(field)}
+                                                        onChange={e => setCredentialFieldValue(field, e.target.value)}
+                                                        placeholder={field.label}
+                                                        className="w-full px-4 py-2.5 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                    />
+                                                    {field.isSecret && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setShowSecret(!showSecret)}
+                                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                                        >
+                                                            {showSecret ? <EyeOff size={18} /> : <Eye size={18} />}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )
+                                    })
+                                )}
+                                {connectionTestMode === 'LocalOnly' && (
+                                    <p className="text-xs text-gray-500">
+                                        {t('carrierConfig.localOnlyValidation', 'This provider validates credential presence locally; no remote API connectivity test is performed.')}
+                                    </p>
+                                )}
+                                {configurationMetadata?.webhookSupported === true && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            {t('carrierConfig.webhookSecret', 'Webhook signing secret')}
+                                        </label>
+                                        <div className="relative">
+                                            <input
+                                                type={showWebhookSecret ? 'text' : 'password'}
+                                                value={formData.webhookSecret}
+                                                onChange={event => setFormData(prev => ({ ...prev, webhookSecret: event.target.value }))}
+                                                placeholder={configurationMetadata?.hasWebhookSecret
+                                                    ? t('carrierConfig.rotateWebhookSecret', 'Enter a new value to rotate the configured secret')
+                                                    : t('carrierConfig.configureWebhookSecret', 'Configure webhook signing secret')}
+                                                autoComplete="new-password"
+                                                className="w-full px-4 py-2.5 pr-12 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowWebhookSecret(value => !value)}
+                                                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                                aria-label={t('carrierConfig.toggleWebhookSecretVisibility', 'Toggle webhook secret visibility')}
+                                            >
+                                                {showWebhookSecret ? <EyeOff size={18} /> : <Eye size={18} />}
+                                            </button>
+                                        </div>
+                                        <p className="mt-1 text-xs text-gray-500">
+                                            {configurationMetadata?.hasWebhookSecret
+                                                ? t('carrierConfig.webhookSecretConfigured', 'A signing secret is configured. It is never returned by the API.')
+                                                : t('carrierConfig.webhookSecretRequired', 'Required before signed webhook events can be trusted.')}
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </>
                     )}
@@ -628,7 +679,7 @@ export default function CarrierConfigurationModal({
                             {/* Test Connection */}
                             <button
                                 onClick={handleTestConnection}
-                                disabled={testing || !formData.apiKey || loading}
+                                disabled={testing || loading || !connectionTestSupported || productionBlocked || !isConfigured}
                                 className="flex items-center gap-2 px-4 py-2.5 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:bg-gray-50 disabled:opacity-50 transition-colors"
                             >
                                 {testing ? (
@@ -638,7 +689,9 @@ export default function CarrierConfigurationModal({
                                 )}
                                 {testing
                                     ? t('carrierConfig.testing', 'Testing...')
-                                    : t('carrierConfig.testConnection', 'Test Connection')
+                                    : connectionTestMode === 'LocalOnly'
+                                        ? t('carrierConfig.validateLocally', 'Validate Locally')
+                                        : t('carrierConfig.testConnection', 'Test Connection')
                                 }
                             </button>
 

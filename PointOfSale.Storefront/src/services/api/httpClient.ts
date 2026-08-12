@@ -32,6 +32,26 @@ export interface NormalizedError {
     isAuthError: boolean;
 }
 
+export function isRequestCanceled(error: unknown): boolean {
+    if (axios.isCancel(error)) {
+        return true;
+    }
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+        return true;
+    }
+
+    if (typeof error === 'object' && error !== null) {
+        const candidate = error as { code?: string; name?: string; message?: string };
+        return candidate.code === 'ERR_CANCELED' ||
+            candidate.name === 'CanceledError' ||
+            candidate.name === 'AbortError' ||
+            candidate.message?.trim().toLowerCase() === 'canceled';
+    }
+
+    return false;
+}
+
 /**
  * Normalize axios error to a consistent format
  */
@@ -40,7 +60,8 @@ export function normalizeError(error: AxiosError<ApiErrorResponse>): NormalizedE
     const code = error.response?.data?.code;
     const message = error.response?.data?.message || error.message;
 
-    const isNetworkError = !status && error.message?.trim().toLowerCase() === 'network error';
+    const isCanceled = isRequestCanceled(error);
+    const isNetworkError = !isCanceled && !status && error.message?.trim().toLowerCase() === 'network error';
     const isServerError = status !== undefined && status >= 500;
     const isClientError = status !== undefined && status >= 400 && status < 500;
     const isAuthError = status === 401;
@@ -52,7 +73,7 @@ export function normalizeError(error: AxiosError<ApiErrorResponse>): NormalizedE
         isNetworkError,
         isServerError,
         isClientError,
-        retryable: isNetworkError || isServerError,
+        retryable: !isCanceled && (isNetworkError || isServerError),
         isAuthError,
     };
 }
@@ -265,8 +286,9 @@ const createHttpClient = (): AxiosInstance => {
         },
         async (error: AxiosError<ApiErrorResponse>) => {
             const normalized = normalizeError(error);
+            const isCanceled = isRequestCanceled(error);
 
-            if (import.meta.env.DEV) {
+            if (import.meta.env.DEV && !isCanceled) {
                 console.error('[HTTP] Response error:', {
                     status: normalized.status,
                     code: normalized.code,

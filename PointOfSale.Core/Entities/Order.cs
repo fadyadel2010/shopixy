@@ -362,6 +362,12 @@ public class Order : BaseEntity, ITenantOwned, IProjectionVersioned
     /// This is immutable after order creation - does not change if POS updates the method.
     /// </summary>
     public string? ShippingMethodName { get; set; }
+
+    /// <summary>
+    /// Immutable carrier service-level snapshot purchased at checkout.
+    /// Shipment execution must not reload this value from the mutable shipping method.
+    /// </summary>
+    public string? ShippingServiceLevel { get; set; }
     
     public decimal ShippingCost { get; set; }
     

@@ -211,6 +211,88 @@ public class StorefrontPricingAuthorityTests
         Assert.Equal(first, second);
     }
 
+    [Theory]
+    [InlineData(10, 2, 50, 0, 10)]
+    [InlineData(10, 2, 50, 3, 16)]
+    [InlineData(10, 2, 100, 3, 0)]
+    [InlineData(10.004, 0.001, 50, 1, 10.01)]
+    public void ShippingCalculationService_PreservesZeroWeightWeightedThresholdAndRounding(
+        decimal baseRate,
+        decimal perKgRate,
+        decimal subtotal,
+        decimal totalWeight,
+        decimal expected)
+    {
+        var service = new ShippingCalculationService();
+
+        var actual = service.Calculate(
+            baseRate,
+            perKgRate,
+            freeShippingThreshold: 100m,
+            subtotal,
+            totalWeight);
+
+        Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task WeightedShipping_CartPreviewAndCheckoutPricing_UseTheSameAuthoritativeWeightSnapshot()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(tenantId, countryCode: null);
+        var pricingService = CreatePricingService(dbContext);
+        var method = CreateShippingMethod(tenantId, baseRate: 10m, perKgRate: 2m);
+        var productId = Guid.NewGuid();
+
+        var preview = await pricingService.CalculateCartPreviewAsync(
+            tenantId,
+            new CartDto
+            {
+                TenantId = tenantId,
+                Currency = "USD",
+                Items =
+                [
+                    new CartItemDto
+                    {
+                        ProductId = productId,
+                        Quantity = 2,
+                        UnitPrice = 25m,
+                        Weight = 1.5m
+                    }
+                ]
+            },
+            method,
+            paymentMethod: null,
+            shippingCountry: null);
+
+        var checkout = await pricingService.CalculateCheckoutAsync(
+            tenantId,
+            new CartSnapshot
+            {
+                TenantId = tenantId,
+                Currency = "USD",
+                CartUpdatedAtUtc = DateTime.UtcNow,
+                Items =
+                [
+                    new CartItemSnapshot
+                    {
+                        ProductId = productId,
+                        Quantity = 2,
+                        CartPrice = 25m,
+                        CurrentPrice = 25m,
+                        Weight = 1.5m
+                    }
+                ]
+            },
+            method,
+            paymentMethod: null,
+            shippingCountry: null);
+
+        Assert.Equal(16m, preview.Shipping);
+        Assert.Equal(preview.Shipping, checkout.Shipping);
+        Assert.Equal(preview.Total, checkout.Total);
+    }
+
     [Fact]
     public void TryCalculate_RejectsThresholdOnlyZeroRateBeforeThreshold_Regression()
     {
@@ -413,7 +495,11 @@ public class StorefrontPricingAuthorityTests
         return dbContext;
     }
 
-    private static ShippingMethodDocument CreateShippingMethod(Guid tenantId, decimal baseRate)
+    private static ShippingMethodDocument CreateShippingMethod(
+        Guid tenantId,
+        decimal baseRate,
+        decimal perKgRate = 0m,
+        decimal? freeShippingThreshold = null)
     {
         return new ShippingMethodDocument
         {
@@ -421,7 +507,8 @@ public class StorefrontPricingAuthorityTests
             ShippingMethodId = Guid.NewGuid(),
             Name = "Standard",
             BaseRate = baseRate,
-            PerKgRate = 0m,
+            PerKgRate = perKgRate,
+            FreeShippingThreshold = freeShippingThreshold,
             Currency = "USD",
             IsActive = true
         };

@@ -1,14 +1,15 @@
-using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using PointOfSale.Core.Entities;
-using PointOfSale.Infrastructure.Data;
 using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Shipping;
 
 /// <summary>
 /// Shipping quote service for storefront checkout.
+///
+/// LEGACY COMPATIBILITY:
+/// This service returns carrier-rate compatibility quotes only. It does not
+/// admit checkout shipping choices; canonical checkout admission is
+/// ShippingMethod -> FulfillmentWarehouseId -> WarehouseResolution.
 /// 
 /// ARCHITECTURAL RULES:
 /// - Queries ALL enabled carriers for quotes
@@ -105,8 +106,8 @@ public class ShippingQuoteOption
 /// </summary>
 public class ShippingQuoteService : IShippingQuoteService
 {
-    private readonly ApplicationDbContext _dbContext;
     private readonly IShippingCarrierRegistry _carrierRegistry;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly IConnectionMultiplexer _redis;
     private readonly ILogger<ShippingQuoteService> _logger;
     
@@ -114,13 +115,13 @@ public class ShippingQuoteService : IShippingQuoteService
     private static readonly TimeSpan QuoteCacheDuration = TimeSpan.FromMinutes(5);
     
     public ShippingQuoteService(
-        ApplicationDbContext dbContext,
         IShippingCarrierRegistry carrierRegistry,
+        ICarrierIntegrationAuthority carrierIntegrationAuthority,
         IConnectionMultiplexer redis,
         ILogger<ShippingQuoteService> logger)
     {
-        _dbContext = dbContext;
         _carrierRegistry = carrierRegistry;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority;
         _redis = redis;
         _logger = logger;
     }
@@ -136,11 +137,10 @@ public class ShippingQuoteService : IShippingQuoteService
         
         try
         {
-            // Get enabled carrier configurations for tenant
-            var carrierConfigs = await _dbContext.Set<CarrierConfiguration>()
-                .Where(c => c.TenantId == tenantId && c.IsEnabled)
-                .OrderBy(c => c.SortOrder)
-                .ToListAsync(cancellationToken);
+            var carrierConfigs = await _carrierIntegrationAuthority.ListRuntimeConfigurationsAsync(
+                tenantId,
+                CarrierIntegrationPurpose.Quote,
+                cancellationToken);
             
             if (!carrierConfigs.Any())
             {
@@ -159,7 +159,7 @@ public class ShippingQuoteService : IShippingQuoteService
             
             // Query each enabled carrier in parallel
             var quoteTasks = carrierConfigs
-                .Select(config => GetCarrierQuoteAsync(config, request, defaultConfig, cancellationToken))
+                .Select(config => GetCarrierQuoteAsync(tenantId, config, request, defaultConfig, cancellationToken))
                 .ToList();
             
             var results = await Task.WhenAll(quoteTasks);
@@ -197,9 +197,10 @@ public class ShippingQuoteService : IShippingQuoteService
     }
     
     private async Task<List<ShippingQuoteOption>?> GetCarrierQuoteAsync(
-        CarrierConfiguration config,
+        Guid tenantId,
+        CarrierIntegrationConfigurationSnapshot config,
         GetShippingQuotesRequest request,
-        CarrierConfiguration defaultConfig,
+        CarrierIntegrationConfigurationSnapshot defaultConfig,
         CancellationToken cancellationToken)
     {
         var adapter = _carrierRegistry.GetAdapter(config.CarrierCode);
@@ -222,8 +223,19 @@ public class ShippingQuoteService : IShippingQuoteService
                 return null;
             }
             
-            // Build credentials
-            var credentials = BuildCredentials(config);
+            var credentialsResolution = await _carrierIntegrationAuthority.ResolveCredentialsAsync(
+                tenantId,
+                config.CarrierCode,
+                CarrierIntegrationPurpose.Quote,
+                cancellationToken);
+            if (!credentialsResolution.Succeeded || credentialsResolution.Credentials == null)
+            {
+                _logger.LogWarning(
+                    "Skipping carrier {CarrierCode} quote because integration credentials are unavailable: {Blockers}",
+                    config.CarrierCode,
+                    string.Join(",", credentialsResolution.Blockers));
+                return null;
+            }
             
             // Build quote request
             var quoteRequest = new ShippingQuoteRequest
@@ -246,7 +258,7 @@ public class ShippingQuoteService : IShippingQuoteService
             }
             
             // Get quotes from carrier
-            var result = await adapter.GetQuoteAsync(quoteRequest, credentials, cancellationToken);
+            var result = await adapter.GetQuoteAsync(quoteRequest, credentialsResolution.Credentials, cancellationToken);
             
             if (!result.Success)
             {
@@ -291,7 +303,7 @@ public class ShippingQuoteService : IShippingQuoteService
     }
     
     private List<ShippingQuoteOption> BuildFixedRateQuotes(
-        CarrierConfiguration config,
+        CarrierIntegrationConfigurationSnapshot config,
         GetShippingQuotesRequest request)
     {
         var isFreeShipping = config.FreeShippingThreshold.HasValue && 
@@ -315,39 +327,6 @@ public class ShippingQuoteService : IShippingQuoteService
                 IsFreeShipping = isFreeShipping
             }
         };
-    }
-    
-    private CarrierCredentials BuildCredentials(CarrierConfiguration config)
-    {
-        var credentials = new CarrierCredentials
-        {
-            ApiKey = config.ApiKey ?? string.Empty,
-            ApiSecret = config.ApiSecret,
-            AccountId = config.AccountId,
-            ApiUrl = config.ApiUrl,
-            UseSandbox = config.UseSandbox
-        };
-        
-        // Parse extra config from JSON
-        if (!string.IsNullOrEmpty(config.Configuration))
-        {
-            try
-            {
-                var extra = JsonSerializer.Deserialize<Dictionary<string, string>>(config.Configuration);
-                if (extra != null)
-                {
-                    credentials.ExtraConfig = extra;
-                }
-            }
-            catch (JsonException)
-            {
-                _logger.LogWarning(
-                    "Invalid JSON in carrier config for {CarrierCode}",
-                    config.CarrierCode);
-            }
-        }
-        
-        return credentials;
     }
     
     private static decimal ApplyMarkup(decimal cost, decimal markupPercentage)

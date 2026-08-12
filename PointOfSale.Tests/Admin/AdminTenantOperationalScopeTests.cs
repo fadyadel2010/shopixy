@@ -151,10 +151,18 @@ public sealed class AdminTenantOperationalScopeTests
         var tenantId = Guid.NewGuid();
         var foreignTenantId = Guid.NewGuid();
         var methodId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
         var databaseName = Guid.NewGuid().ToString("N");
 
         await using (var setup = CreateDbContext(databaseName, foreignTenantId))
         {
+            setup.Warehouses.Add(new Warehouse
+            {
+                Id = warehouseId,
+                TenantId = foreignTenantId,
+                Name = "Foreign Origin",
+                IsActive = true
+            });
             setup.ShippingMethods.Add(new ShippingMethod
             {
                 Id = methodId,
@@ -165,6 +173,7 @@ public sealed class AdminTenantOperationalScopeTests
                 EstimatedDeliveryDaysMin = 1,
                 EstimatedDeliveryDaysMax = 3,
                 IsActive = true,
+                FulfillmentWarehouseId = warehouseId,
                 CreatedAt = DateTime.UtcNow
             });
             await setup.SaveChangesAsync();
@@ -182,7 +191,7 @@ public sealed class AdminTenantOperationalScopeTests
                 PerKgRate = 9,
                 EstimatedDeliveryDaysMin = 1,
                 EstimatedDeliveryDaysMax = 2,
-                IsActive = true
+                IsActive = false
             });
             var calculate = await controller.CalculateShippingCost(new CalculateShippingRequest
             {

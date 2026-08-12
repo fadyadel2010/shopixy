@@ -11,7 +11,7 @@
  * Phase 7.7: Checkout UI Implementation
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import {
     useCheckoutStore,
@@ -545,7 +545,6 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
     const checkoutFieldsError = useCheckoutStore(selectCheckoutFieldsError);
     const checkoutFieldsTotalCount = useCheckoutStore(selectCheckoutFieldsTotalCount);
     const customFieldValues = useCheckoutStore(selectCustomFieldValues);
-
     // Store actions
     const setAddressField = useCheckoutStore((state) => state.setAddressField);
     const touchField = useCheckoutStore((state) => state.touchField);
@@ -558,13 +557,6 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
     const getCustomFieldError = useCheckoutStore((state) => state.getCustomFieldError);
     const isStepValid = useCheckoutStore((state) => state.isStepValid);
     const setShowAllErrors = useCheckoutStore((state) => state.setShowAllErrors);
-
-    // Fetch shipping methods on mount
-    useEffect(() => {
-        if (shippingMethods.length === 0) {
-            fetchShippingMethods();
-        }
-    }, [shippingMethods.length, fetchShippingMethods]);
 
     // Handle continue button
     const handleContinue = () => {
@@ -767,7 +759,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                         </p>
                         <button
                             type="button"
-                            onClick={() => void fetchShippingMethods()}
+                            onClick={() => void fetchShippingMethods({ force: true })}
                             className="mt-3 inline-flex items-center rounded-lg border border-red-300 px-3 py-2 font-medium text-red-700 hover:bg-red-100"
                         >
                             Retry shipping options

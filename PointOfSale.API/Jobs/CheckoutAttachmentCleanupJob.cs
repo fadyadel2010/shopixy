@@ -89,6 +89,12 @@ public sealed class CheckoutAttachmentCleanupJob
                     expiredCount,
                     failureCount);
             }
+
+            if (failureCount > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Checkout attachment cleanup could not delete {failureCount} claimed object set(s).");
+            }
         }
         catch (PostgresException pgEx) when (pgEx.SqlState == "42P01")
         {
@@ -97,6 +103,7 @@ public sealed class CheckoutAttachmentCleanupJob
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogError(ex, "Checkout attachment cleanup failed.");
+            throw;
         }
     }
 

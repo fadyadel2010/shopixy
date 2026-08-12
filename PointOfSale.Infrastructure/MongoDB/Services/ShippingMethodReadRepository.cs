@@ -387,6 +387,8 @@ public class ShippingMethodReadRepository : IShippingMethodReadRepository
             SortOrder = method.SortOrder,
             CarrierName = method.CarrierName,
             CarrierCode = method.CarrierCode,
+            ServiceLevel = method.ServiceLevel,
+            FulfillmentWarehouseId = method.FulfillmentWarehouseId,
             TrackingUrlTemplate = method.TrackingUrlTemplate,
             AvailableCountries = method.AvailableCountries,
             IsDeleted = false,

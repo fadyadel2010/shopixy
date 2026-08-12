@@ -165,6 +165,7 @@ public class CheckoutService : ICheckoutService
         string? SKU,
         decimal EffectivePrice,
         decimal CostPrice,
+        decimal Weight,
         Guid CategoryId,
         bool ProductIsActive,
         bool ProductIsOnlineVisible,
@@ -249,6 +250,8 @@ public class CheckoutService : ICheckoutService
     private readonly ICheckoutRequestIdempotencyCoordinator _checkoutRequestIdempotencyCoordinator;
     private readonly ICheckoutSessionTokenService _checkoutSessionTokenService;
     private readonly ICheckoutAttachmentService _checkoutAttachmentService;
+    private readonly IWarehouseResolutionService _warehouseResolutionService;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly IDataProtector _dataProtector;
     private readonly IPaymentIntentClientSecretProtector _clientSecretProtector;
     private readonly IPaymobSensitiveArtifactProtector _paymobArtifactProtector;
@@ -320,6 +323,7 @@ public class CheckoutService : ICheckoutService
         IPaymobSensitiveArtifactProtector paymobArtifactProtector,
         ICheckoutSessionTokenService checkoutSessionTokenService,
         ICheckoutAttachmentService checkoutAttachmentService,
+        IWarehouseResolutionService warehouseResolutionService,
         IOptions<R2Options> r2Options,
         IOptions<PaymentLifecycleSettings> paymentLifecycleSettings,
         ILogger<CheckoutService> logger,
@@ -328,7 +332,8 @@ public class CheckoutService : ICheckoutService
         IWhatsAppFeatureGateService? whatsAppFeatureGate = null,
         IStorefrontPhoneVerificationService? phoneVerificationService = null,
         CommerceReliabilityTelemetry? reliabilityTelemetry = null,
-        IAddressAdmissionService? addressAdmissionService = null)
+        IAddressAdmissionService? addressAdmissionService = null,
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
     {
         // CRITICAL: Purpose string MUST match PaymentMethodsAdminController.DataProtectionPurpose
         _dataProtector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
@@ -351,6 +356,8 @@ public class CheckoutService : ICheckoutService
         _checkoutRequestIdempotencyCoordinator = checkoutRequestIdempotencyCoordinator;
         _checkoutSessionTokenService = checkoutSessionTokenService;
         _checkoutAttachmentService = checkoutAttachmentService;
+        _warehouseResolutionService = warehouseResolutionService;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
         _r2Options = r2Options.Value;
         _marketplaceEventOutbox = marketplaceEventOutbox;
         _phoneRiskProfileService = phoneRiskProfileService;
@@ -858,13 +865,26 @@ public class CheckoutService : ICheckoutService
                 "Cart snapshot taken | CartId: {CartId} | Items: {ItemCount} | CorrelationId: {CorrelationId}",
                 cartSnapshot.CartId, cartSnapshot.Items.Count, correlationId);
 
+            var warehouseResolutionValidation = await _warehouseResolutionService.ValidateSubmittedResolutionAsync(
+                tenantId,
+                ownerId,
+                ownerType,
+                customerId,
+                sessionId,
+                cartSnapshot,
+                request,
+                correlationId,
+                lockForCheckout: false,
+                cancellationToken);
+
             // =================================================================
             // STEP 2.5: Claim persistent idempotency against the exact cart snapshot
             // =================================================================
             activeStep = "IdempotencyClaim";
             var snapshotHash = CheckoutCartIdempotencySnapshotBuilder.BuildHash(
                 cartSnapshot,
-                request);
+                request,
+                warehouseResolutionValidation.WarehouseId);
 
             checkoutId = BuildServerCheckoutIdempotencyKey(
                 tenantId,
@@ -2124,6 +2144,9 @@ public class CheckoutService : ICheckoutService
             Operation = "STOREFRONT_CHECKOUT",
             request.CartId,
             CanonicalOwner = canonicalOwner,
+            request.CheckoutSessionId,
+            request.WarehouseResolutionId,
+            request.WarehouseResolutionVersion,
             request.ShippingMethodId,
             PaymentMethod = canonicalPaymentMethod,
             CouponCode = request.CouponCode?.Trim().ToUpperInvariant(),
@@ -4172,6 +4195,7 @@ public class CheckoutService : ICheckoutService
                     CartPrice = item.UnitPrice,
                     CurrentPrice = 0, // Will be filled in price recalculation
                     CostPrice = 0,    // Will be filled in price recalculation
+                    Weight = Math.Max(0m, item.Weight),
                     ThumbnailImage = item.ThumbnailImage
                 }).ToList()
             };
@@ -4563,6 +4587,7 @@ public class CheckoutService : ICheckoutService
             item.SKU = authoritativeVariant.SKU ?? item.SKU;
             item.CurrentPrice = authoritativeVariant.EffectivePrice;
             item.CostPrice = authoritativeVariant.CostPrice;
+            item.Weight = Math.Max(0m, authoritativeVariant.Weight);
             item.CategoryId = authoritativeVariant.CategoryId;
 
             _logger.LogDebug(
@@ -4641,6 +4666,7 @@ public class CheckoutService : ICheckoutService
                     ? variant.OnlinePrice.Value
                     : variant.Price,
                 variant.CostPrice,
+                variant.Weight ?? variant.Product.Weight,
                 variant.Product.CategoryId,
                 variant.Product.IsActive,
                 variant.Product.IsOnlineVisible,
@@ -5343,16 +5369,29 @@ public class CheckoutService : ICheckoutService
             throw new CheckoutShippingMethodException(shippingMethodId, "Not currently available");
         }
 
-        if (!CarrierCodes.IsManual(shippingMethod.CarrierCode) &&
-            !await _dbContext.Set<CarrierConfiguration>()
-                .AsNoTracking()
-                .AnyAsync(
-                    configuration => configuration.TenantId == tenantId &&
-                                     configuration.CarrierCode == CarrierCodes.Normalize(shippingMethod.CarrierCode) &&
-                                     configuration.IsEnabled,
-                    cancellationToken))
+        var serviceLevelReadiness = await _carrierIntegrationAuthority.GetServiceLevelReadinessAsync(
+            tenantId,
+            shippingMethod.CarrierCode,
+            shippingMethod.ServiceLevel,
+            cancellationToken);
+        if (!serviceLevelReadiness.CanExecute)
         {
-            throw new CheckoutShippingMethodException(shippingMethodId, "Carrier is not currently available");
+            throw new CheckoutShippingMethodException(shippingMethodId, "Carrier service level is not currently available");
+        }
+
+        if (!CarrierCodes.IsManual(shippingMethod.CarrierCode))
+        {
+            var readiness = await _carrierIntegrationAuthority.GetIntegrationReadinessAsync(
+                tenantId,
+                shippingMethod.CarrierCode,
+                shippingMethodId,
+                shippingMethod.FulfillmentWarehouseId,
+                CarrierIntegrationPurpose.CheckoutAdmission,
+                cancellationToken);
+            if (!readiness.CanExecute)
+            {
+                throw new CheckoutShippingMethodException(shippingMethodId, "Carrier is not currently available");
+            }
         }
 
         _logger.LogDebug(
@@ -5678,6 +5717,7 @@ public class CheckoutService : ICheckoutService
         CartSnapshot snapshot,
         Guid tenantId,
         Guid orderId,
+        Guid warehouseId,
         string requestId,
         string correlationId,
         CancellationToken cancellationToken,
@@ -5702,9 +5742,16 @@ public class CheckoutService : ICheckoutService
 
         var reservationExpiresAtUtc = DateTime.UtcNow.AddMinutes(InventoryReservationTtlMinutes);
 
-        // Get available quantities for all variants in one call
-        var availableQuantities = await _variantStockRepository.GetAvailableQuantitiesAsync(
-            tenantId, variantIds, cancellationToken);
+        var availableQuantities = variantIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : await _dbContext.ProductVariantStocks
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .WhereCurrentInventoryStockOwner(tenantId)
+                .Where(stock => stock.WarehouseId == warehouseId && variantIds.Contains(stock.VariantId))
+                .GroupBy(stock => stock.VariantId)
+                .Select(group => new { VariantId = group.Key, Available = group.Sum(stock => stock.Quantity - stock.ReservedQuantity) })
+                .ToDictionaryAsync(item => item.VariantId, item => item.Available, cancellationToken);
 
         // Stock policy is write-side authority. Mongo product documents can lag Admin
         // mutations, so checkout must not use them to decide whether reservation is required.
@@ -5755,14 +5802,16 @@ public class CheckoutService : ICheckoutService
                         "Insufficient variant stock | VariantId: {VariantId} | SKU: {SKU} | Requested: {Requested} | Available: {Available} | CorrelationId: {CorrelationId}",
                         item.VariantId, item.SKU, item.Quantity, availableQty, correlationId);
 
-                    throw new CheckoutOutOfStockException(
-                        item.ProductId, item.SKU, item.Quantity, (int)availableQty);
+                    throw new WarehouseResolutionException(
+                        WarehouseResolutionErrorCodes.InsufficientStockAtResolvedWarehouse,
+                        $"Resolved warehouse no longer has enough stock for {item.SKU}.",
+                        409);
                 }
 
                 // PHASE 11.4.1: Reserve stock in ProductVariantStocks
                 reservationMutationAttempted = true;
                 var reserved = await _variantStockRepository.ReserveAsync(
-                    tenantId, item.VariantId.Value, null, item.Quantity, orderId, reservationExpiresAtUtc, cancellationToken);
+                    tenantId, item.VariantId.Value, warehouseId, item.Quantity, orderId, reservationExpiresAtUtc, cancellationToken);
 
                 if (!reserved)
                 {
@@ -5770,8 +5819,10 @@ public class CheckoutService : ICheckoutService
                         "Failed to reserve variant stock | VariantId: {VariantId} | SKU: {SKU} | Quantity: {Quantity} | CorrelationId: {CorrelationId}",
                         item.VariantId, item.SKU, item.Quantity, correlationId);
 
-                    throw new CheckoutOutOfStockException(
-                        item.ProductId, item.SKU, item.Quantity, (int)availableQty);
+                    throw new WarehouseResolutionException(
+                        WarehouseResolutionErrorCodes.InsufficientStockAtResolvedWarehouse,
+                        $"Resolved warehouse no longer has enough stock for {item.SKU}.",
+                        409);
                 }
 
                 reservedItems.Add(new InventoryReservationItem
@@ -6117,6 +6168,7 @@ public class CheckoutService : ICheckoutService
             // Shipping method (snapshot - immutable after order creation)
             ShippingMethodId = shippingMethod.ShippingMethodId,
             ShippingMethodName = shippingMethod.Name,
+            ShippingServiceLevel = shippingMethod.ServiceLevel,
             ShippingCost = shippingCost,
             EstimatedDeliveryDays = FormatEstimatedDelivery(shippingMethod),
             
@@ -6369,6 +6421,17 @@ public class CheckoutService : ICheckoutService
             snapshot = transactionScopedAuthority.Snapshot;
             shippingMethod = transactionScopedAuthority.ShippingMethod;
             paymentMethod = transactionScopedAuthority.PaymentMethod;
+            var finalWarehouseResolution = await _warehouseResolutionService.ValidateSubmittedResolutionAsync(
+                tenantId,
+                ownerId,
+                ownerType,
+                customerId,
+                sessionId,
+                snapshot,
+                request,
+                correlationId,
+                lockForCheckout: true,
+                cancellationToken);
             pricing = transactionScopedAuthority.Pricing;
             resolvedAffiliateAuthority = await RevalidateResolvedAffiliateAuthorityInsideFinalTransactionAsync(
                 tenantId,
@@ -6406,6 +6469,7 @@ public class CheckoutService : ICheckoutService
                 pricing,
                 validatedOrderCurrency,
                 admittedGeography);
+            order.WarehouseId = finalWarehouseResolution.WarehouseId;
             RefreshOrderItemAuthoritySnapshots(
                 order,
                 snapshot.Items,
@@ -6413,6 +6477,10 @@ public class CheckoutService : ICheckoutService
                 pricing.Tax,
                 affiliateOrderLineAdmissions,
                 resolvedAffiliateAuthority != null);
+            foreach (var orderItem in order.Items)
+            {
+                orderItem.WarehouseId = finalWarehouseResolution.WarehouseId;
+            }
             RefreshOrderCheckoutFieldSnapshots(
                 order,
                 transactionScopedAuthority.CheckoutFieldSnapshots);
@@ -6421,6 +6489,7 @@ public class CheckoutService : ICheckoutService
                 snapshot,
                 tenantId,
                 order.Id,
+                finalWarehouseResolution.WarehouseId,
                 requestId,
                 correlationId,
                 cancellationToken,
@@ -6536,6 +6605,12 @@ public class CheckoutService : ICheckoutService
                     correlationId,
                     cancellationToken);
             }
+
+            await _warehouseResolutionService.MarkOrderedAsync(
+                tenantId,
+                finalWarehouseResolution.Resolution.Id,
+                order.Id,
+                cancellationToken);
 
             await EmitOrderCreatedEventAsync(
                 tenantId,
@@ -7293,6 +7368,7 @@ public class CheckoutService : ICheckoutService
         order.FulfillmentCarrierCode = ExtractCarrierCode(shippingMethod);
         order.ShippingMethodId = shippingMethod.ShippingMethodId;
         order.ShippingMethodName = shippingMethod.Name;
+        order.ShippingServiceLevel = shippingMethod.ServiceLevel;
         order.ShippingCost = shippingCost;
         order.EstimatedDeliveryDays = FormatEstimatedDelivery(shippingMethod);
         order.Subtotal = subtotal;

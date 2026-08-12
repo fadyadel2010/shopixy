@@ -81,6 +81,15 @@ public class ShippingMethodDto
     /// Carrier/provider name (e.g., DHL, FedEx, Aramex).
     /// </summary>
     public string? CarrierName { get; set; }
+
+    /// <summary>Canonical carrier identity admitted by the backend.</summary>
+    public string CarrierCode { get; set; } = string.Empty;
+
+    /// <summary>Canonical service level admitted by the backend.</summary>
+    public string ServiceLevel { get; set; } = string.Empty;
+
+    /// <summary>Tracking presentation template; never a checkout authority input.</summary>
+    public string? TrackingUrlTemplate { get; set; }
     
     /// <summary>
     /// Display order in shipping method list.
@@ -93,6 +102,11 @@ public class ShippingMethodDto
 /// </summary>
 public class ShippingMethodsListResponseDto
 {
+    /// <summary>
+    /// Canonical server-authoritative tenant scope for this availability response.
+    /// </summary>
+    public Guid TenantId { get; set; }
+
     /// <summary>
     /// Canonical checkout availability state for the returned methods.
     /// </summary>
@@ -122,4 +136,73 @@ public class ShippingMethodsListResponseDto
     /// Active methods applicable to the current cart/address context.
     /// </summary>
     public int ApplicableCount { get; set; }
+}
+
+public sealed class ShippingMethodsPreviewRequestDto
+{
+    public Guid CheckoutSessionId { get; set; }
+
+    public (string? ErrorCode, string? ErrorMessage) Validate()
+    {
+        if (CheckoutSessionId == Guid.Empty)
+        {
+            return ("CHECKOUT_SESSION_REQUIRED", "Checkout session is required.");
+        }
+
+        return (null, null);
+    }
+}
+
+public sealed class ShippingMethodsPreviewResponseDto
+{
+    public Guid TenantId { get; set; }
+
+    public Guid? WarehouseResolutionId { get; set; }
+
+    public int? ResolutionVersion { get; set; }
+
+    public string Status { get; set; } = "PREVIEW";
+
+    public DateTime? ExpiresAtUtc { get; set; }
+
+    public string ShippingMethodsStatus { get; set; } = string.Empty;
+
+    public List<ShippingMethodDto> ShippingMethods { get; set; } = new();
+}
+
+public sealed class ShippingMethodSelectionRequestDto
+{
+    public Guid CheckoutSessionId { get; set; }
+
+    public Guid ShippingMethodId { get; set; }
+
+    public (string? ErrorCode, string? ErrorMessage) Validate()
+    {
+        if (CheckoutSessionId == Guid.Empty)
+        {
+            return ("CHECKOUT_SESSION_REQUIRED", "Checkout session is required.");
+        }
+
+        if (ShippingMethodId == Guid.Empty)
+        {
+            return ("SHIPPING_METHOD_REQUIRED", "Shipping method is required.");
+        }
+
+        return (null, null);
+    }
+}
+
+public sealed class ShippingMethodSelectionResponseDto
+{
+    public Guid TenantId { get; set; }
+
+    public Guid ShippingMethodId { get; set; }
+
+    public Guid WarehouseResolutionId { get; set; }
+
+    public int ResolutionVersion { get; set; }
+
+    public string Status { get; set; } = string.Empty;
+
+    public DateTime? ExpiresAtUtc { get; set; }
 }

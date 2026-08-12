@@ -155,4 +155,12 @@ public class ShippingMethodDocument
     /// Defaults to "standard" if not specified.
     /// </summary>
     public string? ServiceLevel { get; set; }
+
+    /// <summary>
+    /// Tenant-owned method fulfillment warehouse. Storefront never exposes this
+    /// value as customer authority; SQL revalidation remains required.
+    /// </summary>
+    [BsonRepresentation(BsonType.String)]
+    [BsonIgnoreIfNull]
+    public Guid? FulfillmentWarehouseId { get; set; }
 }

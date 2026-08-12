@@ -92,6 +92,26 @@ public sealed class CheckoutCartIdempotencySnapshotBuilderTests
     }
 
     [Fact]
+    public void BuildHash_Changes_WhenAuthoritativeWeightChanges()
+    {
+        var request = BuildRequest();
+        var timestamp = new DateTime(2026, 8, 12, 8, 0, 0, DateTimeKind.Utc);
+        var productId = Guid.Parse("00000000-0000-0000-0000-000000000001");
+        var original = BuildSnapshot(timestamp,
+        [
+            new CartItemSnapshot { ProductId = productId, Quantity = 2, CartPrice = 15m, Weight = 1.5m }
+        ]);
+        var changed = BuildSnapshot(timestamp,
+        [
+            new CartItemSnapshot { ProductId = productId, Quantity = 2, CartPrice = 15m, Weight = 2m }
+        ]);
+
+        Assert.NotEqual(
+            CheckoutCartIdempotencySnapshotBuilder.BuildHash(original, request),
+            CheckoutCartIdempotencySnapshotBuilder.BuildHash(changed, request));
+    }
+
+    [Fact]
     public void BuildHash_Changes_WhenManualDiscountTotalChanges()
     {
         var request = BuildRequest();
@@ -129,10 +149,46 @@ public sealed class CheckoutCartIdempotencySnapshotBuilderTests
         Assert.NotEqual(hashWithoutDiscount, hashWithDiscount);
     }
 
+    [Fact]
+    public void BuildHash_Changes_WhenWarehouseResolutionVersionChanges()
+    {
+        var snapshot = BuildSnapshot(
+            cartUpdatedAtUtc: new DateTime(2026, 8, 11, 8, 0, 0, DateTimeKind.Utc),
+            items:
+            [
+                new CartItemSnapshot
+                {
+                    ProductId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+                    VariantId = Guid.Parse("00000000-0000-0000-0000-000000000010"),
+                    Quantity = 1,
+                    CartPrice = 15m
+                }
+            ]);
+        var request = BuildRequest();
+        request.CheckoutSessionId = Guid.Parse("40000000-0000-0000-0000-000000000001");
+        request.WarehouseResolutionId = Guid.Parse("50000000-0000-0000-0000-000000000001");
+        request.WarehouseResolutionVersion = 1;
+
+        var originalHash = CheckoutCartIdempotencySnapshotBuilder.BuildHash(
+            snapshot,
+            request,
+            Guid.Parse("60000000-0000-0000-0000-000000000001"));
+        request.WarehouseResolutionVersion = 2;
+        var changedHash = CheckoutCartIdempotencySnapshotBuilder.BuildHash(
+            snapshot,
+            request,
+            Guid.Parse("60000000-0000-0000-0000-000000000001"));
+
+        Assert.NotEqual(originalHash, changedHash);
+    }
+
     private static CheckoutRequestDto BuildRequest() =>
         new()
         {
             CartId = Guid.Parse("10000000-0000-0000-0000-000000000001"),
+            CheckoutSessionId = Guid.Parse("40000000-0000-0000-0000-000000000001"),
+            WarehouseResolutionId = Guid.Parse("50000000-0000-0000-0000-000000000001"),
+            WarehouseResolutionVersion = 1,
             ShippingMethodId = Guid.Parse("20000000-0000-0000-0000-000000000001"),
             PaymentMethod = "stripe",
             CouponCode = "save10",

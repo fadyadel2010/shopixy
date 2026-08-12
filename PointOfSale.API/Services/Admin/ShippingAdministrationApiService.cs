@@ -1,5 +1,8 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.ShippingAdministration;
+using PointOfSale.Core.Constants;
+using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.ShippingAdministration;
 using PointOfSale.Core.Interfaces.ShippingAdministration;
 using PointOfSale.Infrastructure.Data;
@@ -12,32 +15,66 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
     private readonly ApplicationDbContext _db;
     private readonly ICarrierAccountAdministrationRuntime _runtime;
     private readonly IShippingCarrierRegistry _carrierRegistry;
+    private readonly ICarrierCapabilityRegistry _carrierCapabilityRegistry;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
 
     public ShippingAdministrationApiService(
         ApplicationDbContext db,
         ICarrierAccountAdministrationRuntime runtime,
-        IShippingCarrierRegistry carrierRegistry)
+        IShippingCarrierRegistry carrierRegistry,
+        ICarrierCapabilityRegistry? carrierCapabilityRegistry = null,
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
     {
         _db = db;
         _runtime = runtime;
         _carrierRegistry = carrierRegistry;
+        _carrierCapabilityRegistry = carrierCapabilityRegistry ?? new CarrierCapabilityRegistry(carrierRegistry);
+        _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
     }
 
     public Task<IReadOnlyList<SupportedShippingCarrierDto>> ListSupportedCarriersAsync(CancellationToken cancellationToken)
     {
-        IReadOnlyList<SupportedShippingCarrierDto> carriers = _carrierRegistry.GetAllAdapters()
-            .OrderBy(adapter => adapter.CarrierCode)
-            .Select(adapter => new SupportedShippingCarrierDto(
-                adapter.CarrierCode,
-                adapter.DisplayName,
-                adapter.GetSupportedServiceLevels()
+        IReadOnlyList<SupportedShippingCarrierDto> carriers = _carrierCapabilityRegistry.GetAllCapabilities()
+            .OrderBy(capability => capability.CarrierCode)
+            .Select(capability =>
+            {
+                var adapter = _carrierRegistry.GetAdapter(capability.CarrierCode);
+                var serviceLevels = (adapter?.GetSupportedServiceLevels() ?? Array.Empty<ServiceLevelInfo>())
                     .Select(level => new ShippingAdministrationServiceLevelDto(
                         level.Code,
                         level.Name,
                         level.Description,
                         level.TypicalDaysMin,
                         level.TypicalDaysMax))
-                    .ToList()))
+                    .ToList();
+                var isExternal = !CarrierCodes.IsManual(capability.CarrierCode);
+                var productionBlocked = capability.ProductionCapability is
+                    CarrierProductionCapability.Unavailable or
+                    CarrierProductionCapability.NotCertified;
+                return new SupportedShippingCarrierDto(
+                    capability.CarrierCode,
+                    capability.DisplayName,
+                    serviceLevels,
+                    IsExternal: isExternal,
+                    AccountRequired: isExternal && !productionBlocked,
+                    ReadinessRequired: isExternal && !productionBlocked,
+                    ProductionCapability: capability.ProductionCapability.ToString(),
+                    CredentialFields: capability.CredentialFields
+                        .Select(field => new CarrierCredentialFieldDto(
+                            field.Key,
+                            field.Label,
+                            field.IsSecret,
+                            field.Required,
+                            field.Target))
+                        .ToList(),
+                    EnvironmentSupported: capability.EnvironmentSupported,
+                    ConnectionTestSupported: capability.ConnectionTestSupported,
+                    ConnectionTestMode: capability.ConnectionTestMode.ToString(),
+                    RequiresOriginReadiness: capability.RequiresOriginReadiness,
+                    RequiresGeographyMapping: capability.RequiresGeographyMapping,
+                    SupportsWebhooks: capability.SupportsWebhooks,
+                    WebhookTrustModes: capability.WebhookTrustModes);
+            })
             .ToList();
 
         return Task.FromResult(carriers);
@@ -48,7 +85,9 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
         var accounts = await _db.CarrierAccounts
             .AsNoTracking()
             .IgnoreQueryFilters()
-            .Where(account => account.TenantId == tenantId && !account.IsDeleted)
+            .Where(account => account.TenantId == tenantId &&
+                              !account.IsDeleted &&
+                              account.CarrierCode != CarrierCodes.Manual)
             .OrderBy(account => account.CarrierCode)
             .ToListAsync(cancellationToken);
 
@@ -109,6 +148,22 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
         if (string.IsNullOrWhiteSpace(command.CarrierCode))
         {
             return Failure("UNKNOWN_CARRIER");
+        }
+
+        if (CarrierCodes.IsManual(command.CarrierCode))
+        {
+            return Failure("MANUAL_CARRIER_ACCOUNT_NOT_SUPPORTED");
+        }
+
+        var capability = _carrierCapabilityRegistry.GetCapability(command.CarrierCode);
+        if (capability == null)
+        {
+            return Failure("UNKNOWN_CARRIER");
+        }
+
+        if (capability.ProductionCapability is CarrierProductionCapability.Unavailable or CarrierProductionCapability.NotCertified)
+        {
+            return Failure("CARRIER_NOT_PRODUCTION_ACTIVATABLE");
         }
 
         return (await _runtime.RegisterCarrierAccountAsync(tenantId, command.CarrierCode, actor, correlationId, cancellationToken)).ToDto();
@@ -202,20 +257,80 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
 
     public async Task<ShippingAdministrationResultDto> RunConnectionTestAsync(Guid tenantId, Guid carrierAccountId, ConnectionTestCommand command, CarrierAdministrationActor actor, string correlationId, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(command.ApiKey))
+        var account = await _db.CarrierAccounts
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(item => item.TenantId == tenantId && item.Id == carrierAccountId && !item.IsDeleted, cancellationToken);
+        if (account == null)
+        {
+            return Failure("UNKNOWN_CARRIER_ACCOUNT", carrierAccountId);
+        }
+
+        var capability = _carrierCapabilityRegistry.GetCapability(account.CarrierCode);
+        if (capability == null)
+        {
+            return Failure("UNKNOWN_CARRIER", carrierAccountId);
+        }
+
+        if (!capability.ConnectionTestSupported || capability.ConnectionTestMode == CarrierConnectionTestMode.Unsupported)
+        {
+            return Failure("CONNECTION_TEST_UNSUPPORTED", carrierAccountId);
+        }
+
+        if (capability.CredentialFields.Any(field => field.Required && string.IsNullOrWhiteSpace(ReadCredentialTarget(command, field.Target))))
         {
             return Failure("UNKNOWN_CREDENTIAL_REFERENCE", carrierAccountId);
         }
 
-        var credentials = new CarrierConnectionTestCredentials(
-            command.ApiKey,
-            command.ApiSecret,
-            command.AccountId,
-            command.ApiUrl,
-            command.UseSandbox,
-            command.ExtraConfig);
+        var storeResult = await _carrierIntegrationAuthority.ValidateAndStoreIntegrationAsync(
+            tenantId,
+            account.CarrierCode,
+            new CarrierIntegrationUpdate(
+                DisplayName: null,
+                IsEnabled: true,
+                IsDefault: null,
+                ApiKey: command.ApiKey,
+                ApiSecret: command.ApiSecret,
+                AccountId: command.AccountId,
+                ApiUrl: command.ApiUrl,
+                UseSandbox: command.UseSandbox,
+                SupportsCod: null,
+                SupportsTracking: null,
+                SupportsWebhooks: null,
+                SupportsLabels: null,
+                Configuration: SerializeExtraConfig(command.ExtraConfig),
+                PickupAddress: null,
+                PickupCity: null,
+                PickupCountry: null,
+                PickupPhone: null,
+                PickupContactName: null,
+                DefaultServiceLevel: null,
+                UseCarrierRates: null,
+                FixedShippingCost: null,
+                MarkupPercentage: null,
+                FreeShippingThreshold: null,
+                SortOrder: null,
+                Notes: null),
+            cancellationToken);
 
-        return (await _runtime.RunConnectionTestAsync(tenantId, carrierAccountId, credentials, actor, correlationId, cancellationToken)).ToDto();
+        if (!storeResult.Succeeded || storeResult.Configuration == null)
+        {
+            return Failure(storeResult.Blockers.FirstOrDefault() ?? "CARRIER_CONFIGURATION_SAVE_FAILED", carrierAccountId);
+        }
+
+        var validation = await _carrierIntegrationAuthority.ValidateResolvedCredentialsAsync(
+            tenantId,
+            account.CarrierCode,
+            cancellationToken);
+
+        return await RecordCanonicalConnectionValidationAsync(
+            tenantId,
+            carrierAccountId,
+            command.UseSandbox,
+            validation,
+            actor,
+            correlationId,
+            cancellationToken);
     }
 
     public async Task<ShippingAdministrationResultDto> ActivateAsync(Guid tenantId, Guid carrierAccountId, ReadinessEvidenceCommand command, CarrierAdministrationActor actor, string correlationId, CancellationToken cancellationToken)
@@ -332,15 +447,21 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
                 item.TestedAtUtc))
             .FirstOrDefaultAsync(cancellationToken);
 
+        var readiness = await _carrierIntegrationAuthority.GetIntegrationReadinessAsync(
+            account.TenantId,
+            account.CarrierCode,
+            purpose: CarrierIntegrationPurpose.StorefrontAdmission,
+            cancellationToken: cancellationToken);
+
         return new CarrierAccountAdministrationDto(
             account.Id,
             account.CarrierCode,
             account.Environment?.ToString(),
             account.ActiveCredentialReferenceId,
             account.State.ToString(),
-            account.OperationalState.ToString(),
-            account.HealthState.ToString(),
-            account.HealthReason,
+            readiness.CanExecute ? CarrierOperationalState.Ready.ToString() : account.OperationalState.ToString(),
+            readiness.CanExecute ? CarrierAccountHealthState.Healthy.ToString() : account.HealthState.ToString(),
+            readiness.CanExecute ? null : account.HealthReason,
             account.LastHealthEvaluatedAtUtc,
             account.ActivatedAtUtc,
             account.SuspendedAtUtc,
@@ -350,11 +471,141 @@ public sealed class ShippingAdministrationApiService : IShippingAdministrationAp
             assignments,
             policies,
             serviceLevels,
-            lastConnectionTest);
+            lastConnectionTest,
+            new CarrierIntegrationReadinessDto(
+                readiness.Enabled,
+                readiness.CanExecute,
+                readiness.Environment,
+                readiness.ProductionCapability.ToString(),
+                readiness.Blockers,
+                readiness.OriginReadinessRequired,
+                readiness.OriginReadinessSatisfied,
+                readiness.CredentialAvailability));
     }
 
     private static CarrierReadinessEvidence ToReadiness(ReadinessEvidenceCommand command) =>
         new(command.CarrierMappingPublished, command.ProviderCapabilitySupported);
+
+    private static string? ReadCredentialTarget(ConnectionTestCommand command, string target)
+    {
+        if (string.Equals(target, "ApiKey", StringComparison.OrdinalIgnoreCase))
+            return command.ApiKey;
+        if (string.Equals(target, "ApiSecret", StringComparison.OrdinalIgnoreCase))
+            return command.ApiSecret;
+        if (string.Equals(target, "AccountId", StringComparison.OrdinalIgnoreCase))
+            return command.AccountId;
+        if (string.Equals(target, "ApiUrl", StringComparison.OrdinalIgnoreCase))
+            return command.ApiUrl;
+        if (target.StartsWith("ExtraConfig.", StringComparison.OrdinalIgnoreCase))
+        {
+            var key = target["ExtraConfig.".Length..];
+            return command.ExtraConfig != null && command.ExtraConfig.TryGetValue(key, out var value)
+                ? value
+                : null;
+        }
+
+        return null;
+    }
+
+    private async Task<ShippingAdministrationResultDto> RecordCanonicalConnectionValidationAsync(
+        Guid tenantId,
+        Guid carrierAccountId,
+        bool useSandbox,
+        CarrierValidationResult validation,
+        CarrierAdministrationActor actor,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var account = await _db.CarrierAccounts
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(item => item.TenantId == tenantId && item.Id == carrierAccountId && !item.IsDeleted, cancellationToken);
+        if (account == null)
+        {
+            return Failure("UNKNOWN_CARRIER_ACCOUNT", carrierAccountId);
+        }
+
+        account.Environment = useSandbox ? CarrierAccountEnvironment.Sandbox : CarrierAccountEnvironment.Production;
+        account.LastHealthEvaluatedAtUtc = DateTime.UtcNow;
+
+        if (validation.Success)
+        {
+            if (account.State is CarrierAccountState.Draft or CarrierAccountState.CredentialsPending)
+            {
+                account.State = CarrierAccountState.ConnectionTestPending;
+            }
+
+            account.OperationalState = CarrierOperationalState.Ready;
+            account.HealthState = CarrierAccountHealthState.Healthy;
+            account.HealthReason = null;
+        }
+        else
+        {
+            account.OperationalState = CarrierOperationalState.NotReady;
+            account.HealthState = IsProviderConnectivityFailure(validation.ErrorCode)
+                ? CarrierAccountHealthState.Warning
+                : CarrierAccountHealthState.Blocked;
+            account.HealthReason = ToMerchantConnectionFailure(validation.ErrorCode);
+        }
+
+        var record = new CarrierConnectionTestRecord
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CarrierAccountId = account.Id,
+            CredentialReferenceId = account.ActiveCredentialReferenceId,
+            Environment = account.Environment.Value,
+            Status = validation.Success ? CarrierConnectionTestStatus.Succeeded : CarrierConnectionTestStatus.Failed,
+            FailureCode = validation.Success ? null : validation.ErrorCode ?? "CONNECTION_VERIFICATION_FAILED",
+            FailureReason = validation.Success ? null : validation.ErrorMessage,
+            TestedAtUtc = DateTime.UtcNow
+        };
+        _db.Set<CarrierConnectionTestRecord>().Add(record);
+        _db.Set<CarrierAdministrationAudit>().Add(new CarrierAdministrationAudit
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CarrierAccountId = account.Id,
+            Action = CarrierAdministrationAuditAction.ConnectionTest,
+            ActorId = actor.ActorId,
+            CorrelationId = correlationId,
+            PreviousState = null,
+            NextState = record.Status.ToString(),
+            Reason = validation.Success ? "Persisted credentials validated" : record.FailureCode,
+            OccurredAtUtc = DateTime.UtcNow
+        });
+
+        await _db.SaveChangesAsync(cancellationToken);
+
+        return validation.Success
+            ? new ShippingAdministrationResultDto(true, account.Id, account.State.ToString(), account.HealthState.ToString(), null, Array.Empty<string>())
+            : new ShippingAdministrationResultDto(false, account.Id, account.State.ToString(), account.HealthState.ToString(), record.FailureCode, new[] { record.FailureCode ?? "CONNECTION_VERIFICATION_FAILED" });
+    }
+
+    private static string? SerializeExtraConfig(IReadOnlyDictionary<string, string>? extraConfig)
+    {
+        if (extraConfig == null || extraConfig.Count == 0)
+        {
+            return null;
+        }
+
+        var values = extraConfig
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+            .ToDictionary(pair => pair.Key, pair => pair.Value.Trim(), StringComparer.OrdinalIgnoreCase);
+        return values.Count == 0 ? null : JsonSerializer.Serialize(values);
+    }
+
+    private static bool IsProviderConnectivityFailure(string? errorCode) =>
+        string.Equals(errorCode, "CONNECTION_ERROR", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(errorCode, "NETWORK_ERROR", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(errorCode, "PROVIDER_UNAVAILABLE", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(errorCode, "CONNECTION_TEST_EXCEPTION", StringComparison.OrdinalIgnoreCase);
+
+    private static string ToMerchantConnectionFailure(string? errorCode) =>
+        IsProviderConnectivityFailure(errorCode)
+            ? "Provider could not be reached. Credentials were saved and were not marked invalid."
+            : string.Equals(errorCode, "INVALID_CREDENTIALS", StringComparison.OrdinalIgnoreCase)
+                ? "Connection verification failed. Check the saved credentials and retry."
+                : "Connection verification failed. Credentials remain saved for retry.";
 
     private static ShippingAdministrationResultDto Failure(string failureCode, Guid? carrierAccountId = null) =>
         new(false, carrierAccountId, null, null, failureCode, new[] { failureCode });

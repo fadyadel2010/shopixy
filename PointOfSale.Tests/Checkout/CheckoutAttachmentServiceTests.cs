@@ -302,6 +302,47 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ConfirmUpload_RejectsMissingETagBeforeFinalCopy()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var storage = CreateStorageMock();
+        storage.Setup(item => item.GetObjectMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new R2ObjectMetadata("image/jpeg", 1024, null, null));
+        var service = CreateService(storage, cartId, tenantId);
+        var lease = await service.CreateUploadLeaseAsync(
+            tenantId,
+            "guest-session",
+            "session",
+            "guest-session",
+            null,
+            NewLeaseRequest(field.Id, cartId, "image.jpg", "image/jpeg", 1024));
+
+        var ex = await Assert.ThrowsAsync<CheckoutDynamicFieldValidationException>(() =>
+            service.ConfirmUploadAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                new CheckoutAttachmentConfirmRequestDto
+                {
+                    CartId = cartId,
+                    FieldId = field.Id,
+                    AttachmentId = lease.AttachmentId
+                }));
+
+        Assert.Equal("CHECKOUT_ATTACHMENT_INTEGRITY_EVIDENCE_MISSING", ex.ErrorCode);
+        storage.Verify(
+            item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        _dbContext.ChangeTracker.Clear();
+        var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
+        Assert.Equal(CheckoutAttachmentStatus.Failed, attachment.Status);
+    }
+
+    [Fact]
     public async Task ConfirmUpload_FinalizesAttachmentAndPreservesMetadata()
     {
         var tenantId = Guid.NewGuid();
@@ -373,7 +414,7 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
 
         Assert.Equal("CHECKOUT_ATTACHMENT_CART_NOT_AUTHORIZED", ex.ErrorCode);
         storage.Verify(
-            item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -405,18 +446,18 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         Assert.Equal("FINALIZED", first.Status);
         Assert.Equal("FINALIZED", second.Status);
         storage.Verify(
-            item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), "etag", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
     [Fact]
-    public async Task ConfirmUpload_CopyFailureLeavesAttachmentFailedWithoutFinalObject()
+    public async Task ConfirmUpload_CopyFailurePersistsRecoverableFinalObjectKey()
     {
         var tenantId = Guid.NewGuid();
         var cartId = Guid.NewGuid();
         var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
         var storage = CreateStorageMock();
-        storage.Setup(item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        storage.Setup(item => item.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("copy failed"));
         var service = CreateService(storage, cartId, tenantId);
         var lease = await service.CreateUploadLeaseAsync(
@@ -443,7 +484,8 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
 
         var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
         Assert.Equal(CheckoutAttachmentStatus.Failed, attachment.Status);
-        Assert.Null(attachment.FinalObjectKey);
+        Assert.NotNull(attachment.FinalObjectKey);
+        Assert.Contains(attachment.Id.ToString("N"), attachment.FinalObjectKey, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1121,7 +1163,7 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
             storage.Object,
             Mock.Of<ILogger<CheckoutAttachmentCleanupJob>>());
 
-        await cleanup.RunAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => cleanup.RunAsync());
         Assert.False(attachment.IsDeleted);
         Assert.Equal(CheckoutAttachmentStatus.Deleting, attachment.Status);
 
@@ -1184,8 +1226,8 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
             .ReturnsAsync(new R2ObjectMetadata(contentType, contentLength, null, "etag"));
         mock.Setup(storage => storage.GetObjectBytesAsync(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00 });
-        mock.Setup(storage => storage.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string sourceKey, string destinationKey, string copiedContentType, CancellationToken token) =>
+        mock.Setup(storage => storage.CopyObjectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string sourceKey, string destinationKey, string copiedContentType, string? sourceETag, CancellationToken token) =>
                 new R2ObjectMetadata(copiedContentType, contentLength, null, "final-etag"));
         mock.Setup(storage => storage.DeleteObjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

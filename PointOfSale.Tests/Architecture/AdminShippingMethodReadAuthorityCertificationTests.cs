@@ -10,7 +10,7 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         var storefrontService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/ShippingMethodService.cs");
         var storefrontDto = CertificationSource.ReadRepoFile("PointOfSale.API/DTOs/Storefront/ShippingMethodDto.cs");
         var projectionConsumer = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Consumers/ShippingMethodProjectionConsumer.cs");
-        var adminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/pages/ShippingMethods.jsx");
+        var adminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/shipping-administration/components/ShippingMethodsTab.jsx");
         var checkoutStore = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/store/checkoutStore.ts");
         var checkoutTypes = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/types/checkout.ts");
         var shippingStep = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/checkout/ShippingStep.tsx");
@@ -23,8 +23,9 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         Assert.Contains("query = query.Where(s => s.IsActive);", adminController, StringComparison.Ordinal);
         Assert.Contains(".OrderBy(s => s.SortOrder)", adminController, StringComparison.Ordinal);
         Assert.Contains("FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId && !s.IsDeleted)", adminController, StringComparison.Ordinal);
-        Assert.Contains("CarrierCode = s.CarrierCode", adminController, StringComparison.Ordinal);
-        Assert.Contains("AvailableCountries = s.AvailableCountries", adminController, StringComparison.Ordinal);
+        Assert.Contains("return Ok(methods.Select(MapToDto).ToList());", adminController, StringComparison.Ordinal);
+        Assert.Contains("CarrierCode = normalizedCarrierCode", adminController, StringComparison.Ordinal);
+        Assert.Contains("AvailableCountries = method.AvailableCountries", adminController, StringComparison.Ordinal);
         Assert.Contains("Response.Headers[\"Cache-Control\"] = \"no-store, no-cache, max-age=0\"", adminController, StringComparison.Ordinal);
 
         Assert.Contains("[Route(\"api/storefront/shipping-methods\")]", storefrontController, StringComparison.Ordinal);
@@ -34,9 +35,9 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         Assert.Contains("_cartService.GetCartAsync(", storefrontController, StringComparison.Ordinal);
         Assert.Contains("cart.Subtotal", storefrontController, StringComparison.Ordinal);
         Assert.Contains("cart.TotalWeight", storefrontController, StringComparison.Ordinal);
-        Assert.Contains("_shippingMethodService.GetShippingMethodsAsync(", storefrontController, StringComparison.Ordinal);
+        Assert.Contains("_shippingMethodService.GetShippingMethodsAvailabilityAsync(", storefrontController, StringComparison.Ordinal);
 
-        Assert.Contains("TryValidateCachedTenantScope(tenantId, cached", storefrontService, StringComparison.Ordinal);
+        Assert.Contains("TryValidateCachedTenantScope(tenantId, documents", storefrontService, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == tenantId", storefrontService, StringComparison.Ordinal);
         Assert.Contains("GetActiveShippingMethodsAsync(tenantId", storefrontService, StringComparison.Ordinal);
         Assert.Contains("TenantId = doc.TenantId", storefrontService, StringComparison.Ordinal);
@@ -49,6 +50,8 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         Assert.Contains("public string Currency { get; set; }", storefrontDto, StringComparison.Ordinal);
         Assert.Contains("public int? EstimatedDays { get; set; }", storefrontDto, StringComparison.Ordinal);
         Assert.Contains("public string? CarrierName { get; set; }", storefrontDto, StringComparison.Ordinal);
+        Assert.Contains("public class ShippingMethodsListResponseDto", storefrontDto, StringComparison.Ordinal);
+        Assert.Contains("public Guid TenantId { get; set; }", storefrontDto, StringComparison.Ordinal);
 
         Assert.Contains("Consumer ALWAYS re-fetches from PostgreSQL", projectionConsumer, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", projectionConsumer, StringComparison.Ordinal);
@@ -65,14 +68,15 @@ public sealed class AdminShippingMethodReadAuthorityCertificationTests
         Assert.Contains("setMethods(admitAdminShippingMethods(response.data))", adminPage, StringComparison.Ordinal);
 
         Assert.Contains("tenantId: string;", checkoutTypes, StringComparison.Ordinal);
-        Assert.Contains("function admitStorefrontShippingMethods(payload: unknown): ShippingMethod[]", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const expectedTenantId = getRequestHeaders()['X-Tenant-Id'];", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("function requireStorefrontShippingTenantScope(value: unknown): string", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("function admitStorefrontShippingMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: ShippingMethod[] }", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const expectedTenantId = requireStorefrontShippingTenantScope(candidate.tenantId);", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Shipping method response contained foreign tenant evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Shipping method response contained duplicate identity evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Shipping method response contained invalid currency evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Shipping method response contained invalid ETA evidence.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const methods = admitStorefrontShippingMethods(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedResponse = admitStorefrontShippingMethods(response.data);", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: state.shippingMethodId", checkoutStore, StringComparison.Ordinal);
         Assert.DoesNotContain("shippingMethods: state.shippingMethods", checkoutStore, StringComparison.Ordinal);
 

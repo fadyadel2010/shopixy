@@ -130,7 +130,7 @@ public class CarrierConfiguration : BaseEntity, ITenantOwned
     public string? WebhookUrl { get; set; }
     
     /// <summary>
-    /// Webhook secret for signature validation.
+    /// Webhook secret for signature validation. Persisted encrypted and exposed write-only.
     /// </summary>
     public string? WebhookSecret { get; set; }
     
@@ -232,6 +232,17 @@ public class CarrierConfiguration : BaseEntity, ITenantOwned
     /// Error message from last validation (if failed).
     /// </summary>
     public string? LastValidationError { get; set; }
+
+    /// <summary>
+    /// SHA-256 fingerprint of the currently persisted credential/configuration material.
+    /// Contains no recoverable credential data.
+    /// </summary>
+    public string? CredentialConfigurationFingerprint { get; set; }
+
+    /// <summary>
+    /// Configuration fingerprint against which the last provider validation was performed.
+    /// </summary>
+    public string? LastValidatedConfigurationFingerprint { get; set; }
     
     #endregion
 }

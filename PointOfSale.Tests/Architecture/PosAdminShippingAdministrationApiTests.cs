@@ -175,6 +175,26 @@ public sealed class PosAdminShippingAdministrationApiTests
     }
 
     [Fact]
+    public async Task CreateCarrierAccount_ShouldRejectManualFulfillmentCarrier()
+    {
+        await using var db = CreateDbContext();
+        var service = CreateApiService(db, new FakeCarrierAdapter());
+        var tenantId = Guid.NewGuid();
+        var actor = new CarrierAdministrationActor("admin-user");
+
+        var result = await service.CreateCarrierAccountAsync(
+            tenantId,
+            new CreateCarrierAccountCommand(CarrierCodes.Manual),
+            actor,
+            "corr-manual",
+            CancellationToken.None);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("MANUAL_CARRIER_ACCOUNT_NOT_SUPPORTED", result.FailureCode);
+        Assert.Empty(await db.CarrierAccounts.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
     public void ApiLayer_ShouldNotMutateShipmentRuntimeOrCarrierAdapters()
     {
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminShippingAdministrationController.cs");
@@ -253,7 +273,14 @@ public sealed class PosAdminShippingAdministrationApiTests
     {
         var registry = new ShippingCarrierRegistry(adapters, NullLogger<ShippingCarrierRegistry>.Instance);
         var runtime = new CarrierAccountAdministrationRuntime(db, registry, NullLogger<CarrierAccountAdministrationRuntime>.Instance);
-        return new ShippingAdministrationApiService(db, runtime, registry);
+        var capabilityRegistry = new CarrierCapabilityRegistry(registry);
+        var authority = new CarrierIntegrationAuthority(
+            db,
+            registry,
+            capabilityRegistry,
+            new FakeCredentialEncryptionService(),
+            NullLogger<CarrierIntegrationAuthority>.Instance);
+        return new ShippingAdministrationApiService(db, runtime, registry, capabilityRegistry, authority);
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -288,5 +315,23 @@ public sealed class PosAdminShippingAdministrationApiTests
             new[] { new ServiceLevelInfo { Code = "standard", Name = "Standard" } };
 
         public WebhookParseResult? ParseWebhook(string payload, string? signature, string? webhookSecret) => null;
+    }
+
+    private sealed class FakeCredentialEncryptionService : ICarrierCredentialEncryptionService
+    {
+        public string Encrypt(string plainText) =>
+            string.IsNullOrEmpty(plainText) || IsEncrypted(plainText)
+                ? plainText
+                : $"ENC:{Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(plainText))}";
+
+        public string Decrypt(string? encryptedOrPlainText) =>
+            string.IsNullOrEmpty(encryptedOrPlainText)
+                ? string.Empty
+                : IsEncrypted(encryptedOrPlainText)
+                    ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encryptedOrPlainText["ENC:".Length..]))
+                    : encryptedOrPlainText;
+
+        public bool IsEncrypted(string? value) =>
+            value?.StartsWith("ENC:", StringComparison.Ordinal) == true;
     }
 }

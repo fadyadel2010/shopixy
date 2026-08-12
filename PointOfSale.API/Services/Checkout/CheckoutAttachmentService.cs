@@ -641,6 +641,14 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
             throw new CheckoutDynamicFieldValidationException("CHECKOUT_ATTACHMENT_SIZE_MISMATCH", "Uploaded file size does not match the approved upload.");
         }
 
+        if (string.IsNullOrWhiteSpace(metadata.ETag))
+        {
+            attachment.Status = CheckoutAttachmentStatus.Failed;
+            throw new CheckoutDynamicFieldValidationException(
+                "CHECKOUT_ATTACHMENT_INTEGRITY_EVIDENCE_MISSING",
+                "Uploaded file integrity could not be verified.");
+        }
+
         try
         {
             ValidateFileSize(metadata.ContentLength, policy);
@@ -713,6 +721,9 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
         }
 
         var finalObjectKey = BuildFinalObjectKey(attachment, allowedType);
+        // Persist this deterministic key on every terminal path. A provider can
+        // create the copy even when its response is lost, so cleanup must know it.
+        attachment.FinalObjectKey = finalObjectKey;
         R2ObjectMetadata finalMetadata;
         try
         {
@@ -720,6 +731,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
                 attachment.ObjectKey,
                 finalObjectKey,
                 normalizedContentType,
+                metadata.ETag,
                 cancellationToken);
         }
         catch
@@ -755,7 +767,6 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
         }
 
         attachment.SizeBytes = finalMetadata.ContentLength;
-        attachment.FinalObjectKey = finalObjectKey;
         attachment.FinalETag = finalMetadata.ETag;
         attachment.FinalChecksumSha256 = finalMetadata.ChecksumSha256;
         attachment.Status = CheckoutAttachmentStatus.Finalized;

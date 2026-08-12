@@ -24,7 +24,8 @@ public sealed class ShippingMethodsSyncReliabilityTests
         var tenantId = Guid.NewGuid();
         var callOrder = new List<string>();
         await using var dbContext = CreateDbContext(tenantId, callOrder);
-        dbContext.ShippingMethods.Add(CreateShippingMethod(tenantId, "Express"));
+        var warehouseId = AddWarehouse(dbContext, tenantId);
+        dbContext.ShippingMethods.Add(CreateShippingMethod(tenantId, "Express", warehouseId));
         await dbContext.SaveChangesAsync();
         dbContext.ResetTracking();
 
@@ -53,7 +54,8 @@ public sealed class ShippingMethodsSyncReliabilityTests
         var tenantId = Guid.NewGuid();
         var callOrder = new List<string>();
         await using var dbContext = CreateDbContext(tenantId, callOrder);
-        dbContext.ShippingMethods.Add(CreateShippingMethod(tenantId, "Express"));
+        var warehouseId = AddWarehouse(dbContext, tenantId);
+        dbContext.ShippingMethods.Add(CreateShippingMethod(tenantId, "Express", warehouseId));
         await dbContext.SaveChangesAsync();
         dbContext.ResetTracking();
         dbContext.ThrowOnSave = true;
@@ -112,7 +114,20 @@ public sealed class ShippingMethodsSyncReliabilityTests
         return new TrackingApplicationDbContext(options, tenantContext, callOrder);
     }
 
-    private static ShippingMethod CreateShippingMethod(Guid tenantId, string name)
+    private static Guid AddWarehouse(ApplicationDbContext dbContext, Guid tenantId)
+    {
+        var warehouseId = Guid.NewGuid();
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        return warehouseId;
+    }
+
+    private static ShippingMethod CreateShippingMethod(Guid tenantId, string name, Guid warehouseId)
     {
         return new ShippingMethod
         {
@@ -124,6 +139,7 @@ public sealed class ShippingMethodsSyncReliabilityTests
             EstimatedDeliveryDaysMin = 1,
             EstimatedDeliveryDaysMax = 2,
             IsActive = true,
+            FulfillmentWarehouseId = warehouseId,
             SortOrder = 1,
             CreatedAt = DateTime.UtcNow
         };

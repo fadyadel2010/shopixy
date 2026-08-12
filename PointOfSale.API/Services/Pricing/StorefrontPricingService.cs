@@ -74,6 +74,7 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
             tenantId,
             new PricingRequestTotals(
                 Subtotal: RoundCurrency(cart.Items.Sum(item => item.UnitPrice * item.Quantity)),
+                TotalWeight: CalculateTotalWeight(cart.Items.Select(item => (item.Weight, item.Quantity))),
                 CouponDiscount: RoundCurrency(cart.DiscountTotal),
                 ItemPromotionDiscount: RoundCurrency(cart.PromotionDiscountTotal),
                 CartPromotionDiscount: RoundCurrency(cart.CartPromotionDiscountTotal),
@@ -99,6 +100,7 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
             tenantId,
             new PricingRequestTotals(
                 Subtotal: RoundCurrency(snapshot.Items.Sum(item => item.CurrentPrice * item.Quantity)),
+                TotalWeight: CalculateTotalWeight(snapshot.Items.Select(item => (item.Weight, item.Quantity))),
                 CouponDiscount: RoundCurrency(snapshot.CouponDiscountTotal > 0m ? snapshot.CouponDiscountTotal : snapshot.DiscountTotal),
                 ItemPromotionDiscount: RoundCurrency(snapshot.PromotionDiscountTotal),
                 CartPromotionDiscount: RoundCurrency(snapshot.CartPromotionDiscountTotal),
@@ -121,7 +123,10 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
     {
         var shipping = shippingMethod == null
             ? 0m
-            : _shippingCalculationService.Calculate(shippingMethod, requestTotals.Subtotal);
+            : _shippingCalculationService.Calculate(
+                shippingMethod,
+                requestTotals.Subtotal,
+                requestTotals.TotalWeight);
 
         var taxComputation = await _taxCalculationService.CalculateAsync(
             tenantId,
@@ -182,8 +187,12 @@ public sealed class StorefrontPricingService : IStorefrontPricingService
         return Math.Round(value, CurrencyScale, MidpointRounding.AwayFromZero);
     }
 
+    private static decimal CalculateTotalWeight(IEnumerable<(decimal Weight, int Quantity)> lines) =>
+        lines.Sum(line => Math.Max(0m, line.Weight) * Math.Max(0, line.Quantity));
+
     private readonly record struct PricingRequestTotals(
         decimal Subtotal,
+        decimal TotalWeight,
         decimal CouponDiscount,
         decimal ItemPromotionDiscount,
         decimal CartPromotionDiscount,

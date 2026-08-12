@@ -13,7 +13,26 @@ public sealed record ShippingAdministrationResultDto(
 public sealed record SupportedShippingCarrierDto(
     string CarrierCode,
     string DisplayName,
-    IReadOnlyList<ShippingAdministrationServiceLevelDto> ServiceLevels);
+    IReadOnlyList<ShippingAdministrationServiceLevelDto> ServiceLevels,
+    bool IsExternal,
+    bool AccountRequired,
+    bool ReadinessRequired,
+    string ProductionCapability = "Partial",
+    IReadOnlyList<CarrierCredentialFieldDto>? CredentialFields = null,
+    bool EnvironmentSupported = true,
+    bool ConnectionTestSupported = true,
+    string ConnectionTestMode = "Remote",
+    bool RequiresOriginReadiness = false,
+    bool RequiresGeographyMapping = false,
+    bool SupportsWebhooks = false,
+    IReadOnlyList<string>? WebhookTrustModes = null);
+
+public sealed record CarrierCredentialFieldDto(
+    string Key,
+    string Label,
+    bool IsSecret,
+    bool Required,
+    string Target);
 
 public sealed record ShippingAdministrationServiceLevelDto(
     string Code,
@@ -41,7 +60,18 @@ public sealed record CarrierAccountAdministrationDto(
     IReadOnlyList<CarrierWarehouseAssignmentDto> WarehouseAssignments,
     IReadOnlyList<CarrierPolicyDto> Policies,
     IReadOnlyList<ShippingAdministrationServiceLevelDto> ServiceLevels,
-    CarrierConnectionTestDto? LastConnectionTest);
+    CarrierConnectionTestDto? LastConnectionTest,
+    CarrierIntegrationReadinessDto? IntegrationReadiness = null);
+
+public sealed record CarrierIntegrationReadinessDto(
+    bool Enabled,
+    bool CanExecute,
+    string? Environment,
+    string ProductionCapability,
+    IReadOnlyList<string> Blockers,
+    bool OriginReadinessRequired,
+    bool OriginReadinessSatisfied,
+    string CredentialAvailability);
 
 public sealed record CarrierCredentialReferenceDto(
     Guid Id,

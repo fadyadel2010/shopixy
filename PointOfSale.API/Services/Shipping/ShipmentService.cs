@@ -17,6 +17,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Fulfillment;
 using PointOfSale.Core.Payments;
 using PointOfSale.Core.Policies;
+using PointOfSale.Infrastructure.Shipping;
 
 namespace PointOfSale.API.Services.Shipping;
 
@@ -40,6 +41,7 @@ public class ShipmentService : IShipmentService
     private readonly IEventPublisher _eventPublisher;
     private readonly IOrderFulfillmentService _fulfillmentService;
     private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
+    private readonly ICarrierIntegrationAuthority _carrierIntegrationAuthority;
     private readonly ILogger<ShipmentService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
@@ -55,7 +57,8 @@ public class ShipmentService : IShipmentService
         IEventPublisher eventPublisher,
         IOrderFulfillmentService fulfillmentService,
         IMarketplaceEventOutboxService marketplaceEventOutbox,
-        ILogger<ShipmentService> logger)
+        ILogger<ShipmentService> logger,
+        ICarrierIntegrationAuthority? carrierIntegrationAuthority = null)
     {
         _dbContext = dbContext;
         _redisFactory = redisFactory;
@@ -63,6 +66,7 @@ public class ShipmentService : IShipmentService
         _eventPublisher = eventPublisher;
         _fulfillmentService = fulfillmentService;
         _marketplaceEventOutbox = marketplaceEventOutbox;
+        _carrierIntegrationAuthority = carrierIntegrationAuthority ?? NullCarrierIntegrationAuthority.Instance;
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -135,36 +139,42 @@ public class ShipmentService : IShipmentService
                 shippingMethodId);
         }
 
-        var shippingMethod = await _dbContext.ShippingMethods
-            .FirstOrDefaultAsync(
-                sm => sm.Id == shippingMethodId &&
-                      sm.TenantId == tenantId &&
-                      !sm.IsDeleted,
-                cancellationToken);
+        var normalizedCarrierCode = order.FulfillmentMode == FulfillmentMode.Manual
+            ? CarrierCodes.Manual
+            : CarrierCodes.Normalize(order.FulfillmentCarrierCode);
+        var serviceLevel = NormalizeServiceLevel(order.ShippingServiceLevel);
+        if (string.IsNullOrWhiteSpace(order.ShippingMethodName) || string.IsNullOrWhiteSpace(serviceLevel))
+        {
+            throw new InvalidOperationException("Order shipping execution snapshot is incomplete.");
+        }
 
-        if (shippingMethod == null || !shippingMethod.IsActive)
+        var serviceLevelReadiness = await _carrierIntegrationAuthority.GetServiceLevelReadinessAsync(
+            tenantId,
+            normalizedCarrierCode,
+            serviceLevel,
+            cancellationToken);
+        if (!serviceLevelReadiness.CanExecute)
         {
             throw new ShippingMethodInactiveException(shippingMethodId);
         }
 
-        if (!CarrierCodes.IsManual(shippingMethod.CarrierCode) &&
-            !await _dbContext.Set<CarrierConfiguration>()
-                .AsNoTracking()
-                .AnyAsync(
-                    configuration => configuration.TenantId == tenantId &&
-                                     configuration.CarrierCode == CarrierCodes.Normalize(shippingMethod.CarrierCode) &&
-                                     configuration.IsEnabled,
-                    cancellationToken))
+        if (!CarrierCodes.IsManual(normalizedCarrierCode))
         {
-            throw new ShippingMethodInactiveException(shippingMethodId);
+            var readiness = await _carrierIntegrationAuthority.GetIntegrationReadinessAsync(
+                tenantId,
+                normalizedCarrierCode,
+                shippingMethodId,
+                order.WarehouseId,
+                CarrierIntegrationPurpose.ShipmentCreation,
+                cancellationToken);
+            if (!readiness.CanExecute)
+            {
+                throw new ShippingMethodInactiveException(shippingMethodId);
+            }
         }
 
         var shipmentNumber = GenerateShipmentNumber(orderId);
-        var estimatedDelivery = CalculateEstimatedDelivery(
-            shippingMethod.EstimatedDeliveryDaysMin,
-            shippingMethod.EstimatedDeliveryDaysMax);
-        var normalizedCarrierCode = CarrierCodes.Normalize(shippingMethod.CarrierCode);
-        var serviceLevel = NormalizeServiceLevel(shippingMethod.ServiceLevel);
+        var estimatedDelivery = CalculateEstimatedDeliveryFromSnapshot(order.EstimatedDeliveryDays);
         var isCarrierManaged = !CarrierCodes.IsManual(normalizedCarrierCode);
 
         var shipment = new Shipment
@@ -172,8 +182,9 @@ public class ShipmentService : IShipmentService
             Id = Guid.NewGuid(),
             TenantId = tenantId,
             OrderId = orderId,
+            OriginWarehouseId = order.WarehouseId,
             ShippingMethodId = shippingMethodId,
-            ShippingMethodName = shippingMethod.Name,
+            ShippingMethodName = order.ShippingMethodName,
             CarrierCode = normalizedCarrierCode,
             ShippingCost = order.ShippingCost,
             Currency = order.Currency,
@@ -600,7 +611,7 @@ public class ShipmentService : IShipmentService
     private static string NormalizeServiceLevel(string? serviceLevel)
     {
         var normalized = serviceLevel?.Trim();
-        return string.IsNullOrWhiteSpace(normalized) ? "standard" : normalized;
+        return string.IsNullOrWhiteSpace(normalized) ? string.Empty : normalized.ToLowerInvariant();
     }
 
     private static string GenerateShipmentNumber(Guid orderId)
@@ -615,6 +626,28 @@ public class ShipmentService : IShipmentService
         // Use average of min and max
         var avgDays = (minDays + maxDays) / 2;
         return DateTime.UtcNow.AddDays(avgDays);
+    }
+
+    private static DateTime? CalculateEstimatedDeliveryFromSnapshot(string? deliveryPromise)
+    {
+        if (string.IsNullOrWhiteSpace(deliveryPromise))
+        {
+            return null;
+        }
+
+        var days = deliveryPromise
+            .Split(deliveryPromise.Where(character => !char.IsDigit(character)).Distinct().ToArray(),
+                StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => int.TryParse(value, out var parsed) ? (int?)parsed : null)
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .ToArray();
+        return days.Length switch
+        {
+            0 => null,
+            1 => DateTime.UtcNow.AddDays(days[0]),
+            _ => CalculateEstimatedDelivery(days.Min(), days.Max())
+        };
     }
 
     private static string? BuildTrackingUrl(string? template, string? trackingNumber)

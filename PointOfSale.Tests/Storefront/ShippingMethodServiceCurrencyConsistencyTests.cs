@@ -12,6 +12,7 @@ using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Infrastructure.Redis.Services;
+using PointOfSale.Infrastructure.Shipping;
 
 namespace PointOfSale.Tests.Storefront;
 
@@ -21,23 +22,30 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
     public async Task GetShippingMethodsAsync_UsesProjectedTenantCurrencyAcrossAllMethods()
     {
         var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
         var repository = new Mock<IShippingMethodReadRepository>();
         repository
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "sar", 20m),
-                CreateShippingMethod(tenantId, "SAR", 35m)
+                CreateShippingMethod(tenantId, "sar", 20m, fulfillmentWarehouseId: warehouseId),
+                CreateShippingMethod(tenantId, "SAR", 35m, fulfillmentWarehouseId: warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
+        SeedWarehouse(dbContext, tenantId, warehouseId);
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
             CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
-            NullLogger<ShippingMethodService>.Instance);
+            NullLogger<ShippingMethodService>.Instance,
+            new FakeCarrierIntegrationAuthority(new Dictionary<string, bool>
+            {
+                [CarrierCodes.Bosta] = true,
+                [CarrierCodes.FedEx] = false
+            }));
 
         var result = await service.GetShippingMethodsAsync(
             tenantId,
@@ -54,23 +62,30 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
     public async Task GetShippingMethodsAsync_WhenProjectedCurrenciesMismatch_ThrowsOutOfSync()
     {
         var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
         var repository = new Mock<IShippingMethodReadRepository>();
         repository
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "SAR", 20m),
-                CreateShippingMethod(tenantId, "USD", 35m)
+                CreateShippingMethod(tenantId, "SAR", 20m, fulfillmentWarehouseId: warehouseId),
+                CreateShippingMethod(tenantId, "USD", 35m, fulfillmentWarehouseId: warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
+        SeedWarehouse(dbContext, tenantId, warehouseId);
         var service = new ShippingMethodService(
             repository.Object,
             dbContext,
             CreatePassThroughCache(),
             new ShippingCalculationService(),
             new CommerceReliabilityTelemetry(),
-            NullLogger<ShippingMethodService>.Instance);
+            NullLogger<ShippingMethodService>.Instance,
+            new FakeCarrierIntegrationAuthority(new Dictionary<string, bool>
+            {
+                [CarrierCodes.Bosta] = true,
+                [CarrierCodes.FedEx] = false
+            }));
 
         await Assert.ThrowsAsync<StorefrontConfigOutOfSyncException>(() =>
             service.GetShippingMethodsAsync(
@@ -93,9 +108,9 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.Bosta),
-                CreateShippingMethod(tenantId, "SAR", 35m, CarrierCodes.FedEx),
-                CreateShippingMethod(tenantId, "SAR", 10m, null)
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.Bosta, warehouseId),
+                CreateShippingMethod(tenantId, "SAR", 35m, CarrierCodes.FedEx, warehouseId),
+                CreateShippingMethod(tenantId, "SAR", 10m, null, warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
@@ -142,6 +157,91 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
                 IsEnabled = true,
                 OriginReadinessPublished = false
             });
+        dbContext.CarrierConfigurations.AddRange(
+            new CarrierConfiguration
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                CarrierCode = CarrierCodes.Bosta,
+                DisplayName = "Bosta",
+                IsEnabled = true
+            },
+            new CarrierConfiguration
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                CarrierCode = CarrierCodes.FedEx,
+                DisplayName = "FedEx",
+                IsEnabled = true
+            });
+        await dbContext.SaveChangesAsync();
+
+        var service = new ShippingMethodService(
+            repository.Object,
+            dbContext,
+            CreatePassThroughCache(),
+            new ShippingCalculationService(),
+            new CommerceReliabilityTelemetry(),
+            NullLogger<ShippingMethodService>.Instance,
+            new FakeCarrierIntegrationAuthority(new Dictionary<string, bool>
+            {
+                [CarrierCodes.Bosta] = true,
+                [CarrierCodes.FedEx] = false
+            }));
+
+        var result = await service.GetShippingMethodsAsync(
+            tenantId,
+            cartSubtotal: 100m,
+            totalWeight: 0m,
+            correlationId: "warehouse-filter",
+            warehouseId: warehouseId,
+            cancellationToken: CancellationToken.None);
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, method => method.CarrierName == "Bosta");
+        Assert.Contains(result, method => method.CarrierName == null);
+        Assert.DoesNotContain(result, method => method.CarrierName == "FedEx");
+    }
+
+    [Fact]
+    public async Task GetShippingMethodsAsync_WithReadyAssignmentButNoEnabledCarrierConfiguration_FailsClosed()
+    {
+        var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var accountId = Guid.NewGuid();
+        var repository = new Mock<IShippingMethodReadRepository>();
+        repository
+            .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ShippingMethodDocument>
+            {
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.Bosta, warehouseId)
+            });
+
+        await using var dbContext = CreateDbContext();
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        dbContext.CarrierAccounts.Add(new CarrierAccount
+        {
+            Id = accountId,
+            TenantId = tenantId,
+            CarrierCode = CarrierCodes.Bosta,
+            State = CarrierAccountState.Active,
+            OperationalState = CarrierOperationalState.Ready
+        });
+        dbContext.CarrierWarehouseAssignments.Add(new CarrierWarehouseAssignment
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CarrierAccountId = accountId,
+            WarehouseId = warehouseId,
+            IsEnabled = true,
+            OriginReadinessPublished = true
+        });
         await dbContext.SaveChangesAsync();
 
         var service = new ShippingMethodService(
@@ -156,12 +256,11 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             tenantId,
             cartSubtotal: 100m,
             totalWeight: 0m,
-            correlationId: "warehouse-filter",
+            correlationId: "warehouse-missing-carrier-config",
             warehouseId: warehouseId,
             cancellationToken: CancellationToken.None);
 
-        var method = Assert.Single(result);
-        Assert.Equal("Bosta", method.CarrierName);
+        Assert.Empty(result);
     }
 
     [Fact]
@@ -174,7 +273,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx)
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx, warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
@@ -210,16 +309,18 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
     public async Task GetShippingMethodsAvailabilityAsync_WithActiveMethods_ReturnsAvailable()
     {
         var tenantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
         var repository = new Mock<IShippingMethodReadRepository>();
         repository
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "SAR", 20m)
+                CreateShippingMethod(tenantId, "SAR", 20m, fulfillmentWarehouseId: warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
-        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true));
+        SeedWarehouse(dbContext, tenantId, warehouseId);
+        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true, warehouseId));
         await dbContext.SaveChangesAsync();
         var service = CreateService(repository.Object, dbContext);
 
@@ -231,6 +332,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             cancellationToken: CancellationToken.None);
 
         Assert.Equal("AVAILABLE", result.Status);
+        Assert.Equal(tenantId, result.TenantId);
         Assert.Single(result.ShippingMethods);
         Assert.Equal(1, result.ConfiguredCount);
         Assert.Equal(1, result.ActiveCount);
@@ -257,6 +359,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             cancellationToken: CancellationToken.None);
 
         Assert.Equal("EMPTY", result.Status);
+        Assert.Equal(tenantId, result.TenantId);
         Assert.Empty(result.ShippingMethods);
         Assert.Equal(0, result.ConfiguredCount);
         Assert.Equal(0, result.ActiveCount);
@@ -284,6 +387,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             cancellationToken: CancellationToken.None);
 
         Assert.Equal("EMPTY", result.Status);
+        Assert.Equal(tenantId, result.TenantId);
         Assert.Empty(result.ShippingMethods);
         Assert.Equal(1, result.ConfiguredCount);
         Assert.Equal(0, result.ActiveCount);
@@ -299,18 +403,12 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             .Setup(service => service.GetActiveShippingMethodsAsync(tenantId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ShippingMethodDocument>
             {
-                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx)
+                CreateShippingMethod(tenantId, "SAR", 20m, CarrierCodes.FedEx, warehouseId)
             });
 
         await using var dbContext = CreateDbContext();
-        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true));
-        dbContext.Warehouses.Add(new Warehouse
-        {
-            Id = warehouseId,
-            TenantId = tenantId,
-            Name = "Origin",
-            IsActive = true
-        });
+        dbContext.ShippingMethods.Add(CreateConfiguredShippingMethod(tenantId, true, warehouseId));
+        SeedWarehouse(dbContext, tenantId, warehouseId);
         await dbContext.SaveChangesAsync();
         var service = CreateService(repository.Object, dbContext);
 
@@ -323,6 +421,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             cancellationToken: CancellationToken.None);
 
         Assert.Equal("NOT_APPLICABLE", result.Status);
+        Assert.Equal(tenantId, result.TenantId);
         Assert.Empty(result.ShippingMethods);
         Assert.Equal(1, result.ConfiguredCount);
         Assert.Equal(1, result.ActiveCount);
@@ -333,7 +432,8 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
         Guid tenantId,
         string currency,
         decimal baseRate,
-        string? carrierCode = null)
+        string? carrierCode = null,
+        Guid? fulfillmentWarehouseId = null)
     {
         return new ShippingMethodDocument
         {
@@ -347,6 +447,8 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             EstimatedDeliveryDaysMax = 3,
             IsActive = true,
             CarrierCode = carrierCode,
+            ServiceLevel = "standard",
+            FulfillmentWarehouseId = fulfillmentWarehouseId,
             CarrierName = carrierCode switch
             {
                 CarrierCodes.Bosta => "Bosta",
@@ -356,7 +458,7 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
         };
     }
 
-    private static ShippingMethod CreateConfiguredShippingMethod(Guid tenantId, bool isActive)
+    private static ShippingMethod CreateConfiguredShippingMethod(Guid tenantId, bool isActive, Guid? fulfillmentWarehouseId = null)
     {
         return new ShippingMethod
         {
@@ -366,10 +468,23 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             BaseRate = 20m,
             PerKgRate = 0m,
             IsActive = isActive,
+            FulfillmentWarehouseId = fulfillmentWarehouseId,
             SortOrder = 1,
             EstimatedDeliveryDaysMin = 1,
             EstimatedDeliveryDaysMax = 3,
         };
+    }
+
+    private static void SeedWarehouse(ApplicationDbContext dbContext, Guid tenantId, Guid warehouseId)
+    {
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
+        dbContext.SaveChanges();
     }
 
     private static ShippingMethodService CreateService(
@@ -408,5 +523,93 @@ public sealed class ShippingMethodServiceCurrencyConsistencyTests
             .Setup(service => service.InvalidateAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return cache.Object;
+    }
+
+    private sealed class FakeCarrierIntegrationAuthority : ICarrierIntegrationAuthority
+    {
+        private readonly IReadOnlyDictionary<string, bool> _readiness;
+
+        public FakeCarrierIntegrationAuthority(IReadOnlyDictionary<string, bool> readiness)
+        {
+            _readiness = readiness;
+        }
+
+        public Task<IReadOnlyList<CarrierIntegrationConfigurationSnapshot>> ListRuntimeConfigurationsAsync(
+            Guid tenantId,
+            CarrierIntegrationPurpose purpose,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<CarrierIntegrationConfigurationSnapshot>>(Array.Empty<CarrierIntegrationConfigurationSnapshot>());
+
+        public Task<CarrierCredentialsResolution> ResolveCredentialsAsync(
+            Guid tenantId,
+            string carrierCode,
+            CarrierIntegrationPurpose purpose,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new CarrierCredentialsResolution(false, carrierCode, null, null, Array.Empty<string>()));
+
+        public Task<CarrierIntegrationReadiness> GetIntegrationReadinessAsync(
+            Guid tenantId,
+            string carrierCode,
+            Guid? shippingMethodId = null,
+            Guid? warehouseId = null,
+            CarrierIntegrationPurpose purpose = CarrierIntegrationPurpose.StorefrontAdmission,
+            CancellationToken cancellationToken = default)
+        {
+            var ready = _readiness.TryGetValue(CarrierCodes.Normalize(carrierCode), out var configuredReady) && configuredReady;
+            return Task.FromResult(new CarrierIntegrationReadiness(
+                CarrierCodes.Normalize(carrierCode),
+                carrierCode,
+                IsManual: CarrierCodes.IsManual(carrierCode),
+                Enabled: ready,
+                CanExecute: ready,
+                Environment: null,
+                CarrierProductionCapability.Partial,
+                ready ? Array.Empty<string>() : new[] { "TEST_PROVIDER_NOT_READY" },
+                OriginReadinessRequired: false,
+                OriginReadinessSatisfied: true,
+                CredentialAvailability: ready ? "Available" : "Missing"));
+        }
+
+        public Task<CarrierServiceLevelReadiness> GetServiceLevelReadinessAsync(
+            Guid tenantId,
+            string carrierCode,
+            string? serviceLevel,
+            CancellationToken cancellationToken = default)
+        {
+            var exists = !string.IsNullOrWhiteSpace(serviceLevel);
+            return Task.FromResult(new CarrierServiceLevelReadiness(
+                CarrierCodes.Normalize(carrierCode),
+                serviceLevel?.Trim().ToLowerInvariant() ?? string.Empty,
+                exists,
+                exists,
+                exists,
+                exists,
+                exists ? Array.Empty<string>() : new[] { "SERVICE_LEVEL_MISSING" }));
+        }
+
+        public Task<CarrierIntegrationStoreResult> ValidateAndStoreIntegrationAsync(
+            Guid tenantId,
+            string carrierCode,
+            CarrierIntegrationUpdate update,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
+        public Task<bool> DeleteIntegrationAsync(
+            Guid tenantId,
+            string carrierCode,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(false);
+
+        public Task<CarrierValidationResult> ValidateResolvedCredentialsAsync(
+            Guid tenantId,
+            string carrierCode,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new CarrierValidationResult { Success = false });
+
+        public Task<CarrierWebhookTrustResolution> ResolveWebhookTrustAsync(
+            Guid tenantId,
+            string carrierCode,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
     }
 }

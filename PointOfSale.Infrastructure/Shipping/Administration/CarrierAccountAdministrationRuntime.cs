@@ -44,6 +44,13 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
         CancellationToken cancellationToken = default)
     {
         var normalizedCarrierCode = CarrierCodes.Normalize(carrierCode);
+        if (CarrierCodes.IsManual(normalizedCarrierCode))
+        {
+            return CarrierAccountRuntimeResult.Failure(
+                "MANUAL_CARRIER_ACCOUNT_NOT_SUPPORTED",
+                new[] { "Manual Fulfillment does not require a carrier account." });
+        }
+
         if (!_carrierRegistry.IsCarrierSupported(normalizedCarrierCode))
         {
             return CarrierAccountRuntimeResult.Failure("UNKNOWN_CARRIER", new[] { "Unknown carrier" });
@@ -171,6 +178,16 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
             return CarrierAccountRuntimeResult.Failure("UNKNOWN_CARRIER_ACCOUNT");
         }
 
+        if (CarrierCodes.IsManual(account.CarrierCode))
+        {
+            return CarrierAccountRuntimeResult.Failure(
+                "MANUAL_CARRIER_ACCOUNT_NOT_SUPPORTED",
+                new[] { "Manual Fulfillment does not require warehouse assignments." },
+                account.Id,
+                account.State,
+                account.HealthState);
+        }
+
         var warehouseExists = await _db.Warehouses
             .IgnoreQueryFilters()
             .AnyAsync(
@@ -189,7 +206,8 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
             .SingleOrDefaultAsync(
                 item => item.TenantId == tenantId &&
                         item.CarrierAccountId == account.Id &&
-                        item.WarehouseId == command.WarehouseId,
+                        item.WarehouseId == command.WarehouseId &&
+                        !item.IsDeleted,
                 cancellationToken);
 
         if (assignment == null)
@@ -461,7 +479,11 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
     private async Task<CarrierAccount?> FindAccountAsync(Guid tenantId, Guid carrierAccountId, CancellationToken cancellationToken) =>
         await _db.Set<CarrierAccount>()
             .IgnoreQueryFilters()
-            .SingleOrDefaultAsync(account => account.Id == carrierAccountId && account.TenantId == tenantId, cancellationToken);
+            .SingleOrDefaultAsync(
+                account => account.Id == carrierAccountId &&
+                           account.TenantId == tenantId &&
+                           !account.IsDeleted,
+                cancellationToken);
 
     private async Task<IReadOnlyList<string>> EvaluateAndApplyHealthAsync(
         CarrierAccount account,
@@ -526,7 +548,8 @@ public sealed class CarrierAccountAdministrationRuntime : ICarrierAccountAdminis
             .IgnoreQueryFilters()
             .Where(assignment => assignment.TenantId == account.TenantId &&
                                  assignment.CarrierAccountId == account.Id &&
-                                 assignment.IsEnabled)
+                                 assignment.IsEnabled &&
+                                 !assignment.IsDeleted)
             .ToListAsync(cancellationToken);
         if (activeAssignments.Count == 0)
         {

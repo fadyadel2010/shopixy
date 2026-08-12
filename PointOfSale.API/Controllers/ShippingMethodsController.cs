@@ -72,27 +72,9 @@ public class ShippingMethodsController : ControllerBase
         
         var methods = await query
             .OrderBy(s => s.SortOrder)
-            .Select(s => new ShippingMethodDto
-            {
-                Id = s.Id,
-                Name = s.Name,
-                NameAr = s.NameAr,
-                Description = s.Description,
-                BaseRate = s.BaseRate,
-                PerKgRate = s.PerKgRate,
-                FreeShippingThreshold = s.FreeShippingThreshold,
-                EstimatedDeliveryDaysMin = s.EstimatedDeliveryDaysMin,
-                EstimatedDeliveryDaysMax = s.EstimatedDeliveryDaysMax,
-                IsActive = s.IsActive,
-                SortOrder = s.SortOrder,
-                CarrierName = s.CarrierName,
-                CarrierCode = s.CarrierCode,
-                TrackingUrlTemplate = s.TrackingUrlTemplate,
-                AvailableCountries = s.AvailableCountries
-            })
             .ToListAsync();
         
-        return Ok(methods);
+        return Ok(methods.Select(MapToDto).ToList());
     }
 
     /// <summary>
@@ -111,24 +93,7 @@ public class ShippingMethodsController : ControllerBase
             return NotFound(new { message = "Shipping method not found" });
         }
         
-        return Ok(new ShippingMethodDto
-        {
-            Id = method.Id,
-            Name = method.Name,
-            NameAr = method.NameAr,
-            Description = method.Description,
-            BaseRate = method.BaseRate,
-            PerKgRate = method.PerKgRate,
-            FreeShippingThreshold = method.FreeShippingThreshold,
-            EstimatedDeliveryDaysMin = method.EstimatedDeliveryDaysMin,
-            EstimatedDeliveryDaysMax = method.EstimatedDeliveryDaysMax,
-            IsActive = method.IsActive,
-            SortOrder = method.SortOrder,
-            CarrierName = method.CarrierName,
-            CarrierCode = method.CarrierCode,
-            TrackingUrlTemplate = method.TrackingUrlTemplate,
-            AvailableCountries = method.AvailableCountries
-        });
+        return Ok(MapToDto(method));
     }
 
     /// <summary>
@@ -155,6 +120,22 @@ public class ShippingMethodsController : ControllerBase
         
         // Normalize CarrierCode: null/empty becomes "manual"
         var normalizedCarrierCode = CarrierCodes.Normalize(dto.CarrierCode);
+        var serviceLevelValidationError = ValidateAndNormalizeServiceLevel(normalizedCarrierCode, dto.ServiceLevel, out var normalizedServiceLevel);
+        if (serviceLevelValidationError != null)
+        {
+            return BadRequest(new { message = serviceLevelValidationError });
+        }
+        var canonicalCarrierName = ResolveCarrierDisplayName(normalizedCarrierCode);
+        if (dto.IsActive && (!dto.FulfillmentWarehouseId.HasValue || dto.FulfillmentWarehouseId.Value == Guid.Empty))
+        {
+            return BadRequest(new { message = "Active shipping methods require a fulfillment warehouse." });
+        }
+
+        var warehouseValidationError = await ValidateFulfillmentWarehouseAsync(tenantId, dto.FulfillmentWarehouseId);
+        if (warehouseValidationError != null)
+        {
+            return BadRequest(new { message = warehouseValidationError });
+        }
         
         var method = new ShippingMethod
         {
@@ -170,8 +151,10 @@ public class ShippingMethodsController : ControllerBase
             EstimatedDeliveryDaysMax = dto.EstimatedDeliveryDaysMax,
             IsActive = dto.IsActive,
             SortOrder = dto.SortOrder,
-            CarrierName = dto.CarrierName,
+            CarrierName = canonicalCarrierName,
             CarrierCode = normalizedCarrierCode,
+            ServiceLevel = normalizedServiceLevel,
+            FulfillmentWarehouseId = dto.FulfillmentWarehouseId,
             TrackingUrlTemplate = dto.TrackingUrlTemplate,
             AvailableCountries = dto.AvailableCountries,
             CreatedAt = DateTime.UtcNow
@@ -191,24 +174,7 @@ public class ShippingMethodsController : ControllerBase
             "ShippingMethod created | TenantId: {TenantId} | ShippingMethodId: {ShippingMethodId} | Name: {Name}",
             tenantId, method.Id, method.Name);
         
-        return CreatedAtAction(nameof(GetShippingMethod), new { id = method.Id }, new ShippingMethodDto
-        {
-            Id = method.Id,
-            Name = method.Name,
-            NameAr = method.NameAr,
-            Description = method.Description,
-            BaseRate = method.BaseRate,
-            PerKgRate = method.PerKgRate,
-            FreeShippingThreshold = method.FreeShippingThreshold,
-            EstimatedDeliveryDaysMin = method.EstimatedDeliveryDaysMin,
-            EstimatedDeliveryDaysMax = method.EstimatedDeliveryDaysMax,
-            IsActive = method.IsActive,
-            SortOrder = method.SortOrder,
-            CarrierName = method.CarrierName,
-            CarrierCode = method.CarrierCode,
-            TrackingUrlTemplate = method.TrackingUrlTemplate,
-            AvailableCountries = method.AvailableCountries
-        });
+        return CreatedAtAction(nameof(GetShippingMethod), new { id = method.Id }, MapToDto(method));
     }
 
     /// <summary>
@@ -235,6 +201,22 @@ public class ShippingMethodsController : ControllerBase
         
         // Normalize CarrierCode: null/empty becomes "manual"
         var normalizedCarrierCode = CarrierCodes.Normalize(dto.CarrierCode);
+        var serviceLevelValidationError = ValidateAndNormalizeServiceLevel(normalizedCarrierCode, dto.ServiceLevel, out var normalizedServiceLevel);
+        if (serviceLevelValidationError != null)
+        {
+            return BadRequest(new { message = serviceLevelValidationError });
+        }
+        var canonicalCarrierName = ResolveCarrierDisplayName(normalizedCarrierCode);
+        if (dto.IsActive && (!dto.FulfillmentWarehouseId.HasValue || dto.FulfillmentWarehouseId.Value == Guid.Empty))
+        {
+            return BadRequest(new { message = "Active shipping methods require a fulfillment warehouse." });
+        }
+
+        var warehouseValidationError = await ValidateFulfillmentWarehouseAsync(tenantId, dto.FulfillmentWarehouseId);
+        if (warehouseValidationError != null)
+        {
+            return BadRequest(new { message = warehouseValidationError });
+        }
         
         var method = await _context.ShippingMethods
             .FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId && !s.IsDeleted);
@@ -254,8 +236,10 @@ public class ShippingMethodsController : ControllerBase
         method.EstimatedDeliveryDaysMax = dto.EstimatedDeliveryDaysMax;
         method.IsActive = dto.IsActive;
         method.SortOrder = dto.SortOrder;
-        method.CarrierName = dto.CarrierName;
+        method.CarrierName = canonicalCarrierName;
         method.CarrierCode = normalizedCarrierCode;
+        method.ServiceLevel = normalizedServiceLevel;
+        method.FulfillmentWarehouseId = dto.FulfillmentWarehouseId;
         method.TrackingUrlTemplate = dto.TrackingUrlTemplate;
         method.AvailableCountries = dto.AvailableCountries;
         method.UpdatedAt = NextShippingMethodMutationTimestamp(method);
@@ -306,12 +290,16 @@ public class ShippingMethodsController : ControllerBase
     }
 
     /// <summary>
-    /// Calculate shipping cost for an order
+    /// Legacy compatibility quote only. The caller-supplied subtotal and weight are
+    /// presentation inputs and are never admitted by checkout or persisted to an order.
     /// </summary>
     [HttpPost("calculate")]
     [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<ActionResult<ShippingCostResult>> CalculateShippingCost(CalculateShippingRequest request)
     {
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers["X-Shipping-Authority"] = "compatibility-quote-only";
         var tenantId = TenantId;
         var dtoValidationError = request.Validate();
         if (dtoValidationError != null)
@@ -328,6 +316,12 @@ public class ShippingMethodsController : ControllerBase
         if (method == null || !method.IsActive)
         {
             return NotFound(new { message = "Shipping method not found or inactive" });
+        }
+
+        var warehouseValidationError = await ValidateFulfillmentWarehouseAsync(tenantId, method.FulfillmentWarehouseId);
+        if (!method.FulfillmentWarehouseId.HasValue || warehouseValidationError != null)
+        {
+            return BadRequest(new { message = warehouseValidationError ?? "Shipping method does not have a configured fulfillment warehouse." });
         }
         
         var isFreeShipping = method.FreeShippingThreshold.HasValue &&
@@ -495,6 +489,99 @@ public class ShippingMethodsController : ControllerBase
         return $"Invalid CarrierCode '{carrierCode}'. Valid options: {validCodes}, or leave empty for manual fulfillment.";
     }
 
+    private string? ValidateAndNormalizeServiceLevel(string carrierCode, string? serviceLevel, out string normalizedServiceLevel)
+    {
+        normalizedServiceLevel = string.IsNullOrWhiteSpace(serviceLevel)
+            ? "standard"
+            : serviceLevel.Trim().ToLowerInvariant();
+
+        var adapter = _carrierRegistry.GetAdapter(carrierCode);
+        var supportedLevels = adapter?.GetSupportedServiceLevels() ?? Array.Empty<ServiceLevelInfo>();
+        var requestedServiceLevel = normalizedServiceLevel;
+        if (supportedLevels.Count == 0)
+        {
+            return requestedServiceLevel == "standard"
+                ? null
+                : $"ServiceLevel '{serviceLevel}' is not supported for carrier '{carrierCode}'. Valid options: standard.";
+        }
+
+        if (supportedLevels.Any(level => string.Equals(level.Code, requestedServiceLevel, StringComparison.OrdinalIgnoreCase)))
+        {
+            return null;
+        }
+
+        var validLevels = string.Join(", ", supportedLevels.Select(level => level.Code));
+        return $"ServiceLevel '{serviceLevel}' is not supported for carrier '{carrierCode}'. Valid options: {validLevels}.";
+    }
+
+    private string ResolveCarrierDisplayName(string carrierCode)
+    {
+        var adapter = _carrierRegistry.GetAdapter(carrierCode);
+        if (adapter != null)
+        {
+            return adapter.DisplayName;
+        }
+
+        return CarrierCodes.IsManual(carrierCode) ? "Manual Fulfillment" : carrierCode;
+    }
+
+    private ShippingMethodDto MapToDto(ShippingMethod method)
+    {
+        var normalizedCarrierCode = CarrierCodes.Normalize(method.CarrierCode);
+        return new ShippingMethodDto
+        {
+            Id = method.Id,
+            Name = method.Name,
+            NameAr = method.NameAr,
+            Description = method.Description,
+            BaseRate = method.BaseRate,
+            PerKgRate = method.PerKgRate,
+            FreeShippingThreshold = method.FreeShippingThreshold,
+            EstimatedDeliveryDaysMin = method.EstimatedDeliveryDaysMin,
+            EstimatedDeliveryDaysMax = method.EstimatedDeliveryDaysMax,
+            IsActive = method.IsActive,
+            SortOrder = method.SortOrder,
+            CarrierName = ResolveCarrierDisplayName(normalizedCarrierCode),
+            CarrierCode = normalizedCarrierCode,
+            ServiceLevel = string.IsNullOrWhiteSpace(method.ServiceLevel) ? "standard" : method.ServiceLevel.Trim().ToLowerInvariant(),
+            FulfillmentWarehouseId = method.FulfillmentWarehouseId,
+            TrackingUrlTemplate = method.TrackingUrlTemplate,
+            AvailableCountries = method.AvailableCountries
+        };
+    }
+
+    private async Task<string?> ValidateFulfillmentWarehouseAsync(Guid tenantId, Guid? fulfillmentWarehouseId)
+    {
+        if (!fulfillmentWarehouseId.HasValue)
+        {
+            return null;
+        }
+
+        if (fulfillmentWarehouseId.Value == Guid.Empty)
+        {
+            return "Fulfillment warehouse is required.";
+        }
+
+        var warehouse = await _context.Warehouses
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                item => item.TenantId == tenantId && item.Id == fulfillmentWarehouseId.Value,
+                HttpContext.RequestAborted);
+
+        if (warehouse == null || warehouse.IsDeleted)
+        {
+            return "Selected fulfillment warehouse is no longer available.";
+        }
+
+        if (!warehouse.IsActive)
+        {
+            return "Selected fulfillment warehouse is inactive.";
+        }
+
+        return null;
+    }
+
     private void SetNoStoreHeaders()
     {
         Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
@@ -526,6 +613,8 @@ public class ShippingMethodDto
     /// Null means "manual" (no carrier integration).
     /// </summary>
     public string? CarrierCode { get; set; }
+    public string ServiceLevel { get; set; } = "standard";
+    public Guid? FulfillmentWarehouseId { get; set; }
     public string? TrackingUrlTemplate { get; set; }
     public string? AvailableCountries { get; set; }
 }
@@ -548,6 +637,8 @@ public class CreateShippingMethodDto
     /// Null means "manual" (no carrier integration).
     /// </summary>
     public string? CarrierCode { get; set; }
+    public string? ServiceLevel { get; set; }
+    public Guid? FulfillmentWarehouseId { get; set; }
     public string? TrackingUrlTemplate { get; set; }
     public string? AvailableCountries { get; set; }
 

@@ -3,11 +3,13 @@ import {
     fetchCarrierAccounts,
     fetchShippingAdministrationAudit,
     fetchSupportedCarriers,
+    fetchWarehouses,
 } from '../shippingAdministrationApi'
 
 export function useShippingAdministrationApi() {
     const [supportedCarriers, setSupportedCarriers] = useState([])
     const [carrierAccounts, setCarrierAccounts] = useState([])
+    const [warehouses, setWarehouses] = useState([])
     const [audit, setAudit] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -17,14 +19,16 @@ export function useShippingAdministrationApi() {
         setError('')
 
         try {
-            const [supportedCarrierData, carrierAccountData, auditData] = await Promise.all([
+            const [supportedCarrierData, carrierAccountData, warehouseData, auditData] = await Promise.all([
                 fetchSupportedCarriers(),
                 fetchCarrierAccounts(),
+                fetchWarehouses(),
                 fetchShippingAdministrationAudit(),
             ])
 
             setSupportedCarriers(supportedCarrierData)
             setCarrierAccounts(carrierAccountData)
+            setWarehouses(warehouseData)
             setAudit(auditData)
         } catch (err) {
             setError(err.message || 'Failed to load shipping administration.')
@@ -40,6 +44,7 @@ export function useShippingAdministrationApi() {
     return {
         supportedCarriers,
         carrierAccounts,
+        warehouses,
         audit,
         loading,
         error,

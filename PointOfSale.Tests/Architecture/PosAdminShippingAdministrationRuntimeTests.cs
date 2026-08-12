@@ -97,6 +97,135 @@ public sealed class PosAdminShippingAdministrationRuntimeTests
     }
 
     [Fact]
+    public async Task WarehouseAssignment_ShouldValidateTenantWarehouseLifecycleAndDuplicateDeterminism()
+    {
+        await using var db = CreateDbContext();
+        var service = CreateService(db, new FakeCarrierAdapter());
+        var tenantId = Guid.NewGuid();
+        var foreignTenantId = Guid.NewGuid();
+        var actor = new CarrierAdministrationActor("admin");
+        var accountId = (await service.RegisterCarrierAccountAsync(tenantId, CarrierCodes.Bosta, actor, "corr-account")).CarrierAccountId!.Value;
+        var activeWarehouseId = SeedWarehouse(db, tenantId);
+        var foreignWarehouseId = SeedWarehouse(db, foreignTenantId);
+        var inactiveWarehouseId = SeedWarehouse(db, tenantId, isActive: false);
+        var deletedWarehouseId = SeedWarehouse(db, tenantId, isDeleted: true);
+
+        var assigned = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, activeWarehouseId, true, "origin-ready"),
+            actor,
+            "corr-wh-1");
+        Assert.True(assigned.Succeeded);
+
+        var duplicateUpdate = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, activeWarehouseId, false, "origin-not-ready"),
+            actor,
+            "corr-wh-2");
+        Assert.True(duplicateUpdate.Succeeded);
+
+        var activeAssignments = await db.CarrierWarehouseAssignments
+            .IgnoreQueryFilters()
+            .Where(assignment => assignment.TenantId == tenantId &&
+                                 assignment.CarrierAccountId == accountId &&
+                                 assignment.WarehouseId == activeWarehouseId &&
+                                 !assignment.IsDeleted)
+            .ToListAsync();
+
+        Assert.Single(activeAssignments);
+        Assert.False(activeAssignments.Single().OriginReadinessPublished);
+        Assert.Equal("origin-not-ready", activeAssignments.Single().ReadinessEvidenceReference);
+
+        var foreign = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, foreignWarehouseId, true, null),
+            actor,
+            "corr-wh-foreign");
+        var inactive = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, inactiveWarehouseId, true, null),
+            actor,
+            "corr-wh-inactive");
+        var deleted = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, deletedWarehouseId, true, null),
+            actor,
+            "corr-wh-deleted");
+
+        Assert.Equal("UNKNOWN_WAREHOUSE", foreign.FailureCode);
+        Assert.Equal("UNKNOWN_WAREHOUSE", inactive.FailureCode);
+        Assert.Equal("UNKNOWN_WAREHOUSE", deleted.FailureCode);
+    }
+
+    [Fact]
+    public async Task WarehouseAssignment_ShouldCreateNewActiveAssignmentWhenPriorAssignmentWasSoftDeleted()
+    {
+        await using var db = CreateDbContext();
+        var service = CreateService(db, new FakeCarrierAdapter());
+        var tenantId = Guid.NewGuid();
+        var actor = new CarrierAdministrationActor("admin");
+        var accountId = (await service.RegisterCarrierAccountAsync(tenantId, CarrierCodes.Bosta, actor, "corr-account")).CarrierAccountId!.Value;
+        var warehouseId = SeedWarehouse(db, tenantId);
+
+        db.CarrierWarehouseAssignments.Add(new CarrierWarehouseAssignment
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CarrierAccountId = accountId,
+            WarehouseId = warehouseId,
+            IsEnabled = false,
+            IsDeleted = true
+        });
+        await db.SaveChangesAsync();
+
+        var result = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(accountId, warehouseId, true, "origin-ready"),
+            actor,
+            "corr-wh");
+
+        Assert.True(result.Succeeded);
+        var assignments = await db.CarrierWarehouseAssignments
+            .IgnoreQueryFilters()
+            .Where(assignment => assignment.TenantId == tenantId &&
+                                 assignment.CarrierAccountId == accountId &&
+                                 assignment.WarehouseId == warehouseId)
+            .ToListAsync();
+        Assert.Equal(2, assignments.Count);
+        Assert.Single(assignments.Where(assignment => !assignment.IsDeleted));
+    }
+
+    [Fact]
+    public async Task WarehouseAssignment_ShouldRejectManualFulfillmentCarrierAccountIfLegacyDataExists()
+    {
+        await using var db = CreateDbContext();
+        var service = CreateService(db, new FakeCarrierAdapter());
+        var tenantId = Guid.NewGuid();
+        var warehouseId = SeedWarehouse(db, tenantId);
+        var manualAccountId = Guid.NewGuid();
+        db.CarrierAccounts.Add(new CarrierAccount
+        {
+            Id = manualAccountId,
+            TenantId = tenantId,
+            CarrierCode = CarrierCodes.Manual,
+            State = CarrierAccountState.Draft,
+            OperationalState = CarrierOperationalState.NotReady,
+            HealthState = CarrierAccountHealthState.Blocked
+        });
+        await db.SaveChangesAsync();
+
+        var result = await service.AssignWarehouseAsync(
+            tenantId,
+            new CarrierWarehouseAssignmentCommand(manualAccountId, warehouseId, true, "origin-ready"),
+            new CarrierAdministrationActor("admin"),
+            "corr-manual");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("MANUAL_CARRIER_ACCOUNT_NOT_SUPPORTED", result.FailureCode);
+        Assert.Empty(await db.CarrierWarehouseAssignments.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
     public async Task ConnectionTest_ShouldInvokeAdapterValidationOnlyAndStoreNoPlaintextSecretInAudit()
     {
         await using var db = CreateDbContext();
@@ -199,7 +328,7 @@ public sealed class PosAdminShippingAdministrationRuntimeTests
 
     private static CarrierReadinessEvidence ReadyEvidence() => new(true, true);
 
-    private static Guid SeedWarehouse(ApplicationDbContext db, Guid tenantId)
+    private static Guid SeedWarehouse(ApplicationDbContext db, Guid tenantId, bool isActive = true, bool isDeleted = false)
     {
         var warehouseId = Guid.NewGuid();
         db.Warehouses.Add(new Warehouse
@@ -207,7 +336,8 @@ public sealed class PosAdminShippingAdministrationRuntimeTests
             Id = warehouseId,
             TenantId = tenantId,
             Name = "Main",
-            IsActive = true
+            IsActive = isActive,
+            IsDeleted = isDeleted
         });
         db.SaveChanges();
         return warehouseId;

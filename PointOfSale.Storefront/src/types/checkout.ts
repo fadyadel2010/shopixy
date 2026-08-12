@@ -80,6 +80,11 @@ export interface ShippingMethod {
     price: number;
     currency: string;
     estimatedDays?: number;
+    /** Server-provided display evidence. Never used as checkout authority. */
+    carrierCode?: string;
+    /** Server-provided display evidence. The warehouse resolution owns selection. */
+    serviceLevel?: string;
+    trackingUrlTemplate?: string;
 }
 
 export type CheckoutDependencyStatus =
@@ -174,6 +179,9 @@ export interface PaymentMethodDto {
 
 export interface CheckoutRequest {
     cartId: string;
+    checkoutSessionId: string;
+    warehouseResolutionId: string;
+    warehouseResolutionVersion: number;
     shippingAddress: AddressDto;
     billingAddress?: AddressDto;
     shippingMethodId: string;

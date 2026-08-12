@@ -82,8 +82,23 @@ public sealed class AdminDataSyncControllerOperationalTests
     {
         var tenantId = Guid.NewGuid();
         var shippingMethodId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
 
         await using var dbContext = CreateDbContext(tenantId);
+        dbContext.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Name = "Shipping tenant",
+            Currency = "EGP",
+            IsActive = true
+        });
+        dbContext.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Origin",
+            IsActive = true
+        });
         dbContext.ShippingMethods.Add(new ShippingMethod
         {
             Id = shippingMethodId,
@@ -93,6 +108,7 @@ public sealed class AdminDataSyncControllerOperationalTests
             PerKgRate = 5m,
             EstimatedDeliveryDaysMin = 1,
             EstimatedDeliveryDaysMax = 2,
+            FulfillmentWarehouseId = warehouseId,
             CreatedAt = DateTime.UtcNow
         });
         await dbContext.SaveChangesAsync();

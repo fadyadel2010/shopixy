@@ -113,6 +113,22 @@ describe('checkout field rules', () => {
         expect(effective.some((item) => item.id === target.id)).toBe(true);
     });
 
+    it.each(['.5', '5.'])('matches backend decimal grammar for %s', (value) => {
+        const source = field('source-number', 'NUMBER', 'Number', {});
+        const target = field('target-number', 'TEXT', 'Target', {
+            conditionalRules: [{
+                ruleId: 'number-rule',
+                conditionMode: 'ALL',
+                conditions: [{ sourceFieldId: source.id, operator: 'EQUALS', comparisonValue: value }],
+                actions: ['SHOW'],
+            }],
+        });
+
+        const effective = getEffectiveCheckoutFields([source, target], address, { [source.id]: value });
+
+        expect(effective.some((item) => item.id === target.id)).toBe(true);
+    });
+
     it('rejects non-canonical offset dates instead of applying timezone coercion', () => {
         const source = field('source-date', 'DATE', 'Date', {});
         const target = field('target-date', 'TEXT', 'Target', {
@@ -127,6 +143,22 @@ describe('checkout field rules', () => {
         const effective = getEffectiveCheckoutFields([source, target], address, { [source.id]: '2026-08-09T23:00:00-02:00' });
 
         expect(effective.some((item) => item.id === target.id)).toBe(false);
+    });
+
+    it('admits year 0001 dates consistently with backend DateOnly parsing', () => {
+        const source = field('source-date', 'DATE', 'Date', {});
+        const target = field('target-date', 'TEXT', 'Target', {
+            conditionalRules: [{
+                ruleId: 'date-rule',
+                conditionMode: 'ALL',
+                conditions: [{ sourceFieldId: source.id, operator: 'EQUALS', comparisonValue: '0001-01-01' }],
+                actions: ['SHOW'],
+            }],
+        });
+
+        const effective = getEffectiveCheckoutFields([source, target], address, { [source.id]: '0001-01-01' });
+
+        expect(effective.some((item) => item.id === target.id)).toBe(true);
     });
 
     it('builds review-safe option and upload presentation without object keys', () => {

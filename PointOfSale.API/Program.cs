@@ -795,6 +795,7 @@ builder.Services.AddScoped<PointOfSale.Infrastructure.MongoDB.Services.IOrderRea
 builder.Services.AddScoped<PointOfSale.Infrastructure.MongoDB.Services.ICommerceHubOrderReadRepository, PointOfSale.Infrastructure.MongoDB.Services.CommerceHubOrderReadRepository>();
 
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IShippingMethodService, PointOfSale.API.Services.Storefront.ShippingMethodService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IWarehouseResolutionService, PointOfSale.API.Services.Storefront.WarehouseResolutionService>();
 
 // =============================================================================
 // SHIPMENT SERVICE (Lifecycle Management)
@@ -803,6 +804,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IShippingMethodSe
 // - Event-driven with status transition validation
 // =============================================================================
 builder.Services.AddScoped<PointOfSale.API.Services.Shipping.IShipmentService, PointOfSale.API.Services.Shipping.ShipmentService>();
+builder.Services.AddHostedService<PointOfSale.API.Services.Shipping.CarrierWebhookSecretBackfillHostedService>();
 builder.Services.AddHostedService<PointOfSale.API.Services.Shipping.ShipmentAuthorityRecoveryHostedService>();
 
 // =============================================================================
@@ -824,6 +826,7 @@ builder.Services.AddHostedService<PointOfSale.API.Services.Shipping.ShipmentAuth
 
 // Carrier Adapter Registry (discovers all registered adapters)
 builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.IShippingCarrierRegistry, PointOfSale.Infrastructure.Shipping.ShippingCarrierRegistry>();
+builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.ICarrierCapabilityRegistry, PointOfSale.Infrastructure.Shipping.CarrierCapabilityRegistry>();
 
 // Carrier Credential Encryption Service (P2 Security Hardening)
 // Encrypts/decrypts API credentials using Data Protection API
@@ -831,6 +834,7 @@ builder.Services.AddSingleton<PointOfSale.Infrastructure.Shipping.ICarrierCreden
 
 // Shipping Quote Service (returns quotes from all enabled carriers)
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.IShippingQuoteService, PointOfSale.Infrastructure.Shipping.ShippingQuoteService>();
+builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.ICarrierIntegrationAuthority, PointOfSale.Infrastructure.Shipping.CarrierIntegrationAuthority>();
 
 // Carrier Shipment Service (creates/manages shipments with carriers)
 builder.Services.AddScoped<PointOfSale.Infrastructure.Shipping.ICarrierShipmentService, PointOfSale.Infrastructure.Shipping.CarrierShipmentService>();

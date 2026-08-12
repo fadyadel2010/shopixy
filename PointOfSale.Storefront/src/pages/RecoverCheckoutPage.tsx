@@ -193,6 +193,7 @@ export default function RecoverCheckoutPage() {
 
                 useCheckoutStore.setState({
                     checkoutSessionId: null,
+                    checkoutSessionCartId: null,
                     step: inferredStep,
                     address: {
                         fullName: session.address.fullName || '',

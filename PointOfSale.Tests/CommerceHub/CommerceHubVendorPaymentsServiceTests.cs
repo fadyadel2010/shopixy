@@ -625,8 +625,14 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
             string sourceObjectKey,
             string destinationObjectKey,
             string contentType,
+            string? sourceIfMatchETag,
             CancellationToken cancellationToken = default)
         {
+            if (sourceIfMatchETag != null && sourceIfMatchETag != TestETag)
+            {
+                throw new InvalidOperationException($"ETag mismatch: expected '{TestETag}', got '{sourceIfMatchETag}'");
+            }
+
             return Task.FromResult(new R2ObjectMetadata(contentType, 1024, null, TestETag));
         }
 

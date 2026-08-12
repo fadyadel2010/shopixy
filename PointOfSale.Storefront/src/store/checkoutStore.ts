@@ -14,7 +14,7 @@
 
 import { create } from 'zustand';
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
-import { httpClient, normalizeError, isRetryableError } from '@/services/api';
+import { httpClient, normalizeError, isRetryableError, isRequestCanceled } from '@/services/api';
 import { useCartStore, waitForCartMerge } from './cartStore';
 import { useAuthStore, selectIsAuthenticated, selectAuthStatus } from '@/auth/store/authStore';
 import { useStoreConfigStore } from './storeConfigStore';
@@ -22,7 +22,6 @@ import { resolveCountryCode } from '@/utils/country';
 import { persistActiveCheckoutOrderContext } from '@/features/checkout/activeCheckoutOrderContext';
 import { requireStorefrontPaymentSessionAuthority } from '@/features/checkout/paymentSessionAuthority';
 import { emitCheckoutSelectionInvalidated } from '@/features/checkout/checkoutSelectionTelemetry';
-import { getRequestHeaders } from '@/bootstrap/requestContext';
 import { tryGetTenantScopedStorageKey } from '@/bootstrap/tenantScopedStorage';
 import { getEffectiveCheckoutFields } from '@/utils/checkoutFieldRules';
 import type {
@@ -62,6 +61,8 @@ const CHECKOUT_ENDPOINTS = {
     CHECKOUT: '/api/storefront/checkout',
     PRICING: '/api/storefront/checkout/pricing',
     SHIPPING_METHODS: '/api/storefront/shipping-methods',
+    SHIPPING_METHODS_PREVIEW: '/api/storefront/shipping-methods/preview',
+    SHIPPING_METHODS_SELECT: '/api/storefront/shipping-methods/select',
     PAYMENT_METHODS: '/api/storefront/payment-methods',
     CHECKOUT_FIELDS: '/api/storefront/checkout-fields',
     CHECKOUT_ATTACHMENT_LEASE: '/api/storefront/checkout/attachments/upload-lease',
@@ -90,20 +91,51 @@ interface StaleCheckoutSelection {
     message: string;
 }
 
+type WarehouseResolutionStatus = 'RESOLVED' | 'LOCKED' | 'ORDERED' | 'INVALIDATED' | 'EXPIRED' | 'FAILED' | 'UNRESOLVED';
+
+interface StorefrontShippingMethodsPreviewAdmission {
+    status: CheckoutDependencyStatus;
+    methods: ShippingMethod[];
+}
+
+interface StorefrontShippingMethodSelectionAdmission {
+    warehouseResolutionId: string;
+    warehouseResolutionVersion: number;
+    warehouseResolutionStatus: WarehouseResolutionStatus;
+    warehouseResolutionExpiresAtUtc: string | null;
+}
+
 interface CheckoutSessionResponseDto {
     sessionId?: string | null;
     manualWalletUploadToken?: string | null;
+}
+
+interface EnsureCheckoutSessionOptions {
+    throwOnError?: boolean;
+}
+
+interface FetchShippingMethodsOptions {
+    force?: boolean;
+}
+
+interface ShippingMethodSelectionOptions {
+    previewSequence?: number;
 }
 
 let checkoutAutosaveTimer: ReturnType<typeof setTimeout> | null = null;
 let checkoutAutosaveAbortController: AbortController | null = null;
 let checkoutAutosaveRequestSequence = 0;
 let checkoutSessionInitPromise: Promise<string | null> | null = null;
+let checkoutSessionInitCartId: string | null = null;
 let checkoutSessionInitAbortController: AbortController | null = null;
 let pricingPreviewAbortController: AbortController | null = null;
 let pricingPreviewRequestSequence = 0;
 let checkoutFieldsAbortController: AbortController | null = null;
 let checkoutFieldsRequestSequence = 0;
+let shippingMethodsAbortController: AbortController | null = null;
+let shippingMethodsRequestSequence = 0;
+let shippingMethodsInFlightKey: string | null = null;
+let shippingMethodsInFlightPromise: Promise<void> | null = null;
 const STALE_SELECTION_ERROR_KEY = 'checkout.staleSelection';
 
 function clearCheckoutAutosaveTimer(): void {
@@ -126,6 +158,20 @@ function cancelCheckoutSessionInit(): void {
         checkoutSessionInitAbortController = null;
     }
     checkoutSessionInitPromise = null;
+    checkoutSessionInitCartId = null;
+}
+
+function clearCheckoutSessionAuthorityForCartChange(): void {
+    useCheckoutStore.setState({
+        checkoutSessionId: null,
+        checkoutSessionCartId: null,
+        manualWalletUploadToken: null,
+        manualWalletProofFileKey: null,
+        warehouseResolutionId: null,
+        warehouseResolutionVersion: null,
+        warehouseResolutionStatus: null,
+        warehouseResolutionExpiresAtUtc: null,
+    });
 }
 
 function cancelPricingPreviewRequest(): void {
@@ -133,6 +179,15 @@ function cancelPricingPreviewRequest(): void {
         pricingPreviewAbortController.abort();
         pricingPreviewAbortController = null;
     }
+}
+
+function isWarehouseResolutionExpired(expiresAtUtc: string | null): boolean {
+    if (!expiresAtUtc) {
+        return false;
+    }
+
+    const timestamp = Date.parse(expiresAtUtc);
+    return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
 function buildExpectedPricing(pricing: CheckoutPricingBreakdown): CheckoutExpectedPricing {
@@ -150,16 +205,7 @@ function buildExpectedPricing(pricing: CheckoutPricingBreakdown): CheckoutExpect
 }
 
 function isAutosaveAbortError(error: unknown): boolean {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-        return true;
-    }
-
-    if (typeof error === 'object' && error !== null) {
-        const candidate = error as { code?: string; name?: string };
-        return candidate.code === 'ERR_CANCELED' || candidate.name === 'CanceledError';
-    }
-
-    return false;
+    return isRequestCanceled(error);
 }
 
 function waitForAutosaveRetry(delayMs: number, signal: AbortSignal): Promise<void> {
@@ -283,25 +329,43 @@ function buildCheckoutAutosaveErrorMessage(
     return fallbackMessage;
 }
 
-async function ensureCheckoutSessionInitialized(): Promise<string | null> {
-    const existingSessionId = useCheckoutStore.getState().checkoutSessionId;
-    const existingUploadToken = useCheckoutStore.getState().manualWalletUploadToken;
-    if (existingSessionId && existingUploadToken) {
-        return existingSessionId;
+async function ensureCheckoutSessionInitialized(options: EnsureCheckoutSessionOptions = {}): Promise<string | null> {
+    const cart = useCartStore.getState().cart;
+    const currentCartId = cart?.cartId ?? null;
+    if (!currentCartId) {
+        return null;
+    }
+
+    const state = useCheckoutStore.getState();
+    if (state.checkoutSessionId && state.manualWalletUploadToken && state.checkoutSessionCartId === currentCartId) {
+        return state.checkoutSessionId;
+    }
+
+    if (state.checkoutSessionId && state.checkoutSessionCartId !== currentCartId) {
+        clearCheckoutSessionAuthorityForCartChange();
     }
 
     if (checkoutSessionInitPromise) {
-        return checkoutSessionInitPromise;
-    }
-
-    checkoutSessionInitPromise = (async () => {
-        const cart = useCartStore.getState().cart;
-        if (!cart?.cartId) {
-            return null;
+        if (checkoutSessionInitCartId === currentCartId) {
+            try {
+                return await checkoutSessionInitPromise;
+            } catch (error) {
+                if (options.throwOnError) {
+                    throw error;
+                }
+                return null;
+            }
         }
 
-        // Capture the cartId at the start to validate response is still relevant
-        const capturedCartId = cart.cartId;
+        cancelCheckoutSessionInit();
+    }
+
+    // Capture the cart at the start to validate response is still relevant.
+    const capturedCart = cart as NonNullable<typeof cart>;
+    const capturedCartId = currentCartId;
+
+    let initPromise!: Promise<string | null>;
+    initPromise = (async () => {
 
         // Create abort controller for this session init request
         checkoutSessionInitAbortController?.abort();
@@ -312,10 +376,10 @@ async function ensureCheckoutSessionInitialized(): Promise<string | null> {
             const response = await httpClient.post<CheckoutSessionResponseDto>(
                 CHECKOUT_ENDPOINTS.CHECKOUT_SESSION,
                 {
-                    cartId: cart.cartId,
+                    cartId: capturedCart.cartId,
                     itemsSnapshotJson: serializeWithSortedKeys(getCheckoutItemsSnapshot()),
-                    cartTotal: cart.grandTotal || cart.subtotal || 0,
-                    currency: cart.currency || undefined,
+                    cartTotal: capturedCart.grandTotal || capturedCart.subtotal || 0,
+                    currency: capturedCart.currency || undefined,
                     deviceType: getDeviceType(),
                     source: getTrafficSource(),
                 },
@@ -337,6 +401,7 @@ async function ensureCheckoutSessionInitialized(): Promise<string | null> {
 
             useCheckoutStore.setState({
                 checkoutSessionId: sessionId,
+                checkoutSessionCartId: capturedCartId,
                 manualWalletUploadToken,
             });
             console.log('[CheckoutSession] Session initialized:', sessionId);
@@ -356,16 +421,29 @@ async function ensureCheckoutSessionInitialized(): Promise<string | null> {
                     "checkout.autosaveInitFailed"
                 ),
             });
-            return null;
+            throw error;
         } finally {
             if (checkoutSessionInitAbortController === controller) {
                 checkoutSessionInitAbortController = null;
             }
-            checkoutSessionInitPromise = null;
+            if (checkoutSessionInitPromise === initPromise) {
+                checkoutSessionInitPromise = null;
+                checkoutSessionInitCartId = null;
+            }
         }
     })();
 
-    return checkoutSessionInitPromise;
+    checkoutSessionInitPromise = initPromise;
+    checkoutSessionInitCartId = capturedCartId;
+
+    try {
+        return await initPromise;
+    } catch (error) {
+        if (options.throwOnError) {
+            throw error;
+        }
+        return null;
+    }
 }
 
 async function performCheckoutAutosave(): Promise<boolean> {
@@ -601,6 +679,21 @@ function cancelCheckoutFieldsRequest(): void {
     checkoutFieldsRequestSequence += 1;
 }
 
+function cancelShippingMethodsRequest(): void {
+    shippingMethodsAbortController?.abort();
+    shippingMethodsAbortController = null;
+    shippingMethodsRequestSequence += 1;
+    shippingMethodsInFlightKey = null;
+    shippingMethodsInFlightPromise = null;
+}
+
+function buildShippingMethodsRequestKey(
+    cart: { cartId?: string | null; lastUpdatedUtc?: string | null },
+    checkoutSessionId: string
+): string {
+    return [cart.cartId ?? '', checkoutSessionId, cart.lastUpdatedUtc ?? ''].join('|');
+}
+
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value);
 }
@@ -682,7 +775,9 @@ function classifyCheckoutMethodLoadFailure(error: unknown): { status: CheckoutDe
     if (normalized.retryable || candidate.code === 'ECONNABORTED' || /timeout/i.test(candidate.message || '')) {
         return {
             status: 'UNAVAILABLE',
-            message: 'Checkout options are temporarily unavailable. Please retry.',
+            message: normalized.status
+                ? (normalized.message || 'Checkout options are temporarily unavailable. Please retry.')
+                : 'Checkout options are temporarily unavailable. Please retry.',
         };
     }
 
@@ -692,14 +787,17 @@ function classifyCheckoutMethodLoadFailure(error: unknown): { status: CheckoutDe
     };
 }
 
-function admitStorefrontShippingMethodList(payload: unknown): ShippingMethod[] {
-    if (!Array.isArray(payload)) {
-        throw new Error('Shipping method response failed admission.');
+function requireStorefrontShippingTenantScope(value: unknown): string {
+    if (typeof value !== 'string' || !UUID_REGEX.test(value)) {
+        throw new Error('Shipping method response could not be admitted without tenant scope.');
     }
 
-    const expectedTenantId = getRequestHeaders()['X-Tenant-Id'];
-    if (!UUID_REGEX.test(expectedTenantId)) {
-        throw new Error('Shipping method response could not be admitted without tenant scope.');
+    return value;
+}
+
+function admitStorefrontShippingMethodList(payload: unknown, expectedTenantId: string): ShippingMethod[] {
+    if (!Array.isArray(payload)) {
+        throw new Error('Shipping method response failed admission.');
     }
 
     const seenIds = new Set<string>();
@@ -741,29 +839,88 @@ function admitStorefrontShippingMethodList(payload: unknown): ShippingMethod[] {
             price: requireShippingAmount(candidate.price, 'price'),
             currency,
             estimatedDays: optionalEstimatedDays(candidate.estimatedDays),
+            carrierCode: optionalShippingString(candidate.carrierCode),
+            serviceLevel: optionalShippingString(candidate.serviceLevel),
+            trackingUrlTemplate: optionalShippingString(candidate.trackingUrlTemplate),
         };
     });
 }
 
 function admitStorefrontShippingMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: ShippingMethod[] } {
-    if (Array.isArray(payload)) {
-        const methods = admitStorefrontShippingMethodList(payload);
-        return {
-            status: methods.length > 0 ? 'AVAILABLE' : 'EMPTY',
-            methods,
-        };
-    }
-
     if (!payload || typeof payload !== 'object') {
         throw new Error('Shipping method response failed admission.');
     }
 
-    const candidate = payload as { status?: unknown; shippingMethods?: unknown };
-    const methods = admitStorefrontShippingMethodList(candidate.shippingMethods);
+    const candidate = payload as { tenantId?: unknown; status?: unknown; shippingMethods?: unknown };
+    const expectedTenantId = requireStorefrontShippingTenantScope(candidate.tenantId);
+    const methods = admitStorefrontShippingMethodList(candidate.shippingMethods, expectedTenantId);
 
     return {
         status: normalizeCheckoutDependencyStatus(candidate.status, methods.length > 0 ? 'AVAILABLE' : 'EMPTY'),
         methods,
+    };
+}
+
+function admitStorefrontShippingMethodsPreview(payload: unknown): StorefrontShippingMethodsPreviewAdmission {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Shipping method preview response failed admission.');
+    }
+
+    const candidate = payload as {
+        tenantId?: unknown;
+        status?: unknown;
+        shippingMethodsStatus?: unknown;
+        shippingMethods?: unknown;
+    };
+    return admitStorefrontShippingMethods({
+        tenantId: candidate.tenantId,
+        status: candidate.shippingMethodsStatus,
+        shippingMethods: candidate.shippingMethods,
+    });
+}
+
+function admitStorefrontShippingMethodSelection(payload: unknown): StorefrontShippingMethodSelectionAdmission {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Shipping method selection response failed admission.');
+    }
+
+    const candidate = payload as {
+        warehouseResolutionId?: unknown;
+        resolutionVersion?: unknown;
+        status?: unknown;
+        expiresAtUtc?: unknown;
+    };
+    if (typeof candidate.warehouseResolutionId !== 'string' || !UUID_REGEX.test(candidate.warehouseResolutionId)) {
+        throw new Error('Shipping method selection response contained malformed warehouse resolution identity.');
+    }
+
+    if (!Number.isInteger(candidate.resolutionVersion) || Number(candidate.resolutionVersion) < 1) {
+        throw new Error('Shipping method selection response contained malformed warehouse resolution version.');
+    }
+
+    const resolutionStatus = typeof candidate.status === 'string'
+        ? candidate.status.trim().toUpperCase()
+        : '';
+    if (!['RESOLVED', 'LOCKED', 'ORDERED', 'INVALIDATED', 'EXPIRED', 'FAILED', 'UNRESOLVED'].includes(resolutionStatus)) {
+        throw new Error('Shipping method preview response contained malformed warehouse resolution status.');
+    }
+
+    const expiresAtUtc = candidate.expiresAtUtc;
+    if (expiresAtUtc !== null && expiresAtUtc !== undefined && typeof expiresAtUtc !== 'string') {
+        throw new Error('Shipping method selection response contained malformed warehouse resolution expiry.');
+    }
+    if (typeof expiresAtUtc === 'string' && !Number.isFinite(Date.parse(expiresAtUtc))) {
+        throw new Error('Shipping method selection response contained malformed warehouse resolution expiry.');
+    }
+    if (resolutionStatus === 'RESOLVED' && typeof expiresAtUtc !== 'string') {
+        throw new Error('Shipping method selection response omitted warehouse resolution expiry.');
+    }
+
+    return {
+        warehouseResolutionId: candidate.warehouseResolutionId,
+        warehouseResolutionVersion: Number(candidate.resolutionVersion),
+        warehouseResolutionStatus: resolutionStatus as WarehouseResolutionStatus,
+        warehouseResolutionExpiresAtUtc: typeof expiresAtUtc === 'string' ? expiresAtUtc : null,
     };
 }
 
@@ -1066,8 +1223,13 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const isCanonicalCheckoutDate = (value: string) => {
     const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
     if (!match) return false;
-    const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-    return date.toISOString().slice(0, 10) === value;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (year < 1 || year > 9999 || month < 1 || month > 12) return false;
+    const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    return day >= 1 && day <= daysInMonth[month - 1];
 };
 
 const SYSTEM_FIELD_ADDRESS_KEY_MAP: Record<string, keyof ShippingAddress | 'notes'> = {
@@ -1220,7 +1382,7 @@ export function validateCustomCheckoutFields(
         } else if (field.fieldType === 'PHONE' && !isValidCheckoutPhone(value)) {
             errors[field.id] = `Please enter a valid ${field.label.toLowerCase()}`;
         } else if (field.fieldType === 'NUMBER') {
-            const numericValue = /^[-+]?\d+(?:\.\d+)?$/.test(value) ? Number(value) : Number.NaN;
+            const numericValue = /^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value) ? Number(value) : Number.NaN;
             if (!Number.isFinite(numericValue)) {
                 errors[field.id] = `${field.label} must be a valid number`;
             } else if (field.configuration.min != null && numericValue < field.configuration.min) {
@@ -1279,6 +1441,10 @@ export interface CheckoutState {
     shippingMethodsStatus: CheckoutDependencyStatus;
     shippingMethodsLoading: boolean;
     shippingMethodsError: string | null;
+    warehouseResolutionId: string | null;
+    warehouseResolutionVersion: number | null;
+    warehouseResolutionStatus: WarehouseResolutionStatus | null;
+    warehouseResolutionExpiresAtUtc: string | null;
 
     // Payment method
     paymentMethod: PaymentMethod | null;
@@ -1330,6 +1496,7 @@ export interface CheckoutState {
 
     // Phase: Abandoned Checkout — session autosave
     checkoutSessionId: string | null;
+    checkoutSessionCartId: string | null;
     autosaveStatus: CheckoutAutosaveStatus;
     autosaveError: string | null;
     lastAutosavedAt: string | null;
@@ -1342,8 +1509,8 @@ export interface CheckoutActions {
     touchField: (key: keyof ShippingAddress) => void;
 
     // Shipping method actions
-    setShippingMethod: (id: string) => void;
-    fetchShippingMethods: () => Promise<void>;
+    setShippingMethod: (id: string, options?: ShippingMethodSelectionOptions) => Promise<void>;
+    fetchShippingMethods: (options?: FetchShippingMethodsOptions) => Promise<void>;
 
     // Payment method actions
     setPaymentMethod: (method: PaymentMethod) => void;
@@ -1638,6 +1805,10 @@ const INITIAL_STATE: CheckoutState = {
     shippingMethodsStatus: 'IDLE',
     shippingMethodsLoading: false,
     shippingMethodsError: null,
+    warehouseResolutionId: null,
+    warehouseResolutionVersion: null,
+    warehouseResolutionStatus: null,
+    warehouseResolutionExpiresAtUtc: null,
     paymentMethod: null,
     paymentSelectionStatus: 'none',
     stalePaymentSelection: null,
@@ -1676,6 +1847,7 @@ const INITIAL_STATE: CheckoutState = {
 
     // Phase: Abandoned Checkout
     checkoutSessionId: null,
+    checkoutSessionCartId: null,
     autosaveStatus: 'idle',
     autosaveError: null,
     lastAutosavedAt: null,
@@ -1718,81 +1890,241 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
             // Shipping Method Actions
             // ================================================================
 
-            setShippingMethod: (id) => {
+            setShippingMethod: async (id, options = {}) => {
                 set({
                     shippingMethodId: id,
                     shippingSelectionStatus: 'valid',
                     staleShippingSelection: null,
+                    warehouseResolutionId: null,
+                    warehouseResolutionVersion: null,
+                    warehouseResolutionStatus: null,
+                    warehouseResolutionExpiresAtUtc: null,
+                });
+
+                const checkoutSessionId = await ensureCheckoutSessionInitialized({ throwOnError: true });
+                if (!checkoutSessionId) {
+                    throw new Error('Checkout session is required before selecting shipping method.');
+                }
+
+                const response = await httpClient.post<unknown>(
+                    CHECKOUT_ENDPOINTS.SHIPPING_METHODS_SELECT,
+                    { checkoutSessionId, shippingMethodId: id },
+                    {
+                        headers: {
+                            'Cache-Control': 'no-store',
+                            Pragma: 'no-cache',
+                        },
+                    }
+                );
+                const admittedSelection = admitStorefrontShippingMethodSelection(response.data);
+                if (options.previewSequence !== undefined && options.previewSequence !== shippingMethodsRequestSequence) {
+                    return;
+                }
+
+                set({
+                    shippingMethodId: id,
+                    shippingSelectionStatus: 'valid',
+                    staleShippingSelection: null,
+                    warehouseResolutionId: admittedSelection.warehouseResolutionId,
+                    warehouseResolutionVersion: admittedSelection.warehouseResolutionVersion,
+                    warehouseResolutionStatus: admittedSelection.warehouseResolutionStatus,
+                    warehouseResolutionExpiresAtUtc: admittedSelection.warehouseResolutionExpiresAtUtc,
                 });
                 get().autosaveCheckoutSession();
             },
 
-            fetchShippingMethods: async () => {
-                set({ shippingMethodsLoading: true, shippingMethodsStatus: 'LOADING', shippingMethodsError: null });
-
-                try {
-                    const response = await httpClient.get<ShippingMethod[]>(
-                        CHECKOUT_ENDPOINTS.SHIPPING_METHODS,
-                        {
-                            headers: {
-                                'Cache-Control': 'no-store',
-                                Pragma: 'no-cache',
-                            },
-                        }
-                    );
-
-                    const admittedResponse = admitStorefrontShippingMethods(response.data);
-                    const methods = admittedResponse.methods;
-
-                    const currentId = get().shippingMethodId;
-                    const previousMethods = get().shippingMethods;
-                    const previousStaleSelection = get().staleShippingSelection;
-                    const methodIds = methods.map(m => m.id);
-                    const hasStoredSelection = !!currentId;
-                    const isCurrentSelectionValid = currentId ? methodIds.includes(currentId) : false;
-                    const nextShippingMethodId = hasStoredSelection
-                        ? currentId
-                        : (methods[0]?.id ?? null);
-                    const nextShippingSelectionStatus: CheckoutSelectionStatus = hasStoredSelection
-                        ? (isCurrentSelectionValid ? 'valid' : 'stale')
-                        : (nextShippingMethodId ? 'valid' : 'none');
-                    const staleShippingSelection = hasStoredSelection && !isCurrentSelectionValid && currentId
-                        ? {
-                            value: currentId,
-                            label:
-                                previousMethods.find((method) => method.id === currentId)?.name ||
-                                previousStaleSelection?.label ||
-                                'Previous shipping selection',
-                            message: STALE_SELECTION_ERROR_KEY,
-                        }
-                        : null;
-
+            fetchShippingMethods: async (options = {}) => {
+                const cartAtStart = useCartStore.getState().cart;
+                if (!cartAtStart?.cartId) {
+                    cancelShippingMethodsRequest();
                     set({
-                        shippingMethods: methods,
-                        shippingMethodsStatus: admittedResponse.status,
                         shippingMethodsLoading: false,
+                        shippingMethodsStatus: 'IDLE',
                         shippingMethodsError: null,
-                        shippingMethodId: nextShippingMethodId,
-                        shippingSelectionStatus: nextShippingSelectionStatus,
-                        staleShippingSelection,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
                     });
+                    return;
+                }
 
-                    if (!hasStoredSelection && nextShippingMethodId) {
-                        get().autosaveCheckoutSession();
-                    }
-
-                    if (staleShippingSelection) {
-                        emitCheckoutSelectionInvalidated('shipping', 'missing_from_latest_config', currentId);
-                    }
+                let checkoutSessionId: string | null = null;
+                try {
+                    checkoutSessionId = await ensureCheckoutSessionInitialized({ throwOnError: true });
                 } catch (error) {
+                    const classifiedFailure = classifyCheckoutMethodLoadFailure(error);
+                    console.error('[CheckoutStore] Failed to initialize checkout session for shipping methods:', classifiedFailure, error);
+                    set({
+                        shippingMethodsLoading: false,
+                        shippingMethodsStatus: classifiedFailure.status,
+                        shippingMethodsError: classifiedFailure.message,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
+                    });
+                    return;
+                }
+
+                if (!checkoutSessionId) {
+                    if (!useCartStore.getState().cart?.cartId) {
+                        set({
+                            shippingMethodsLoading: false,
+                            shippingMethodsStatus: 'IDLE',
+                            shippingMethodsError: null,
+                            warehouseResolutionId: null,
+                            warehouseResolutionVersion: null,
+                            warehouseResolutionStatus: null,
+                            warehouseResolutionExpiresAtUtc: null,
+                        });
+                        return;
+                    }
+
+                    const error = new Error('Checkout session is required before shipping methods can be previewed.');
                     const classifiedFailure = classifyCheckoutMethodLoadFailure(error);
                     console.error('[CheckoutStore] Failed to fetch shipping methods:', classifiedFailure, error);
                     set({
                         shippingMethodsLoading: false,
                         shippingMethodsStatus: classifiedFailure.status,
                         shippingMethodsError: classifiedFailure.message,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
                     });
+                    return;
                 }
+
+                const currentCart = useCartStore.getState().cart;
+                if (!currentCart?.cartId) {
+                    cancelShippingMethodsRequest();
+                    set({
+                        shippingMethodsLoading: false,
+                        shippingMethodsStatus: 'IDLE',
+                        shippingMethodsError: null,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
+                    });
+                    return;
+                }
+
+                const requestKey = buildShippingMethodsRequestKey(currentCart, checkoutSessionId);
+                if (!options.force && shippingMethodsInFlightPromise && shippingMethodsInFlightKey === requestKey) {
+                    await shippingMethodsInFlightPromise;
+                    return;
+                }
+
+                if (shippingMethodsInFlightPromise) {
+                    shippingMethodsAbortController?.abort();
+                    shippingMethodsInFlightPromise = null;
+                    shippingMethodsInFlightKey = null;
+                }
+
+                const controller = new AbortController();
+                shippingMethodsAbortController = controller;
+                const sequence = ++shippingMethodsRequestSequence;
+
+                let requestPromise!: Promise<void>;
+                requestPromise = (async () => {
+                    set({
+                        shippingMethodsLoading: true,
+                        shippingMethodsStatus: 'LOADING',
+                        shippingMethodsError: null,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
+                    });
+
+                    try {
+                        const response = await httpClient.post<unknown>(
+                            CHECKOUT_ENDPOINTS.SHIPPING_METHODS_PREVIEW,
+                            { checkoutSessionId },
+                            {
+                                signal: controller.signal,
+                                headers: {
+                                    'Cache-Control': 'no-store',
+                                    Pragma: 'no-cache',
+                                },
+                            }
+                        );
+
+                        const admittedResponse = admitStorefrontShippingMethodsPreview(response.data);
+                        if (controller.signal.aborted || sequence !== shippingMethodsRequestSequence) return;
+                        const methods = admittedResponse.methods;
+
+                        const currentId = get().shippingMethodId;
+                        const previousMethods = get().shippingMethods;
+                        const previousStaleSelection = get().staleShippingSelection;
+                        const methodIds = methods.map(m => m.id);
+                        const hasStoredSelection = !!currentId;
+                        const isCurrentSelectionValid = currentId ? methodIds.includes(currentId) : false;
+                        const nextShippingMethodId = hasStoredSelection
+                            ? currentId
+                            : (methods[0]?.id ?? null);
+                        const nextShippingSelectionStatus: CheckoutSelectionStatus = hasStoredSelection
+                            ? (isCurrentSelectionValid ? 'valid' : 'stale')
+                            : (nextShippingMethodId ? 'valid' : 'none');
+                        const staleShippingSelection = hasStoredSelection && !isCurrentSelectionValid && currentId
+                            ? {
+                                value: currentId,
+                                label:
+                                    previousMethods.find((method) => method.id === currentId)?.name ||
+                                    previousStaleSelection?.label ||
+                                    'Previous shipping selection',
+                                message: STALE_SELECTION_ERROR_KEY,
+                            }
+                            : null;
+
+                        set({
+                            shippingMethods: methods,
+                            shippingMethodsStatus: admittedResponse.status,
+                            shippingMethodsLoading: false,
+                            shippingMethodsError: null,
+                            warehouseResolutionId: null,
+                            warehouseResolutionVersion: null,
+                            warehouseResolutionStatus: null,
+                            warehouseResolutionExpiresAtUtc: null,
+                            shippingMethodId: nextShippingMethodId,
+                            shippingSelectionStatus: nextShippingSelectionStatus,
+                            staleShippingSelection,
+                        });
+
+                        if (nextShippingMethodId && nextShippingSelectionStatus === 'valid') {
+                            await get().setShippingMethod(nextShippingMethodId, { previewSequence: sequence });
+                        }
+
+                        if (staleShippingSelection) {
+                            emitCheckoutSelectionInvalidated('shipping', 'missing_from_latest_config', currentId);
+                        }
+                    } catch (error) {
+                        if (isAutosaveAbortError(error) || controller.signal.aborted || sequence !== shippingMethodsRequestSequence) return;
+                        const classifiedFailure = classifyCheckoutMethodLoadFailure(error);
+                        console.error('[CheckoutStore] Failed to fetch shipping methods:', classifiedFailure, error);
+                        set({
+                            shippingMethodsLoading: false,
+                            shippingMethodsStatus: classifiedFailure.status,
+                            shippingMethodsError: classifiedFailure.message,
+                            warehouseResolutionId: null,
+                            warehouseResolutionVersion: null,
+                            warehouseResolutionStatus: null,
+                            warehouseResolutionExpiresAtUtc: null,
+                        });
+                    } finally {
+                        if (shippingMethodsAbortController === controller) shippingMethodsAbortController = null;
+                        if (shippingMethodsInFlightPromise === requestPromise) {
+                            shippingMethodsInFlightPromise = null;
+                            shippingMethodsInFlightKey = null;
+                        }
+                    }
+                })();
+
+                shippingMethodsInFlightKey = requestKey;
+                shippingMethodsInFlightPromise = requestPromise;
+                await requestPromise;
             },
 
             // ================================================================
@@ -2220,6 +2552,9 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     // Refresh cart to ensure we have the latest cart ID
                     await useCartStore.getState().fetchCart();
+
+                    // Refresh warehouse resolution and shipping methods after cart refresh.
+                    await get().fetchShippingMethods({ force: true });
                     
                     // Refresh pricing after cart fetch to ensure we have up-to-date totals
                     // (fetchCart may have swapped in a different/merged cart)
@@ -2263,6 +2598,23 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     if (!latestState.shippingMethodId) {
                         set({ isSubmitting: false, error: 'checkout.shippingMethodRequired' });
+                        return false;
+                    }
+
+                    if (
+                        !latestState.checkoutSessionId ||
+                        !latestState.warehouseResolutionId ||
+                        !latestState.warehouseResolutionVersion ||
+                        latestState.warehouseResolutionStatus !== 'RESOLVED' ||
+                        isWarehouseResolutionExpired(latestState.warehouseResolutionExpiresAtUtc)
+                    ) {
+                        set({
+                            isSubmitting: false,
+                            error: latestState.shippingMethodsError || 'Shipping methods must be refreshed before checkout.',
+                            errorCode: isWarehouseResolutionExpired(latestState.warehouseResolutionExpiresAtUtc)
+                                ? 'WAREHOUSE_RESOLUTION_EXPIRED'
+                                : 'CHECKOUT_SESSION_STALE',
+                        });
                         return false;
                     }
 
@@ -2405,6 +2757,9 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
 
                     const finalRequest: CheckoutRequest = {
                         cartId: cart.cartId,
+                        checkoutSessionId: latestState.checkoutSessionId,
+                        warehouseResolutionId: latestState.warehouseResolutionId,
+                        warehouseResolutionVersion: latestState.warehouseResolutionVersion,
                         shippingAddress,
                         shippingMethodId: latestState.shippingMethodId,
                         paymentMethod: latestState.paymentMethod,
@@ -2477,6 +2832,11 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         manualWalletProofFileKey: null,
                         manualWalletUploadToken: null,
                         checkoutSessionId: null,
+                        checkoutSessionCartId: null,
+                        warehouseResolutionId: null,
+                        warehouseResolutionVersion: null,
+                        warehouseResolutionStatus: null,
+                        warehouseResolutionExpiresAtUtc: null,
                         customFieldValues: {},
                         touchedCustomFields: new Set(),
                     });
@@ -2528,6 +2888,18 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                         } else if (errorCode === 'CHECKOUT_TOTAL_MISMATCH') {
                             errorMessage = 'Checkout totals changed. We refreshed the latest pricing. Please review the updated amount before placing your order again.';
                             await get().refreshPricingPreview();
+                        } else if (
+                            errorCode === 'CART_CHANGED_RE_RESOLUTION_REQUIRED' ||
+                            errorCode === 'WAREHOUSE_RESOLUTION_EXPIRED' ||
+                            errorCode === 'CHECKOUT_SESSION_STALE' ||
+                            errorCode === 'INSUFFICIENT_STOCK_AT_RESOLVED_WAREHOUSE' ||
+                            errorCode === 'WAREHOUSE_INACTIVE' ||
+                            errorCode === 'CARRIER_ASSIGNMENT_UNAVAILABLE' ||
+                            errorCode === 'SHIPPING_METHOD_INCOMPATIBLE_WITH_WAREHOUSE'
+                        ) {
+                            errorMessage = axiosError.response?.data?.message ||
+                                'Shipping availability changed. Please review the latest shipping methods.';
+                            await get().fetchShippingMethods({ force: true });
                         } else if (errorCode === 'CART_NOT_FOUND') {
                             // Cart expired or was cleared - try to refresh
                             errorMessage = 'Your cart session has expired. Please add items to your cart again.';
@@ -2579,6 +2951,7 @@ export const useCheckoutStore = create<CheckoutState & CheckoutActions>()(
                 cancelCheckoutSessionInit();
                 cancelPricingPreviewRequest();
                 cancelCheckoutFieldsRequest();
+                cancelShippingMethodsRequest();
                 clearSensitiveCheckoutSessionStorage();
                 set({
                     ...INITIAL_STATE,
