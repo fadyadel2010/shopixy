@@ -164,6 +164,21 @@ public sealed class FileValidationService : IFileValidationService
             .ToArray();
     }
 
+    public static IReadOnlyCollection<AllowedFileType> GetAllowedFileTypesForMimeTypes(
+        IEnumerable<string> contentTypes)
+    {
+        var normalizedContentTypes = new HashSet<string>(
+            (contentTypes ?? Array.Empty<string>())
+                .Select(NormalizeContentType)
+                .Where(contentType => !string.IsNullOrWhiteSpace(contentType)),
+            StringComparer.OrdinalIgnoreCase);
+
+        return FileTypeRules
+            .Where(pair => pair.Value.MimeTypes.Any(normalizedContentTypes.Contains))
+            .Select(pair => pair.Key)
+            .ToArray();
+    }
+
     public Task<FileValidationResult> ValidateFileAsync(
         Stream fileStream,
         string fileName,

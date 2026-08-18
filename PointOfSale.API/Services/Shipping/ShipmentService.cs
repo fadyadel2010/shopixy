@@ -566,7 +566,7 @@ public class ShipmentService : IShipmentService
         {
             return await _dbContext.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""TenantId"" = {tenantId}

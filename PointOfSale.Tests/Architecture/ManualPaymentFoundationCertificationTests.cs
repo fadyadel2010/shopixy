@@ -158,6 +158,37 @@ public sealed class ManualPaymentFoundationCertificationTests
         Assert.Empty(provider.GetServices<ManualWalletPaymentAdapter>());
     }
 
+    [Theory]
+    [InlineData("appsettings.Development.json")]
+    public void RuntimeOverlays_MustEnableValidSandboxReviewWorkflowWithoutMerchantWalletConfiguration(string overlayFileName)
+    {
+        var root = DiscoverSolutionRoot(AppContext.BaseDirectory);
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Path.Combine(root, "PointOfSale.API"))
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile(overlayFileName, optional: false)
+            .Build();
+        var options = new ManualPaymentOptions();
+        configuration.GetSection(ManualPaymentOptions.SectionName).Bind(options);
+
+        var result = ManualPaymentConfigurationValidator.Validate(options);
+
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+        Assert.True(result.Enabled);
+        Assert.True(options.FeatureFlags.ReviewExecutionEnabled);
+        Assert.True(options.FeatureFlags.ApprovalExecutionEnabled);
+        Assert.True(options.FeatureFlags.RejectionExecutionEnabled);
+        Assert.True(options.Capabilities.RuntimeBridgeCertified);
+        Assert.True(options.Capabilities.EvidenceAdapterCertified);
+        Assert.True(options.Capabilities.ReviewWorkflowCertified);
+        Assert.True(options.Channels.Any(channel => channel.Channel == ManualPaymentChannel.VodafoneCash && channel.Enabled));
+        Assert.DoesNotContain("010", options.Instructions.DefaultInstructions, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "\"walletNumber\"",
+            ReadRepoFile($"PointOfSale.API/{overlayFileName}"),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void DependencyInjection_MustFailForDuplicateFoundationRegistration()
     {
@@ -225,7 +256,6 @@ public sealed class ManualPaymentFoundationCertificationTests
             "PointOfSale.API/Configuration/ManualPaymentOptions.cs",
             "PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentFoundationModels.cs",
             "PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentFoundationService.cs",
-            "PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentFoundationServiceCollectionExtensions.cs",
             "PointOfSale.API/HealthChecks/ManualPaymentFoundationHealthCheck.cs"
         }.Select(ReadRepoFile);
 
@@ -239,6 +269,16 @@ public sealed class ManualPaymentFoundationCertificationTests
             Assert.DoesNotContain("DbContext", source, StringComparison.Ordinal);
             Assert.DoesNotContain("Controller", source, StringComparison.Ordinal);
         }
+
+        var compositionRoot = ReadRepoFile(
+            "PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentFoundationServiceCollectionExtensions.cs");
+        Assert.Contains("TryAddSingleton<PaymentRuntimeOrchestrator>", compositionRoot, StringComparison.Ordinal);
+        Assert.Contains("AddScoped<IManualPaymentRuntimeApplicationService", compositionRoot, StringComparison.Ordinal);
+        Assert.DoesNotContain("InitiateAsync", compositionRoot, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApproveAsync", compositionRoot, StringComparison.Ordinal);
+        Assert.DoesNotContain("RejectAsync", compositionRoot, StringComparison.Ordinal);
+        Assert.DoesNotContain("DbContext", compositionRoot, StringComparison.Ordinal);
+        Assert.DoesNotContain("Controller", compositionRoot, StringComparison.Ordinal);
     }
 
     private static ManualPaymentOptions BindOptions(Dictionary<string, string?> values)

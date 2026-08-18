@@ -13,6 +13,7 @@ using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Payments;
+using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MultiTenancy;
 
@@ -30,6 +31,21 @@ public sealed class PaymentsControllerTests
             authorize.AuthenticationSchemes == "StorefrontJwt,CustomerJwt");
         Assert.DoesNotContain(attributes, attribute => attribute is AllowAnonymousAttribute);
         Assert.DoesNotContain(attributes, attribute => attribute is AllowAnonymousTenantAttribute);
+    }
+
+    [Fact]
+    public void GetCanonicalPaymentStatus_ExposesStorefrontScopedRoute_ForStorefrontCookieAuthority()
+    {
+        var method = typeof(PaymentsController).GetMethod(nameof(PaymentsController.GetCanonicalPaymentStatus));
+        Assert.NotNull(method);
+
+        var routes = method.GetCustomAttributes(typeof(HttpGetAttribute), inherit: true)
+            .Cast<HttpGetAttribute>()
+            .Select(attribute => attribute.Template)
+            .ToArray();
+
+        Assert.Contains("status/{orderId:guid}", routes);
+        Assert.Contains("/api/storefront/payments/status/{orderId:guid}", routes);
     }
 
     [Fact]
@@ -260,6 +276,94 @@ public sealed class PaymentsControllerTests
     }
 
     [Fact]
+    public async Task GetCanonicalPaymentStatus_WhenGuestCheckoutCookieMatches_ReturnsCanonicalStatus()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        const string sessionId = "guest-session-cookie";
+        const string checkoutToken = "guest-cookie-token";
+        var paymentService = new Mock<IPaymentService>();
+        var paymobPaymentService = new Mock<IPaymobPaymentService>();
+        var tokenService = new Mock<ICheckoutSessionTokenService>();
+
+        paymentService
+            .Setup(service => service.GetOrderAccessInfoAsync(tenantId, orderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentOrderAccessInfo(null, null, sessionId, true));
+        tokenService
+            .Setup(service => service.ValidatePaymentToken(checkoutToken, tenantId))
+            .Returns(new CheckoutSessionTokenValidationResult(
+                true,
+                false,
+                orderId.ToString("D"),
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(5),
+                "checkout-payment"));
+        paymentService
+            .Setup(service => service.GetCanonicalPaymentStatusAsync(
+                tenantId,
+                orderId,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CanonicalPaymentStatusDto
+            {
+                OrderId = orderId,
+                OrderNumber = "ORD-COD-COOKIE-1",
+                Status = CanonicalPaymentStatusResolver.Failed,
+                OrderStatus = "Pending",
+                PaymentStatus = "Failed",
+                PaymentIntentStatus = "Failed",
+                PaymentMethod = "PAYMOB",
+                TotalAmount = 410m,
+                Currency = "EGP"
+            });
+        paymobPaymentService
+            .Setup(service => service.GetPaymentStatusAsync(
+                tenantId,
+                orderId,
+                null,
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymobPaymentStatusDto
+            {
+                OrderId = orderId,
+                OrderNumber = "ORD-COD-COOKIE-1",
+                PaymentStatus = "Failed",
+                PaymobStatus = "failed",
+                CanRetryPayment = true
+            });
+
+        var controller = CreateController(
+            paymentService.Object,
+            tenantId,
+            CreateAuthenticationService(),
+            tokenService: tokenService.Object,
+            paymobPaymentService: paymobPaymentService.Object);
+        controller.Request.Headers["X-Session-Id"] = sessionId;
+        controller.Request.Headers["Cookie"] = $"{GuestOrderAccessCookie.CheckoutTokenCookieName}={checkoutToken}";
+
+        var result = await controller.GetCanonicalPaymentStatus(orderId, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<CanonicalPaymentStatusDto>(ok.Value);
+        Assert.Equal(orderId, response.OrderId);
+        Assert.Equal("ORD-COD-COOKIE-1", response.OrderNumber);
+        Assert.Equal(CanonicalPaymentStatusResolver.Failed, response.Status);
+        Assert.True(response.CanRetryPayment);
+
+        paymentService.Verify(service => service.GetCanonicalPaymentStatusAsync(
+            tenantId,
+            orderId,
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        paymobPaymentService.Verify(service => service.GetPaymentStatusAsync(
+            tenantId,
+            orderId,
+            null,
+            It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CreatePaymentIntent_WhenManualWalletRequestIsSentDirectly_ReturnsBadRequest()
     {
         var tenantId = Guid.NewGuid();
@@ -323,7 +427,8 @@ public sealed class PaymentsControllerTests
         Guid tenantId,
         IAuthenticationService authenticationService,
         ApplicationDbContext? dbContext = null,
-        ICheckoutSessionTokenService? tokenService = null)
+        ICheckoutSessionTokenService? tokenService = null,
+        IPaymobPaymentService? paymobPaymentService = null)
     {
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
@@ -345,6 +450,7 @@ public sealed class PaymentsControllerTests
 
         return new PaymentsController(
             paymentService,
+            paymobPaymentService ?? Mock.Of<IPaymobPaymentService>(),
             paymentRequestAuthorizationService,
             tenantContext,
             dbContext ?? CreateDbContext(tenantId),

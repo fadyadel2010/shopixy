@@ -14,12 +14,72 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MultiTenancy;
 
 namespace PointOfSale.Tests.Storefront;
 
 public sealed class StorefrontManualWalletStorageTests
 {
+    [Fact]
+    public async Task GetConfig_ReturnsConfiguredWalletChannelsAndProofPolicy()
+    {
+        var tenantId = Guid.NewGuid();
+        var tenantContext = new TenantContext();
+        tenantContext.SetTenantId(tenantId);
+        var repository = new Mock<IPaymentMethodReadRepository>();
+        repository
+            .Setup(service => service.GetByCodeAsync(tenantId, "MANUALWALLET", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentMethodDocument
+            {
+                TenantId = tenantId,
+                PaymentMethodId = Guid.NewGuid(),
+                Code = "MANUALWALLET",
+                IsEnabled = true,
+                IsConfigurationValid = true,
+                PublicConfiguration = new Dictionary<string, string>
+                {
+                    ["walletNumber"] = "01000000000"
+                }
+            });
+        var manualOptions = CreateManualPaymentOptions() with
+        {
+            Proof = new ManualPaymentProofConfiguration
+            {
+                AcceptedContentTypes = new[] { "image/webp" },
+                MaximumUploadBytes = 7 * 1024 * 1024
+            }
+        };
+
+        var controller = new StorefrontManualWalletController(
+            tenantContext,
+            Mock.Of<IR2StorageService>(),
+            repository.Object,
+            CreateAdmittingAuthority(tenantId),
+            Mock.Of<IFileValidationService>(),
+            Mock.Of<ICheckoutSessionService>(),
+            Options.Create(new R2Options()),
+            Options.Create(manualOptions),
+            NullLogger<StorefrontManualWalletController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+
+        var result = await controller.GetConfig(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<StorefrontManualWalletController.ManualWalletConfigResponse>(ok.Value);
+        var walletType = Assert.Single(response.WalletTypes);
+        Assert.Equal("VODAFONECASH", walletType.Code);
+        Assert.Equal("01000000000", response.WalletNumber);
+        Assert.Equal(7 * 1024 * 1024, response.MaxFileBytes);
+        Assert.Equal(new[] { "image/webp" }, response.AllowedMimeTypes);
+        Assert.Equal(new[] { ".webp" }, response.AllowedExtensions);
+    }
+
     [Fact]
     public async Task UploadProof_WhenValidationSucceeds_ReturnsTrustedFileKey()
     {
@@ -58,7 +118,8 @@ public sealed class StorefrontManualWalletStorageTests
                 It.IsAny<Stream>(),
                 "proof.jpg",
                 "image/jpeg",
-                FileValidationProfiles.ManualWallet,
+                It.Is<IReadOnlyCollection<AllowedFileType>>(types =>
+                    types.SequenceEqual(FileValidationProfiles.ManualWallet)),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(FileValidationResult.Success(
                 ".jpg",
@@ -92,6 +153,7 @@ public sealed class StorefrontManualWalletStorageTests
             fileValidationService.Object,
             checkoutSessionService.Object,
             Options.Create(new R2Options()),
+            Options.Create(CreateManualPaymentOptions()),
             NullLogger<StorefrontManualWalletController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -158,6 +220,7 @@ public sealed class StorefrontManualWalletStorageTests
             fileValidationService.Object,
             checkoutSessionService.Object,
             Options.Create(new R2Options()),
+            Options.Create(CreateManualPaymentOptions()),
             NullLogger<StorefrontManualWalletController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -224,6 +287,7 @@ public sealed class StorefrontManualWalletStorageTests
             fileValidationService.Object,
             checkoutSessionService.Object,
             Options.Create(new R2Options()),
+            Options.Create(CreateManualPaymentOptions()),
             NullLogger<StorefrontManualWalletController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -268,15 +332,15 @@ public sealed class StorefrontManualWalletStorageTests
                 Guid.NewGuid(),
                 true,
                 ManualPaymentEnvironment.Sandbox,
-                ManualPaymentChannel.BankTransfer,
+                ManualPaymentChannel.VodafoneCash,
                 new[]
                 {
                     new ManualPaymentChannelConfiguration
                     {
-                        Channel = ManualPaymentChannel.BankTransfer,
+                        Channel = ManualPaymentChannel.VodafoneCash,
                         Enabled = true,
-                        DisplayName = "Bank Transfer",
-                        Instructions = "Transfer manually."
+                        DisplayName = "Vodafone Cash",
+                        Instructions = "Transfer to the configured wallet."
                     }
                 },
                 true,
@@ -289,4 +353,13 @@ public sealed class StorefrontManualWalletStorageTests
 
         return authority.Object;
     }
+
+    private static ManualPaymentOptions CreateManualPaymentOptions() => new()
+    {
+        Proof = new ManualPaymentProofConfiguration
+        {
+            AcceptedContentTypes = new[] { "image/jpeg", "image/png", "application/pdf" },
+            MaximumUploadBytes = FileValidationProfiles.MaxManualWalletProofBytes
+        }
+    };
 }

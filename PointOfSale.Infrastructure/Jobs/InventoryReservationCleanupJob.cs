@@ -471,7 +471,7 @@ public sealed class InventoryReservationCleanupJob
         {
             return await _dbContext.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""TenantId"" = {candidate.TenantId}
                       AND ""Id"" = {candidate.OrderId}

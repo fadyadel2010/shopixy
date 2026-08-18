@@ -132,7 +132,7 @@ public class AdminOrderService : IAdminOrderService
         }
 
         var standardRowsQuery = standardOrdersQuery
-            .Select(o => new AdminOrderListItemDto
+            .Select(o => new AdminOrderListQueryRow
             {
                 TenantId = o.TenantId,
                 OrderId = o.Id,
@@ -145,9 +145,9 @@ public class AdminOrderService : IAdminOrderService
                 PaymentStatus = o.PaymentStatus,
                 Source = o.Source,
                 SourceOrderId = o.SourceOrderId,
+                MarketplaceOrderId = null,
                 SourceLabel = o.Source == OrderSource.Marketplace ? "Marketplace" : null,
                 IsMarketplaceOrder = false,
-                MarketplaceLineage = null,
                 CreatedAtUtc = o.CreatedAt
             });
 
@@ -194,7 +194,7 @@ public class AdminOrderService : IAdminOrderService
         }
 
         var marketplaceRowsQuery = marketplaceOrdersQuery
-            .Select(subOrder => new AdminOrderListItemDto
+            .Select(subOrder => new AdminOrderListQueryRow
             {
                 TenantId = subOrder.StoreId,
                 OrderId = subOrder.Id,
@@ -206,20 +206,21 @@ public class AdminOrderService : IAdminOrderService
                 Status = subOrder.Status,
                 PaymentStatus = subOrder.PaymentStatus,
                 Source = OrderSource.Marketplace,
-                SourceOrderId = subOrder.MarketplaceOrderId.ToString(),
+                SourceOrderId = null,
+                MarketplaceOrderId = subOrder.MarketplaceOrderId,
                 SourceLabel = "Marketplace",
                 IsMarketplaceOrder = true,
-                MarketplaceLineage = null,
                 CreatedAtUtc = subOrder.CreatedAt
             });
 
         var combinedQuery = standardRowsQuery.Concat(marketplaceRowsQuery);
         var totalCount = await combinedQuery.CountAsync(cancellationToken);
         var orderedQuery = ApplyOrderListSorting(combinedQuery, query.SortBy, query.SortDirection);
-        var orders = await orderedQuery
+        var rows = await orderedQuery
             .Skip(skip)
             .Take(query.PageSize)
             .ToListAsync(cancellationToken);
+        var orders = rows.Select(MapOrderListRow).ToList();
 
         await AttachAffiliateAttributionEvidenceAsync(orders, tenantId, cancellationToken);
         await AttachMarketplaceLineageEvidenceAsync(orders, tenantId, cancellationToken);
@@ -231,8 +232,8 @@ public class AdminOrderService : IAdminOrderService
         return new AdminPagedResult<AdminOrderListItemDto>(orders, query.Page, query.PageSize, totalCount);
     }
 
-    private static IOrderedQueryable<AdminOrderListItemDto> ApplyOrderListSorting(
-        IQueryable<AdminOrderListItemDto> query,
+    private static IOrderedQueryable<AdminOrderListQueryRow> ApplyOrderListSorting(
+        IQueryable<AdminOrderListQueryRow> query,
         string sortBy,
         string sortDirection)
     {
@@ -258,6 +259,44 @@ public class AdminOrderService : IAdminOrderService
                 ? query.OrderByDescending(order => order.CreatedAtUtc)
                 : query.OrderBy(order => order.CreatedAtUtc),
         };
+    }
+
+    private static AdminOrderListItemDto MapOrderListRow(AdminOrderListQueryRow row) => new()
+    {
+        TenantId = row.TenantId,
+        OrderId = row.OrderId,
+        OrderNumber = row.OrderNumber,
+        CustomerId = row.CustomerId,
+        CustomerName = row.CustomerName,
+        TotalAmount = row.TotalAmount,
+        Currency = row.Currency,
+        Status = row.Status,
+        PaymentStatus = row.PaymentStatus,
+        Source = row.Source,
+        SourceOrderId = row.SourceOrderId ?? row.MarketplaceOrderId?.ToString(),
+        SourceLabel = row.SourceLabel,
+        IsMarketplaceOrder = row.IsMarketplaceOrder,
+        MarketplaceLineage = null,
+        CreatedAtUtc = row.CreatedAtUtc
+    };
+
+    private sealed class AdminOrderListQueryRow
+    {
+        public Guid TenantId { get; init; }
+        public Guid OrderId { get; init; }
+        public string OrderNumber { get; init; } = string.Empty;
+        public Guid? CustomerId { get; init; }
+        public string? CustomerName { get; init; }
+        public decimal TotalAmount { get; init; }
+        public string Currency { get; init; } = string.Empty;
+        public OrderStatus Status { get; init; }
+        public PaymentStatus PaymentStatus { get; init; }
+        public OrderSource Source { get; init; }
+        public string? SourceOrderId { get; init; }
+        public Guid? MarketplaceOrderId { get; init; }
+        public string? SourceLabel { get; init; }
+        public bool IsMarketplaceOrder { get; init; }
+        public DateTime CreatedAtUtc { get; init; }
     }
 
     /// <inheritdoc />
@@ -1173,6 +1212,7 @@ public class AdminOrderService : IAdminOrderService
             OrderNumber = order.OrderNumber,
             Status = order.Status,
             PaymentStatus = order.PaymentStatus,
+            FulfillmentStatus = order.FulfillmentStatus,
             ShipmentStatus = shipment?.Status,
             Items = order.Items.Select(i => new AdminOrderItemDto
             {
@@ -1468,6 +1508,7 @@ public class AdminOrderService : IAdminOrderService
             OrderNumber = subOrder.OrderNumber,
             Status = subOrder.Status,
             PaymentStatus = subOrder.PaymentStatus,
+            FulfillmentStatus = null,
             ShipmentStatus = null,
             Items = subOrder.Items.Select(item => new AdminOrderItemDto
             {

@@ -777,6 +777,12 @@ public static class FawryWebhookMetadataFactory
             ["evidence_id_source"] = "event_type|request_id|fawry_ref_number|evidence_hash"
         };
 
+        if (action.Metadata.Values.TryGetValue(FawryRequestMetadataKeys.Currency, out var currency) &&
+            !string.IsNullOrWhiteSpace(currency))
+        {
+            values["currency"] = currency.Trim().ToUpperInvariant();
+        }
+
         if (!string.IsNullOrWhiteSpace(callback.FailureErrorCode))
         {
             values["failure_error_code"] = callback.FailureErrorCode;

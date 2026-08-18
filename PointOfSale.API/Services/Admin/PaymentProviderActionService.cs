@@ -107,7 +107,9 @@ public sealed class PaymentProviderActionService : IPaymentProviderActionService
         var missingConfiguration = new List<string>();
         RequireConfiguration(configuration.Configuration, "currency", missingConfiguration);
         RequireConfiguration(configuration.Configuration, "integrationId", missingConfiguration);
-        RequireConfiguration(configuration.Configuration, "iframeId", missingConfiguration);
+        RequireConfiguration(configuration.Configuration, "publicKey", missingConfiguration);
+        RequireConfiguration(configuration.Configuration, "webhookUrl", missingConfiguration);
+        RequireConfiguration(configuration.Configuration, "browserCallbackUrl", missingConfiguration);
 
         if (missingConfiguration.Count > 0)
         {
@@ -119,7 +121,7 @@ public sealed class PaymentProviderActionService : IPaymentProviderActionService
         }
 
         var missingCredentials = new List<string>();
-        RequireCredential(configuration.Credentials, "apiKey", missingCredentials);
+        RequireCredential(configuration.Credentials, "secretKey", missingCredentials);
         RequireCredential(configuration.Credentials, "hmacSecret", missingCredentials);
 
         if (missingCredentials.Count > 0)
@@ -217,25 +219,10 @@ public sealed class PaymobConnectivityTester : IPaymentProviderConnectivityTeste
 
         try
         {
-            var auth = await _client.AuthenticateAsync(
-                new PaymobAuthRequest(configuration.Credentials["apiKey"]),
-                cancellationToken);
-
-            if (string.IsNullOrWhiteSpace(auth.Token))
-            {
-                return CreateFailure(
-                    configuration,
-                    checkedAt,
-                    stopwatch.ElapsedMilliseconds,
-                    "Authentication Failed",
-                    "Paymob authentication did not return an access token.");
-            }
+            await _client.CheckAvailabilityAsync(cancellationToken);
 
             var warnings = new List<string>();
-            if (auth.Profile?.Id is null or <= 0)
-            {
-                warnings.Add("Paymob authenticated successfully but did not return merchant profile details.");
-            }
+            warnings.Add("Provider reachability and credential format passed. Account/integration ownership is verified when Paymob accepts an Intention request.");
 
             var status = warnings.Count == 0 ? "Healthy" : "Warning";
             return new PaymentProviderActionResultDto
@@ -245,8 +232,8 @@ public sealed class PaymobConnectivityTester : IPaymentProviderConnectivityTeste
                 Provider = configuration.ProviderCode,
                 Environment = configuration.Environment,
                 Message = status == "Healthy"
-                    ? "Provider authentication and profile verification succeeded."
-                    : "Provider authentication succeeded with operational warnings.",
+                    ? "Provider reachability verification succeeded."
+                    : "Provider is reachable with an operational verification warning.",
                 CheckedAtUtc = checkedAt,
                 LatencyMs = stopwatch.ElapsedMilliseconds,
                 Warnings = warnings,

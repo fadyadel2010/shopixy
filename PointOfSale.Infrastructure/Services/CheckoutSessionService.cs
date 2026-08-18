@@ -1057,19 +1057,27 @@ public class CheckoutSessionService : ICheckoutSessionService
         Guid cartId,
         CancellationToken ct)
     {
-        return await _db.CheckoutSessions
+        var recoverableSessions = _db.CheckoutSessions
             .IgnoreQueryFilters()
             .Where(session =>
                 session.TenantId == tenantId &&
                 session.CartId == cartId &&
                 (session.Status == CheckoutSessionStatus.Active ||
                  session.Status == CheckoutSessionStatus.Abandoned) &&
-                session.InvalidatedAtUtc == null)
+                session.InvalidatedAtUtc == null);
+
+        return await OrderCanonicalSessions(recoverableSessions)
+            .ToListAsync(ct);
+    }
+
+    public static IOrderedQueryable<CheckoutSession> OrderCanonicalSessions(
+        IQueryable<CheckoutSession> sessions)
+    {
+        return sessions
             .OrderBy(session => session.Status == CheckoutSessionStatus.Active ? 0 : 1)
             .ThenByDescending(session => session.LastActivityAtUtc)
             .ThenByDescending(session => session.CreatedAtUtc)
-            .ThenByDescending(session => session.Id)
-            .ToListAsync(ct);
+            .ThenByDescending(session => session.Id);
     }
 
     private async Task<string> ValidateCheckoutCurrencyAsync(

@@ -60,7 +60,7 @@ public interface ICheckoutAttachmentService
 
 public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
 {
-    private const int UploadUrlExpiryMinutes = 15;
+    internal const int UploadUrlExpiryMinutes = 15;
     private const int PendingUploadExpiryHours = 24;
     private const long DefaultMaxFileSizeBytes = 5 * 1024 * 1024;
     private const int DefaultMultiImageMaxFiles = 5;
@@ -119,6 +119,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
         var activeCount = await CountActiveAttachmentsAsync(
             tenantId,
             ownerId,
+            ownerType,
             request.CartId,
             field.Id,
             DateTime.UtcNow,
@@ -135,6 +136,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
             request.FileName,
             GetPrimaryExtension(allowedType));
         var nowUtc = DateTime.UtcNow;
+        var uploadExpiresAtUtc = nowUtc.AddMinutes(UploadUrlExpiryMinutes);
         var uploadTarget = await _storageService.CreateUploadUrlAsync(
             GetCanonicalContentType(allowedType),
             $"tenants/{tenantId:N}/checkout/{request.CartId:N}/fields/{field.Id:N}/attachments/{nowUtc:yyyy/MM/dd}",
@@ -158,7 +160,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
             ExpectedSizeBytes = request.FileSizeBytes,
             SizeBytes = 0,
             Status = CheckoutAttachmentStatus.Pending,
-            ExpiresAtUtc = nowUtc.AddHours(PendingUploadExpiryHours),
+            ExpiresAtUtc = uploadExpiresAtUtc,
             CreatedAt = nowUtc,
             MetadataJson = SerializeMetadata(null, fileName, GetCanonicalContentType(allowedType), 0, CheckoutAttachmentStatus.Pending)
         };
@@ -182,7 +184,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
             UploadUrl = uploadTarget.UploadUrl,
             UploadMethod = uploadTarget.HttpMethod,
             ContentType = uploadTarget.ContentType,
-            ExpiresAtUtc = nowUtc.AddMinutes(UploadUrlExpiryMinutes),
+            ExpiresAtUtc = uploadExpiresAtUtc,
             AttachmentExpiresAtUtc = attachment.ExpiresAtUtc
         };
     }
@@ -766,13 +768,15 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
             throw new CheckoutDynamicFieldValidationException("CHECKOUT_ATTACHMENT_FINALIZATION_MISMATCH", "Uploaded file could not be finalized safely.");
         }
 
+        var finalizedAtUtc = DateTime.UtcNow;
         attachment.SizeBytes = finalMetadata.ContentLength;
         attachment.FinalETag = finalMetadata.ETag;
         attachment.FinalChecksumSha256 = finalMetadata.ChecksumSha256;
         attachment.Status = CheckoutAttachmentStatus.Finalized;
-        attachment.UploadedAtUtc ??= DateTime.UtcNow;
-        attachment.FinalizedAtUtc ??= DateTime.UtcNow;
-        attachment.UpdatedAt = DateTime.UtcNow;
+        attachment.UploadedAtUtc ??= finalizedAtUtc;
+        attachment.FinalizedAtUtc ??= finalizedAtUtc;
+        attachment.ExpiresAtUtc = finalizedAtUtc.AddHours(PendingUploadExpiryHours);
+        attachment.UpdatedAt = finalizedAtUtc;
         attachment.MetadataJson = SerializeMetadata(attachment, attachment.OriginalFileName, normalizedContentType, finalMetadata.ContentLength, attachment.Status);
         return _dbContext.Database.IsRelational()
             ? CheckoutAttachmentStatus.Uploaded
@@ -804,6 +808,7 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
                 .SetProperty(item => item.Status, attachment.Status)
                 .SetProperty(item => item.UploadedAtUtc, attachment.UploadedAtUtc)
                 .SetProperty(item => item.FinalizedAtUtc, attachment.FinalizedAtUtc)
+                .SetProperty(item => item.ExpiresAtUtc, attachment.ExpiresAtUtc)
                 .SetProperty(item => item.UpdatedAt, attachment.UpdatedAt)
                 .SetProperty(item => item.MetadataJson, attachment.MetadataJson), cancellationToken);
         if (updated != 1)
@@ -934,20 +939,30 @@ public sealed class CheckoutAttachmentService : ICheckoutAttachmentService
     private async Task<int> CountActiveAttachmentsAsync(
         Guid tenantId,
         string ownerId,
+        string ownerType,
         Guid cartId,
         Guid fieldId,
         DateTime nowUtc,
-        CancellationToken cancellationToken) =>
-        await _dbContext.CheckoutAttachments.IgnoreQueryFilters().CountAsync(attachment =>
+        CancellationToken cancellationToken)
+    {
+        var normalizedOwnerId = ownerId.Trim();
+        var normalizedOwnerType = ownerType.Trim().ToLowerInvariant();
+        var pendingLeaseCutoffUtc = nowUtc.AddMinutes(-UploadUrlExpiryMinutes);
+
+        return await _dbContext.CheckoutAttachments.IgnoreQueryFilters().CountAsync(attachment =>
             attachment.TenantId == tenantId &&
-            attachment.OwnerId == ownerId.Trim() &&
+            attachment.OwnerId == normalizedOwnerId &&
+            attachment.OwnerType == normalizedOwnerType &&
             attachment.CartId == cartId &&
             attachment.CheckoutFieldDefinitionId == fieldId &&
             !attachment.IsDeleted &&
             attachment.OrderId == null &&
             attachment.ExpiresAtUtc > nowUtc &&
-            (attachment.Status == CheckoutAttachmentStatus.Pending || attachment.Status == CheckoutAttachmentStatus.Uploaded || attachment.Status == CheckoutAttachmentStatus.Finalized),
+            ((attachment.Status == CheckoutAttachmentStatus.Pending && attachment.CreatedAt > pendingLeaseCutoffUtc) ||
+             attachment.Status == CheckoutAttachmentStatus.Uploaded ||
+             attachment.Status == CheckoutAttachmentStatus.Finalized),
             cancellationToken);
+    }
 
     private async Task ValidateCartAuthorityAsync(
         Guid tenantId,

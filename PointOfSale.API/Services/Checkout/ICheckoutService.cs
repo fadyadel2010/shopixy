@@ -414,6 +414,26 @@ public class CheckoutPaymentMethodException : CheckoutException
 }
 
 /// <summary>
+/// Thrown when a valid selected provider fails its current execution-readiness gate.
+/// HTTP 503 Service Unavailable.
+/// </summary>
+public sealed class CheckoutPaymentRuntimeUnavailableException : CheckoutException
+{
+    public string PaymentMethodCode { get; }
+    public string FirstFailedGate { get; }
+
+    public CheckoutPaymentRuntimeUnavailableException(string paymentMethodCode, string firstFailedGate)
+        : base(
+            "PAYMENT_RUNTIME_UNAVAILABLE",
+            $"Payment method {paymentMethodCode} is temporarily unavailable.",
+            "PaymentMethodValidation")
+    {
+        PaymentMethodCode = paymentMethodCode;
+        FirstFailedGate = firstFailedGate;
+    }
+}
+
+/// <summary>
 /// Thrown when checkout lock infrastructure is unavailable.
 /// HTTP 503 Service Unavailable.
 /// </summary>

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PointOfSale.API.Services.Payments.ProviderContracts;
+using PointOfSale.Core.Payments;
 using PointOfSale.Core.Payments.Runtime.Domain;
 
 namespace PointOfSale.API.Services.Payments.Paymob;
@@ -19,6 +20,15 @@ public interface IPaymobPaymentAdapter
 
 public partial interface IPaymobOfficialApiClient
 {
+    Task CheckAvailabilityAsync(CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This Paymob client does not support availability checks.");
+
+    Task<PaymobIntentionResponse> CreateIntentionAsync(
+        PaymobIntentionRequest request,
+        string secretKey,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This Paymob client does not support the Intention API.");
+
     Task<PaymobAdapterAuthResponse> AuthenticateAsync(
         PaymobAuthRequest request,
         CancellationToken cancellationToken);
@@ -70,57 +80,49 @@ public sealed class PaymobPaymentAdapter : IPaymobPaymentAdapter
                 return CreateCheckpointResult(action, request, checkpoint);
             }
 
-            var authResponse = await _client.AuthenticateAsync(
-                request.AuthRequest,
-                cancellationToken);
-            request = request with
-            {
-                OrderRequest = request.OrderRequest with { AuthToken = authResponse.Token },
-                PaymentKeyRequest = request.PaymentKeyRequest with { AuthToken = authResponse.Token }
-            };
-
-            PaymobOrderRegistrationResponse orderResponse;
             if (checkpoint.ProviderOrderId is not null)
             {
-                orderResponse = CreateCheckpointedOrderResponse(
-                    checkpoint.ProviderOrderId,
-                    request.OrderRequest.MerchantOrderId);
+                throw new PaymobProviderCheckpointException(
+                    "PAYMOB_INTENTION_RECOVERY_REQUIRED",
+                    "The Paymob intention was accepted without a durable checkout secret. Automatic intention recreation is blocked until provider reconciliation completes.");
             }
-            else
-            {
-                if (_checkpointStore is not null)
-                {
-                    await _checkpointStore.BeginOrderRegistrationAsync(
-                        action,
-                        request.OrderRequest.MerchantOrderId,
-                        cancellationToken);
-                }
 
-                orderResponse = await _client.RegisterOrderAsync(
-                    request.OrderRequest,
-                    authResponse.Token,
+            if (_checkpointStore is not null)
+            {
+                await _checkpointStore.BeginOrderRegistrationAsync(
+                    action,
+                    request.OrderRequest.MerchantOrderId,
                     cancellationToken);
-
-                if (_checkpointStore is not null)
-                {
-                    await _checkpointStore.PersistAcceptedOrderAsync(
-                        action,
-                        request.OrderRequest.MerchantOrderId,
-                        orderResponse,
-                        cancellationToken);
-                }
             }
 
-            request = request with
-            {
-                PaymentKeyRequest = request.PaymentKeyRequest with { OrderId = orderResponse.Id.ToString(CultureInfo.InvariantCulture) }
-            };
-
-            var paymentKeyResponse = await _client.CreatePaymentKeyAsync(
-                request.PaymentKeyRequest,
-                authResponse.Token,
+            var intentionResponse = await _client.CreateIntentionAsync(
+                request.IntentionRequest ?? throw new InvalidOperationException("Paymob intention request is required."),
+                credentials.SecretKey,
                 cancellationToken);
-            var iframeUrl = PaymobRedirectFactory.CreateIframeUrl(credentials.IframeId, paymentKeyResponse.Token);
+            var providerOrderId = intentionResponse.ResolveOrderId();
+            var orderResponse = new PaymobOrderRegistrationResponse(
+                providerOrderId,
+                request.OrderRequest.MerchantOrderId);
+
+            if (_checkpointStore is not null)
+            {
+                await _checkpointStore.PersistAcceptedOrderAsync(
+                    action,
+                    request.OrderRequest.MerchantOrderId,
+                    orderResponse,
+                    cancellationToken);
+            }
+
+            if (string.IsNullOrWhiteSpace(intentionResponse.ClientSecret) ||
+                string.IsNullOrWhiteSpace(intentionResponse.Id))
+            {
+                throw new JsonException("Paymob intention response did not include its id and client secret.");
+            }
+
+            var paymentKeyResponse = new PaymobAdapterPaymentKeyResponse(intentionResponse.ClientSecret);
+            var iframeUrl = PaymobRedirectFactory.CreateUnifiedCheckoutUrl(
+                credentials.PublicKey,
+                intentionResponse.ClientSecret);
 
             if (_checkpointStore is not null)
             {
@@ -134,10 +136,11 @@ public sealed class PaymobPaymentAdapter : IPaymobPaymentAdapter
             }
 
             var providerResponse = new PaymobPaymentPreparationResponse(
-                authResponse,
+                new PaymobAdapterAuthResponse(string.Empty),
                 orderResponse,
                 paymentKeyResponse,
-                iframeUrl);
+                iframeUrl,
+                intentionResponse.Id);
             var evidence = PaymobEvidenceFactory.FromPaymentPreparation(
                 action,
                 request,
@@ -201,7 +204,8 @@ public sealed class PaymobPaymentAdapter : IPaymobPaymentAdapter
             new PaymobAdapterAuthResponse(string.Empty),
             orderResponse,
             new PaymobAdapterPaymentKeyResponse(checkpoint.PaymentKey),
-            checkpoint.IframeUrl);
+            checkpoint.IframeUrl,
+            $"checkpoint:{checkpoint.ProviderOrderId}");
         var evidence = PaymobEvidenceFactory.FromPaymentPreparation(
             action,
             checkpointedRequest,
@@ -276,11 +280,35 @@ public sealed partial class PaymobOfficialApiHttpClient : IPaymobOfficialApiClie
             cancellationToken);
     }
 
+    public async Task<PaymobIntentionResponse> CreateIntentionAsync(
+        PaymobIntentionRequest request,
+        string secretKey,
+        CancellationToken cancellationToken)
+    {
+        return await PostAsync<PaymobIntentionRequest, PaymobIntentionResponse>(
+            "../v1/intention/",
+            request,
+            authToken: secretKey,
+            cancellationToken,
+            authenticationScheme: "Token");
+    }
+
+    public async Task CheckAvailabilityAsync(CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "../");
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new PaymobOfficialApiException(response.StatusCode, string.Empty, null);
+        }
+    }
+
     private async Task<TResponse> PostAsync<TRequest, TResponse>(
         string relativePath,
         TRequest request,
         string? authToken,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string authenticationScheme = "Bearer")
     {
         using var message = new HttpRequestMessage(HttpMethod.Post, relativePath)
         {
@@ -292,7 +320,7 @@ public sealed partial class PaymobOfficialApiHttpClient : IPaymobOfficialApiClie
 
         if (!string.IsNullOrWhiteSpace(authToken))
         {
-            message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authToken);
+            message.Headers.Authorization = new AuthenticationHeaderValue(authenticationScheme, authToken);
         }
 
         using var response = await _client.SendAsync(message, cancellationToken);
@@ -366,12 +394,20 @@ public static class PaymobPaymentRequestFactory
         var currency = Required(values, PaymobRequestMetadataKeys.Currency).ToUpperInvariant();
         var merchantOrderId = Optional(values, PaymobRequestMetadataKeys.MerchantOrderId)
             ?? PaymobIdempotencyKey.Build(action).Value;
-        var integrationId = ParseInt(credentials.IntegrationId, "Paymob integration ID");
+        if (!PaymentMethodConfigurationValidator.TryParsePaymobIntegrationIds(
+                credentials.IntegrationId,
+                out var integrationIds))
+        {
+            throw new InvalidOperationException(
+                "Paymob integration IDs must be one or more positive integers separated by commas.");
+        }
+
+        var integrationId = integrationIds[0];
         var expiration = ParseOptionalInt(values, PaymobRequestMetadataKeys.ExpirationSeconds) ?? 3600;
         var billingData = PaymobBillingData.FromActionMetadata(values);
         var canonicalMetadata = PaymobRequestMetadata.FromAction(action).Values;
 
-        var authRequest = new PaymobAuthRequest(credentials.ApiKey);
+        var authRequest = new PaymobAuthRequest(credentials.ApiKey ?? string.Empty);
         var orderRequest = new PaymobOrderRegistrationRequest(
             AuthToken: string.Empty,
             DeliveryNeeded: "false",
@@ -394,13 +430,36 @@ public static class PaymobPaymentRequestFactory
             Currency: currency,
             IntegrationId: integrationId,
             LockOrderWhenPaid: ParseOptionalBool(values, PaymobRequestMetadataKeys.LockOrderWhenPaid) ?? true);
+        var intentionRequest = new PaymobIntentionRequest(
+            amountCents,
+            currency,
+            integrationIds,
+            [new PaymobIntentionItem(
+                Optional(values, PaymobRequestMetadataKeys.ItemName) ?? action.Reference.Value,
+                amountCents,
+                action.Reference.Value,
+                1)],
+            billingData,
+            new PaymobIntentionCustomer(
+                billingData.FirstName,
+                billingData.LastName,
+                billingData.Email),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["internal_reference"] = merchantOrderId
+            },
+            merchantOrderId,
+            expiration,
+            credentials.NotificationUrl.ToString(),
+            credentials.RedirectionUrl.ToString());
 
         return new PaymobPaymentPreparationRequest(
             authRequest,
             orderRequest,
             paymentKeyRequest,
             new PaymobIdempotencyKey(merchantOrderId),
-            canonicalMetadata);
+            canonicalMetadata,
+            intentionRequest);
     }
 
     private static string Required(IReadOnlyDictionary<string, string> values, string key)
@@ -480,9 +539,9 @@ public static class PaymobEvidenceFactory
             throw new ArgumentException("Paymob order id is required.", nameof(response));
         }
 
-        if (string.IsNullOrWhiteSpace(response.PaymentKey.Token))
+        if (string.IsNullOrWhiteSpace(response.IntentionId))
         {
-            throw new ArgumentException("Paymob payment key token is required.", nameof(response));
+            throw new ArgumentException("Paymob intention id is required.", nameof(response));
         }
 
         var reference = new PaymobProviderReference(response.Order.Id.ToString(CultureInfo.InvariantCulture));
@@ -491,7 +550,7 @@ public static class PaymobEvidenceFactory
         var evidenceHash = PaymobHash.Create(
             response.Order.Id.ToString(CultureInfo.InvariantCulture),
             response.Order.MerchantOrderId ?? string.Empty,
-            response.PaymentKey.Token,
+            response.IntentionId,
             request.PaymentKeyRequest.AmountCents.ToString(CultureInfo.InvariantCulture),
             request.PaymentKeyRequest.Currency,
             action.CorrelationId.Value);
@@ -511,7 +570,7 @@ public static class PaymobEvidenceFactory
             new EvidenceSource(PaymobProviderReference.ProviderName),
             new EvidenceTimestamp(timestamp),
             new EvidenceHash(evidenceHash),
-            new ProviderPayloadReference($"paymob:order:{response.Order.Id}:payment_key"),
+            new ProviderPayloadReference($"paymob:intention:{response.IntentionId}"),
             action.CorrelationId,
             new EvidenceMetadata(metadata));
     }
@@ -642,13 +701,66 @@ public sealed record PaymobPaymentPreparationRequest(
     PaymobOrderRegistrationRequest OrderRequest,
     PaymobPaymentKeyRequest PaymentKeyRequest,
     PaymobIdempotencyKey IdempotencyKey,
-    IReadOnlyDictionary<string, string> CanonicalMetadata);
+    IReadOnlyDictionary<string, string> CanonicalMetadata,
+    PaymobIntentionRequest? IntentionRequest = null);
 
 public sealed record PaymobPaymentPreparationResponse(
     PaymobAdapterAuthResponse Auth,
     PaymobOrderRegistrationResponse Order,
     PaymobAdapterPaymentKeyResponse PaymentKey,
-    string IframeUrl);
+    string IframeUrl,
+    string? IntentionId = null);
+
+public sealed record PaymobIntentionRequest(
+    [property: JsonPropertyName("amount")] long Amount,
+    [property: JsonPropertyName("currency")] string Currency,
+    [property: JsonPropertyName("payment_methods")] IReadOnlyList<int> PaymentMethods,
+    [property: JsonPropertyName("items")] IReadOnlyList<PaymobIntentionItem> Items,
+    [property: JsonPropertyName("billing_data")] PaymobBillingData BillingData,
+    [property: JsonPropertyName("customer")] PaymobIntentionCustomer Customer,
+    [property: JsonPropertyName("extras")] IReadOnlyDictionary<string, string> Extras,
+    [property: JsonPropertyName("special_reference")] string SpecialReference,
+    [property: JsonPropertyName("expiration")] int Expiration,
+    [property: JsonPropertyName("notification_url")] string NotificationUrl,
+    [property: JsonPropertyName("redirection_url")] string RedirectionUrl);
+
+public sealed record PaymobIntentionItem(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("amount")] long Amount,
+    [property: JsonPropertyName("description")] string Description,
+    [property: JsonPropertyName("quantity")] int Quantity);
+
+public sealed record PaymobIntentionCustomer(
+    [property: JsonPropertyName("first_name")] string FirstName,
+    [property: JsonPropertyName("last_name")] string LastName,
+    [property: JsonPropertyName("email")] string Email);
+
+public sealed record PaymobIntentionResponse
+{
+    [JsonPropertyName("id")]
+    public string? Id { get; init; }
+
+    [JsonPropertyName("client_secret")]
+    public string? ClientSecret { get; init; }
+
+    [JsonPropertyName("intention_order_id")]
+    public long? IntentionOrderId { get; init; }
+
+    [JsonPropertyName("payment_keys")]
+    public IReadOnlyList<PaymobIntentionPaymentKey> PaymentKeys { get; init; } = Array.Empty<PaymobIntentionPaymentKey>();
+
+    public long ResolveOrderId()
+    {
+        var orderId = IntentionOrderId ?? PaymentKeys.Select(key => key.OrderId).FirstOrDefault(value => value > 0);
+        return orderId > 0
+            ? orderId
+            : throw new JsonException("Paymob intention response did not include an order id.");
+    }
+}
+
+public sealed record PaymobIntentionPaymentKey(
+    [property: JsonPropertyName("order_id")] long OrderId,
+    [property: JsonPropertyName("integration")] long Integration);
 
 public sealed record PaymobAuthRequest(
     [property: JsonPropertyName("api_key")] string ApiKey);
@@ -725,9 +837,14 @@ public sealed record PaymobBillingData(
             RequiredOrDefault(values, PaymobRequestMetadataKeys.ShippingMethod),
             RequiredOrDefault(values, PaymobRequestMetadataKeys.PostalCode),
             RequiredOrDefault(values, PaymobRequestMetadataKeys.City),
-            RequiredOrDefault(values, PaymobRequestMetadataKeys.Country, "EG"),
+            NormalizeCountry(RequiredOrDefault(values, PaymobRequestMetadataKeys.Country, "EG")),
             RequiredOrDefault(values, PaymobRequestMetadataKeys.State));
     }
+
+    private static string NormalizeCountry(string value) =>
+        string.Equals(value, "EG", StringComparison.OrdinalIgnoreCase)
+            ? "EGY"
+            : value.ToUpperInvariant();
 
     private static string RequiredOrDefault(
         IReadOnlyDictionary<string, string> values,
@@ -866,9 +983,9 @@ public sealed record PaymobResponseMetadata(IReadOnlyDictionary<string, string> 
             ["provider_reference"] = response.Order.Id.ToString(CultureInfo.InvariantCulture),
             ["provider_order_id"] = response.Order.Id.ToString(CultureInfo.InvariantCulture),
             ["provider_merchant_order_id"] = response.Order.MerchantOrderId ?? string.Empty,
-            ["provider_status"] = "payment_key_created",
-            ["transaction_reference"] = response.PaymentKey.Token,
-            ["external_status"] = "payment_key_created",
+            ["provider_status"] = "intention_created",
+            ["transaction_reference"] = response.IntentionId ?? string.Empty,
+            ["external_status"] = "intention_created",
             ["iframe_url"] = response.IframeUrl,
             ["correlation_id"] = action.CorrelationId.Value,
             ["payment_action_id"] = action.Id.Value.ToString("N"),
@@ -888,6 +1005,23 @@ public sealed record PaymobResponseMetadata(IReadOnlyDictionary<string, string> 
 
 public static class PaymobRedirectFactory
 {
+    private static readonly Uri EgyptUnifiedCheckoutUri = new("https://accept.paymob.com/unifiedcheckout/");
+
+    public static string CreateUnifiedCheckoutUrl(string publicKey, string clientSecret)
+    {
+        if (string.IsNullOrWhiteSpace(publicKey))
+        {
+            throw new InvalidOperationException("Paymob public key is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(clientSecret))
+        {
+            throw new ArgumentException("Paymob intention client secret is required.", nameof(clientSecret));
+        }
+
+        return $"{EgyptUnifiedCheckoutUri}?publicKey={Uri.EscapeDataString(publicKey.Trim())}&clientSecret={Uri.EscapeDataString(clientSecret.Trim())}";
+    }
+
     public static string CreateIframeUrl(string iframeId, string paymentKey)
     {
         if (string.IsNullOrWhiteSpace(iframeId))
@@ -954,6 +1088,11 @@ internal static class PaymobMoneyMapper
 {
     public static long ToMinorUnits(string amount, string currency)
     {
+        if (!string.Equals(currency?.Trim(), "EGP", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ArgumentException("The configured Paymob Egypt integration only supports EGP checkout currency.");
+        }
+
         if (!decimal.TryParse(amount, NumberStyles.Number, CultureInfo.InvariantCulture, out var parsed))
         {
             throw new ArgumentException("Canonical amount must be an invariant decimal value.");

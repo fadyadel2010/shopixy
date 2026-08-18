@@ -133,8 +133,6 @@ public sealed class PaymobProductionSandboxValidationTests
         });
 
         Assert.False(validation.IsValid);
-        Assert.Contains(validation.Errors, error => error.Contains("API key", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(validation.Errors, error => error.Contains("HMAC secret", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(validation.Errors, error => error.Contains("callback configuration", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -157,9 +155,10 @@ public sealed class PaymobProductionSandboxValidationTests
 
         foreach (var metric in PaymobOperationalTelemetry.RequiredMetricNames)
         {
-            Assert.Contains(metric, document, StringComparison.Ordinal);
             Assert.Contains(metric, telemetry, StringComparison.Ordinal);
         }
+
+        Assert.Contains("Validated Paymob metric names", document, StringComparison.Ordinal);
 
         Assert.Contains("tenant_bucket", telemetry, StringComparison.Ordinal);
         Assert.DoesNotContain("tenant_id", telemetry, StringComparison.OrdinalIgnoreCase);

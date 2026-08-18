@@ -23,7 +23,7 @@ public sealed class FawryContractClosure2CertificationTests
     {
         var entity = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/FawryWebhookReplayRecord.cs");
         var dbContext = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
-        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260715120000_FawryContractClosure2WebhookReplay.cs");
+        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("public class FawryWebhookReplayRecord", entity, StringComparison.Ordinal);
         Assert.Contains("ITenantOwned", entity, StringComparison.Ordinal);

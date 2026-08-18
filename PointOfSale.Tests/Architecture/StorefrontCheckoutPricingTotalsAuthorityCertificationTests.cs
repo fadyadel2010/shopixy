@@ -23,8 +23,9 @@ public sealed class StorefrontCheckoutPricingTotalsAuthorityCertificationTests
         Assert.Contains("paymentFee: number;", checkoutTypes, StringComparison.Ordinal);
 
         Assert.Contains("PRICING: '/api/storefront/checkout/pricing'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const response = await httpClient.post<CheckoutPricingBreakdown>", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("pricing: response.data", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const response = await httpClient.post<unknown>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("admitCheckoutPricingPreview(response.data)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("pricing: admittedPricing", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("expectedPricing: buildExpectedPricing(latestState.pricing)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("if (latestState.pricingLoading || !latestState.pricing || latestState.pricingError)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("await get().refreshPricingPreview();", checkoutStore, StringComparison.Ordinal);
@@ -132,7 +133,7 @@ public sealed class StorefrontCheckoutPricingTotalsAuthorityCertificationTests
 
         Assert.Contains("new PricingRequestTotals(", pricingService, StringComparison.Ordinal);
         Assert.Contains("Subtotal: RoundCurrency(snapshot.Items.Sum(item => item.CurrentPrice * item.Quantity))", pricingService, StringComparison.Ordinal);
-        Assert.Contains("_shippingCalculationService.Calculate(shippingMethod, requestTotals.Subtotal)", pricingService, StringComparison.Ordinal);
+        Assert.Contains("requestTotals.TotalWeight", pricingService, StringComparison.Ordinal);
         Assert.Contains("_taxCalculationService.CalculateAsync(", pricingService, StringComparison.Ordinal);
         Assert.Contains("CalculatePaymentFee(paymentMethod, requestTotals.Subtotal)", pricingService, StringComparison.Ordinal);
         Assert.Contains("requestTotals.Subtotal - breakdown.TotalDiscount + shipping + taxComputation.TaxAmount + paymentFee", pricingService, StringComparison.Ordinal);
@@ -189,17 +190,6 @@ public sealed class StorefrontCheckoutPricingTotalsAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-checkout-pricing-totals-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PA5.5", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

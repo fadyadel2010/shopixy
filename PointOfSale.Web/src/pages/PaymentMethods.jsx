@@ -43,6 +43,7 @@ function sanitizeConfiguration(configuration) {
 }
 
 function normalizeMethod(method) {
+    const hasTenantPaymentMethod = Boolean(method.hasTenantPaymentMethod ?? method.id)
     const requiresConfiguration = Boolean(method.requiresConfiguration)
     const configurationErrors = Array.isArray(method.configurationErrors)
         ? method.configurationErrors.filter((value) => typeof value === 'string' && value.trim())
@@ -50,8 +51,12 @@ function normalizeMethod(method) {
 
     return {
         ...method,
+        code: method.code?.toUpperCase?.() || method.code,
+        hasTenantPaymentMethod,
         requiresConfiguration: Boolean(requiresConfiguration),
-        isConfigurationValid: requiresConfiguration ? method.isConfigurationValid === true : true,
+        isConfigurationValid: hasTenantPaymentMethod
+            ? (requiresConfiguration ? method.isConfigurationValid === true : true)
+            : false,
         configurationErrors,
         isEnabled: Boolean(method.isEnabled),
         isSandbox: method.isSandbox ?? true,
@@ -61,8 +66,40 @@ function normalizeMethod(method) {
     }
 }
 
-function mergeMethods(methods) {
-    return methods.map(normalizeMethod).sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999))
+function normalizeCatalogProvider(provider) {
+    return normalizeMethod({
+        id: null,
+        code: provider.code,
+        displayName: provider.displayName,
+        displayNameAr: provider.displayNameAr,
+        description: provider.description,
+        descriptionAr: provider.descriptionAr,
+        sortOrder: provider.sortOrder,
+        supportsOnline: provider.supportsOnline,
+        supportsOffline: provider.supportsOffline,
+        isSandbox: provider.isSandbox ?? true,
+        icon: provider.icon,
+        fee: provider.fee ?? 0,
+        feeType: provider.feeType || 'fixed',
+        requiresConfiguration: provider.requiresConfiguration,
+        isConfigurationValid: false,
+        configurationErrors: [],
+        isEnabled: false,
+        hasTenantPaymentMethod: false
+    })
+}
+
+export function mergePaymentMethodCatalog(catalog, methods) {
+    const methodByCode = new Map(
+        (methods || []).map((method) => [method.code?.toUpperCase?.() || method.code, normalizeMethod(method)])
+    )
+
+    return (catalog || [])
+        .map((provider) => {
+            const code = provider.code?.toUpperCase?.() || provider.code
+            return methodByCode.get(code) || normalizeCatalogProvider(provider)
+        })
+        .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999))
 }
 
 export default function PaymentMethods() {
@@ -100,14 +137,41 @@ export default function PaymentMethods() {
     const fetchMethods = async () => {
         try {
             setLoading(true)
-            const response = await api.get('/admin/payment-methods')
-            setMethods(mergeMethods(response.data || []))
+            const [catalogResponse, methodsResponse] = await Promise.all([
+                api.get('/admin/payment-methods/catalog'),
+                api.get('/admin/payment-methods')
+            ])
+            setMethods(mergePaymentMethodCatalog(catalogResponse.data || [], methodsResponse.data || []))
         } catch (err) {
             console.error('Failed to fetch payment methods:', err)
             setMethods([])
             applyApiError(err, t('common.error'))
         } finally {
             setLoading(false)
+        }
+    }
+
+    const handleCreateWithoutCredentials = async (method) => {
+        clearFeedback()
+
+        try {
+            await api.put(`/admin/payment-methods/${method.code}`, {
+                displayName: method.displayName,
+                displayNameAr: method.displayNameAr,
+                description: method.description,
+                descriptionAr: method.descriptionAr,
+                sortOrder: method.sortOrder,
+                isSandbox: method.isSandbox ?? true,
+                fee: method.fee ?? 0,
+                feeType: method.feeType || 'fixed',
+                minOrderAmount: method.minOrderAmount ?? null,
+                maxOrderAmount: method.maxOrderAmount ?? null,
+                configuration: null
+            })
+            setSuccess(t('common.updatedSuccessfully'))
+            await fetchMethods()
+        } catch (err) {
+            applyApiError(err, t('common.error'))
         }
     }
 
@@ -265,10 +329,24 @@ export default function PaymentMethods() {
                 ]
             case 'PAYMOB':
                 return [
-                    { key: 'apiKey', label: 'API Key', placeholder: 'Your Paymob API key', sensitive: true },
-                    { key: 'integrationId', label: 'Integration ID', placeholder: 'Your Paymob integration ID' },
-                    { key: 'iframeId', label: 'iFrame ID', placeholder: 'Your Paymob iframe ID' },
-                    { key: 'hmacSecret', label: 'HMAC Secret', placeholder: 'Your Paymob HMAC secret', sensitive: true }
+                    { key: 'publicKey', label: 'Public Key', placeholder: 'egy_pk_test_...' },
+                    {
+                        key: 'apiKey',
+                        label: 'API Key',
+                        placeholder: 'Paymob account API key for dashboard reconciliation',
+                        sensitive: true,
+                        helpText: 'Stored encrypted. Leave blank to keep the existing API Key.'
+                    },
+                    { key: 'secretKey', label: 'Secret Key', placeholder: 'egy_sk_test_...', sensitive: true },
+                    {
+                        key: 'integrationId',
+                        label: 'Integration IDs',
+                        placeholder: 'e.g. 3153058, 3153060',
+                        helpText: 'Comma-separated Paymob integrations shown together in Unified Checkout.'
+                    },
+                    { key: 'hmacSecret', label: 'HMAC Secret', placeholder: 'Your Paymob HMAC secret', sensitive: true },
+                    { key: 'merchantId', label: 'Merchant ID (optional)', placeholder: 'Not required by Intention API' },
+                    { key: 'iframeId', label: 'Legacy iFrame ID (optional)', placeholder: 'Not used by Unified Checkout' }
                 ]
             case 'FAWRY':
                 return [
@@ -278,8 +356,7 @@ export default function PaymentMethods() {
                 ]
             case 'MANUALWALLET':
                 return [
-                    { key: 'walletNumber', label: isRTL ? 'رقم المحفظة' : 'Wallet Number', placeholder: isRTL ? 'مثال: 01012345678' : 'e.g. 01012345678' },
-                    { key: 'walletName', label: isRTL ? 'اسم المحفظة' : 'Wallet Name', placeholder: isRTL ? 'مثال: Vodafone Cash' : 'e.g. Vodafone Cash' }
+                    { key: 'walletNumber', label: isRTL ? 'رقم المحفظة' : 'Wallet Number', placeholder: isRTL ? 'مثال: 01012345678' : 'e.g. 01012345678' }
                 ]
             default:
                 return []
@@ -297,8 +374,20 @@ export default function PaymentMethods() {
     }
 
     const getConfigurationBadge = (method) => {
+        if (!method.hasTenantPaymentMethod) {
+            return (
+                <span className="rounded-full bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-700">
+                    {t('paymentMethods.notConfigured', 'Not configured')}
+                </span>
+            )
+        }
+
         if (!method.requiresConfiguration) {
-            return <span className="text-gray-400">-</span>
+            return (
+                <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-semibold text-green-800">
+                    {t('paymentMethods.configured', 'Configured')}
+                </span>
+            )
         }
 
         const className = method.isConfigurationValid
@@ -310,6 +399,36 @@ export default function PaymentMethods() {
                 {method.isConfigurationValid ? 'Valid' : 'Invalid'}
             </span>
         )
+    }
+
+    const getTenantState = (method) => {
+        if (!method.hasTenantPaymentMethod) {
+            return {
+                label: t('paymentMethods.notConfigured', 'Not configured'),
+                className: 'bg-gray-100 text-gray-700'
+            }
+        }
+
+        if (method.requiresConfiguration && !method.isConfigurationValid) {
+            return {
+                label: t('paymentMethods.configurationInvalid', 'Configuration invalid'),
+                className: 'bg-red-100 text-red-800'
+            }
+        }
+
+        if (method.isEnabled) {
+            return {
+                label: t('paymentMethods.enabledState', 'Enabled'),
+                className: 'bg-green-100 text-green-800'
+            }
+        }
+
+        return {
+            label: method.isConfigurationValid
+                ? t('paymentMethods.configuredDisabled', 'Configured / Disabled')
+                : t('paymentMethods.disabledState', 'Disabled'),
+            className: 'bg-amber-100 text-amber-800'
+        }
     }
 
     return (
@@ -350,7 +469,7 @@ export default function PaymentMethods() {
                     <div className="flex justify-center py-12">
                         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary-600 border-t-transparent"></div>
                     </div>
-                ) : methods.length === 0 ? (
+                ) : error && methods.length === 0 ? (
                     <div className="py-12 text-center text-gray-500">
                         <p>{t('paymentMethods.noMethods', 'No payment methods available')}</p>
                         {error && (
@@ -365,6 +484,9 @@ export default function PaymentMethods() {
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
+                        <div className="px-6 py-4">
+                            <h2 className="text-lg font-semibold text-gray-900">{t('paymentMethods.availableMethods', 'Available Payment Methods')}</h2>
+                        </div>
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
@@ -407,15 +529,30 @@ export default function PaymentMethods() {
                                             {getConfigurationBadge(method)}
                                         </td>
                                         <td className="px-6 py-4 text-center align-top">
-                                            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${method.isEnabled
-                                                ? 'bg-green-100 text-green-800'
-                                                : 'bg-red-100 text-red-800'
-                                            }`}>
-                                                {method.isEnabled ? t('common.active') : t('common.inactive')}
+                                            <span className={`rounded-full px-2 py-1 text-xs font-semibold ${getTenantState(method).className}`}>
+                                                {getTenantState(method).label}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center align-top">
                                             <div className="flex flex-wrap justify-center gap-2">
+                                                {!method.hasTenantPaymentMethod && !method.requiresConfiguration && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleCreateWithoutCredentials(method)}
+                                                        className="rounded-lg border border-primary-300 px-3 py-1 text-sm font-medium text-primary-700 hover:bg-primary-50"
+                                                    >
+                                                        {t('paymentMethods.configure', 'Configure')}
+                                                    </button>
+                                                )}
+                                                {!method.hasTenantPaymentMethod && method.requiresConfiguration && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleConfig(method)}
+                                                        className="rounded-lg border border-primary-300 px-3 py-1 text-sm font-medium text-primary-700 hover:bg-primary-50"
+                                                    >
+                                                        {t('paymentMethods.configure', 'Configure')}
+                                                    </button>
+                                                )}
                                                 <button
                                                     type="button"
                                                     onClick={() => handleToggle(method)}
@@ -424,14 +561,16 @@ export default function PaymentMethods() {
                                                 >
                                                     {method.isEnabled ? t('common.disable') : t('common.enable')}
                                                 </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleEdit(method)}
-                                                    className="rounded-lg border border-primary-300 px-3 py-1 text-sm font-medium text-primary-700 hover:bg-primary-50"
-                                                >
-                                                    {t('common.edit')}
-                                                </button>
-                                                {method.requiresConfiguration && (
+                                                {method.hasTenantPaymentMethod && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleEdit(method)}
+                                                        className="rounded-lg border border-primary-300 px-3 py-1 text-sm font-medium text-primary-700 hover:bg-primary-50"
+                                                    >
+                                                        {t('common.edit')}
+                                                    </button>
+                                                )}
+                                                {method.hasTenantPaymentMethod && method.requiresConfiguration && (
                                                     <button
                                                         type="button"
                                                         onClick={() => handleConfig(method)}
@@ -625,27 +764,35 @@ export default function PaymentMethods() {
                                 Empty or null configuration never wipes stored secrets. To clear credentials, use the explicit reset section below and confirm the action.
                             </div>
 
-                            {getConfigFields(editingMethod.code).map((field) => (
-                                <div key={field.key}>
-                                    <label className="label">{field.label}</label>
-                                    <input
-                                        type={field.sensitive ? 'password' : 'text'}
-                                        placeholder={field.placeholder}
-                                        value={configData.configuration[field.key] || ''}
-                                        onChange={(e) => setConfigData((current) => ({
-                                            ...current,
-                                            reset: false,
-                                            confirmReset: false,
-                                            configuration: {
-                                                ...current.configuration,
-                                                [field.key]: e.target.value
-                                            }
-                                        }))}
-                                        className="input font-mono"
-                                        disabled={configData.reset}
-                                    />
-                                </div>
-                            ))}
+                            {getConfigFields(editingMethod.code).map((field) => {
+                                const fieldId = `payment-config-${editingMethod.code}-${field.key}`
+
+                                return (
+                                    <div key={field.key}>
+                                        <label className="label" htmlFor={fieldId}>{field.label}</label>
+                                        <input
+                                            id={fieldId}
+                                            type={field.sensitive ? 'password' : 'text'}
+                                            placeholder={field.placeholder}
+                                            value={configData.configuration[field.key] || ''}
+                                            onChange={(e) => setConfigData((current) => ({
+                                                ...current,
+                                                reset: false,
+                                                confirmReset: false,
+                                                configuration: {
+                                                    ...current.configuration,
+                                                    [field.key]: e.target.value
+                                                }
+                                            }))}
+                                            className="input font-mono"
+                                            disabled={configData.reset}
+                                        />
+                                        {field.helpText && (
+                                            <p className="mt-1 text-xs text-gray-500">{field.helpText}</p>
+                                        )}
+                                    </div>
+                                )
+                            })}
 
                             <div className="rounded-lg border border-red-200 bg-red-50 p-4">
                                 <label className="flex items-start gap-3 text-sm text-red-800">

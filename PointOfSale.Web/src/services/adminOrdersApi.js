@@ -123,6 +123,68 @@ export async function updateAdminOrderStatus(orderId, { newStatus, reason, rowVe
     }
 }
 
+export async function getAdminOrderFulfillmentActions(orderId) {
+    try {
+        const response = await api.get(`/orders/${orderId}/fulfillment/actions`, {
+            headers: buildTenantHeaders(),
+        })
+
+        return response.data
+    } catch (error) {
+        throw new Error(getSafeApiErrorMessage(error, 'Unable to load fulfillment actions right now.'))
+    }
+}
+
+export async function runAdminOrderFulfillmentAction(orderId, actionCode) {
+    const supportedActionCodes = new Set([
+        'confirm',
+        'pack',
+        'out-for-delivery',
+        'complete',
+        'retry-delivery',
+    ])
+
+    if (!supportedActionCodes.has(actionCode)) {
+        throw new Error('This lifecycle action needs additional evidence and cannot be submitted from this control.')
+    }
+
+    try {
+        const response = await api.post(
+            `/orders/${orderId}/fulfillment/${actionCode}`,
+            {},
+            {
+                headers: buildTenantHeaders(),
+            },
+        )
+
+        return response.data
+    } catch (error) {
+        throw new Error(getSafeApiErrorMessage(error, 'Unable to run the selected lifecycle action right now.'))
+    }
+}
+
+export async function cancelAdminOrder(orderId, reason) {
+    if (!reason?.trim()) {
+        throw new Error('Cancellation reason is required.')
+    }
+
+    try {
+        const response = await api.post(
+            `/admin/orders/${orderId}/cancel`,
+            {
+                reason: reason.trim(),
+            },
+            {
+                headers: buildTenantHeaders(),
+            },
+        )
+
+        return response.data
+    } catch (error) {
+        throw new Error(getSafeApiErrorMessage(error, 'Unable to cancel this order right now.'))
+    }
+}
+
 export async function downloadAdminOrderCheckoutAttachment(orderId, attachmentId, fileName) {
     try {
         const response = await api.get(`/admin/orders/${orderId}/checkout-attachments/${attachmentId}/download`, {

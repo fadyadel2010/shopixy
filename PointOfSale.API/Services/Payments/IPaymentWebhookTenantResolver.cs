@@ -104,6 +104,7 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
             !string.IsNullOrWhiteSpace(objectId))
         {
             var resolved = await ResolveByProviderPaymentIdAsync(
+                PaymentProvider.Stripe,
                 objectId,
                 cancellationToken);
             if (resolved != null)
@@ -118,7 +119,11 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
 
         if (TryGetProperty(objectElement, "metadata", out var metadataElement))
         {
-            var paymentReference = GetString(metadataElement, "payment_reference", "paymentReference");
+            var paymentReference = GetString(
+                metadataElement,
+                "payment_reference",
+                "paymentReference",
+                "canonical_paymentReference");
             if (!string.IsNullOrWhiteSpace(paymentReference))
             {
                 var resolved = await ResolveByPaymentReferenceAsync(
@@ -134,7 +139,7 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
                 }
             }
 
-            var orderIdRaw = GetString(metadataElement, "order_id", "orderId");
+            var orderIdRaw = GetString(metadataElement, "order_id", "orderId", "canonical_orderId");
             if (Guid.TryParse(orderIdRaw, out var orderId))
             {
                 var resolved = await ResolveByOrderIdAsync(orderId, cancellationToken);
@@ -181,15 +186,22 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
             }
 
             var merchantOrderId = GetString(orderElement, "merchant_order_id");
-            if (Guid.TryParse(merchantOrderId, out var orderId))
+            if (Guid.TryParse(merchantOrderId, out var merchantReferenceId))
             {
-                var resolved = await ResolveByOrderIdAsync(orderId, cancellationToken);
+                var resolved = await ResolveUniquePaymentIntentAsync(
+                    paymentIntent => paymentIntent.Provider == PaymentProvider.Paymob &&
+                                     paymentIntent.Id == merchantReferenceId,
+                    cancellationToken);
+                resolved ??= await ResolveUniquePaymentIntentAsync(
+                    paymentIntent => paymentIntent.Provider == PaymentProvider.Paymob &&
+                                     paymentIntent.OrderId == merchantReferenceId,
+                    cancellationToken);
                 if (resolved != null)
                 {
                     return resolved with
                     {
                         ResolutionKey = "MerchantOrderId",
-                        ResolutionValue = orderId.ToString("D")
+                        ResolutionValue = merchantReferenceId.ToString("D")
                     };
                 }
             }
@@ -199,6 +211,7 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
         if (!string.IsNullOrWhiteSpace(providerPaymentId))
         {
             var resolved = await ResolveByProviderPaymentIdAsync(
+                PaymentProvider.Paymob,
                 providerPaymentId,
                 cancellationToken);
             if (resolved != null)
@@ -316,7 +329,7 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
         string providerIntentId,
         CancellationToken cancellationToken)
     {
-        return ResolvePaymentIntentAsync(
+        return ResolveUniquePaymentIntentAsync(
             paymentIntent => paymentIntent.Provider == provider &&
                              paymentIntent.ProviderIntentId == providerIntentId,
             cancellationToken);
@@ -332,11 +345,13 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
     }
 
     private Task<WebhookTenantResolutionResult?> ResolveByProviderPaymentIdAsync(
+        PaymentProvider provider,
         string providerPaymentId,
         CancellationToken cancellationToken)
     {
-        return ResolvePaymentIntentAsync(
-            paymentIntent => paymentIntent.ProviderPaymentId == providerPaymentId,
+        return ResolveUniquePaymentIntentAsync(
+            paymentIntent => paymentIntent.Provider == provider &&
+                             paymentIntent.ProviderPaymentId == providerPaymentId,
             cancellationToken);
     }
 
@@ -392,6 +407,34 @@ public sealed class PaymentWebhookTenantResolver : IPaymentWebhookTenantResolver
                 paymentIntent.OrderId,
                 ResolutionKey: string.Empty,
                 ResolutionValue: string.Empty);
+    }
+
+    private async Task<WebhookTenantResolutionResult?> ResolveUniquePaymentIntentAsync(
+        Expression<Func<PaymentIntent, bool>> predicate,
+        CancellationToken cancellationToken)
+    {
+        var matches = await _dbContext.PaymentIntents
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(predicate)
+            .OrderByDescending(entity => entity.CreatedAt)
+            .Select(entity => new
+            {
+                entity.TenantId,
+                entity.Id,
+                entity.OrderId
+            })
+            .Take(2)
+            .ToArrayAsync(cancellationToken);
+
+        return matches.Length == 1
+            ? new WebhookTenantResolutionResult(
+                matches[0].TenantId,
+                matches[0].Id,
+                matches[0].OrderId,
+                ResolutionKey: string.Empty,
+                ResolutionValue: string.Empty)
+            : null;
     }
 
     private static bool TryGetProperty(JsonElement element, string propertyName, out JsonElement property)

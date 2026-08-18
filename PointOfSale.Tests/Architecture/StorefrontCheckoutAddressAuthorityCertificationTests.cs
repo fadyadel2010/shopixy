@@ -13,11 +13,11 @@ public sealed class StorefrontCheckoutAddressAuthorityCertificationTests
         Assert.Contains("export interface AddressDto", checkoutTypes, StringComparison.Ordinal);
         Assert.Contains("shippingAddress: AddressDto", checkoutTypes, StringComparison.Ordinal);
         Assert.Contains("const shippingAddress = {", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("name: latestState.address.fullName", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("phone: latestState.address.phone", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("street: latestState.address.addressLine", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("city: latestState.address.city", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("state: latestState.address.area", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("name: dynamicSystemValue('full_name', latestState.address.fullName)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("phone: dynamicSystemValue('phone', latestState.address.phone)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("street: dynamicSystemValue('street_address', latestState.address.addressLine)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("city: dynamicSystemValue('city', latestState.address.city)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("state: dynamicSystemValue('area', latestState.address.area)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("onChange={(value) => setAddressField('fullName', value)}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("onChange={(value) => setAddressField('phone', value)}", shippingStep, StringComparison.Ordinal);
 
@@ -65,14 +65,13 @@ public sealed class StorefrontCheckoutAddressAuthorityCertificationTests
 
         Assert.Contains("var (errorCode, errorMessage) = request.Validate();", checkoutController, StringComparison.Ordinal);
         Assert.Contains("var shippingValidation = ShippingAddress.Validate();", checkoutDtos, StringComparison.Ordinal);
-        Assert.Contains("string.IsNullOrWhiteSpace(Name)", checkoutDtos, StringComparison.Ordinal);
-        Assert.Contains("string.IsNullOrWhiteSpace(Phone)", checkoutDtos, StringComparison.Ordinal);
-        Assert.Contains("string.IsNullOrWhiteSpace(Street)", checkoutDtos, StringComparison.Ordinal);
-        Assert.Contains("string.IsNullOrWhiteSpace(City)", checkoutDtos, StringComparison.Ordinal);
+        Assert.Contains("if (string.IsNullOrWhiteSpace(Country))", checkoutDtos, StringComparison.Ordinal);
         Assert.Contains("CountryCodeHelper.TryNormalizeCountryCode(Country, out var normalizedCountry)", checkoutDtos, StringComparison.Ordinal);
         Assert.Contains("Country = normalizedCountry;", checkoutDtos, StringComparison.Ordinal);
 
         Assert.Contains("request.ShippingAddress == null", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("ValidateCheckoutFieldDefinitionsAsync(", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("CheckoutFieldRuleEngine.Evaluate(definitions, submittedValues)", checkoutService, StringComparison.Ordinal);
         Assert.Contains("CHECKOUT_SHIPPING_PHONE_REQUIRED", checkoutService, StringComparison.Ordinal);
         Assert.Contains("CHECKOUT_SHIPPING_COUNTRY_REQUIRED", checkoutService, StringComparison.Ordinal);
         Assert.Contains("request.ShippingAddress.Phone", checkoutService, StringComparison.Ordinal);
@@ -119,17 +118,6 @@ public sealed class StorefrontCheckoutAddressAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-checkout-address-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PA5.2", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

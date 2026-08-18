@@ -26,7 +26,11 @@ public sealed class AdminPaymentMethodReadAuthorityCertificationTests
         Assert.Contains(".OrderBy(m => m.SortOrder)", adminController, StringComparison.Ordinal);
         Assert.Contains(".ThenBy(m => m.Code)", adminController, StringComparison.Ordinal);
         Assert.Contains("IsValidCode(string code)", adminController, StringComparison.Ordinal);
-        Assert.Contains("code is \"COD\" or \"STRIPE\" or \"PAYMOB\" or \"FAWRY\" or \"MANUALWALLET\"", adminController, StringComparison.Ordinal);
+        foreach (var code in new[] { "COD", "STRIPE", "PAYMOB", "FAWRY", "MANUALWALLET" })
+        {
+            Assert.Contains($"\"{code}\"", adminController, StringComparison.Ordinal);
+        }
+        Assert.Contains("SupportedPaymentMethodCodes.Contains(code, StringComparer.OrdinalIgnoreCase)", adminController, StringComparison.Ordinal);
         Assert.Contains("return Ok(MapToDto(method));", adminController, StringComparison.Ordinal);
         Assert.DoesNotContain("ConfigEncrypted", responseDto, StringComparison.Ordinal);
 
@@ -70,13 +74,14 @@ public sealed class AdminPaymentMethodReadAuthorityCertificationTests
         Assert.Contains("displayName: string;", checkoutTypes, StringComparison.Ordinal);
         Assert.Contains("isAvailable: boolean;", checkoutTypes, StringComparison.Ordinal);
 
-        Assert.Contains("function admitStorefrontPaymentMethods(payload: unknown): PaymentMethodDto[]", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("function admitStorefrontPaymentMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: PaymentMethodDto[] }", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("UUID_REGEX", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("PAYMENT_METHOD_CODE_REGEX", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("seenIds.has(id) || seenCodes.has(code)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Payment method response failed admission.", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const methods = admitStorefrontPaymentMethods(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedResponse = admitStorefrontPaymentMethods(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const methods = admittedResponse.methods;", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentMethods: methods", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentMethod: state.paymentMethod", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("selectedPaymentMethodCode: state.selectedPaymentMethodCode", checkoutStore, StringComparison.Ordinal);
@@ -89,20 +94,15 @@ public sealed class AdminPaymentMethodReadAuthorityCertificationTests
     }
 
     [Fact]
-    public void PaymentMethodReadAuthorityDocumentation_MustBeFrozen()
+    public void PaymentMethodReadAuthorityDocumentation_MustRecordCurrentSqlAuthority()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/payment-method-read-authority-certification-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
+        var forensicAudit = CertificationSource.ReadRepoFile("docs/architecture/SHOPIXY_PAYMENT_METHODS_FORENSIC_RECOVERY_AUDIT_2026-08-12.md");
+        var p2Implementation = CertificationSource.ReadRepoFile("docs/architecture/SHOPIXY_PAYMENT_METHODS_P2_IMPLEMENTATION_2026-08-12.md");
 
         Assert.Contains("PASS SF-PM.READ Payment Method Read Authority Certification", findings, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-PM.READ Payment Method Read Authority Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-PM.READ Payment Method Read Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-PM.READ", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-PM.READ Payment Method Read Authority Hardening", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS SF-PM.READ Payment Method Read Authority Freeze", codexRules, StringComparison.Ordinal);
+        Assert.Contains("SQL `TenantPaymentMethods`", findings, StringComparison.Ordinal);
+        Assert.Contains("Admin payment-method authority: SQL `TenantPaymentMethods` rows", forensicAudit, StringComparison.Ordinal);
+        Assert.Contains("Existing storefront tests remain in the P2 focused slice", p2Implementation, StringComparison.Ordinal);
     }
 }

@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
@@ -8,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PointOfSale.API.Configuration;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.Services.Payments;
@@ -18,6 +20,7 @@ using PointOfSale.Core.Interfaces.Payments;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Tests.Infrastructure;
+using PaymentRuntimeOrchestrator = PointOfSale.Core.Payments.Runtime.Domain.PaymentRuntimeOrchestrator;
 
 namespace PointOfSale.Tests.Payments;
 
@@ -280,23 +283,44 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         string referenceNumber,
         string paymentStatus,
         decimal amount = 150m,
-        string currency = "EGP")
+        string currency = "EGP",
+        string webhookSecret = "fawry-secret")
     {
+        var amountText = amount.ToString("0.00", CultureInfo.InvariantCulture);
+        var merchantReference = $"FWY-{referenceNumber}";
+        const string paymentMethod = "PAYATFAWRY";
+        var signaturePayload = string.Concat(
+            referenceNumber,
+            merchantReference,
+            amountText,
+            amountText,
+            paymentStatus.ToUpperInvariant(),
+            paymentMethod,
+            referenceNumber);
+        var messageSignature = Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(signaturePayload + webhookSecret)))
+            .ToLowerInvariant();
+
         return JsonSerializer.Serialize(new
         {
-            eventId,
-            referenceNumber,
-            paymentStatus,
+            requestId = eventId,
+            fawryRefNumber = referenceNumber,
+            merchantRefNumber = merchantReference,
+            orderStatus = paymentStatus,
             paymentAmount = amount,
-            paymentCurrency = currency
+            orderAmount = amount,
+            paymentMethod,
+            paymentTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture),
+            paymentReferenceNumber = referenceNumber,
+            paymentCurrency = currency,
+            messageSignature
         });
     }
 
-    private static string ComputeSignature(string payload, string webhookSecret)
+    private static string ReadMessageSignature(string payload)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(webhookSecret));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(payload));
-        return Convert.ToHexString(hash);
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.GetProperty("messageSignature").GetString()!;
     }
 
     private FawryWebhookController CreateController(
@@ -316,8 +340,27 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         };
         httpContext.Request.ContentType = "application/json";
         httpContext.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(rawPayload));
-        httpContext.Request.Headers["X-Fawry-Signature"] = ComputeSignature(rawPayload, webhookSecret);
+        httpContext.Request.Headers["X-Fawry-Signature"] = ReadMessageSignature(rawPayload);
         httpContext.Request.QueryString = new QueryString($"?tenant={tenantId:D}");
+
+        var tenantResolver = new Mock<IFawryTenantConfigurationResolver>();
+        tenantResolver
+            .Setup(value => value.ResolveWebhookAuthorityAsync(tenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new FawryTenantWebhookAuthority(
+                tenantId,
+                Guid.NewGuid(),
+                "merchant-code",
+                webhookSecret,
+                FawryEnvironment.Sandbox,
+                true,
+                new Uri("https://store.example.test/api/fawry/callback"),
+                new Uri("https://store.example.test/api/webhooks/fawry")));
+        var runtimeIntegration = new FawryWebhookRuntimeIntegrationService(
+            dbContext,
+            tenantResolver.Object,
+            new FawryWebhookEvidenceAdapter(),
+            new PaymentRuntimeOrchestrator(),
+            NullLogger<FawryWebhookRuntimeIntegrationService>.Instance);
 
         return new FawryWebhookController(
             dbContext,
@@ -326,7 +369,7 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
                 NullLogger<PaymentWebhookRequestPipeline>.Instance),
             new FawrySensitiveArtifactProtector(_dataProtectionProvider),
             lifecycleService,
-            Mock.Of<IFawryWebhookRuntimeIntegrationService>(),
+            runtimeIntegration,
             NullLogger<FawryWebhookController>.Instance)
         {
             ControllerContext = new ControllerContext

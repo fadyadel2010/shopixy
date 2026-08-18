@@ -137,6 +137,68 @@ public sealed class StorefrontCheckoutSubmissionAuthorityCertificationTests
     }
 
     [Fact]
+    public void FinalWarehouseResolutionConflicts_MustNotBeWrappedAsOrderCreation500()
+    {
+        var checkoutService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
+        var checkoutController = ReadRepoFile("PointOfSale.API/Controllers/CheckoutController.cs");
+
+        var orderCreationCatch = Slice(
+            checkoutService,
+            "catch (Exception ex)",
+            "// Only run pre-commit compensation if order was NOT committed",
+            "activeStep = \"OrderCreation\";");
+
+        Assert.Contains("ex is WarehouseResolutionException", orderCreationCatch, StringComparison.Ordinal);
+        Assert.Contains("throw;", orderCreationCatch, StringComparison.Ordinal);
+        Assert.Contains("catch (WarehouseResolutionException ex)", checkoutController, StringComparison.Ordinal);
+        Assert.True(
+            checkoutController.IndexOf("catch (WarehouseResolutionException ex)", StringComparison.Ordinal) <
+            checkoutController.IndexOf("catch (CheckoutOrderCreationException ex)", StringComparison.Ordinal),
+            "Warehouse resolution conflicts must be classified before ORDER_CREATION_FAILED.");
+    }
+
+    [Fact]
+    public void OnlineProviderPostCommitRecovery_MustRequireRealProviderHandoff()
+    {
+        var checkoutService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
+        var paymobRuntime = ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/PaymobRuntimeApplicationService.cs");
+
+        var recovery = Slice(
+            checkoutService,
+            "async Task<CheckoutResponseDto?> TryRecoverPaymentIntentPostCommitFailureAsync",
+            "async Task<bool> TryCloseUnrecoverablePaymentIntentGapAsync");
+
+        Assert.Contains("IsPostCommitPaymentRecoveryResponseSafe(recoveryResponse)", recovery, StringComparison.Ordinal);
+        Assert.Contains("Checkout post-commit payment intent recovery did not produce a safe provider handoff", recovery, StringComparison.Ordinal);
+        Assert.Contains("HasPaymobCheckoutHandoff(recoveryResponse)", recovery, StringComparison.Ordinal);
+        Assert.Contains("return null;", recovery, StringComparison.Ordinal);
+
+        Assert.Contains("EnsureReplayResponseContainsOnlineProviderHandoff(", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("TryRegenerateReplayOnlineProviderHandoffAsync(", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("Checkout replay regenerating online provider handoff after recoverable initialization failure", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("Checkout replay regenerated online provider handoff", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("Checkout replay blocked because online provider handoff is missing", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("\"PAYMENT_HANDOFF_MISSING\"", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("response.ExpiresAtUtc.Value <= DateTime.UtcNow", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("response.ExpiresAtUtc.Value <= DateTime.UtcNow", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("\"existing_order\"", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("\"stored_replay\"", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("PaymentIntentStatus.Failed or PaymentIntentStatus.Cancelled or PaymentIntentStatus.Expired", checkoutService, StringComparison.Ordinal);
+
+        Assert.Contains("catch (PaymentException ex)", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("throw;", Slice(checkoutService, "catch (PaymentException ex)", "catch (UnauthorizedAccessException ex)"), StringComparison.Ordinal);
+
+        Assert.Contains("\"PAYMOB\" => HasPaymobCheckoutHandoff(response)", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("QueryHelpers.ParseQuery(uri.Query)", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("\"/unifiedcheckout\"", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("\"clientSecret\"", checkoutService, StringComparison.Ordinal);
+
+        Assert.Contains("Paymob payment initialization context resolved", paymobRuntime, StringComparison.Ordinal);
+        Assert.Contains("IntegrationId: {IntegrationId}", paymobRuntime, StringComparison.Ordinal);
+        Assert.Contains("ClientSecretPresent: {ClientSecretPresent}", paymobRuntime, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CertificationArtifacts_MustRecordSfPa56Truth()
     {
         Assert.Contains(
@@ -144,17 +206,6 @@ public sealed class StorefrontCheckoutSubmissionAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-checkout-submission-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PA5.6", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string Slice(string source, string startMarker, string endMarker, string? afterMarker = null)
@@ -184,7 +235,9 @@ public sealed class StorefrontCheckoutSubmissionAuthorityCertificationTests
         var current = new DirectoryInfo(startPath);
         while (current != null)
         {
-            if (current.GetFiles("*.sln").Any() || current.GetDirectories("PointOfSale.API").Any())
+            if (current.GetFiles("*.sln").Any() ||
+                current.GetDirectories("PointOfSale.API")
+                    .Any(directory => File.Exists(Path.Combine(directory.FullName, "PointOfSale.API.csproj"))))
             {
                 return current.FullName;
             }

@@ -73,10 +73,7 @@ public sealed class ManualPaymentOperationalReadinessHealthContributor : IManual
         && capabilities.SupportsExpirationPolicy
         && capabilities.ProviderAdapterCertified
         && capabilities.RuntimeBridgeCertified
-        && capabilities.EvidenceAdapterCertified
-        && !capabilities.ReviewWorkflowCertified
-        && !capabilities.ApprovalWorkflowCertified
-        && !capabilities.PersistenceCertified;
+        && capabilities.EvidenceAdapterCertified;
 
     private static bool NoSecretsExposed(ManualPaymentConfigurationStatus configuration) =>
         !configuration.ProviderRegistration.ExternalNetworkRequired

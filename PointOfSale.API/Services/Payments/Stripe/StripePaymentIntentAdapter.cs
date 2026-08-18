@@ -418,6 +418,11 @@ public sealed record StripeRequestMetadata(IReadOnlyDictionary<string, string> V
             if (!StripeRequestMetadataKeys.AdapterOnlyKeys.Contains(key))
             {
                 values[$"canonical_{key}"] = value;
+
+                if (StripeRequestMetadataKeys.WebhookCorrelationKeys.Contains(key))
+                {
+                    values[key] = value;
+                }
             }
         }
 
@@ -529,6 +534,12 @@ public static class StripeRequestMetadataKeys
         IdempotencyKey,
         StatementDescriptor,
         ReceiptEmail
+    };
+
+    public static readonly ISet<string> WebhookCorrelationKeys = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "orderId",
+        "paymentReference"
     };
 }
 

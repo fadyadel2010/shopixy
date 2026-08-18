@@ -5,7 +5,7 @@ namespace PointOfSale.API.Configuration;
 
 public record PaymobOptions
 {
-    public const string SectionName = "CommerceHub:Payments:Paymob";
+    public const string SectionName = "Storefront:Payments:Paymob";
     public static readonly Uri OfficialApiBaseUri = new("https://accept.paymob.com/api/");
 
     public bool Enabled { get; init; }
@@ -21,7 +21,7 @@ public record PaymobOptions
     public int RetryCount { get; init; } = 2;
     public PaymobFeatureFlags FeatureFlags { get; init; } = new();
     public PaymobCallbackConfiguration Callback { get; init; } = new();
-    public PaymobCapabilityModel Capabilities { get; init; } = PaymobCapabilityModel.FoundationOnly;
+    public PaymobCapabilityModel Capabilities { get; init; } = new();
 }
 
 public sealed record CommerceHubPaymobOptions : PaymobOptions;
@@ -116,6 +116,11 @@ public static class PaymobCredentialValidator
         {
             errors.Add("Paymob base URL must be an absolute URI.");
         }
+        else if (!string.Equals(options.BaseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                 !string.Equals(options.BaseUrl.Host, PaymobOptions.OfficialApiBaseUri.Host, StringComparison.OrdinalIgnoreCase))
+        {
+            errors.Add("Paymob base URL must use the official https://accept.paymob.com host.");
+        }
 
         if (options.RetryCount is < 0 or > 5)
         {
@@ -140,14 +145,6 @@ public static class PaymobCredentialValidator
         if (enabled && options.Environment == PaymobEnvironment.Production && !options.FeatureFlags.ProductionEnabled)
         {
             errors.Add("Paymob production execution must be explicitly enabled by the production feature flag.");
-        }
-
-        if (enabled)
-        {
-            ValidateRequiredSecret(options.ApiKey, "API key", errors);
-            ValidateRequiredIdentifier(options.IntegrationId, "integration ID", errors);
-            ValidateRequiredIdentifier(options.IframeId, "iframe ID", errors);
-            ValidateRequiredSecret(PaymobOptionsValidator.ResolveWebhookSecret(options), "webhook secret", errors);
         }
 
         if (!string.IsNullOrWhiteSpace(options.IntegrationId) && !long.TryParse(options.IntegrationId, out _))

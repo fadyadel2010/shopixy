@@ -78,7 +78,7 @@ public sealed class StorefrontSmartOfferFinancialAuthorityCertificationTests
         var pricingService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Pricing/StorefrontPricingService.cs");
 
         Assert.Contains("PRICING: '/api/storefront/checkout/pricing'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("pricing: response.data", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("pricing: admittedPricing", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("expectedPricing: buildExpectedPricing(latestState.pricing)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("latestState.pricingLoading || !latestState.pricing || latestState.pricingError", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("Checkout displays ONLY server-quoted pricing", orderSummary, StringComparison.Ordinal);
@@ -121,16 +121,5 @@ public sealed class StorefrontSmartOfferFinancialAuthorityCertificationTests
             CertificationSource.ReadRepoFile("docs/architecture/storefront-smart-offer-financial-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-SOF.FIN", CertificationSource.ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 }

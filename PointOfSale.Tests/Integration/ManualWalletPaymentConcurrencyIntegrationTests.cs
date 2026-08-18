@@ -14,6 +14,7 @@ using PointOfSale.API.Services;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.ManualPayment;
 using PointOfSale.Core.Entities;
+using AccountingOutboxMessage = PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
@@ -73,7 +74,20 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
         startGate.SetResult();
         var results = await Task.WhenAll(firstTask, secondTask).WaitAsync(TimeSpan.FromSeconds(30));
 
-        var ok = Assert.Single(results.OfType<OkObjectResult>());
+        var okResults = results.OfType<OkObjectResult>().ToList();
+        if (okResults.Count != 1)
+        {
+            Assert.Fail(string.Join(
+                "; ",
+                results.Select(result =>
+                {
+                    var objectResult = result as ObjectResult;
+                    var apiError = objectResult?.Value as ApiErrorResponse;
+                    return $"{result.GetType().Name}:{objectResult?.StatusCode}:{apiError?.Code}:{apiError?.Message}";
+                })));
+        }
+
+        var ok = okResults[0];
         var conflict = Assert.Single(results.OfType<ConflictObjectResult>());
         var error = Assert.IsType<ApiErrorResponse>(conflict.Value);
 
@@ -134,6 +148,11 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
             Status = PaymentIntentStatus.AwaitingVerification,
             Provider = PaymentProvider.ManualWallet,
             PaymentReference = paymentReference,
+            WalletType = "VODAFONECASH",
+            WalletPhoneNumber = "01000000000",
+            ProofImageUrl = $"tenants/{tenantId:D}/manual-wallet-proofs/{paymentIntentId:N}.png",
+            ProofImageExpiresAtUtc = utcNow.AddDays(30),
+            ExpiresAtUtc = utcNow.AddMinutes(30),
             CreatedAt = utcNow
         });
 
@@ -191,6 +210,24 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
     {
         var outbox = new Mock<IAccountingOutboxService>();
         outbox.SetReturnsDefault(Task.CompletedTask);
+        outbox
+            .Setup(service => service.EnqueueWalletApprovedAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<Guid, Guid, CancellationToken>(async (tenantId, orderId, cancellationToken) =>
+            {
+                context.AccountingOutboxMessages.Add(AccountingOutboxMessage.Create(
+                    tenantId,
+                    "WalletApproved",
+                    orderId,
+                    typeof(Order).FullName!,
+                    "{}",
+                    $"WALLET_APPROVED:{tenantId}:{orderId}",
+                    aggregateVersion: 1,
+                    sourceType: "Order"));
+                await context.SaveChangesAsync(cancellationToken);
+            });
 
         var eventPublisher = new Mock<IEventPublisher>();
         eventPublisher.SetReturnsDefault(Task.CompletedTask);
@@ -259,7 +296,8 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
                 PaymentIntentId = request.PaymentIntentId,
                 Outcome = PaymentLifecycleOutcome.Succeeded,
                 Source = PaymentLifecycleSource.PaymentReviewApproval,
-                Actor = request.Actor
+                Actor = request.Actor,
+                ReviewProofRetentionExpiresAtUtc = DateTime.UtcNow.AddDays(30)
             }, cancellationToken);
 
             return new ManualPaymentReviewApplicationResult(null!, null!, null!, result);
@@ -421,6 +459,9 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
             var keepTypes = new HashSet<Type>
             {
                 typeof(Order),
+                typeof(OrderItem),
+                typeof(InventoryReservation),
+                typeof(AccountingOutboxMessage),
                 typeof(PaymentIntent)
             };
 
@@ -445,6 +486,33 @@ public sealed class ManualWalletPaymentConcurrencyIntegrationTests
                 entity.HasKey(order => order.Id);
                 entity.Property(order => order.OrderNumber).IsRequired();
                 entity.Property(order => order.Currency).IsRequired();
+                entity.HasMany(order => order.Items)
+                    .WithOne(item => item.Order)
+                    .HasForeignKey(item => item.OrderId)
+                    .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<OrderItem>(entity =>
+            {
+                entity.ToTable("OrderItems");
+                entity.HasKey(item => item.Id);
+                entity.Ignore(item => item.Product);
+                entity.Ignore(item => item.Variant);
+                entity.Ignore(item => item.Unit);
+                entity.Ignore(item => item.Warehouse);
+            });
+
+            modelBuilder.Entity<InventoryReservation>(entity =>
+            {
+                entity.ToTable("InventoryReservations");
+                entity.HasKey(reservation => reservation.Id);
+            });
+
+            modelBuilder.Entity<AccountingOutboxMessage>(entity =>
+            {
+                entity.ToTable("AccountingOutboxMessages");
+                entity.HasKey(message => message.Id);
+                entity.HasIndex(message => new { message.TenantId, message.IdempotencyKey }).IsUnique();
             });
 
             modelBuilder.Entity<PaymentIntent>(entity =>

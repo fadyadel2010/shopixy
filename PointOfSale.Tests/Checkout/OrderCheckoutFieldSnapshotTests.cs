@@ -309,20 +309,54 @@ public class OrderCheckoutFieldSnapshotTests
     {
         var source = ReadRepositoryFile("PointOfSale.API", "Services", "Checkout", "CheckoutService.cs");
         var transactionStart = source.IndexOf("IsolationLevel.Serializable", StringComparison.Ordinal);
-        var snapshotRefresh = source.IndexOf("RefreshOrderCheckoutFieldSnapshots", transactionStart, StringComparison.Ordinal);
-        var orderAdd = source.IndexOf("_dbContext.Orders.Add(order);", snapshotRefresh, StringComparison.Ordinal);
-        var transactionScopedValidation = source.IndexOf("var checkoutFieldSnapshots = await ValidateCheckoutFieldDefinitionsAsync", StringComparison.Ordinal);
+        var revalidationCall = source.IndexOf("var transactionScopedAuthority = await RevalidateCheckoutAuthorityInsideTransactionAsync", transactionStart, StringComparison.Ordinal);
+        var revalidationMethodStart = source.IndexOf("private async Task<TransactionScopedCheckoutAuthoritySnapshot> RevalidateCheckoutAuthorityInsideTransactionAsync", StringComparison.Ordinal);
+        var transactionScopedValidation = source.IndexOf("var checkoutFieldSnapshots = await ValidateCheckoutFieldDefinitionsAsync", revalidationMethodStart, StringComparison.Ordinal);
         var returnsAdmission = source.IndexOf("pricing,\r\n            checkoutFieldSnapshots", transactionScopedValidation, StringComparison.Ordinal);
         if (returnsAdmission < 0)
         {
             returnsAdmission = source.IndexOf("pricing,\n            checkoutFieldSnapshots", transactionScopedValidation, StringComparison.Ordinal);
         }
+        var orderAdd = source.IndexOf("_dbContext.Orders.Add(order);", transactionStart, StringComparison.Ordinal);
+        var firstOrderSave = source.IndexOf("await _dbContext.SaveChangesAsync(cancellationToken);", orderAdd, StringComparison.Ordinal);
+        var postOrderAttachmentValidation = source.IndexOf("var checkoutFieldSnapshots = await ValidateCheckoutFieldDefinitionsAsync", firstOrderSave, StringComparison.Ordinal);
+        var postOrderSnapshotRefresh = source.IndexOf("RefreshOrderCheckoutFieldSnapshots(order, checkoutFieldSnapshots);", postOrderAttachmentValidation, StringComparison.Ordinal);
+        var bindReservations = source.IndexOf("_variantStockRepository.BindOrderReservationsAsync", postOrderSnapshotRefresh, StringComparison.Ordinal);
+        var prematureSnapshotRefresh = source.IndexOf("RefreshOrderCheckoutFieldSnapshots", revalidationCall, orderAdd - revalidationCall, StringComparison.Ordinal);
 
         Assert.True(transactionStart >= 0);
+        Assert.True(revalidationCall > transactionStart);
         Assert.True(transactionScopedValidation >= 0);
         Assert.True(returnsAdmission > transactionScopedValidation);
-        Assert.True(snapshotRefresh > transactionStart);
-        Assert.True(orderAdd > snapshotRefresh);
+        Assert.True(orderAdd > revalidationCall);
+        Assert.True(firstOrderSave > orderAdd);
+        Assert.True(postOrderAttachmentValidation > firstOrderSave);
+        Assert.True(postOrderSnapshotRefresh > postOrderAttachmentValidation);
+        Assert.True(bindReservations > postOrderSnapshotRefresh);
+        Assert.True(prematureSnapshotRefresh < 0);
+    }
+
+    [Fact]
+    public void CheckoutService_DoesNot_Attach_Uploads_Before_OrderRowExists()
+    {
+        var source = ReadRepositoryFile("PointOfSale.API", "Services", "Checkout", "CheckoutService.cs");
+        var revalidationStart = source.IndexOf("private async Task<TransactionScopedCheckoutAuthoritySnapshot> RevalidateCheckoutAuthorityInsideTransactionAsync", StringComparison.Ordinal);
+        var revalidationEnd = source.IndexOf("private void RefreshOrderAuthoritySnapshot", revalidationStart, StringComparison.Ordinal);
+        var revalidationMethod = source[revalidationStart..revalidationEnd];
+
+        Assert.Contains("orderId: null", revalidationMethod);
+
+        var orderAdd = source.IndexOf("_dbContext.Orders.Add(order);", StringComparison.Ordinal);
+        var firstOrderSave = source.IndexOf("await _dbContext.SaveChangesAsync(cancellationToken);", orderAdd, StringComparison.Ordinal);
+        var attachmentClaim = source.IndexOf("order.Id,\r\n                cancellationToken", firstOrderSave, StringComparison.Ordinal);
+        if (attachmentClaim < 0)
+        {
+            attachmentClaim = source.IndexOf("order.Id,\n                cancellationToken", firstOrderSave, StringComparison.Ordinal);
+        }
+
+        Assert.True(orderAdd >= 0);
+        Assert.True(firstOrderSave > orderAdd);
+        Assert.True(attachmentClaim > firstOrderSave);
     }
 
     [Fact]

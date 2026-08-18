@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Moq;
 using PointOfSale.API.DTOs.Checkout;
@@ -59,7 +60,151 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         Assert.Equal("guest-session", attachment.OwnerId);
         Assert.Equal("session", attachment.OwnerType);
         Assert.Equal("guest-session", attachment.SessionId);
-        Assert.True(lease.ExpiresAtUtc < lease.AttachmentExpiresAtUtc);
+        Assert.Equal(lease.ExpiresAtUtc, lease.AttachmentExpiresAtUtc, TimeSpan.FromSeconds(1));
+        Assert.Equal(lease.ExpiresAtUtc, attachment.ExpiresAtUtc, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task CreateUploadLease_ActivePendingAttachmentsStillEnforceLimit()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var service = CreateService(validCartId: cartId, tenantId: tenantId);
+
+        for (var i = 0; i < 3; i++)
+        {
+            await service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, cartId, $"image-{i}.jpg", "image/jpeg", 1024));
+        }
+
+        var ex = await Assert.ThrowsAsync<CheckoutDynamicFieldValidationException>(() =>
+            service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, cartId, "image-4.jpg", "image/jpeg", 1024)));
+
+        Assert.Equal("CHECKOUT_ATTACHMENT_PENDING_LIMIT_EXCEEDED", ex.ErrorCode);
+    }
+
+    [Fact]
+    public async Task CreateUploadLease_ExpiredPendingAttachmentsDoNotBlockNewLease()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var service = CreateService(validCartId: cartId, tenantId: tenantId);
+
+        for (var i = 0; i < 3; i++)
+        {
+            var lease = await service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, cartId, $"image-{i}.jpg", "image/jpeg", 1024));
+            var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
+            attachment.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1);
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        var nextLease = await service.CreateUploadLeaseAsync(
+            tenantId,
+            "guest-session",
+            "session",
+            "guest-session",
+            null,
+            NewLeaseRequest(field.Id, cartId, "image-retry.jpg", "image/jpeg", 1024));
+
+        Assert.NotEqual(Guid.Empty, nextLease.AttachmentId);
+    }
+
+    [Fact]
+    public async Task CreateUploadLease_StalePendingLeaseWindowDoesNotBlockNewLease()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var service = CreateService(validCartId: cartId, tenantId: tenantId);
+
+        for (var i = 0; i < 3; i++)
+        {
+            _dbContext.CheckoutAttachments.Add(NewAttachment(
+                tenantId,
+                cartId,
+                field.Id,
+                "guest-session",
+                "session",
+                CheckoutAttachmentStatus.Pending,
+                DateTime.UtcNow.AddHours(20)));
+        }
+
+        await _dbContext.SaveChangesAsync();
+        var staleCreatedAt = DateTime.UtcNow.AddMinutes(-20);
+        foreach (var attachment in await _dbContext.CheckoutAttachments.IgnoreQueryFilters().ToListAsync())
+        {
+            attachment.CreatedAt = staleCreatedAt;
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        var nextLease = await service.CreateUploadLeaseAsync(
+            tenantId,
+            "guest-session",
+            "session",
+            "guest-session",
+            null,
+            NewLeaseRequest(field.Id, cartId, "image-retry.jpg", "image/jpeg", 1024));
+
+        Assert.NotEqual(Guid.Empty, nextLease.AttachmentId);
+    }
+
+    [Fact]
+    public async Task CreateUploadLease_CountSeparatesGuestSessionAndCustomerOwnerType()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var collidingOwnerId = Guid.NewGuid().ToString("N");
+        var service = CreateService(
+            validCartId: cartId,
+            tenantId: tenantId,
+            ownerId: collidingOwnerId,
+            ownerType: "session");
+
+        for (var i = 0; i < 3; i++)
+        {
+            _dbContext.CheckoutAttachments.Add(NewAttachment(
+                tenantId,
+                cartId,
+                field.Id,
+                collidingOwnerId,
+                "customer",
+                CheckoutAttachmentStatus.Pending,
+                DateTime.UtcNow.AddMinutes(10)));
+        }
+
+        await _dbContext.SaveChangesAsync();
+
+        var lease = await service.CreateUploadLeaseAsync(
+            tenantId,
+            collidingOwnerId,
+            "session",
+            collidingOwnerId,
+            null,
+            NewLeaseRequest(field.Id, cartId, "image.jpg", "image/jpeg", 1024));
+
+        Assert.NotEqual(Guid.Empty, lease.AttachmentId);
     }
 
     [Fact]
@@ -378,8 +523,79 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         Assert.Equal("image.jpg", attachment.OriginalFileName);
         Assert.Equal("image/jpeg", attachment.ContentType);
         Assert.Equal(1024, attachment.SizeBytes);
+        Assert.True(attachment.ExpiresAtUtc > lease.ExpiresAtUtc.AddHours(23));
         Assert.Contains(lease.AttachmentId.ToString(), attachment.MetadataJson, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("FINALIZED", attachment.MetadataJson, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(CheckoutFieldType.Image, "image.jpg", "image/jpeg")]
+    [InlineData(CheckoutFieldType.File, "document.pdf", "application/pdf")]
+    [InlineData(CheckoutFieldType.MultiImage, "gallery.jpg", "image/jpeg")]
+    public async Task DevelopmentStorage_LeaseUploadAndConfirm_FinalizesDynamicUploadFields(
+        CheckoutFieldType fieldType,
+        string fileName,
+        string contentType)
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var contentRoot = Path.Combine(Path.GetTempPath(), $"shopixy-checkout-attachments-{Guid.NewGuid():N}");
+
+        try
+        {
+            var field = await SeedFieldAsync(tenantId, fieldType, maxFiles: fieldType == CheckoutFieldType.MultiImage ? 3 : 1);
+            var environment = new Mock<IHostEnvironment>();
+            environment.SetupGet(item => item.ContentRootPath).Returns(contentRoot);
+            var storage = new DevelopmentFileStorageService(environment.Object);
+            var service = CreateServiceWithStorage(storage, cartId, tenantId);
+            var bytes = TestFileBytes(contentType);
+
+            var lease = await service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, cartId, fileName, contentType, bytes.Length));
+
+            await using (var upload = new MemoryStream(bytes))
+            {
+                await storage.StorePresignedUploadAsync(
+                    ExtractToken(lease.UploadUrl),
+                    lease.ContentType,
+                    bytes.Length,
+                    upload,
+                    CancellationToken.None);
+            }
+
+            var confirmed = await service.ConfirmUploadAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                new CheckoutAttachmentConfirmRequestDto
+                {
+                    CartId = cartId,
+                    FieldId = field.Id,
+                    AttachmentId = lease.AttachmentId
+                });
+
+            Assert.Equal("FINALIZED", confirmed.Status);
+            Assert.Equal(contentType, confirmed.ContentType);
+            Assert.Equal(bytes.Length, confirmed.SizeBytes);
+            var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
+            Assert.Equal(CheckoutAttachmentStatus.Finalized, attachment.Status);
+            Assert.NotNull(attachment.FinalObjectKey);
+            Assert.True(File.Exists(Path.Combine(contentRoot, "secure-uploads", "development-object-storage", attachment.FinalObjectKey.Replace('/', Path.DirectorySeparatorChar))));
+        }
+        finally
+        {
+            if (Directory.Exists(contentRoot))
+            {
+                Directory.Delete(contentRoot, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -1019,6 +1235,101 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CleanupJob_ExpiresPendingAttachmentAfterLeaseWindow()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var attachment = NewAttachment(
+            tenantId,
+            cartId,
+            field.Id,
+            "guest-session",
+            "session",
+            CheckoutAttachmentStatus.Pending,
+            DateTime.UtcNow.AddHours(20));
+        _dbContext.CheckoutAttachments.Add(attachment);
+        await _dbContext.SaveChangesAsync();
+        attachment.CreatedAt = DateTime.UtcNow.AddMinutes(-20);
+        await _dbContext.SaveChangesAsync();
+        var storage = CreateStorageMock(objectKey: attachment.ObjectKey);
+        var cleanup = new CheckoutAttachmentCleanupJob(
+            _dbContext,
+            storage.Object,
+            Mock.Of<ILogger<CheckoutAttachmentCleanupJob>>());
+
+        await cleanup.RunAsync();
+
+        Assert.True(attachment.IsDeleted);
+        Assert.Equal(CheckoutAttachmentStatus.Expired, attachment.Status);
+        storage.Verify(item => item.DeleteObjectAsync(attachment.ObjectKey, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CleanupJob_ExpiresPendingDevelopmentUploadAndDeletesStagedObject()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var contentRoot = Path.Combine(Path.GetTempPath(), $"shopixy-checkout-cleanup-{Guid.NewGuid():N}");
+
+        try
+        {
+            var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+            var environment = new Mock<IHostEnvironment>();
+            environment.SetupGet(item => item.ContentRootPath).Returns(contentRoot);
+            var storage = new DevelopmentFileStorageService(environment.Object);
+            var service = CreateServiceWithStorage(storage, cartId, tenantId);
+            var bytes = TestFileBytes("image/jpeg");
+
+            var lease = await service.CreateUploadLeaseAsync(
+                tenantId,
+                "guest-session",
+                "session",
+                "guest-session",
+                null,
+                NewLeaseRequest(field.Id, cartId, "image.jpg", "image/jpeg", bytes.Length));
+
+            await using (var upload = new MemoryStream(bytes))
+            {
+                await storage.StorePresignedUploadAsync(
+                    ExtractToken(lease.UploadUrl),
+                    lease.ContentType,
+                    bytes.Length,
+                    upload,
+                    CancellationToken.None);
+            }
+
+            var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
+            var stagedPath = Path.Combine(
+                contentRoot,
+                "secure-uploads",
+                "development-object-storage",
+                attachment.ObjectKey.Replace('/', Path.DirectorySeparatorChar));
+            Assert.True(File.Exists(stagedPath));
+
+            attachment.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1);
+            await _dbContext.SaveChangesAsync();
+            var cleanup = new CheckoutAttachmentCleanupJob(
+                _dbContext,
+                storage,
+                Mock.Of<ILogger<CheckoutAttachmentCleanupJob>>());
+
+            await cleanup.RunAsync();
+
+            Assert.True(attachment.IsDeleted);
+            Assert.Equal(CheckoutAttachmentStatus.Expired, attachment.Status);
+            Assert.False(File.Exists(stagedPath));
+        }
+        finally
+        {
+            if (Directory.Exists(contentRoot))
+            {
+                Directory.Delete(contentRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task CleanupJob_DoesNotDeleteUnexpiredFinalizedAttachment()
     {
         var tenantId = Guid.NewGuid();
@@ -1047,6 +1358,49 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
             });
         var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
         attachment.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(10);
+        await _dbContext.SaveChangesAsync();
+        var cleanup = new CheckoutAttachmentCleanupJob(
+            _dbContext,
+            storage.Object,
+            Mock.Of<ILogger<CheckoutAttachmentCleanupJob>>());
+
+        await cleanup.RunAsync();
+
+        Assert.False(attachment.IsDeleted);
+        Assert.Equal(CheckoutAttachmentStatus.Finalized, attachment.Status);
+        storage.Verify(item => item.DeleteObjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CleanupJob_NeverDeletesFinalizedOrderAttachment()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var field = await SeedFieldAsync(tenantId, CheckoutFieldType.Image);
+        var storage = CreateStorageMock();
+        var service = CreateService(storage, cartId, tenantId);
+        var lease = await service.CreateUploadLeaseAsync(
+            tenantId,
+            "guest-session",
+            "session",
+            "guest-session",
+            null,
+            NewLeaseRequest(field.Id, cartId, "image.jpg", "image/jpeg", 1024));
+        await service.ConfirmUploadAsync(
+            tenantId,
+            "guest-session",
+            "session",
+            "guest-session",
+            null,
+            new CheckoutAttachmentConfirmRequestDto
+            {
+                CartId = cartId,
+                FieldId = field.Id,
+                AttachmentId = lease.AttachmentId
+            });
+        var attachment = await _dbContext.CheckoutAttachments.IgnoreQueryFilters().SingleAsync(item => item.Id == lease.AttachmentId);
+        attachment.OrderId = Guid.NewGuid();
+        attachment.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1);
         await _dbContext.SaveChangesAsync();
         var cleanup = new CheckoutAttachmentCleanupJob(
             _dbContext,
@@ -1174,6 +1528,39 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
 
     public void Dispose() => _dbContext.Dispose();
 
+    private CheckoutAttachmentService CreateServiceWithStorage(
+        IR2StorageService storage,
+        Guid validCartId,
+        Guid tenantId,
+        string ownerId = "guest-session",
+        string ownerType = "session")
+    {
+        var cartService = new Mock<ICartService>();
+        cartService.Setup(service => service.GetCartAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<CartOwner>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid resolvedTenantId, CartOwner owner, string _, CancellationToken _) => new CartDto
+            {
+                CartId = validCartId,
+                TenantId = tenantId,
+                OwnerType = ownerType,
+                OwnerId = ownerId,
+                Items = new List<CartItemDto> { new() { ProductId = Guid.NewGuid(), Quantity = 1 } },
+                ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+                LastUpdatedUtc = DateTime.UtcNow,
+                Currency = "EGP"
+            });
+
+        return new CheckoutAttachmentService(
+            _dbContext,
+            storage,
+            cartService.Object,
+            new FileValidationService(),
+            Mock.Of<ILogger<CheckoutAttachmentService>>());
+    }
+
     private CheckoutAttachmentService CreateService(
         Mock<IR2StorageService>? storage = null,
         Guid? validCartId = null,
@@ -1234,6 +1621,33 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         return mock;
     }
 
+    private static CheckoutAttachment NewAttachment(
+        Guid tenantId,
+        Guid cartId,
+        Guid fieldId,
+        string ownerId,
+        string ownerType,
+        CheckoutAttachmentStatus status,
+        DateTime expiresAtUtc) => new()
+    {
+        Id = Guid.NewGuid(),
+        TenantId = tenantId,
+        CartId = cartId,
+        OwnerId = ownerId,
+        OwnerType = ownerType,
+        CheckoutFieldDefinitionId = fieldId,
+        ObjectKey = $"tenants/{tenantId:N}/checkout/{cartId:N}/fields/{fieldId:N}/attachments/{Guid.NewGuid():N}.jpg",
+        OriginalFileName = "image.jpg",
+        ContentType = "image/jpeg",
+        MediaType = "image",
+        ExpectedSizeBytes = 1024,
+        SizeBytes = status == CheckoutAttachmentStatus.Pending ? 0 : 1024,
+        Status = status,
+        ExpiresAtUtc = expiresAtUtc,
+        CreatedAt = DateTime.UtcNow,
+        MetadataJson = "{}"
+    };
+
     private async Task<CheckoutFieldDefinition> SeedFieldAsync(
         Guid tenantId,
         CheckoutFieldType fieldType,
@@ -1277,5 +1691,19 @@ public sealed class CheckoutAttachmentServiceTests : IDisposable
         FileName = fileName,
         ContentType = contentType,
         FileSizeBytes = sizeBytes
+    };
+
+    private static string ExtractToken(string uploadUrl)
+    {
+        var index = uploadUrl.IndexOf("token=", StringComparison.Ordinal);
+        Assert.True(index >= 0);
+        return Uri.UnescapeDataString(uploadUrl[(index + "token=".Length)..]);
+    }
+
+    private static byte[] TestFileBytes(string contentType) => contentType switch
+    {
+        "image/jpeg" => new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 },
+        "application/pdf" => new byte[] { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37 },
+        _ => throw new ArgumentOutOfRangeException(nameof(contentType), contentType, "Unsupported test file type.")
     };
 }

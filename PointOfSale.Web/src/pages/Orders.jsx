@@ -3,9 +3,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, Package, RefreshCw, X } from 'lucide-react'
-import { downloadAdminOrderCheckoutAttachment, getAdminOrderDetails, getAdminOrders, updateAdminOrderStatus } from '../services/adminOrdersApi'
+import {
+    downloadAdminOrderCheckoutAttachment,
+    getAdminOrderDetails,
+    getAdminOrderFulfillmentActions,
+    getAdminOrders,
+    runAdminOrderFulfillmentAction,
+    updateAdminOrderStatus,
+} from '../services/adminOrdersApi'
 import { presentOrderCheckoutFields } from './orderCheckoutFieldPresentation'
 import { useAuthStore } from '../store/authStore'
+import { requireShipmentActionAuthority } from '../modules/shipping/shipmentActionAuthority'
 import {
     requireBackendAffiliateAttributionAuthority,
     requireBackendMarketplaceLineageAuthority,
@@ -27,6 +35,22 @@ const ORDER_STATUS_OPTIONS = [
     'Refunded',
     'OnHold',
 ]
+const GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES = new Set([
+    'Cancelled',
+    'Shipped',
+    'Delivered',
+    'Completed',
+    'Refunded',
+    'Confirmed',
+    'Processing',
+])
+const EXECUTABLE_FULFILLMENT_ACTION_CODES = new Set([
+    'confirm',
+    'pack',
+    'out-for-delivery',
+    'complete',
+    'retry-delivery',
+])
 const PAYMENT_STATUS_OPTIONS = [
     '',
     'Pending',
@@ -170,6 +194,34 @@ function FilterField({ label, children }) {
     )
 }
 
+export function getDirectOrderStatusMutationOptions(order) {
+    if (!order?.status) {
+        return []
+    }
+
+    const options = new Set([order.status])
+
+    if (order.status !== 'OnHold' &&
+        !['Cancelled', 'Refunded', 'Delivered', 'Completed'].includes(order.status)) {
+        options.add('OnHold')
+    }
+
+    if (order.status === 'OnHold') {
+        options.add('Pending')
+    }
+
+    return ORDER_STATUS_OPTIONS
+        .filter(Boolean)
+        .filter((status) => options.has(status) && (
+            status === order.status ||
+            !GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES.has(status)
+        ))
+}
+
+export function isFulfillmentActionExecutableFromOrdersDrawer(action) {
+    return EXECUTABLE_FULFILLMENT_ACTION_CODES.has(action?.code)
+}
+
 function SectionCard({ title, children }) {
     return (
         <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -179,12 +231,35 @@ function SectionCard({ title, children }) {
     )
 }
 
-function OrderDetailsPanel({ order, isLoading, isError, error, onClose, onRetry, onStatusChange, isStatusUpdating, statusUpdateError }) {
+function OrderDetailsPanel({
+    order,
+    isLoading,
+    isError,
+    error,
+    onClose,
+    onRetry,
+    onStatusChange,
+    isStatusUpdating,
+    statusUpdateError,
+    fulfillmentAuthority,
+    fulfillmentAuthorityError,
+    isFulfillmentAuthorityLoading,
+    onFulfillmentAction,
+    isFulfillmentActionUpdating,
+    fulfillmentActionError,
+}) {
     const { t } = useTranslation()
     const [statusCandidate, setStatusCandidate] = useState(order?.status || '')
     const [statusReason, setStatusReason] = useState('')
 
-    const canSubmitStatusCandidate = Boolean(order?.rowVersion && statusCandidate)
+    const directStatusOptions = getDirectOrderStatusMutationOptions(order)
+    const canSubmitStatusCandidate = Boolean(
+        order?.rowVersion &&
+        statusCandidate &&
+        statusCandidate !== order.status &&
+        directStatusOptions.includes(statusCandidate),
+    )
+    const fulfillmentActions = fulfillmentAuthority?.availableActions || []
     const checkoutFieldItems = presentOrderCheckoutFields(order?.checkoutFieldSnapshots)
     const downloadAttachmentMutation = useMutation({
         mutationFn: ({ attachmentId, fileName }) => downloadAdminOrderCheckoutAttachment(order.orderId, attachmentId, fileName),
@@ -291,7 +366,7 @@ function OrderDetailsPanel({ order, isLoading, isError, error, onClose, onRetry,
                                                 disabled={!order.rowVersion || isStatusUpdating}
                                                 className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100"
                                             >
-                                                {ORDER_STATUS_OPTIONS.filter(Boolean).map((option) => (
+                                                {directStatusOptions.map((option) => (
                                                     <option key={option} value={option}>{option}</option>
                                                 ))}
                                             </select>
@@ -322,7 +397,55 @@ function OrderDetailsPanel({ order, isLoading, isError, error, onClose, onRetry,
                                     {statusUpdateError ? (
                                         <p className="mt-3 text-sm text-rose-700">{statusUpdateError}</p>
                                     ) : null}
+                                    <p className="mt-3 text-sm text-slate-600">
+                                        Shipment, delivery, completion, cancellation, and payment-driven states are controlled by dedicated lifecycle actions.
+                                    </p>
                                 </form>
+
+                                <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-4">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                        Fulfillment lifecycle
+                                    </p>
+                                    <div className="mt-3 grid gap-4 md:grid-cols-2">
+                                        <div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Fulfillment status</p>
+                                            <p className="mt-2 text-sm font-medium text-slate-900">{order.fulfillmentStatus || fulfillmentAuthority?.currentStatus || 'Unavailable'}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Authority</p>
+                                            <p className="mt-2 text-sm font-medium text-slate-900">
+                                                {isFulfillmentAuthorityLoading ? 'Loading actions' : `${fulfillmentActions.length} available`}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    {fulfillmentAuthorityError ? (
+                                        <p className="mt-3 text-sm text-rose-700">{fulfillmentAuthorityError}</p>
+                                    ) : null}
+                                    {fulfillmentActionError ? (
+                                        <p className="mt-3 text-sm text-rose-700">{fulfillmentActionError}</p>
+                                    ) : null}
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                        {fulfillmentActions.length ? fulfillmentActions.map((action) => {
+                                            const executable = isFulfillmentActionExecutableFromOrdersDrawer(action)
+                                            return (
+                                                <button
+                                                    key={action.code}
+                                                    type="button"
+                                                    onClick={() => executable && onFulfillmentAction(action.code)}
+                                                    disabled={!executable || isFulfillmentActionUpdating}
+                                                    title={executable ? action.label : 'This action requires additional fulfillment evidence.'}
+                                                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    {isFulfillmentActionUpdating ? 'Working' : action.label}
+                                                </button>
+                                            )
+                                        }) : (
+                                            <p className="text-sm text-slate-500">
+                                                No direct fulfillment actions are currently available for this order.
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
                             </SectionCard>
 
                             <SectionCard title="Customer">
@@ -615,6 +738,16 @@ export default function Orders() {
         staleTime: 30_000,
     })
 
+    const fulfillmentAuthorityQuery = useQuery({
+        queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId],
+        queryFn: async () => {
+            const authority = await getAdminOrderFulfillmentActions(selectedOrderId)
+            return requireShipmentActionAuthority(authority, selectedOrderId)
+        },
+        enabled: Boolean(selectedOrderId),
+        staleTime: 15_000,
+    })
+
     let admittedOrderList = null
     let orderListAuthorityError = null
     if (!ordersQuery.isFetching && ordersQuery.data) {
@@ -644,6 +777,18 @@ export default function Orders() {
             await Promise.all([
                 queryClient.invalidateQueries({ queryKey: [...authorityScope, 'list'] }),
                 queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
+                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
+            ])
+        },
+    })
+
+    const fulfillmentActionMutation = useMutation({
+        mutationFn: (actionCode) => runAdminOrderFulfillmentAction(selectedOrderId, actionCode),
+        onSuccess: async () => {
+            await Promise.all([
+                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'list'] }),
+                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
+                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
             ])
         },
     })
@@ -960,10 +1105,19 @@ export default function Orders() {
                         isError={detailsQuery.isError || Boolean(selectedOrderAuthorityError)}
                         error={detailsQuery.error || selectedOrderAuthorityError}
                         onClose={handleCloseDetails}
-                        onRetry={() => detailsQuery.refetch()}
+                        onRetry={() => {
+                            detailsQuery.refetch()
+                            fulfillmentAuthorityQuery.refetch()
+                        }}
                         onStatusChange={(candidate) => statusMutation.mutate(candidate)}
                         isStatusUpdating={statusMutation.isPending}
                         statusUpdateError={statusMutation.error?.message || null}
+                        fulfillmentAuthority={fulfillmentAuthorityQuery.data}
+                        fulfillmentAuthorityError={fulfillmentAuthorityQuery.error?.message || null}
+                        isFulfillmentAuthorityLoading={fulfillmentAuthorityQuery.isLoading}
+                        onFulfillmentAction={(actionCode) => fulfillmentActionMutation.mutate(actionCode)}
+                        isFulfillmentActionUpdating={fulfillmentActionMutation.isPending}
+                        fulfillmentActionError={fulfillmentActionMutation.error?.message || null}
                     />
                 </>
             ) : null}

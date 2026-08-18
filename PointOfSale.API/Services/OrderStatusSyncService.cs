@@ -360,7 +360,7 @@ public class OrderStatusSyncService : IOrderStatusSyncService
         {
             return await _dbContext.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""TenantId"" = {tenantId}

@@ -39,6 +39,14 @@ public class PaymentMethodsAdminController : ControllerBase
     private readonly ITenantContext _tenantContext;
 
     private const string DataProtectionPurpose = "PaymentMethodSecrets";
+    private static readonly string[] SupportedPaymentMethodCodes =
+    [
+        "COD",
+        "STRIPE",
+        "PAYMOB",
+        "FAWRY",
+        "MANUALWALLET"
+    ];
 
     public PaymentMethodsAdminController(
         ApplicationDbContext dbContext,
@@ -57,6 +65,21 @@ public class PaymentMethodsAdminController : ControllerBase
     }
 
     private Guid TenantId => _tenantContext.RequiredTenantId;
+
+    /// <summary>
+    /// Get the supported provider catalog without creating tenant payment-method rows.
+    /// </summary>
+    [HttpGet("catalog")]
+    [ProducesResponseType(typeof(List<PaymentMethodCatalogProviderDto>), StatusCodes.Status200OK)]
+    public IActionResult GetProviderCatalog()
+    {
+        SetNoStoreHeaders();
+
+        return Ok(SupportedPaymentMethodCodes
+            .Select(MapToCatalogDto)
+            .OrderBy(provider => provider.SortOrder)
+            .ToList());
+    }
 
     /// <summary>
     /// Get all payment methods for the tenant (enabled + disabled).
@@ -530,7 +553,7 @@ public class PaymentMethodsAdminController : ControllerBase
     #region Helper Methods
 
     private static bool IsValidCode(string code) =>
-        code is "COD" or "STRIPE" or "PAYMOB" or "FAWRY" or "MANUALWALLET";
+        SupportedPaymentMethodCodes.Contains(code, StringComparer.OrdinalIgnoreCase);
 
     private static DateTime NextPaymentMethodMutationTimestamp(TenantPaymentMethod method)
     {
@@ -608,6 +631,24 @@ public class PaymentMethodsAdminController : ControllerBase
         "FAWRY" => "receipt",
         "MANUALWALLET" => "phone-portrait",
         _ => "payment"
+    };
+
+    private static PaymentMethodCatalogProviderDto MapToCatalogDto(string code) => new()
+    {
+        Code = code,
+        DisplayName = GetDefaultDisplayName(code),
+        DisplayNameAr = GetDefaultDisplayNameAr(code),
+        Description = GetDefaultDescription(code),
+        DescriptionAr = GetDefaultDescriptionAr(code),
+        SortOrder = GetDefaultSortOrder(code),
+        SupportsOnline = GetSupportsOnline(code),
+        SupportsOffline = GetSupportsOffline(code),
+        IsSandbox = true,
+        Icon = GetDefaultIcon(code),
+        Fee = 0,
+        FeeType = "fixed",
+        RequiresConfiguration = RequiresConfiguration(code),
+        IsSupported = true
     };
 
     private PaymentMethodResponseDto MapToDto(TenantPaymentMethod method)
@@ -856,7 +897,9 @@ public class PaymentMethodsAdminController : ControllerBase
             existingConfiguration,
             normalizedIncomingConfiguration);
 
-        var validation = PaymentMethodConfigurationValidator.Validate(method.Code, mergedConfiguration);
+        var validation = ApplyEnvironmentValidation(
+            method,
+            PaymentMethodConfigurationValidator.Validate(method.Code, mergedConfiguration));
         if (!validation.IsConfigurationValid)
         {
             _reliabilityTelemetry.RecordPaymentConfigInvalid(
@@ -921,13 +964,17 @@ public class PaymentMethodsAdminController : ControllerBase
 
         if (!hasStoredConfiguration)
         {
-            var validation = PaymentMethodConfigurationValidator.Validate(method.Code, null);
+            var validation = ApplyEnvironmentValidation(
+                method,
+                PaymentMethodConfigurationValidator.Validate(method.Code, null));
             return new PaymentMethodConfigurationSnapshot(validation, hasStoredConfiguration);
         }
 
         if (TryReadStoredConfiguration(method, out var configuration, out var _))
         {
-            var validation = PaymentMethodConfigurationValidator.Validate(method.Code, configuration);
+            var validation = ApplyEnvironmentValidation(
+                method,
+                PaymentMethodConfigurationValidator.Validate(method.Code, configuration));
             return new PaymentMethodConfigurationSnapshot(validation, hasStoredConfiguration);
         }
 
@@ -954,6 +1001,55 @@ public class PaymentMethodsAdminController : ControllerBase
             message,
             validationErrors = validationErrors.ToArray()
         });
+    }
+
+    private static PaymentMethodConfigurationValidationResult ApplyEnvironmentValidation(
+        TenantPaymentMethod method,
+        PaymentMethodConfigurationValidationResult validation)
+    {
+        if (string.Equals(method.Code, "STRIPE", StringComparison.OrdinalIgnoreCase) &&
+            validation.IsConfigurationValid)
+        {
+            var stripeMarker = method.IsSandbox ? "_test_" : "_live_";
+            var publishableKey = validation.NormalizedConfiguration.GetValueOrDefault("publishableKey", string.Empty);
+            var stripeSecretKey = validation.NormalizedConfiguration.GetValueOrDefault("secretKey", string.Empty);
+            if (publishableKey.Contains(stripeMarker, StringComparison.Ordinal) &&
+                stripeSecretKey.Contains(stripeMarker, StringComparison.Ordinal))
+            {
+                return validation;
+            }
+
+            return validation with
+            {
+                IsConfigurationValid = false,
+                ValidationErrors = validation.ValidationErrors
+                    .Append("Stripe keys do not match the selected sandbox/production environment.")
+                    .ToArray()
+            };
+        }
+
+        if (!string.Equals(method.Code, "PAYMOB", StringComparison.OrdinalIgnoreCase) ||
+            !validation.IsConfigurationValid)
+        {
+            return validation;
+        }
+
+        var marker = method.IsSandbox ? "_test_" : "_live_";
+        var publicKey = validation.NormalizedConfiguration.GetValueOrDefault("publicKey", string.Empty);
+        var secretKey = validation.NormalizedConfiguration.GetValueOrDefault("secretKey", string.Empty);
+        if (publicKey.Contains(marker, StringComparison.Ordinal) &&
+            secretKey.Contains(marker, StringComparison.Ordinal))
+        {
+            return validation;
+        }
+
+        return validation with
+        {
+            IsConfigurationValid = false,
+            ValidationErrors = validation.ValidationErrors
+                .Append("Paymob keys do not match the selected sandbox/production environment.")
+                .ToArray()
+        };
     }
 
     private string GetActor() =>
@@ -1039,6 +1135,24 @@ public class PaymentMethodResponseDto
     public DateTime? UpdatedAt { get; set; }
 }
 
+public class PaymentMethodCatalogProviderDto
+{
+    public string Code { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string? DisplayNameAr { get; set; }
+    public string? Description { get; set; }
+    public string? DescriptionAr { get; set; }
+    public int SortOrder { get; set; }
+    public bool SupportsOnline { get; set; }
+    public bool SupportsOffline { get; set; }
+    public bool IsSandbox { get; set; }
+    public string? Icon { get; set; }
+    public decimal Fee { get; set; }
+    public string FeeType { get; set; } = "fixed";
+    public bool RequiresConfiguration { get; set; }
+    public bool IsSupported { get; set; }
+}
+
 public class UpsertPaymentMethodDto
 {
     public string? DisplayName { get; set; }
@@ -1057,7 +1171,7 @@ public class UpsertPaymentMethodDto
     /// Provider-specific configuration (encrypted before storage).
     /// 
     /// STRIPE: { "publishableKey": "pk_...", "secretKey": "sk_...", "webhookSecret": "whsec_..." }
-    /// PAYMOB: { "apiKey": "...", "integrationId": "...", "iframeId": "..." }
+    /// PAYMOB: { "publicKey": "egy_pk_...", "secretKey": "egy_sk_...", "integrationId": "...", "hmacSecret": "..." }
     /// COD: null (no configuration needed)
     /// </summary>
     public Dictionary<string, string>? Configuration { get; set; }

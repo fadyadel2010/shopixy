@@ -21,11 +21,14 @@ public sealed class PaymobFoundationHealthContributor : IPaymobFoundationHealthC
     {
         var options = _options.Value;
         var credentialValidation = PaymobCredentialValidator.Validate(options);
+        var usesOfficialApi = options.BaseUrl is { IsAbsoluteUri: true } &&
+            string.Equals(options.BaseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(options.BaseUrl.Host, PaymobOptions.OfficialApiBaseUri.Host, StringComparison.OrdinalIgnoreCase);
         var officialApiAvailability = new PaymobOfficialApiAvailability(
-            OfficialApiAvailable: true,
+            OfficialApiAvailable: usesOfficialApi,
             TransportName: "System.Net.Http.HttpClient",
             BaseUri: options.BaseUrl,
-            UsesOfficialPaymobHttpsApi: true,
+            UsesOfficialPaymobHttpsApi: usesOfficialApi,
             UsesUnofficialWrapper: false);
         var configuration = new PaymobConfigurationStatus(
             PaymobOptionsValidator.IsRuntimeEnabled(options),

@@ -125,6 +125,85 @@ public sealed class PaymentRequestAuthorizationServiceTests
     }
 
     [Fact]
+    public async Task AuthorizeOrderAccessAsync_WhenGuestCookieTokenDoesNotMatchOrder_ReturnsDenied()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var differentOrderId = Guid.NewGuid();
+        var tokenService = new Mock<ICheckoutSessionTokenService>();
+        var paymentService = new Mock<IPaymentService>();
+
+        paymentService
+            .Setup(service => service.GetOrderAccessInfoAsync(tenantId, orderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentOrderAccessInfo(null, null, "guest-session", true));
+        tokenService
+            .Setup(service => service.ValidatePaymentToken("guest-cookie-token", tenantId))
+            .Returns(new CheckoutSessionTokenValidationResult(
+                true,
+                false,
+                differentOrderId.ToString("D"),
+                null,
+                DateTimeOffset.UtcNow.AddMinutes(5),
+                "checkout-payment"));
+
+        var service = CreateService(
+            paymentService.Object,
+            tokenService.Object,
+            CreateAuthenticationService());
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Session-Id"] = "guest-session";
+        httpContext.Request.Headers["Cookie"] = $"{GuestOrderAccessCookie.CheckoutTokenCookieName}=guest-cookie-token";
+
+        var result = await service.AuthorizeOrderAccessAsync(
+            httpContext,
+            tenantId,
+            orderId,
+            "trace-guest-cookie-token-mismatch",
+            cancellationToken: CancellationToken.None);
+
+        Assert.False(result.Authorized);
+        Assert.Equal(StatusCodes.Status403Forbidden, result.FailureStatusCode);
+        Assert.Equal("ORDER_ACCESS_DENIED", result.Error?.Code);
+    }
+
+    [Fact]
+    public async Task AuthorizeOrderAccessAsync_WhenGuestCookieTokenIsNotTenantBound_ReturnsDenied()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var tokenService = new Mock<ICheckoutSessionTokenService>();
+        var paymentService = new Mock<IPaymentService>();
+
+        paymentService
+            .Setup(service => service.GetOrderAccessInfoAsync(tenantId, orderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PaymentOrderAccessInfo(null, null, "guest-session", true));
+        tokenService
+            .Setup(service => service.ValidatePaymentToken("other-tenant-token", tenantId))
+            .Returns(CheckoutSessionTokenValidationResult.Invalid("checkout-payment"));
+
+        var service = CreateService(
+            paymentService.Object,
+            tokenService.Object,
+            CreateAuthenticationService());
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers["X-Session-Id"] = "guest-session";
+        httpContext.Request.Headers["Cookie"] = $"{GuestOrderAccessCookie.CheckoutTokenCookieName}=other-tenant-token";
+
+        var result = await service.AuthorizeOrderAccessAsync(
+            httpContext,
+            tenantId,
+            orderId,
+            "trace-guest-cookie-cross-tenant",
+            cancellationToken: CancellationToken.None);
+
+        Assert.False(result.Authorized);
+        Assert.Equal(StatusCodes.Status403Forbidden, result.FailureStatusCode);
+        Assert.Equal("ORDER_ACCESS_DENIED", result.Error?.Code);
+    }
+
+    [Fact]
     public async Task AuthorizeOrderAccessAsync_WhenAuthenticatedCustomerOwnsOrder_ReturnsSuccess()
     {
         var tenantId = Guid.NewGuid();

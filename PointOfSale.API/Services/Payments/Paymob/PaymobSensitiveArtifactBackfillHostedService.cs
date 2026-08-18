@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 
@@ -8,33 +9,21 @@ public sealed class PaymobSensitiveArtifactBackfillHostedService(
     IServiceScopeFactory scopeFactory,
     ILogger<PaymobSensitiveArtifactBackfillHostedService> logger) : IHostedService
 {
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Fire-and-forget: this backfill scans potentially large tables and must not
-        // block host startup (Kestrel) if the store is slow or a row is unclassifiable.
-        _ = Task.Run(() => RunBackfillAsync(cancellationToken), CancellationToken.None);
-        return Task.CompletedTask;
-    }
+    public Task StartAsync(CancellationToken cancellationToken) =>
+        RunBackfillAsync(cancellationToken);
 
     private async Task RunBackfillAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var protector = scope.ServiceProvider.GetRequiredService<IPaymobSensitiveArtifactProtector>();
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<IPaymobSensitiveArtifactProtector>();
 
-            var changedArtifacts = await ProtectLegacyArtifactsAsync(dbContext, protector, cancellationToken);
-            if (changedArtifacts > 0)
-            {
-                logger.LogInformation(
-                    "Protected {ArtifactCount} legacy Paymob durable security artifacts.",
-                    changedArtifacts);
-            }
-        }
-        catch (Exception ex)
+        var changedArtifacts = await ProtectLegacyArtifactsAsync(dbContext, protector, cancellationToken);
+        if (changedArtifacts > 0)
         {
-            logger.LogError(ex, "Paymob sensitive artifact backfill failed during startup; continuing without it.");
+            logger.LogInformation(
+                "Protected {ArtifactCount} legacy Paymob durable security artifacts.",
+                changedArtifacts);
         }
     }
 
@@ -45,6 +34,7 @@ public sealed class PaymobSensitiveArtifactBackfillHostedService(
         IPaymobSensitiveArtifactProtector protector,
         CancellationToken cancellationToken)
     {
+        using var paymentBoundary = CommerceHubBoundaryMutationScope.BeginPayment();
         var changedArtifacts = 0;
         var intents = await dbContext.PaymentIntents
             .IgnoreQueryFilters()
@@ -143,6 +133,82 @@ public sealed class PaymobSensitiveArtifactBackfillHostedService(
                 log.Signature = protector.DigestHmacSignature(log.Signature);
                 changedArtifacts++;
             }
+        }
+
+        var commerceHubPayments = await dbContext.CommerceHubPayments
+            .IgnoreQueryFilters()
+            .Where(payment =>
+                payment.Provider == PaymentProvider.Paymob &&
+                (payment.CheckoutUrl != null || payment.PaymentToken != null))
+            .ToListAsync(cancellationToken);
+
+        foreach (var payment in commerceHubPayments)
+        {
+            if (payment.PaymentToken?.StartsWith(
+                    PaymobSensitiveArtifactProtector.PaymentSessionPrefix,
+                    StringComparison.Ordinal) == true)
+            {
+                _ = protector.UnprotectPaymentSession(payment.PaymentToken);
+                if (!string.IsNullOrWhiteSpace(payment.CheckoutUrl))
+                {
+                    payment.CheckoutUrl = null;
+                    changedArtifacts++;
+                }
+
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(payment.PaymentToken) && string.IsNullOrWhiteSpace(payment.CheckoutUrl))
+            {
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(payment.PaymentToken) || string.IsNullOrWhiteSpace(payment.CheckoutUrl))
+            {
+                throw new InvalidOperationException(
+                    $"CommerceHub Paymob payment '{payment.Id}' has an incomplete plaintext checkout session.");
+            }
+
+            payment.PaymentToken = protector.ProtectPaymentSession(payment.PaymentToken, payment.CheckoutUrl);
+            payment.CheckoutUrl = null;
+            changedArtifacts += 2;
+        }
+
+        var commerceHubLogs = await dbContext.CommerceHubPaymentLogs
+            .Where(log =>
+                log.Payment.Provider == PaymentProvider.Paymob &&
+                !log.RawResponse.StartsWith(PaymobSensitiveArtifactProtector.WebhookPayloadPrefix))
+            .ToListAsync(cancellationToken);
+
+        foreach (var log in commerceHubLogs)
+        {
+            if (string.IsNullOrWhiteSpace(log.RawResponse))
+            {
+                throw new InvalidOperationException(
+                    $"CommerceHub Paymob payment log '{log.Id}' has no recoverable payload to protect.");
+            }
+
+            log.RawResponse = protector.ProtectWebhookPayload(log.RawResponse);
+            changedArtifacts++;
+        }
+
+        var unresolvedWebhooks = await dbContext.CommerceHubUnresolvedPaymentWebhooks
+            .IgnoreQueryFilters()
+            .Where(webhook =>
+                webhook.Provider == PaymentProvider.Paymob &&
+                !webhook.RawPayload.StartsWith(PaymobSensitiveArtifactProtector.WebhookPayloadPrefix))
+            .ToListAsync(cancellationToken);
+
+        foreach (var webhook in unresolvedWebhooks)
+        {
+            if (string.IsNullOrWhiteSpace(webhook.RawPayload))
+            {
+                throw new InvalidOperationException(
+                    $"CommerceHub unresolved Paymob webhook '{webhook.Id}' has no recoverable payload to protect.");
+            }
+
+            webhook.RawPayload = protector.ProtectWebhookPayload(webhook.RawPayload);
+            changedArtifacts++;
         }
 
         if (changedArtifacts > 0)

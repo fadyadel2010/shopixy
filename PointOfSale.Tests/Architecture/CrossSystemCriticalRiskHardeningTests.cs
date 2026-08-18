@@ -613,7 +613,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("_paymentLifecycleService.RecordRefundAsync", stripeRefundMethod!, StringComparison.Ordinal);
         Assert.Contains("ResolveStripeCumulativeRefundDeltaAsync", stripe, StringComparison.Ordinal);
         Assert.Contains("throw new InvalidOperationException", stripeRefundMethod!, StringComparison.Ordinal);
-        Assert.Contains("transaction.IsRefunded && CanReconcileProviderRefund", paymob, StringComparison.Ordinal);
+        Assert.Contains("finality == PaymobTransactionFinality.Refunded", paymob, StringComparison.Ordinal);
+        Assert.Contains("if (!CanReconcileProviderRefund(intent.Order.PaymentStatus))", paymob, StringComparison.Ordinal);
         Assert.Contains("_paymentLifecycleService.RecordRefundAsync", paymobRefundMethod!, StringComparison.Ordinal);
         Assert.Contains("ResolvePaymobCumulativeRefundDeltaAsync", paymob, StringComparison.Ordinal);
         Assert.Contains("PaymentStatus.Collected", paymob, StringComparison.Ordinal);
@@ -883,29 +884,25 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     [Fact]
     public void CommerceHubPaymobCompensationRefresh_MustQueryGatewayInsteadOfTrustingLocalStatus()
     {
-        var gateway = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubRefundGatewayService.cs"));
-        var refreshMethod = ExtractMethodBody(gateway, "public async Task<CommerceHubGatewayRefundResult> RefreshRefundStatusAsync");
+        var gateway = File.ReadAllText(ApiPath("Services", "Payments", "Paymob", "PaymobCommerceHubRefundGateway.cs"));
+        var refreshMethod = ExtractMethodBody(gateway, "public Task<CommerceHubGatewayRefundResult> RefreshRefundStatusAsync");
 
         Assert.NotNull(refreshMethod);
-        Assert.Contains("PaymobTransactionRetrieveUrl", gateway, StringComparison.Ordinal);
-        Assert.Contains("RefreshPaymobRefundStatusAsync", gateway, StringComparison.Ordinal);
-        Assert.Contains("client.GetAsync", gateway, StringComparison.Ordinal);
-        Assert.Contains("BuildPaymobStatusResultFromJson", gateway, StringComparison.Ordinal);
-        Assert.Contains("Paymob refund status refresh requires a numeric refund reference", gateway, StringComparison.Ordinal);
-        Assert.DoesNotContain("PaymentProvider.Paymob => new CommerceHubGatewayRefundResult", refreshMethod!, StringComparison.Ordinal);
+        Assert.Contains("modern Super Admin credential contract", gateway, StringComparison.Ordinal);
+        Assert.Contains("GatewayStatus: \"not_supported\"", gateway, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceHubPaymobOptions", gateway, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApiKey", gateway, StringComparison.Ordinal);
     }
 
     [Fact]
     public void CommerceHubPaymobInitialRefund_MustNotConfirmFromPaymentLevelSuccessFields()
     {
-        var gateway = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubRefundGatewayService.cs"));
-        var initialResultBuilder = ExtractMethodBody(gateway, "BuildPaymobInitialRefundResultFromJson");
+        var gateway = File.ReadAllText(ApiPath("Services", "Payments", "Paymob", "PaymobCommerceHubRefundGateway.cs"));
+        var refundMethod = ExtractMethodBody(gateway, "public Task<CommerceHubGatewayRefundResult> RefundAsync");
 
-        Assert.NotNull(initialResultBuilder);
-        Assert.Contains("isRefunded == true || isVoided == true", initialResultBuilder!, StringComparison.Ordinal);
-        Assert.Contains("accepted_unverified", initialResultBuilder!, StringComparison.Ordinal);
-        Assert.DoesNotContain("successElement.ValueKind == JsonValueKind.True", gateway, StringComparison.Ordinal);
-        Assert.DoesNotContain("pendingElement.ValueKind == JsonValueKind.False", gateway, StringComparison.Ordinal);
+        Assert.NotNull(refundMethod);
+        Assert.Contains("Task.FromResult(NotSupported", refundMethod!, StringComparison.Ordinal);
+        Assert.DoesNotContain("HttpClient", gateway, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1061,10 +1058,11 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     public void CommerceHubPaymobInitiation_MustFailClosedWhenProviderSessionPersistenceIsAmbiguous()
     {
         var source = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentService.cs"));
+        var adapter = File.ReadAllText(ApiPath("Services", "Payments", "Paymob", "PaymobAdapter.cs"));
         var initiateMethod = ExtractMethodBody(source, "public async Task<CommerceHubPaymentInitiateResponseDto> InitiateAsync");
         var createPaymobMethod = ExtractMethodBody(source, "private async Task<CommerceHubPaymentProviderSession> CreatePaymobSessionAsync");
 
-        Assert.Contains("merchant_order_id = payment.ProviderReference", source, StringComparison.Ordinal);
+        Assert.Contains("ProviderReference = payment.ProviderReference", source, StringComparison.Ordinal);
         Assert.Contains("PAYMENT_PROVIDER_SESSION_RECONCILIATION_REQUIRED", source, StringComparison.Ordinal);
         Assert.Contains("CommerceHubProviderSessionPersistenceException", source, StringComparison.Ordinal);
         Assert.Contains("CommerceHubProviderSessionOutcomeUnknownException", source, StringComparison.Ordinal);
@@ -1089,16 +1087,13 @@ public sealed class CrossSystemCriticalRiskHardeningTests
             "catch (CommerceHubCheckoutException ex)");
         AssertContainsInOrder(
             createPaymobMethod!,
-            "EnsurePaymobPaymentKeyConfigurationValid",
             "ResolveMarketplaceOrderCountryCodeAsync",
-            "AuthenticatePaymobAsync",
-            "CreatePaymobOrderAsync",
-            "payment.ProviderIntentId = paymobOrderId",
-            "CreatePaymobPaymentKeyAsync");
-        Assert.Contains("IsPaymobPaymentKeyOutcomeUnknown", source, StringComparison.Ordinal);
-        Assert.Contains("PAYMOB_PAYMENT_KEY_FAILED", source, StringComparison.Ordinal);
-        Assert.Contains("providerIntentId = payment.ProviderIntentId", source, StringComparison.Ordinal);
-        Assert.Contains("Paymob accepted an order before payment-key creation completed", source, StringComparison.Ordinal);
+            "GetProviderAdapter(CommerceHubPaymentMethods.Paymob).CreateSessionAsync",
+            "BuildPaymobProviderSessionRequest",
+            "ProtectPaymentSession");
+        Assert.Contains("PAYMOB_INTENTION_RECOVERY_REQUIRED", adapter, StringComparison.Ordinal);
+        Assert.Contains("OutcomeUnknown", createPaymobMethod!, StringComparison.Ordinal);
+        Assert.Contains("Paymob intention creation has an unknown outcome", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2697,14 +2692,15 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("CheckoutEventBase : INonAuthoritativeIntegrationEvent", checkoutEvents, StringComparison.Ordinal);
         Assert.Contains("InventoryReservedEvent : IntegrationEvent, IAggregateScopedIntegrationEvent", checkoutEvents, StringComparison.Ordinal);
         Assert.DoesNotContain("InventoryReservedEvent : CheckoutEventBase", checkoutEvents, StringComparison.Ordinal);
-        Assert.Matches(
-            @"Failed to store reservation in Redis \(non-fatal\)[\s\S]+await EmitInventoryReservedEventAsync",
-            validateMethod!);
+        Assert.DoesNotContain("Redis", validateMethod!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("emitExternalReservationSideEffects", validateMethod!, StringComparison.Ordinal);
+        Assert.Contains("await EmitInventoryReservedEventAsync", validateMethod!, StringComparison.Ordinal);
         AssertContainsInOrder(
             createOrderMethod!,
             "BeginTransactionAsync(",
             "ValidateAndReserveInventoryAsync(",
             "EmitOrderCreatedEventAsync(",
+            "PersistInventoryReservedOutboxAsync(",
             "SaveChangesAsync(cancellationToken)",
             "CommitAsync(cancellationToken)");
         Assert.Contains("IsolationLevel.Serializable", createOrderMethod!, StringComparison.Ordinal);

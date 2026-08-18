@@ -3,11 +3,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using PointOfSale.API.Attributes;
-using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.RateLimiting;
 using PointOfSale.API.Security;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Paymob;
 
@@ -38,7 +36,7 @@ namespace PointOfSale.API.Controllers;
 [AllowAnonymousTenant]
 public class PaymobWebhooksController : ControllerBase
 {
-    private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
+    private readonly IPaymobPaymentService _paymobPaymentService;
     private readonly IPaymentWebhookRequestPipeline _webhookRequestPipeline;
     private readonly ILogger<PaymobWebhooksController> _logger;
 
@@ -46,11 +44,11 @@ public class PaymobWebhooksController : ControllerBase
     private const string TenantIdHeader = "X-Tenant-Id";
 
     public PaymobWebhooksController(
-        ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
+        IPaymobPaymentService paymobPaymentService,
         IPaymentWebhookRequestPipeline webhookRequestPipeline,
         ILogger<PaymobWebhooksController> logger)
     {
-        _paymentOrchestrationService = paymentOrchestrationService;
+        _paymobPaymentService = paymobPaymentService;
         _webhookRequestPipeline = webhookRequestPipeline;
         _logger = logger;
     }
@@ -141,8 +139,8 @@ public class PaymobWebhooksController : ControllerBase
 
         try
         {
-            var result = await _paymentOrchestrationService.ProcessWebhookAsync(
-                CommerceHubPaymentMethods.Paymob,
+            var result = await _paymobPaymentService.ProcessWebhookAsync(
+                webhookContext.TenantId,
                 webhookContext.Signature,
                 webhookContext.RawPayload,
                 traceId,
@@ -160,12 +158,12 @@ public class PaymobWebhooksController : ControllerBase
                     result.TransactionId,
                     traceId);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, MapPaymobWebhookResult(result));
+                return StatusCode(StatusCodes.Status500InternalServerError, result);
             }
 
-            return Ok(MapPaymobWebhookResult(result));
+            return Ok(result);
         }
-        catch (CommerceHubCheckoutException ex) when (ex.StatusCode == StatusCodes.Status401Unauthorized)
+        catch (PaymobWebhookSignatureException)
         {
             WebhookRequestBodyReader.RecordInvalidSignature(HttpContext, "paymob", "payment");
             _logger.LogWarning(
@@ -175,13 +173,13 @@ public class PaymobWebhooksController : ControllerBase
             // Return 401 for invalid signature
             return Unauthorized(new ApiErrorResponse("INVALID_SIGNATURE", "Invalid HMAC signature.", traceId));
         }
-        catch (CommerceHubCheckoutException ex)
+        catch (PaymentException ex)
         {
             _logger.LogError(
                 ex,
                 "Paymob webhook validation failed | TenantId: {TenantId} | Code: {Code} | TraceId: {TraceId}",
                 webhookContext.TenantId,
-                ex.Code,
+                ex.ErrorCode,
                 traceId);
 
             return StatusCode(StatusCodes.Status500InternalServerError, new PaymobWebhookResultDto
@@ -230,8 +228,7 @@ public class PaymobWebhooksController : ControllerBase
 
         try
         {
-            var result = await _paymentOrchestrationService.ValidateCallbackAsync(
-                CommerceHubPaymentMethods.Paymob,
+            var result = await _paymobPaymentService.ValidateCallbackAsync(
                 callbackParams,
                 traceId,
                 cancellationToken);
@@ -244,7 +241,7 @@ public class PaymobWebhooksController : ControllerBase
                     "Paymob callback rejected because stored routing context is unavailable | TenantId: {TenantId} | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | TraceId: {TraceId}",
                     result.TenantId,
                     result.OrderId,
-                    result.PaymentId,
+                    result.PaymentIntentId,
                     traceId);
 
                 return BuildSafeErrorPage(
@@ -384,19 +381,6 @@ public class PaymobWebhooksController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-    }
-
-    private static PaymobWebhookResultDto MapPaymobWebhookResult(CommerceHubPaymentWebhookResultDto result)
-    {
-        return new PaymobWebhookResultDto
-        {
-            Processed = result.Processed,
-            Message = result.Message,
-            EventLogId = result.PaymentId,
-            OrderId = result.MarketplaceOrderId?.ToString(),
-            TransactionId = result.TransactionId,
-            EventType = result.Provider
-        };
     }
 
     #endregion

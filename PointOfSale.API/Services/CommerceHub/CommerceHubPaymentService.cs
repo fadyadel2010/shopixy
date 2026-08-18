@@ -14,10 +14,12 @@ using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Instrumentation;
 using PointOfSale.API.Services.CommerceHub.Finance;
 using PointOfSale.API.Services.Payments;
+using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Helpers;
+using PointOfSale.Core.Security;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -105,6 +107,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
     private readonly CommerceHubPaymentsOptions _paymentsOptions;
     private readonly CommerceHubPaymentOrchestrationTelemetry _telemetry;
     private readonly ILogger<CommerceHubPaymentService> _logger;
+    private readonly IPaymobSensitiveArtifactProtector? _paymobArtifactProtector;
 
     public CommerceHubPaymentService(
         ApplicationDbContext dbContext,
@@ -117,7 +120,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         IEnumerable<IPaymentProviderAdapter> providerAdapters,
         IOptions<CommerceHubPaymentsOptions> paymentsOptions,
         CommerceHubPaymentOrchestrationTelemetry telemetry,
-        ILogger<CommerceHubPaymentService> logger)
+        ILogger<CommerceHubPaymentService> logger,
+        IPaymobSensitiveArtifactProtector? paymobArtifactProtector = null)
     {
         _dbContext = dbContext;
         _financialWorkflowService = financialWorkflowService;
@@ -132,6 +136,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         _paymentsOptions = paymentsOptions.Value;
         _telemetry = telemetry;
         _logger = logger;
+        _paymobArtifactProtector = paymobArtifactProtector;
     }
 
     public async Task<CommerceHubPaymentInitiateResponseDto> InitiateAsync(
@@ -775,40 +780,12 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             };
         }
 
-        var legacyIntent = await ResolveLegacyProviderCallbackPaymentIntentAsync(
-            providerValue,
-            callback.ProviderIntentId,
-            callback.TransactionId,
-            cancellationToken);
-        if (legacyIntent == null)
-        {
-            return new CommerceHubPaymentCallbackResultDto
-            {
-                IsValid = false,
-                IsSuccess = false,
-                TransactionId = callback.TransactionId,
-                Message = "Payment callback context was not found."
-            };
-        }
-
-        var legacyMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(legacyIntent.ProviderMetadata);
-        var metadataMatchesIntent = PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(
-            legacyMetadata,
-            legacyIntent.TenantId,
-            legacyIntent.OrderId);
-
         return new CommerceHubPaymentCallbackResultDto
         {
-            IsValid = metadataMatchesIntent,
-            IsSuccess = metadataMatchesIntent && callback.IsSuccess,
-            TenantId = legacyIntent.TenantId,
-            OrderId = legacyIntent.OrderId,
-            PaymentId = legacyIntent.Id,
-            StorefrontBaseUrl = legacyMetadata?.StorefrontBaseUrl,
+            IsValid = false,
+            IsSuccess = false,
             TransactionId = callback.TransactionId,
-            Message = metadataMatchesIntent
-                ? callback.Message ?? "Payment callback verified."
-                : "Payment callback context is incomplete."
+            Message = "CommerceHub payment callback context was not found."
         };
     }
 
@@ -823,7 +800,16 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
 
         if (string.Equals(providerCode, CommerceHubPaymentMethods.Paymob, StringComparison.OrdinalIgnoreCase))
         {
-            var capabilities = GetProviderAdapter(providerCode).Capabilities;
+            if (!_providerAdapters.TryGetValue(new ProviderCode(providerCode).Normalized, out var adapter) || adapter is null)
+            {
+                return false;
+            }
+
+            if (adapter.Capabilities is not { } capabilities)
+            {
+                return false;
+            }
+
             return capabilities.SupportsPaymentSessionCreation &&
                    capabilities.SupportsWebhookVerification &&
                    capabilities.SupportsCallbackParsing;
@@ -848,21 +834,6 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                  (!string.IsNullOrWhiteSpace(providerIntentId) && payment.ProviderIntentId == providerIntentId) ||
                  (!string.IsNullOrWhiteSpace(providerReference) && payment.ProviderReference == providerReference)))
             .OrderByDescending(payment => payment.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
-    }
-
-    private async Task<PaymentIntent?> ResolveLegacyProviderCallbackPaymentIntentAsync(
-        PaymentProvider provider,
-        string? providerIntentId,
-        string? transactionId,
-        CancellationToken cancellationToken)
-    {
-        return await _dbContext.PaymentIntents
-            .Where(intent =>
-                intent.Provider == provider &&
-                ((!string.IsNullOrWhiteSpace(providerIntentId) && intent.ProviderIntentId == providerIntentId) ||
-                 (!string.IsNullOrWhiteSpace(transactionId) && intent.ProviderPaymentId == transactionId)))
-            .OrderByDescending(intent => intent.CreatedAt)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -939,9 +910,14 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         string correlationId,
         CancellationToken cancellationToken)
     {
+        var durablePayload = _paymobArtifactProtector?.ProtectWebhookPayload(rawPayload) ??
+            WebhookDataRedactor.RedactPayload(rawPayload);
         var providerReference = callback.ProviderReference?.Trim();
         var providerIntentId = callback.ProviderIntentId;
         var transactionId = callback.TransactionId;
+        var providerEventId = callback.IsRefunded
+            ? $"{transactionId}:refund:{callback.AmountMinorUnits}"
+            : transactionId;
 
         var payment = await ResolvePaymentAsync(
             PaymentProvider.Paymob,
@@ -966,7 +942,10 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         {
             var unresolvedCurrency = RequireCommerceHubPaymentCurrency(callback.Currency, "unresolved Paymob webhook");
             var unresolvedAmount = ConvertFromMinorUnits(callback.AmountMinorUnits, unresolvedCurrency);
-            var unresolvedSuccess = callback.Success && !callback.IsVoided && !callback.IsRefunded;
+            var unresolvedSuccess = callback.Success &&
+                !callback.AuthorizationOnly &&
+                !callback.IsVoided &&
+                !callback.IsRefunded;
             var unresolvedRefund = callback.IsRefunded;
 
             var durableUnresolvedEvidenceStored = false;
@@ -980,7 +959,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     providerReference,
                     null,
                     providerIntentId,
-                    transactionId,
+                    providerEventId,
                     unresolvedAmount,
                     unresolvedCurrency,
                     rawPayload,
@@ -997,7 +976,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     providerReference,
                     null,
                     providerIntentId,
-                    transactionId,
+                    providerEventId,
                     unresolvedAmount,
                     unresolvedCurrency,
                     rawPayload,
@@ -1030,8 +1009,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 Id = Guid.NewGuid(),
                 PaymentId = payment.Id,
                 EventType = callback.EventType,
-                ProviderEventId = transactionId,
-                RawResponse = rawPayload
+                ProviderEventId = providerEventId,
+                RawResponse = durablePayload
             });
 
             await _dbContext.SaveChangesAsync(cancellationToken);
@@ -1069,13 +1048,34 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 transactionId: transactionId,
                 refundReferenceId: $"paymob-refund:{transactionId}",
                 eventType: callback.EventType,
-                providerEventId: transactionId,
-                rawPayload: rawPayload,
+                providerEventId: providerEventId,
+                rawPayload: durablePayload,
                 reason: "Paymob reported that an already-captured CommerceHub payment was refunded by the provider.",
                 needsManualCurrencyReview: needsManualCurrencyReview,
                 providerAmountIsCumulativeRefunded: true,
                 correlationId: correlationId,
                 cancellationToken: cancellationToken);
+        }
+
+        if (callback.AuthorizationOnly)
+        {
+            _dbContext.CommerceHubPaymentLogs.Add(new CommerceHubPaymentLog
+            {
+                Id = Guid.NewGuid(),
+                PaymentId = payment.Id,
+                EventType = "payment_authorized",
+                ProviderEventId = providerEventId,
+                RawResponse = durablePayload
+            });
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            return BuildWebhookResult(
+                payment,
+                CommerceHubPaymentMethods.Paymob,
+                processed: true,
+                message: "Paymob authorized the transaction; capture is still required.",
+                transactionId: transactionId,
+                shouldRetry: false);
         }
 
         var isSuccess = callback.Success && !callback.IsVoided;
@@ -1089,8 +1089,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             providerIntentId: providerIntentId,
             transactionId: transactionId,
             eventType: callback.EventType,
-            providerEventId: transactionId,
-            rawPayload: rawPayload,
+            providerEventId: providerEventId,
+            rawPayload: durablePayload,
             failureReason: callback.IsRefunded
                 ? "Paymob reported the transaction as refunded."
                 : callback.IsVoided
@@ -1403,6 +1403,30 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     "PAYMENT_REFUND_AMOUNT_INVALID",
                     $"{providerCode} refund webhook amount must be greater than zero.",
                     StatusCodes.Status409Conflict);
+            }
+
+            if (processedPayment.Status is not (CommerceHubPaymentRecordStatus.Paid or
+                CommerceHubPaymentRecordStatus.RefundRequired or
+                CommerceHubPaymentRecordStatus.Refunded))
+            {
+                _dbContext.CommerceHubPaymentLogs.Add(new CommerceHubPaymentLog
+                {
+                    Id = Guid.NewGuid(),
+                    PaymentId = processedPayment.Id,
+                    EventType = "provider_evidence_pending_capture",
+                    ProviderEventId = providerEventId,
+                    RawResponse = rawPayload
+                });
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+
+                return BuildWebhookResult(
+                    processedPayment,
+                    providerCode,
+                    processed: false,
+                    message: "Provider refund evidence arrived before captured payment authority and remains pending reconciliation.",
+                    transactionId: paymentReferenceId,
+                    shouldRetry: true);
             }
 
             EnsurePaymentMatchesMarketplaceOrder(processedPayment, processedPayment.Order);
@@ -2864,7 +2888,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
     private IPaymentProviderAdapter GetProviderAdapter(string providerCode)
     {
         var normalized = new ProviderCode(providerCode).Normalized;
-        if (!_providerAdapters.TryGetValue(normalized, out var adapter))
+        if (!_providerAdapters.TryGetValue(normalized, out var adapter) || adapter is null)
         {
             throw new CommerceHubCheckoutException(
                 "PAYMENT_PROVIDER_ADAPTER_NOT_REGISTERED",
@@ -2967,9 +2991,19 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     correlationId),
                 cancellationToken);
 
+            if (_paymobArtifactProtector is null ||
+                string.IsNullOrWhiteSpace(session.PaymentUrl) ||
+                string.IsNullOrWhiteSpace(session.PaymentToken))
+            {
+                throw new PaymentProviderAdapterException(CanonicalProviderError.Configuration(
+                    PaymobProviderReference.ProviderName,
+                    "PAYMOB_SESSION_PROTECTION_UNAVAILABLE",
+                    "CommerceHub Paymob checkout material could not be protected."));
+            }
+
             return new CommerceHubPaymentProviderSession(
-                session.PaymentUrl,
-                session.PaymentToken,
+                null,
+                _paymobArtifactProtector.ProtectPaymentSession(session.PaymentToken, session.PaymentUrl),
                 session.ProviderIntentId,
                 session.RawResponse);
         }
@@ -2977,7 +3011,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         {
             payment.ProviderIntentId = ex.ProviderIntentId;
             throw new CommerceHubProviderSessionOutcomeUnknownException(
-                "Paymob accepted an order before payment-key creation completed. POS must recover the accepted Paymob order instead of creating a new provider order.",
+                "Paymob intention creation has an unknown outcome. Reconcile the provider intention before creating another session.",
                 ex.ProviderIntentId,
                 ex);
         }
@@ -3885,7 +3919,9 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             unresolved.Currency = authoritativeCurrency;
             unresolved.EventType = eventType;
             unresolved.PayloadHash = payloadHash;
-            unresolved.RawPayload = PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload);
+            unresolved.RawPayload = provider == PaymentProvider.Paymob && _paymobArtifactProtector is not null
+                ? _paymobArtifactProtector.ProtectWebhookPayload(rawPayload)
+                : PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload);
             unresolved.CorrelationId = correlationId;
             unresolved.LastResolutionAttemptAtUtc = nowUtc;
             unresolved.ResolutionAttemptCount += 1;
@@ -5023,7 +5059,19 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             ? _paymentsOptions.Stripe.PublishableKey
             : null;
 
-        var handoffType = ResolveHandoffType(providerCode, payment, publishableKey);
+        var paymentUrl = payment.CheckoutUrl;
+        var paymentToken = payment.PaymentToken;
+        if (string.Equals(providerCode, CommerceHubPaymentMethods.Paymob, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(paymentToken) &&
+            paymentToken.StartsWith(PaymobSensitiveArtifactProtector.PaymentSessionPrefix, StringComparison.Ordinal))
+        {
+            var protectedSession = _paymobArtifactProtector?.UnprotectPaymentSession(paymentToken)
+                ?? throw new InvalidOperationException("CommerceHub Paymob session protector is unavailable.");
+            paymentUrl = protectedSession.IframeUrl;
+            paymentToken = null;
+        }
+
+        var handoffType = ResolveHandoffType(providerCode, paymentUrl, paymentToken, publishableKey);
 
         return new CommerceHubPaymentInitiateResponseDto
         {
@@ -5035,8 +5083,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             Amount = payment.Amount,
             Currency = payment.Currency,
             HandoffType = handoffType,
-            PaymentUrl = payment.CheckoutUrl,
-            PaymentToken = payment.PaymentToken,
+            PaymentUrl = paymentUrl,
+            PaymentToken = paymentToken,
             PublishableKey = publishableKey,
             ProviderReference = payment.ProviderReference,
             ProviderIntentId = payment.ProviderIntentId,
@@ -5045,17 +5093,21 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         };
     }
 
-    private static string ResolveHandoffType(string providerCode, CommerceHubPayment payment, string? publishableKey)
+    private static string ResolveHandoffType(
+        string providerCode,
+        string? paymentUrl,
+        string? paymentToken,
+        string? publishableKey)
     {
         // Only return client_secret for Stripe when both payment token and publishable key are available
         if (string.Equals(providerCode, CommerceHubPaymentMethods.Stripe, StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(payment.PaymentToken) &&
+            !string.IsNullOrWhiteSpace(paymentToken) &&
             !string.IsNullOrWhiteSpace(publishableKey))
         {
             return "client_secret";
         }
 
-        if (!string.IsNullOrWhiteSpace(payment.CheckoutUrl))
+        if (!string.IsNullOrWhiteSpace(paymentUrl))
         {
             return "redirect_url";
         }

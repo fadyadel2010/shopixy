@@ -914,9 +914,9 @@ describe('commerce authority certification', () => {
     it('keeps ShippingStep out of the automatic shipping preview lifecycle', () => {
         const source = readFileSync(new URL('./components/checkout/ShippingStep.tsx', import.meta.url), 'utf8');
 
-        expect(source).not.toContain('import React, { useEffect');
         expect(source).not.toContain('Fetch shipping methods on mount');
         expect(source).not.toContain('useEffect(() => {\n        if (cartId');
+        expect(source).not.toContain('void fetchShippingMethods();');
         expect(source).toContain('fetchShippingMethods({ force: true })');
     });
 

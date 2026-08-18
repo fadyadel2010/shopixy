@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.DataProtection;
@@ -14,6 +13,7 @@ using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.Cart;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Checkout;
+using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Cart;
 using PointOfSale.Core.Entities;
@@ -73,7 +73,11 @@ public sealed class CheckoutSessionConsistencyIntegrationTests
         var recoveryToken = tokenService.CreateRecoveryToken(seeded.OlderSession);
 
         await using var context = await scope.CreateDbContextAsync();
-        var controller = CreateController(CreateService(context), scope.TenantId, tokenService: tokenService);
+        var controller = CreateController(
+            CreateService(context),
+            scope.TenantId,
+            BuildAuthoritativeCart(scope.TenantId, seeded.NewerSession.CartId, "guest-session-legacy"),
+            tokenService);
 
         var result = await controller.RecoverByToken(recoveryToken, CancellationToken.None);
 
@@ -162,7 +166,11 @@ public sealed class CheckoutSessionConsistencyIntegrationTests
         var recoveryToken = tokenService.CreateRecoveryToken(seeded.OlderSession);
 
         await using var context = await scope.CreateDbContextAsync();
-        var controller = CreateController(CreateService(context), scope.TenantId, tokenService: tokenService);
+        var controller = CreateController(
+            CreateService(context),
+            scope.TenantId,
+            BuildAuthoritativeCart(scope.TenantId, seeded.NewerSession.CartId, "guest-session-legacy"),
+            tokenService);
 
         var result = await controller.RecoverByToken(recoveryToken, CancellationToken.None);
 
@@ -202,18 +210,26 @@ public sealed class CheckoutSessionConsistencyIntegrationTests
 
         await using (var firstContext = await scope.CreateDbContextAsync())
         {
-            var firstController = CreateController(CreateService(firstContext), scope.TenantId, tokenService: tokenService);
+            var firstController = CreateController(
+                CreateService(firstContext),
+                scope.TenantId,
+                BuildAuthoritativeCart(scope.TenantId, seeded.NewerSession.CartId, "guest-session-legacy"),
+                tokenService);
             var firstResult = await firstController.RecoverByToken(staleRecoveryToken, CancellationToken.None);
             Assert.IsType<OkObjectResult>(firstResult);
         }
 
         await using var secondContext = await scope.CreateDbContextAsync();
-        var secondController = CreateController(CreateService(secondContext), scope.TenantId, tokenService: tokenService);
+        var secondController = CreateController(
+            CreateService(secondContext),
+            scope.TenantId,
+            BuildAuthoritativeCart(scope.TenantId, seeded.NewerSession.CartId, "guest-session-legacy"),
+            tokenService);
         var secondResult = await secondController.RecoverByToken(staleRecoveryToken, CancellationToken.None);
 
         var notFound = Assert.IsType<NotFoundObjectResult>(secondResult);
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(notFound.Value));
-        Assert.Equal("SESSION_NOT_FOUND", document.RootElement.GetProperty("code").GetString());
+        var error = Assert.IsType<ApiErrorResponse>(notFound.Value);
+        Assert.Equal("SESSION_NOT_FOUND", error.Code);
     }
 
     [Fact]
@@ -654,6 +670,16 @@ public sealed class CheckoutSessionConsistencyIntegrationTests
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)
     {
+        connection.CreateFunction<string?, string?>(
+            "btrim",
+            input => input?.Trim());
+        connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (input, characters) => input?.Trim(characters?.ToCharArray() ?? []));
+        connection.CreateFunction<string?, long?>(
+            "char_length",
+            input => input?.Length);
+
         connection.CreateFunction<string?, string?, string?, string?, string?>(
             "REGEXP_REPLACE",
             (input, pattern, replacement, options) =>

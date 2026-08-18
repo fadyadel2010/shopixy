@@ -452,7 +452,20 @@ builder.Services.AddScoped<PointOfSale.API.Services.IPurchaseFinancialIntegrityS
 builder.Services.AddScoped<PointOfSale.API.Services.IFinancialMutationIdempotencyService, PointOfSale.API.Services.FinancialMutationIdempotencyService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IFinancialIntegrityService, PointOfSale.API.Services.FinancialIntegrityService>();
 builder.Services.AddScoped<PointOfSale.API.Services.IProductMediaService, PointOfSale.API.Services.ProductMediaService>();
-builder.Services.AddScoped<PointOfSale.API.Services.IR2StorageService, PointOfSale.API.Services.R2StorageService>();
+var useDevelopmentFileStorage = builder.Environment.IsDevelopment();
+builder.Services.AddScoped<PointOfSale.API.Services.IR2StorageService>(serviceProvider =>
+{
+    var r2Options = serviceProvider
+        .GetRequiredService<Microsoft.Extensions.Options.IOptions<PointOfSale.API.Configuration.R2Options>>()
+        .Value;
+
+    if (useDevelopmentFileStorage && !r2Options.IsConfigured)
+    {
+        return ActivatorUtilities.CreateInstance<PointOfSale.API.Services.DevelopmentFileStorageService>(serviceProvider);
+    }
+
+    return ActivatorUtilities.CreateInstance<PointOfSale.API.Services.R2StorageService>(serviceProvider);
+});
 builder.Services.AddScoped<PointOfSale.Core.Abstractions.IChatAttachmentReferenceVerifier, PointOfSale.API.Services.ChatAttachmentReferenceVerifier>();
 builder.Services.AddScoped<PointOfSale.API.Services.IFileValidationService, PointOfSale.API.Services.FileValidationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Checkout.ICheckoutAttachmentService, PointOfSale.API.Services.Checkout.CheckoutAttachmentService>();
@@ -764,7 +777,14 @@ builder.Services.AddHostedService<PointOfSale.API.Services.Checkout.CheckoutPaym
 // - Idempotent operations
 // - iFrame-based payment flow
 // =============================================================================
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.Paymob.IPaymobRetryInventoryAuthority, PointOfSale.API.Services.Payments.Paymob.PaymobRetryInventoryAuthority>();
 builder.Services.AddScoped<PointOfSale.API.Services.Payments.Paymob.IPaymobPaymentService, PointOfSale.API.Services.Payments.Paymob.PaymobPaymentService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderPaymentGateway, PointOfSale.API.Services.Payments.Stripe.StripePaymentGateway>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderPaymentGateway, PointOfSale.API.Services.Payments.Paymob.PaymobPaymentGateway>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderPaymentGateway, PointOfSale.API.Services.Payments.Fawry.FawryPaymentGateway>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderPaymentGateway, PointOfSale.API.Services.Payments.ManualPayment.ManualWalletPaymentGateway>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IPaymentGateway, PointOfSale.API.Services.Payments.ProviderContracts.PaymentGateway>();
+builder.Services.AddScoped<PointOfSale.API.Services.Payments.IStorefrontPaymentRuntimeReadinessService, PointOfSale.API.Services.Payments.StorefrontPaymentRuntimeReadinessService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IRefundGateway, PointOfSale.API.Services.Payments.ProviderContracts.RefundGateway>();
 builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderRefundGateway, PointOfSale.API.Services.Payments.Stripe.StripeCommerceHubRefundGateway>();
 builder.Services.AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderRefundGateway, PointOfSale.API.Services.Payments.Paymob.PaymobCommerceHubRefundGateway>();

@@ -15,28 +15,21 @@ public sealed class PaymobFoundationCertificationTests
     {
         var options = BindOptions(new Dictionary<string, string?>
         {
-            ["CommerceHub:Payments:Paymob:Enabled"] = "true",
-            ["CommerceHub:Payments:Paymob:ApiKey"] = "paymob_api_key_foundation",
-            ["CommerceHub:Payments:Paymob:IntegrationId"] = "123456",
-            ["CommerceHub:Payments:Paymob:IframeId"] = "654321",
-            ["CommerceHub:Payments:Paymob:HmacSecret"] = "paymob_hmac_foundation",
-            ["CommerceHub:Payments:Paymob:Environment"] = "Sandbox",
-            ["CommerceHub:Payments:Paymob:SandboxMode"] = "true",
-            ["CommerceHub:Payments:Paymob:Timeout"] = "00:00:12",
-            ["CommerceHub:Payments:Paymob:RetryCount"] = "2",
-            ["CommerceHub:Payments:Paymob:FeatureFlags:Enabled"] = "true",
-            ["CommerceHub:Payments:Paymob:FeatureFlags:SandboxEnabled"] = "true",
-            ["CommerceHub:Payments:Paymob:FeatureFlags:ProductionEnabled"] = "false",
-            ["CommerceHub:Payments:Paymob:Callback:Configured"] = "true",
-            ["CommerceHub:Payments:Paymob:Callback:CallbackUrl"] = "https://pos.example.com/api/webhooks/paymob/callback",
-            ["CommerceHub:Payments:Paymob:Callback:WebhookUrl"] = "https://pos.example.com/api/webhooks/paymob"
+            ["Storefront:Payments:Paymob:Enabled"] = "true",
+            ["Storefront:Payments:Paymob:Environment"] = "Sandbox",
+            ["Storefront:Payments:Paymob:SandboxMode"] = "true",
+            ["Storefront:Payments:Paymob:Timeout"] = "00:00:12",
+            ["Storefront:Payments:Paymob:RetryCount"] = "2",
+            ["Storefront:Payments:Paymob:FeatureFlags:Enabled"] = "true",
+            ["Storefront:Payments:Paymob:FeatureFlags:SandboxEnabled"] = "true",
+            ["Storefront:Payments:Paymob:FeatureFlags:ProductionEnabled"] = "false",
+            ["Storefront:Payments:Paymob:Callback:Configured"] = "true",
+            ["Storefront:Payments:Paymob:Callback:CallbackUrl"] = "https://pos.example.com/api/webhooks/paymob/callback",
+            ["Storefront:Payments:Paymob:Callback:WebhookUrl"] = "https://pos.example.com/api/webhooks/paymob"
         });
 
         Assert.True(options.Enabled);
-        Assert.Equal("paymob_api_key_foundation", options.ApiKey);
-        Assert.Equal("123456", options.IntegrationId);
-        Assert.Equal("654321", options.IframeId);
-        Assert.Equal("paymob_hmac_foundation", options.HmacSecret);
+        Assert.Equal("Storefront:Payments:Paymob", PaymobOptions.SectionName);
         Assert.Equal(PaymobEnvironment.Sandbox, options.Environment);
         Assert.True(options.SandboxMode);
         Assert.Equal(TimeSpan.FromSeconds(12), options.Timeout);
@@ -53,23 +46,45 @@ public sealed class PaymobFoundationCertificationTests
     }
 
     [Fact]
-    public void CredentialValidation_MustFailClosedForMissingEnabledCredentials()
+    public void DevelopmentOverlay_MustEnableValidTenantScopedSandboxRuntime()
+    {
+        var root = DiscoverSolutionRoot(AppContext.BaseDirectory);
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Path.Combine(root, "PointOfSale.API"))
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile("appsettings.Development.json", optional: false)
+            .Build();
+        var options = new PaymobOptions();
+        configuration.GetSection(PaymobOptions.SectionName).Bind(options);
+
+        var result = PaymobCredentialValidator.Validate(options);
+
+        Assert.True(result.IsValid, string.Join(Environment.NewLine, result.Errors));
+        Assert.True(PaymobOptionsValidator.IsRuntimeEnabled(options));
+        Assert.True(options.FeatureFlags.PaymentExecutionEnabled);
+        Assert.True(options.FeatureFlags.CallbackExecutionEnabled);
+        Assert.True(options.FeatureFlags.WebhookExecutionEnabled);
+        Assert.True(options.Capabilities.PaymentExecutionCertified);
+        Assert.True(options.Capabilities.CallbackCertified);
+        Assert.True(options.Capabilities.ProviderAdapterCertified);
+        Assert.False(PaymobOptionsValidator.AreCredentialsConfigured(options));
+    }
+
+    [Fact]
+    public void GovernanceValidation_MustFailClosedForMissingEnabledCallbacks()
     {
         var options = new PaymobOptions
         {
             Enabled = true,
             Environment = PaymobEnvironment.Sandbox,
-            SandboxMode = true,
-            Callback = ValidCallback()
+            SandboxMode = true
         };
 
         var result = PaymobCredentialValidator.Validate(options);
 
         Assert.False(result.IsValid);
-        Assert.Contains(result.Errors, error => error.Contains("API key", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(result.Errors, error => error.Contains("integration ID", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(result.Errors, error => error.Contains("iframe ID", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(result.Errors, error => error.Contains("HMAC secret", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Errors, error => error.Contains("callback configuration", StringComparison.OrdinalIgnoreCase));
+        Assert.False(result.CredentialsConfigured);
     }
 
     [Fact]
@@ -163,7 +178,7 @@ public sealed class PaymobFoundationCertificationTests
         var contributor = provider.GetRequiredService<IPaymobFoundationHealthContributor>();
         var validators = provider.GetServices<IValidateOptions<PaymobOptions>>();
 
-        Assert.Equal("paymob_api_key_foundation", options.ApiKey);
+        Assert.Equal("Storefront:Payments:Paymob", PaymobOptions.SectionName);
         Assert.Equal(PaymobOptions.OfficialApiBaseUri, httpClient.BaseAddress);
         Assert.Contains(validators, validator => validator.GetType() == typeof(PaymobOptionsValidator));
         Assert.True(contributor.GetStatus().Healthy);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using PointOfSale.API.Configuration;
+using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.Infrastructure.Data;
 
@@ -27,8 +28,17 @@ public sealed class PaymobOperationalReadinessHealthCheck : IHealthCheck
         var configuration = foundation.ConfigurationStatus;
         var credentials = configuration.CredentialValidation;
 
+        if (!configuration.Enabled)
+        {
+            return HealthCheckResult.Healthy("Paymob is disabled; optional provider readiness is not required.", new Dictionary<string, object>
+            {
+                ["enabled"] = false
+            });
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var tenantConfigurationResolver = scope.ServiceProvider.GetRequiredService<IPaymobTenantConfigurationResolver>();
 
         var databaseHealth = false;
         var replayStoreHealth = false;
@@ -57,16 +67,43 @@ public sealed class PaymobOperationalReadinessHealthCheck : IHealthCheck
                     .ToListAsync(cancellationToken);
                 webhookAuditStoreHealth = true;
 
-                tenantConfigurationHealth = await dbContext.TenantPaymentMethods
+                var tenantIds = await dbContext.TenantPaymentMethods
                     .IgnoreQueryFilters()
                     .AsNoTracking()
-                    .AnyAsync(method =>
+                    .Where(method =>
                         !method.IsDeleted
                         && method.IsEnabled
                         && method.Code == "PAYMOB"
                         && method.ConfigEncrypted != null
-                        && method.ConfigEncrypted != string.Empty,
-                        cancellationToken);
+                        && method.ConfigEncrypted != string.Empty)
+                    .Select(method => method.TenantId)
+                    .Distinct()
+                    .ToArrayAsync(cancellationToken);
+
+                foreach (var tenantId in tenantIds)
+                {
+                    try
+                    {
+                        await tenantConfigurationResolver.ResolveCredentialsAsync(
+                            tenantId,
+                            PaymobOperationalCapability.PaymentIntent,
+                            cancellationToken);
+                        await tenantConfigurationResolver.ResolveCredentialsAsync(
+                            tenantId,
+                            PaymobOperationalCapability.Webhook,
+                            cancellationToken);
+                        await tenantConfigurationResolver.ResolveCredentialsAsync(
+                            tenantId,
+                            PaymobOperationalCapability.Callback,
+                            cancellationToken);
+                        tenantConfigurationHealth = true;
+                        break;
+                    }
+                    catch (PaymentException)
+                    {
+                        // Continue until one enabled tenant proves the complete runtime contract.
+                    }
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -84,9 +121,9 @@ public sealed class PaymobOperationalReadinessHealthCheck : IHealthCheck
             ["foundationHealth"] = foundation.Healthy,
             ["providerEnabledHealth"] = configuration.Enabled,
             ["environmentHealth"] = EnvironmentConfigured(configuration),
-            ["credentialHealth"] = credentials.IsValid && credentials.CredentialsConfigured,
-            ["merchantIdentifierHealth"] = credentials.CredentialsConfigured,
-            ["hmacSecretHealth"] = credentials.CredentialsConfigured,
+            ["credentialHealth"] = credentials.IsValid,
+            ["merchantIdentifierHealth"] = tenantConfigurationHealth,
+            ["hmacSecretHealth"] = tenantConfigurationHealth,
             ["callbackUrlHealth"] = credentials.CallbackConfigured,
             ["featureFlagHealth"] = FeatureFlagsConsistent(configuration),
             ["capabilityConsistencyHealth"] = CapabilitiesConsistent(configuration.Capabilities),

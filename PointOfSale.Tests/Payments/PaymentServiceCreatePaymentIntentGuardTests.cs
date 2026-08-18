@@ -12,6 +12,7 @@ using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Adapters;
+using PointOfSale.API.Services.Payments.ManualPayment;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
@@ -459,6 +460,80 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             .Setup(provider => provider.CreateProtector(It.IsAny<string>()))
             .Returns(dataProtector);
 
+        var runtimeApplicationService = new Mock<IManualPaymentRuntimeApplicationService>(MockBehavior.Strict);
+        runtimeApplicationService
+            .Setup(service => service.InitializeReferencePaymentAsync(
+                It.IsAny<ManualPaymentRuntimeApplicationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ManualPaymentRuntimeApplicationRequest request, CancellationToken _) =>
+                new ManualPaymentRuntimeApplicationResult(
+                    "manual-wallet-test",
+                    request.Channel,
+                    request.Channel.ToString().ToLowerInvariant(),
+                    request.ExecutionTimestampUtc.AddHours(2),
+                    ReferenceNumberRequired: true,
+                    ProofRequired: true,
+                    null!,
+                    null!,
+                    null!));
+
+        var evidenceApplicationService = new Mock<IManualPaymentEvidenceApplicationService>(MockBehavior.Strict);
+        evidenceApplicationService
+            .Setup(service => service.AdmitEvidenceAsync(
+                It.IsAny<ManualPaymentEvidenceApplicationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ManualPaymentEvidenceApplicationResult(null!, null!, null!));
+
+        var durableEvidenceAuthority = new Mock<IManualPaymentDurableEvidenceAuthority>(MockBehavior.Strict);
+        durableEvidenceAuthority
+            .Setup(authority => authority.WriteReceiptEvidence(
+                It.IsAny<PaymentIntent>(),
+                It.IsAny<string?>(),
+                It.IsAny<ManualPaymentRuntimeApplicationResult>(),
+                It.IsAny<ManualPaymentEvidenceApplicationResult>(),
+                It.IsAny<ManualPaymentProofMetadata>()))
+            .Returns((PaymentIntent _, string? metadata, ManualPaymentRuntimeApplicationResult _, ManualPaymentEvidenceApplicationResult _, ManualPaymentProofMetadata _) => metadata ?? "{}");
+        durableEvidenceAuthority
+            .Setup(authority => authority.ValidateReceiptEvidence(
+                It.IsAny<PaymentIntent>(),
+                It.IsAny<ManualPaymentDurableEvidencePurpose>()))
+            .Returns((ManualPaymentDurableEvidenceFacts)null!);
+
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
+        lifecycleService
+            .Setup(service => service.CreateReviewablePaymentIntentAsync(
+                It.IsAny<ReviewablePaymentIntentCreateRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ReviewablePaymentIntentCreateRequest request, CancellationToken _) =>
+            {
+                var intent = new PaymentIntent
+                {
+                    Id = request.Id,
+                    TenantId = request.TenantId,
+                    OrderId = request.OrderId,
+                    Amount = request.Amount,
+                    Currency = request.Currency,
+                    PaymentMethod = request.PaymentMethod,
+                    Provider = PaymentProvider.ManualWallet,
+                    PaymentReference = request.PaymentReference,
+                    IdempotencyKey = request.IdempotencyKey,
+                    CreatedAt = request.CreatedAtUtc,
+                    Status = PaymentIntentStatus.Pending,
+                    WalletType = request.WalletType,
+                    WalletPhoneNumber = request.WalletPhoneNumber,
+                    ProofImageUrl = request.ProofImageUrl,
+                    ProofImageExpiresAtUtc = request.ProofImageRetentionExpiresAtUtc,
+                    ProviderMetadata = request.ProviderMetadata
+                };
+                dbContext.PaymentIntents.Add(intent);
+                return intent;
+            });
+        lifecycleService
+            .Setup(service => service.AdmitPaymentReviewAsync(
+                It.IsAny<PaymentReviewAdmissionRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PaymentTransitionResult.Succeeded(PaymentStatus.AwaitingVerification));
+
         return new PaymentService(
             dbContext,
             new RedisConnectionFactory(
@@ -467,12 +542,52 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             Options.Create(new RedisSettings { Enabled = false, InstanceName = "test" }),
             Mock.Of<IEventPublisher>(),
             Array.Empty<IPaymentAdapter>(),
-            Mock.Of<IPaymentLifecycleService>(),
+            lifecycleService.Object,
             dataProtectionProvider.Object,
             Options.Create(new R2Options()),
             new CommerceReliabilityTelemetry(),
-            NullLogger<PaymentService>.Instance);
+            NullLogger<PaymentService>.Instance,
+            manualPaymentRuntimeApplicationService: runtimeApplicationService.Object,
+            manualPaymentEvidenceApplicationService: evidenceApplicationService.Object,
+            manualPaymentRetentionAuthority: new ManualPaymentRetentionAuthority(
+                Options.Create(CreateManualPaymentOptions())),
+            manualPaymentDurableEvidenceAuthority: durableEvidenceAuthority.Object);
     }
+
+    private static ManualPaymentOptions CreateManualPaymentOptions() => new()
+    {
+        Enabled = true,
+        Environment = ManualPaymentEnvironment.Sandbox,
+        SandboxMode = true,
+        FeatureFlags = new ManualPaymentFeatureFlags
+        {
+            Enabled = true,
+            SandboxEnabled = true,
+            ProofUploadEnabled = true
+        },
+        Instructions = new ManualPaymentInstructionConfiguration
+        {
+            Configured = true,
+            DefaultInstructions = "Transfer manually.",
+            RequireCustomerProof = true
+        },
+        Expiration = new ManualPaymentExpirationPolicy
+        {
+            Configured = true,
+            PendingPaymentTtl = TimeSpan.FromHours(2),
+            ProofAccessTtl = TimeSpan.FromDays(7)
+        },
+        Channels =
+        [
+            new ManualPaymentChannelConfiguration
+            {
+                Channel = ManualPaymentChannel.VodafoneCash,
+                Enabled = true,
+                DisplayName = "Vodafone Cash",
+                Instructions = "Transfer manually."
+            }
+        ]
+    };
 
     private static ApplicationDbContext CreateDbContext(Guid tenantId)
     {

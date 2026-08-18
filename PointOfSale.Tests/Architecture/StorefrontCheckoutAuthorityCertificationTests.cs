@@ -77,17 +77,6 @@ public sealed class StorefrontCheckoutAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-checkout-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS P2-B", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

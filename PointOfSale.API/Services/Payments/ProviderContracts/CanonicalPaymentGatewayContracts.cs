@@ -160,6 +160,7 @@ public sealed record PaymentProviderWebhookResult
     public string? ProviderIntentId { get; init; }
     public bool Pending { get; init; }
     public bool Success { get; init; }
+    public bool AuthorizationOnly { get; init; }
     public bool IsVoided { get; init; }
     public bool IsRefunded { get; init; }
     public long AmountMinorUnits { get; init; }

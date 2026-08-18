@@ -16,10 +16,21 @@ internal static class StorefrontSuspenseRecoveryPolicy
             return;
         }
 
-        webhookLog.ProcessingError = StorefrontUnresolvedPaymentLogState.RoutedToSuspense(paymentReference);
+        webhookLog.ProcessingError = string.Equals(
+            lifecycleResult.FailureCode,
+            "SUPERSEDED_PAYMENT_ATTEMPT_SUCCESS_REJECTED",
+            StringComparison.Ordinal)
+            ? StorefrontUnresolvedPaymentLogState.ManualReview(
+                lifecycleResult.FailureCode,
+                lifecycleResult.ErrorMessage)
+            : StorefrontUnresolvedPaymentLogState.RoutedToSuspense(paymentReference);
     }
 
     public static bool ShouldRouteToSuspenseRecovery(PaymentTransitionResult lifecycleResult) =>
         lifecycleResult.RequiresManualReview &&
-        lifecycleResult.NewStatus is PaymentStatus.Expired or PaymentStatus.AmountMismatch;
+        (lifecycleResult.NewStatus is PaymentStatus.Expired or PaymentStatus.AmountMismatch ||
+         string.Equals(
+             lifecycleResult.FailureCode,
+             "SUPERSEDED_PAYMENT_ATTEMPT_SUCCESS_REJECTED",
+             StringComparison.Ordinal));
 }

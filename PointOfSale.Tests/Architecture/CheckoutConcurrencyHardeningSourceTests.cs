@@ -15,8 +15,14 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
             "CheckoutService.cs");
 
         Assert.Contains("requestId = checkoutId;", source, StringComparison.Ordinal);
-        Assert.Contains("idempotencyKey: requestId", source, StringComparison.Ordinal);
-        Assert.Contains("idempotencyKey: checkoutId", source, StringComparison.Ordinal);
+        Assert.Contains("BuildServerCheckoutIdempotencyKey(", source, StringComparison.Ordinal);
+        Assert.Contains("string requestId,", source, StringComparison.Ordinal);
+        var canonicalPaymentCallIndex = source.IndexOf(
+            "var response = await _paymentGateway.CreateSessionAsync(",
+            StringComparison.Ordinal);
+        var propagatedRequestIdIndex = source.IndexOf("RequestId = requestId,", canonicalPaymentCallIndex, StringComparison.Ordinal);
+        Assert.True(canonicalPaymentCallIndex > 0, "Checkout must use the canonical payment gateway adapter.");
+        Assert.True(propagatedRequestIdIndex > canonicalPaymentCallIndex, "The server checkout idempotency key must reach payment session creation.");
     }
 
     [Fact]
@@ -47,10 +53,10 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
             "PointOfSale.Infrastructure",
             "Data",
             "ApplicationDbContext.cs");
-        var migrationSource = ReadRepoFile(
+        var modelSnapshotSource = ReadRepoFile(
             "PointOfSale.Infrastructure",
             "Migrations",
-            "20260422190000_S15A_CheckoutIdempotencyCartConcurrency.cs");
+            "ApplicationDbContextModelSnapshot.cs");
         var checkoutServiceSource = ReadRepoFile(
             "PointOfSale.API",
             "Services",
@@ -59,7 +65,8 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
 
         Assert.Contains("IX_Orders_TenantId_CartId_ActiveStatuses", dbContextSource, StringComparison.Ordinal);
         Assert.Contains("\\\"CartId\\\" IS NOT NULL", dbContextSource, StringComparison.Ordinal);
-        Assert.Contains("IX_Orders_TenantId_CartId_ActiveStatuses", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("IX_Orders_TenantId_CartId_ActiveStatuses", modelSnapshotSource, StringComparison.Ordinal);
+        Assert.Contains("\\\"IsDeleted\\\" = false AND \\\"CartId\\\" IS NOT NULL", modelSnapshotSource, StringComparison.Ordinal);
         Assert.Contains("RecordCheckoutDuplicateOrderPrevented(\"db_unique_guard\")", checkoutServiceSource, StringComparison.Ordinal);
     }
 
@@ -442,11 +449,11 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         var paymobGuardIndex = paymobSource.IndexOf(
             "await CheckoutInventoryAuthorityGuard.EnsureStorefrontOrderReservationsActiveAsync(",
             StringComparison.Ordinal);
-        var paymobConfigIndex = paymobSource.IndexOf(
-            "var paymobConfig = await GetPaymobConfigurationAsync(",
+        var paymobProviderSideEffectIndex = paymobSource.IndexOf(
+            "var result = await _paymobRuntimeApplicationService.CreatePaymentIntentAsync(",
             StringComparison.Ordinal);
         Assert.True(paymobGuardIndex > 0, "Paymob payment intent creation must revalidate SQL reservation authority.");
-        Assert.True(paymobGuardIndex < paymobConfigIndex, "Paymob provider configuration/session work must happen only after SQL reservation revalidation.");
+        Assert.True(paymobGuardIndex < paymobProviderSideEffectIndex, "Paymob provider session work must happen only after SQL reservation revalidation.");
     }
 
     [Fact]
@@ -547,6 +554,149 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         var stalePriceThrowIndex = source.IndexOf("throw new CheckoutPriceChangedException(originalSubtotal, newSubtotal, overallDiffPercent);", priceRefreshIndex, StringComparison.Ordinal);
 
         Assert.True(stalePriceThrowIndex > priceRefreshIndex, "Checkout must fail closed when cart prices differ from authoritative catalog prices.");
+    }
+
+    [Fact]
+    public void CheckoutProductAuthorityLock_PostgresEntityMaterialization_MustSelectXmin()
+    {
+        var source = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Checkout",
+            "CheckoutService.cs");
+
+        var method = ExtractMethodBody(source, "LockCheckoutProductAuthorityRowsBatchAsync");
+
+        Assert.Contains("_dbContext.Products", method, StringComparison.Ordinal);
+        Assert.Contains("FromSqlRaw", method, StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", method, StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"Products\"\"", method, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", method, StringComparison.Ordinal);
+        Assert.Contains("\"\"TenantId\"\" = '{tenantId}'", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECT *\r\n                    FROM \"\"Products\"\"", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CheckoutPromotionAndCouponCapacityLocks_PostgresEntityMaterialization_MustSelectXmin()
+    {
+        var checkoutSource = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Checkout",
+            "CheckoutService.cs");
+        var couponSource = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Discounts",
+            "CouponValidationService.cs");
+        var paymentLifecycleSource = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Payments",
+            "PaymentLifecycleService.cs");
+
+        var checkoutPromotionLock = ExtractMethodBody(checkoutSource, "LockPromotionForCapacityMutationAsync");
+        var couponLock = ExtractMethodBody(couponSource, "LockCouponForCapacityMutationAsync");
+        var paymentPromotionLock = ExtractMethodBody(paymentLifecycleSource, "LockPromotionForUsageMutationAsync");
+
+        Assert.Contains("SELECT xmin, *", checkoutPromotionLock, StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"Promotions\"\"", checkoutPromotionLock, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", checkoutPromotionLock, StringComparison.Ordinal);
+
+        Assert.Contains("SELECT xmin, * FROM \"\"Coupons\"\"", couponLock, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", couponLock, StringComparison.Ordinal);
+
+        Assert.Contains("SELECT xmin, *", paymentPromotionLock, StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"Promotions\"\"", paymentPromotionLock, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", paymentPromotionLock, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OrderAndPaymentLifecycleLocks_PostgresXminBackedEntities_MustSelectXmin()
+    {
+        var orderLockingHelper = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Payments",
+            "OrderLockingHelper.cs");
+        var paymentRecovery = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Checkout",
+            "CheckoutPaymentIntentRecoveryService.cs");
+        var orderStatusSync = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "OrderStatusSyncService.cs");
+        var unresolvedPaymentReconciliation = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Payments",
+            "StorefrontUnresolvedPaymentReconciliationJob.cs");
+        var fulfillment = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Fulfillment",
+            "OrderFulfillmentService.cs");
+        var reservationCleanup = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Jobs",
+            "InventoryReservationCleanupJob.cs");
+        var carrierShipment = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Shipping",
+            "CarrierShipmentService.cs");
+        var shipmentService = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Shipping",
+            "ShipmentService.cs");
+        var accountingOutbox = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Accounting",
+            "AccountingOutboxProcessor.cs");
+        var paymentLifecycle = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Payments",
+            "PaymentLifecycleService.cs");
+
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(orderLockingHelper, "LoadOrderWithLockAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(paymentRecovery, "LoadOrderForPaymentIntentRecoveryAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(orderStatusSync, "LoadOrderForStatusMutationAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(unresolvedPaymentReconciliation, "LoadPaymentIntentForRecoveryAsync"), StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"PaymentIntents\"\"", ExtractMethodBody(unresolvedPaymentReconciliation, "LoadPaymentIntentForRecoveryAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(unresolvedPaymentReconciliation, "LoadOrderForRecoveryAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(fulfillment, "LoadOrderForFulfillmentMutationAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(reservationCleanup, "LoadOrderForCleanupAuthorityAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(carrierShipment, "LoadOrderForCarrierShipmentMutationAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(shipmentService, "LoadOrderForShipmentMutationAsync"), StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, *", ExtractMethodBody(accountingOutbox, "LoadOrderForAccountingPostAsync"), StringComparison.Ordinal);
+
+        Assert.Contains("SELECT xmin, * FROM \"\"Orders\"\"", paymentLifecycle, StringComparison.Ordinal);
+        Assert.Contains("SELECT xmin, * FROM \"\"PaymentIntents\"\"", paymentLifecycle, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InventoryAuthorityLocks_WithoutMappedXmin_MustKeepLockingSemantics()
+    {
+        var inventoryGuard = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Payments",
+            "CheckoutInventoryAuthorityGuard.cs");
+        var stockConfiguration = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Data",
+            "Configurations",
+            "ProductVariantStockConfiguration.cs");
+        var reservationConfiguration = ReadRepoFile(
+            "PointOfSale.Infrastructure",
+            "Data",
+            "Configurations",
+            "InventoryReservationConfiguration.cs");
+
+        Assert.DoesNotContain("HasColumnName(\"xmin\")", stockConfiguration, StringComparison.Ordinal);
+        Assert.DoesNotContain("HasColumnName(\"xmin\")", reservationConfiguration, StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"InventoryReservations\"\"", inventoryGuard, StringComparison.Ordinal);
+        Assert.Contains("FROM \"\"ProductVariantStocks\"\"", inventoryGuard, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", inventoryGuard, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -891,5 +1041,65 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
 
         pathParts.AddRange(segments);
         return File.ReadAllText(Path.GetFullPath(Path.Combine(pathParts.ToArray())));
+    }
+
+    private static string ExtractMethodBody(string source, string methodName)
+    {
+        var methodNameIndex = FindMethodDeclarationIndex(source, methodName);
+        Assert.True(methodNameIndex >= 0, $"Could not find method {methodName}.");
+
+        var bodyStart = source.IndexOf('{', methodNameIndex);
+        Assert.True(bodyStart >= 0, $"Could not find method body for {methodName}.");
+
+        var depth = 0;
+        for (var i = bodyStart; i < source.Length; i++)
+        {
+            if (source[i] == '{')
+            {
+                depth++;
+            }
+            else if (source[i] == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return source.Substring(bodyStart, i - bodyStart + 1);
+                }
+            }
+        }
+
+        throw new InvalidOperationException($"Could not parse method body for {methodName}.");
+    }
+
+    private static int FindMethodDeclarationIndex(string source, string methodName)
+    {
+        var searchIndex = 0;
+        while (searchIndex < source.Length)
+        {
+            var methodNameIndex = source.IndexOf(methodName, searchIndex, StringComparison.Ordinal);
+            if (methodNameIndex < 0)
+            {
+                return -1;
+            }
+
+            var lineStart = source.LastIndexOf('\n', methodNameIndex);
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            var lineEnd = source.IndexOf('\n', methodNameIndex);
+            lineEnd = lineEnd < 0 ? source.Length : lineEnd;
+            var line = source.Substring(lineStart, lineEnd - lineStart).TrimStart();
+
+            if ((line.StartsWith("private ", StringComparison.Ordinal) ||
+                 line.StartsWith("public ", StringComparison.Ordinal) ||
+                 line.StartsWith("internal ", StringComparison.Ordinal) ||
+                 line.StartsWith("protected ", StringComparison.Ordinal)) &&
+                line.Contains(methodName + "(", StringComparison.Ordinal))
+            {
+                return methodNameIndex;
+            }
+
+            searchIndex = methodNameIndex + methodName.Length;
+        }
+
+        return -1;
     }
 }

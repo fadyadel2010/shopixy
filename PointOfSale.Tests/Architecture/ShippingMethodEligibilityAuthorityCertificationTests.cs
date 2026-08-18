@@ -15,7 +15,8 @@ public sealed class ShippingMethodEligibilityAuthorityCertificationTests
         Assert.Contains("if (!shippingMethod.IsActive)", checkout, StringComparison.Ordinal);
         Assert.Contains("Carrier is not currently available", checkout, StringComparison.Ordinal);
         Assert.Contains("!method.IsDeleted && method.IsActive && method.TenantId == storeId", commerceHub, StringComparison.Ordinal);
-        Assert.Contains("_dbContext.Set<CarrierConfiguration>().Any", commerceHub, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync", commerceHub, StringComparison.Ordinal);
+        Assert.Contains("CarrierIntegrationPurpose.CommerceHubAdmission", commerceHub, StringComparison.Ordinal);
         Assert.Contains("bypassCache: true", cart, StringComparison.Ordinal);
         Assert.Contains("bypassCache: true", commerceHubCheckout, StringComparison.Ordinal);
         Assert.Contains("SHIPPING_CHANGED", commerceHubCheckout, StringComparison.Ordinal);
@@ -28,15 +29,15 @@ public sealed class ShippingMethodEligibilityAuthorityCertificationTests
         var carrierShipment = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Shipping/CarrierShipmentService.cs");
 
         Assert.Contains("order.ShippingMethodId.Value != shippingMethodId", shipment, StringComparison.Ordinal);
-        Assert.Contains("sm.TenantId == tenantId", shipment, StringComparison.Ordinal);
-        Assert.Contains("!sm.IsDeleted", shipment, StringComparison.Ordinal);
-        Assert.Contains("!shippingMethod.IsActive", shipment, StringComparison.Ordinal);
-        Assert.Contains("_dbContext.Set<CarrierConfiguration>()", shipment, StringComparison.Ordinal);
-        Assert.Contains("ORDER_SHIPPING_METHOD_INELIGIBLE", carrierShipment, StringComparison.Ordinal);
-        Assert.Contains("method.Id == order.ShippingMethodId.Value", carrierShipment, StringComparison.Ordinal);
-        Assert.Contains("method.TenantId == tenantId", carrierShipment, StringComparison.Ordinal);
-        Assert.Contains("!method.IsDeleted", carrierShipment, StringComparison.Ordinal);
-        Assert.Contains("method.IsActive", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingMethodName", shipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingServiceLevel", shipment, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync", shipment, StringComparison.Ordinal);
+        Assert.Contains("CarrierIntegrationPurpose.ShipmentCreation", shipment, StringComparison.Ordinal);
+        Assert.Contains("ORDER_SHIPPING_EXECUTION_SNAPSHOT_MISSING", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("order.FulfillmentCarrierCode", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("order.ShippingServiceLevel", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetServiceLevelReadinessAsync", carrierShipment, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.ResolveCredentialsAsync", carrierShipment, StringComparison.Ordinal);
         Assert.Contains("ORDER_SHIPPING_METHOD_CARRIER_MISMATCH", carrierShipment, StringComparison.Ordinal);
     }
 
@@ -65,13 +66,12 @@ public sealed class ShippingMethodEligibilityAuthorityCertificationTests
 
         Assert.Contains("[FromQuery] Guid? warehouseId", controller, StringComparison.Ordinal);
         Assert.Contains("warehouseId,", controller, StringComparison.Ordinal);
-        Assert.Contains("ApplyWarehouseAssignmentFilterAsync", service, StringComparison.Ordinal);
-        Assert.Contains("CarrierWarehouseAssignment", service, StringComparison.Ordinal);
-        Assert.Contains("assignment.WarehouseId == warehouseId.Value", service, StringComparison.Ordinal);
-        Assert.Contains("assignment.IsEnabled", service, StringComparison.Ordinal);
-        Assert.Contains("assignment.OriginReadinessPublished", service, StringComparison.Ordinal);
-        Assert.Contains("account.State == CarrierAccountState.Active", service, StringComparison.Ordinal);
-        Assert.Contains("account.OperationalState == CarrierOperationalState.Ready", service, StringComparison.Ordinal);
+        Assert.Contains("ApplyConfiguredWarehouseAuthorityFilterAsync", service, StringComparison.Ordinal);
+        Assert.Contains("document.FulfillmentWarehouseId.Value != warehouseId.Value", service, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync", service, StringComparison.Ordinal);
+        Assert.Contains("CarrierIntegrationPurpose.StorefrontAdmission", service, StringComparison.Ordinal);
+        Assert.Contains("serviceLevelReadiness.CanExecute", service, StringComparison.Ordinal);
+        Assert.Contains("readiness.CanExecute", service, StringComparison.Ordinal);
         Assert.Contains("return new List<ShippingMethodDocument>();", service, StringComparison.Ordinal);
         Assert.Contains("public sealed class CarrierWarehouseAssignment", runtimeEntities, StringComparison.Ordinal);
         Assert.Contains("warehouse.TenantId == tenantId", adminRuntime, StringComparison.Ordinal);

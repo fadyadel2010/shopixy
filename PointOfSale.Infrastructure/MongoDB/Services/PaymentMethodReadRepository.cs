@@ -47,7 +47,21 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
         Guid tenantId,
         CancellationToken cancellationToken = default)
     {
-        List<PaymentMethodDocument>? result = null;
+        var authoritativeMethods = await _dbContext.TenantPaymentMethods
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.IsEnabled && !x.IsDeleted)
+            .OrderBy(x => x.SortOrder)
+            .ThenBy(x => x.DisplayName)
+            .ToListAsync(cancellationToken);
+
+        var authoritativeDocuments = authoritativeMethods
+            .Select(MapToDocument)
+            .ToList();
+
+        if (authoritativeDocuments.Count == 0)
+        {
+            return authoritativeDocuments;
+        }
 
         try
         {
@@ -61,22 +75,34 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
                 .Ascending(x => x.SortOrder)
                 .Ascending(x => x.DisplayName);
 
-            result = await _collection
+            var projectedDocuments = await _collection
                 .Find(filter)
                 .Sort(sort)
                 .ToListAsync(cancellationToken);
 
-            if (result.Count > 0 && result.All(document => document.IsConfigurationValid.HasValue))
+            var projectionsByPaymentMethodId = projectedDocuments
+                .GroupBy(document => document.PaymentMethodId)
+                .ToDictionary(group => group.Key, group => group.First());
+
+            var reconciledDocuments = authoritativeDocuments
+                .Select(authoritative =>
+                    projectionsByPaymentMethodId.TryGetValue(authoritative.PaymentMethodId, out var projected) &&
+                    IsProjectionCurrent(projected, authoritative)
+                        ? projected
+                        : authoritative)
+                .ToList();
+
+            if (reconciledDocuments.All(document => document.IsConfigurationValid.HasValue))
             {
                 _logger.LogDebug(
-                    "GetEnabledPaymentMethods | TenantId: {TenantId} | ResultCount: {Count}",
-                    tenantId, result.Count);
+                    "GetEnabledPaymentMethods reconciled against SQL authority | TenantId: {TenantId} | ResultCount: {Count}",
+                    tenantId, reconciledDocuments.Count);
 
-                return result;
+                return reconciledDocuments;
             }
 
             _logger.LogWarning(
-                "Payment method projection empty or stale; falling back to SQL | TenantId: {TenantId}",
+                "Payment method projection incomplete after SQL reconciliation; using SQL authority | TenantId: {TenantId}",
                 tenantId);
         }
         catch (Exception ex) when (IsMongoReadFailure(ex))
@@ -87,14 +113,7 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
                 tenantId);
         }
 
-        var methods = await _dbContext.TenantPaymentMethods
-            .AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.IsEnabled && !x.IsDeleted)
-            .OrderBy(x => x.SortOrder)
-            .ThenBy(x => x.DisplayName)
-            .ToListAsync(cancellationToken);
-
-        return methods.Select(MapToDocument).ToList();
+        return authoritativeDocuments;
     }
 
     /// <inheritdoc />
@@ -103,6 +122,18 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
         Guid paymentMethodId,
         CancellationToken cancellationToken = default)
     {
+        var method = await _dbContext.TenantPaymentMethods
+            .AsNoTracking()
+            .Where(x => x.TenantId == tenantId && x.Id == paymentMethodId && !x.IsDeleted)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (method == null)
+        {
+            return null;
+        }
+
+        var authoritativeDocument = MapToDocument(method);
+
         try
         {
             var filter = Builders<PaymentMethodDocument>.Filter.And(
@@ -112,7 +143,7 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
             );
 
             var document = await _collection.Find(filter).FirstOrDefaultAsync(cancellationToken);
-            if (document != null && document.IsConfigurationValid.HasValue)
+            if (document != null && IsProjectionCurrent(document, authoritativeDocument))
             {
                 return document;
             }
@@ -131,12 +162,7 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
                 paymentMethodId);
         }
 
-        var method = await _dbContext.TenantPaymentMethods
-            .AsNoTracking()
-            .Where(x => x.TenantId == tenantId && x.Id == paymentMethodId && !x.IsDeleted)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return method == null ? null : MapToDocument(method);
+        return authoritativeDocument;
     }
 
     /// <inheritdoc />
@@ -147,6 +173,21 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
     {
         // Normalize code for case-insensitive matching
         var normalizedCode = code?.Trim().ToUpperInvariant() ?? string.Empty;
+
+        var method = await _dbContext.TenantPaymentMethods
+            .AsNoTracking()
+            .Where(x =>
+                x.TenantId == tenantId &&
+                x.Code.ToUpper() == normalizedCode &&
+                !x.IsDeleted)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (method == null)
+        {
+            return null;
+        }
+
+        var authoritativeDocument = MapToDocument(method);
 
         try
         {
@@ -162,7 +203,7 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
                 "GetByCode | TenantId: {TenantId} | Code: {Code} | Found: {Found}",
                 tenantId, normalizedCode, result != null);
 
-            if (result != null && result.IsConfigurationValid.HasValue)
+            if (result != null && IsProjectionCurrent(result, authoritativeDocument))
             {
                 return result;
             }
@@ -181,15 +222,7 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
                 normalizedCode);
         }
 
-        var method = await _dbContext.TenantPaymentMethods
-            .AsNoTracking()
-            .Where(x =>
-                x.TenantId == tenantId &&
-                x.Code.ToUpper() == normalizedCode &&
-                !x.IsDeleted)
-            .FirstOrDefaultAsync(cancellationToken);
-
-        return method == null ? null : MapToDocument(method);
+        return authoritativeDocument;
     }
 
     /// <inheritdoc />
@@ -264,8 +297,36 @@ public class PaymentMethodReadRepository : IPaymentMethodReadRepository
             HasConfiguration = !string.IsNullOrWhiteSpace(method.ConfigEncrypted),
             PublicConfiguration = new Dictionary<string, string>(configurationValidation.PublicConfiguration, StringComparer.OrdinalIgnoreCase),
             IsDeleted = false,
-            SyncedAtUtc = method.UpdatedAtUtc ?? method.UpdatedAt ?? method.CreatedAt
+            SyncedAtUtc = method.UpdatedAtUtc ?? method.UpdatedAt ?? method.CreatedAt,
+            LastEventVersion = method.Version
         };
+    }
+
+    private static bool IsProjectionCurrent(
+        PaymentMethodDocument projected,
+        PaymentMethodDocument authoritative)
+    {
+        return projected.TenantId == authoritative.TenantId &&
+               projected.PaymentMethodId == authoritative.PaymentMethodId &&
+               string.Equals(projected.Code, authoritative.Code, StringComparison.OrdinalIgnoreCase) &&
+               projected.LastEventVersion == authoritative.LastEventVersion &&
+               projected.IsEnabled == authoritative.IsEnabled &&
+               projected.IsDeleted == authoritative.IsDeleted &&
+               projected.IsConfigurationValid == authoritative.IsConfigurationValid &&
+               DictionaryEquals(projected.PublicConfiguration, authoritative.PublicConfiguration);
+    }
+
+    private static bool DictionaryEquals(
+        IReadOnlyDictionary<string, string>? left,
+        IReadOnlyDictionary<string, string>? right)
+    {
+        left ??= new Dictionary<string, string>();
+        right ??= new Dictionary<string, string>();
+
+        return left.Count == right.Count &&
+               left.All(pair =>
+                   right.TryGetValue(pair.Key, out var value) &&
+                   string.Equals(pair.Value, value, StringComparison.Ordinal));
     }
 
     private PaymentMethodConfigurationValidationResult EvaluateConfiguration(TenantPaymentMethod method)

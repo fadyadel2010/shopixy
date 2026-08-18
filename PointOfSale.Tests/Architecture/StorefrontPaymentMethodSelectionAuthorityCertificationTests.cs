@@ -24,8 +24,9 @@ public sealed class StorefrontPaymentMethodSelectionAuthorityCertificationTests
         Assert.Contains("availableMethodCodes", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentSelectionStatus: nextPaymentSelectionStatus", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("selectPaymentMethod: (code) =>", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("selectedPaymentMethodCode: code", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("paymentMethod: code", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedMethod = findAdmittedAvailablePaymentMethod(get().paymentMethods, normalizedCode);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("selectedPaymentMethodCode: admittedMethod.code", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("paymentMethod: admittedMethod.code", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentSelectionStatus === 'stale'", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentMethod: get().paymentSelectionStatus === 'stale'", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("paymentMethod: latestState.paymentMethod", checkoutStore, StringComparison.Ordinal);
@@ -148,17 +149,14 @@ public sealed class StorefrontPaymentMethodSelectionAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-payment-method-selection-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PA5.4", ReadRepoFile(path), StringComparison.Ordinal);
-        }
+        Assert.Contains(
+            "Payment method authority: SQL `TenantPaymentMethods` during checkout.",
+            ReadRepoFile("docs/architecture/SHOPIXY_PAYMENT_METHODS_FORENSIC_RECOVERY_AUDIT_2026-08-12.md"),
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "does not introduce browser authority over tenant, provider, amount, or payment state",
+            ReadRepoFile("docs/architecture/SHOPIXY_PAYMENT_METHODS_P2_IMPLEMENTATION_2026-08-12.md"),
+            StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

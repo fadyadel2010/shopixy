@@ -36,6 +36,7 @@ import { useCategories } from '@/hooks';
 import { useBuildAffiliateUrl } from '@/hooks/useAffiliateNavigation';
 import { useTranslation } from '@/i18n';
 import { useAnalytics } from '@/analytics';
+import { buildPendingCheckoutUrl } from '@/features/checkout/postOrderNavigation';
 import {
     useCartStore,
     selectCart,
@@ -59,7 +60,7 @@ import {
     selectSelectedPaymentMethodCode,
     selectShippingAddress,
 } from '@/store/checkoutStore';
-import type { CheckoutStep, OrderResult } from '@/types/checkout';
+import type { CheckoutStep } from '@/types/checkout';
 
 /**
  * Check if user prefers reduced motion
@@ -82,14 +83,6 @@ const smoothScrollTo = (element: HTMLElement | null, offset = 0) => {
     } else {
         window.scrollTo({ top, behavior: 'smooth' });
     }
-};
-
-const buildPendingCheckoutUrl = (order: OrderResult): string => {
-    const params = new URLSearchParams({
-        orderId: order.orderId,
-    });
-
-    return `/checkout/pending?${params.toString()}`;
 };
 
 const formatAutosaveTime = (value: string | null): string | null => {
@@ -218,16 +211,19 @@ export const CheckoutPage: React.FC = () => {
     const goToNextStep = useCheckoutStore((state) => state.goToNextStep);
     const goToPreviousStep = useCheckoutStore((state) => state.goToPreviousStep);
     const submitCheckout = useCheckoutStore((state) => state.submitCheckout);
+    const clearOrderResult = useCheckoutStore((state) => state.clearOrderResult);
     const fetchShippingMethods = useCheckoutStore((state) => state.fetchShippingMethods);
     const fetchPaymentMethods = useCheckoutStore((state) => state.fetchPaymentMethods);
     const fetchCheckoutFields = useCheckoutStore((state) => state.fetchCheckoutFields);
     const refreshPricingPreview = useCheckoutStore((state) => state.refreshPricingPreview);
+    const initCheckoutSession = useCheckoutStore((state) => state.initCheckoutSession);
     const retryAutosaveCheckoutSession = useCheckoutStore((state) => state.retryAutosaveCheckoutSession);
     const resetCheckoutError = useCheckoutStore((state) => state.resetError);
 
     // Fetch cart and payment methods on mount
     // This ensures coupon state and payment options are current
     useEffect(() => {
+        setCheckoutCartRefreshCompleted(false);
         let cancelled = false;
 
         // Always fetch cart when entering checkout to ensure freshness
@@ -238,9 +234,9 @@ export const CheckoutPage: React.FC = () => {
             }
         })();
 
-        fetchCheckoutFields();
+        void fetchCheckoutFields();
         // Fetch payment methods from POS Admin (Phase 10.4.D2)
-        fetchPaymentMethods();
+        void fetchPaymentMethods();
 
         return () => {
             cancelled = true;
@@ -248,7 +244,7 @@ export const CheckoutPage: React.FC = () => {
     }, [fetchCart, fetchCheckoutFields, fetchPaymentMethods]);
 
     useEffect(() => {
-        if (!cart?.cartId) {
+        if (!checkoutCartRefreshCompleted || isCartLoading || !cart?.cartId) {
             return;
         }
 
@@ -260,8 +256,18 @@ export const CheckoutPage: React.FC = () => {
         selectedPaymentMethodCode,
         shippingAddress?.country,
         shippingAddress?.geography,
+        checkoutCartRefreshCompleted,
+        isCartLoading,
         refreshPricingPreview
     ]);
+
+    useEffect(() => {
+        if (!checkoutCartRefreshCompleted || isCartLoading || !cart?.cartId || cart.items.length === 0) {
+            return;
+        }
+
+        void initCheckoutSession();
+    }, [checkoutCartRefreshCompleted, isCartLoading, cart?.cartId, cart?.items.length, initCheckoutSession]);
 
     useEffect(() => {
         if (!checkoutCartRefreshCompleted || isCartLoading || !cart?.cartId) {
@@ -278,8 +284,6 @@ export const CheckoutPage: React.FC = () => {
             checkoutTrackedRef.current = true;
             console.log('[Analytics] BeginCheckout tracked, cartTotal:', cartTotal);
 
-            // Phase: Abandoned Checkout — create/resume session (fire-and-forget)
-            useCheckoutStore.getState().initCheckoutSession();
         }
     }, [isCartInitialized, isCartEmpty, cartTotal, analytics]);
 
@@ -322,9 +326,11 @@ export const CheckoutPage: React.FC = () => {
         const requiresPendingRoute = !hasStripeInline && !hasPaymobInline;
 
         if (requiresPendingRoute) {
-            window.location.replace(buildAffiliateUrl(buildPendingCheckoutUrl(orderResult)));
+            const pendingUrl = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));
+            clearOrderResult();
+            window.location.replace(pendingUrl);
         }
-    }, [buildAffiliateUrl, orderResult]);
+    }, [buildAffiliateUrl, clearOrderResult, orderResult]);
 
     // Handle step navigation with accessibility
     const handleStepClick = useCallback((step: CheckoutStep) => {
@@ -447,7 +453,7 @@ export const CheckoutPage: React.FC = () => {
         // CRITICAL: Do NOT redirect to success - wait for payment confirmation
         // =========================================================
         if (orderResult.paymobIframeUrl) {
-            console.log('[Checkout] Redirecting to Paymob | orderId:', orderResult.orderId, '| iframeUrl:', orderResult.paymobIframeUrl);
+            console.log('[Checkout] Paymob Unified Checkout ready | orderId:', orderResult.orderId);
             return (
                 <Layout categories={categories}>
                     <div className="container mx-auto px-4 py-6 md:py-10">
@@ -460,6 +466,7 @@ export const CheckoutPage: React.FC = () => {
                                 orderNumber={orderResult.orderNumber}
                                 amount={orderResult.total}
                                 currency={orderResult.currency}
+                                expiresAtUtc={orderResult.expiresAtUtc}
                                 onPending={() => {
                                     console.log('[Checkout] Waiting for Paymob backend confirmation | orderId:', orderResult.orderId);
                                     window.location.href = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));

@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Fulfillment;
+using PointOfSale.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using System.Diagnostics;
 
 namespace PointOfSale.API.Controllers;
@@ -24,13 +27,19 @@ namespace PointOfSale.API.Controllers;
 public class OrderFulfillmentController : ControllerBase
 {
     private readonly IOrderFulfillmentService _fulfillmentService;
+    private readonly ITenantContext _tenantContext;
+    private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<OrderFulfillmentController> _logger;
 
     public OrderFulfillmentController(
         IOrderFulfillmentService fulfillmentService,
+        ITenantContext tenantContext,
+        ApplicationDbContext dbContext,
         ILogger<OrderFulfillmentController> logger)
     {
         _fulfillmentService = fulfillmentService;
+        _tenantContext = tenantContext;
+        _dbContext = dbContext;
         _logger = logger;
     }
 
@@ -44,6 +53,15 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            _logger.LogWarning(
+                "[Fulfillment] GetActions rejected for non-owned order | TenantId: {TenantId} | OrderId: {OrderId} | TraceId: {TraceId}",
+                _tenantContext.RequiredTenantId,
+                orderId,
+                traceId);
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
         
         _logger.LogInformation(
             "[Fulfillment] GetActions | OrderId: {OrderId} | TraceId: {TraceId}",
@@ -95,6 +113,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -120,6 +143,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -146,6 +174,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -178,6 +211,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -206,6 +244,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -233,6 +276,12 @@ public class OrderFulfillmentController : ControllerBase
         [FromBody] ReturnedActionRequest request,
         CancellationToken ct)
     {
+        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
             return BadRequest(new { error = "Reason is required for returns" });
@@ -247,7 +296,6 @@ public class OrderFulfillmentController : ControllerBase
             });
         }
 
-        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -277,12 +325,17 @@ public class OrderFulfillmentController : ControllerBase
         [FromBody] FailedDeliveryActionRequest request,
         CancellationToken ct)
     {
+        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
             return BadRequest(new { error = "Reason is required for failed delivery" });
         }
 
-        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogWarning(
@@ -312,6 +365,11 @@ public class OrderFulfillmentController : ControllerBase
         CancellationToken ct)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         var userName = User.Identity?.Name ?? "system";
 
         _logger.LogInformation(
@@ -331,10 +389,17 @@ public class OrderFulfillmentController : ControllerBase
     /// Transition: Created/Confirmed/Packed/FailedDelivery → Cancelled
     /// </summary>
     [HttpPost("cancel")]
-    public IActionResult Cancel(
+    public async Task<IActionResult> Cancel(
         Guid orderId,
-        [FromBody] CancelActionRequest request)
+        [FromBody] CancelActionRequest request,
+        CancellationToken ct)
     {
+        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+        if (!await IsCurrentTenantOrderAsync(orderId, ct))
+        {
+            return NotFound(new { error = "ORDER_NOT_FOUND", message = "Order not found", traceId });
+        }
+
         if (string.IsNullOrWhiteSpace(request.Reason))
         {
             return BadRequest(new { error = "Reason is required for cancellation" });
@@ -371,6 +436,19 @@ public class OrderFulfillmentController : ControllerBase
             currentStatus = result.OldStatus.ToString(),
             error = result.ErrorMessage
         });
+    }
+
+    private async Task<bool> IsCurrentTenantOrderAsync(Guid orderId, CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        return await _dbContext.Orders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(
+                order => order.Id == orderId &&
+                         order.TenantId == tenantId &&
+                         !order.IsDeleted,
+                cancellationToken);
     }
 }
 

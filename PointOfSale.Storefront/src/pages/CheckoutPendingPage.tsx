@@ -5,11 +5,13 @@ import { AffiliateLink } from '@/components/common/AffiliateLink';
 import { useCategories } from '@/hooks';
 import { useAffiliateNavigate } from '@/hooks/useAffiliateNavigation';
 import { useTranslation } from '@/i18n';
-import { paymentStatusApi } from '@/services/api/paymentStatusApi';
+import { normalizeError, paymentStatusApi } from '@/services/api';
 import {
     type CanonicalPaymentStatusResponse,
+    isPaymentStatusAccessDeniedFailure,
     resolvePendingCheckoutAction,
 } from '@/features/checkout/paymentFlow';
+import { readPendingCheckoutRouteEvidence } from '@/features/checkout/postOrderNavigation';
 import {
     clearActiveCheckoutOrderContextIfMatches,
     readCheckoutTokenForOrder,
@@ -26,14 +28,22 @@ export const CheckoutPendingPage: React.FC = () => {
     const { categories, isLoading: categoriesLoading } = useCategories();
     const [searchParams] = useSearchParams();
 
-    const orderId = (searchParams.get('orderId') || searchParams.get('order') || '').trim();
+    const routeEvidence = useMemo(
+        () => readPendingCheckoutRouteEvidence(searchParams),
+        [searchParams]
+    );
+    const orderId = routeEvidence.orderId;
+    const routeOrderNumber = routeEvidence.orderNumber;
 
     const [paymentStatus, setPaymentStatus] = useState<CanonicalPaymentStatusResponse | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isTimedOut, setIsTimedOut] = useState(false);
     const [hasFailed, setHasFailed] = useState(false);
+    const [isAccessDenied, setIsAccessDenied] = useState(false);
     const [requiresManualReview, setRequiresManualReview] = useState(false);
     const [lastError, setLastError] = useState<string | null>(null);
+    const [retryError, setRetryError] = useState<string | null>(null);
+    const [isRetrying, setIsRetrying] = useState(false);
     const [pollAttempt, setPollAttempt] = useState(0);
 
     const attemptRef = useRef(0);
@@ -42,6 +52,7 @@ export const CheckoutPendingPage: React.FC = () => {
     const tRef = useRef(t);
     const abortControllerRef = useRef<AbortController | null>(null);
     const guestRecoveryTelemetrySentRef = useRef(false);
+    const retryInFlightRef = useRef(false);
 
     // Keep refs up to date
     useEffect(() => {
@@ -58,8 +69,12 @@ export const CheckoutPendingPage: React.FC = () => {
     }, []);
 
     const displayOrderNumber = useMemo(() => {
-        return paymentStatus?.orderNumber || t('checkout.pending.orderUnavailable');
-    }, [paymentStatus?.orderNumber, t]);
+        if (isAccessDenied) {
+            return t('checkout.pending.orderUnavailable');
+        }
+
+        return paymentStatus?.orderNumber || routeOrderNumber || t('checkout.pending.orderUnavailable');
+    }, [isAccessDenied, paymentStatus?.orderNumber, routeOrderNumber, t]);
 
     const trackingHref = useMemo(() => {
         return `/orders/${orderId}/track`;
@@ -90,6 +105,7 @@ export const CheckoutPendingPage: React.FC = () => {
 
             setPaymentStatus(response);
             setLastError(null);
+            setRetryError(null);
             setIsLoading(false);
 
             if (checkoutToken && !guestRecoveryTelemetrySentRef.current) {
@@ -124,6 +140,18 @@ export const CheckoutPendingPage: React.FC = () => {
             if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
                 return;
             }
+
+            const normalized = normalizeError(error as any);
+            if (isPaymentStatusAccessDeniedFailure(normalized)) {
+                setIsLoading(false);
+                setIsAccessDenied(true);
+                setHasFailed(false);
+                setRequiresManualReview(false);
+                setIsTimedOut(false);
+                setLastError(tRef.current('checkout.pending.accessDeniedDescription'));
+                return;
+            }
+
             console.error('[CheckoutPendingPage] Failed to load payment status:', error);
             setIsLoading(false);
             setLastError(tRef.current('checkout.pending.pollingError'));
@@ -157,8 +185,12 @@ export const CheckoutPendingPage: React.FC = () => {
         setIsLoading(true);
         setIsTimedOut(false);
         setHasFailed(false);
+        setIsAccessDenied(false);
         setRequiresManualReview(false);
         setLastError(null);
+        setRetryError(null);
+        setIsRetrying(false);
+        retryInFlightRef.current = false;
     }, [orderId]);
 
     // Initial fetch when order identity changes
@@ -169,7 +201,7 @@ export const CheckoutPendingPage: React.FC = () => {
     }, [orderId, fetchPaymentStatus]);
 
     useEffect(() => {
-        if (!orderId || redirectedRef.current || isTimedOut || hasFailed || requiresManualReview || pollAttempt === 0) {
+        if (!orderId || redirectedRef.current || isTimedOut || hasFailed || isAccessDenied || requiresManualReview || pollAttempt === 0) {
             return;
         }
 
@@ -180,7 +212,7 @@ export const CheckoutPendingPage: React.FC = () => {
         return () => {
             window.clearTimeout(timeoutId);
         };
-    }, [fetchPaymentStatus, hasFailed, isTimedOut, orderId, pollAttempt, requiresManualReview]);
+    }, [fetchPaymentStatus, hasFailed, isAccessDenied, isTimedOut, orderId, pollAttempt, requiresManualReview]);
 
     const handleManualRefresh = useCallback(() => {
         attemptRef.current = 0;
@@ -188,6 +220,7 @@ export const CheckoutPendingPage: React.FC = () => {
         setPollAttempt(0);
         setIsTimedOut(false);
         setHasFailed(false);
+        setIsAccessDenied(false);
         setRequiresManualReview(false);
         setLastError(null);
         setIsLoading(true);
@@ -196,13 +229,51 @@ export const CheckoutPendingPage: React.FC = () => {
         }
     }, [fetchPaymentStatus, orderId]);
 
-    const statusTone = requiresManualReview
+    const handlePayAgain = useCallback(async () => {
+        if (!paymentStatus?.canRetryPayment || retryInFlightRef.current) {
+            return;
+        }
+
+        retryInFlightRef.current = true;
+        setIsRetrying(true);
+        setRetryError(null);
+
+        try {
+            const retrySession = await paymentStatusApi.retryPaymobPayment(paymentStatus, {
+                checkoutToken: readCheckoutTokenForOrder(orderId),
+            });
+            window.location.assign(retrySession.iframeUrl);
+        } catch (error) {
+            console.error('[CheckoutPendingPage] Paymob retry failed:', error);
+            retryInFlightRef.current = false;
+            setIsRetrying(false);
+            setRetryError(tRef.current('checkout.pending.retryError'));
+        }
+    }, [orderId, paymentStatus]);
+
+    const statusTone = isAccessDenied
+        ? 'border-red-200 bg-red-50'
+        : requiresManualReview
         ? 'border-orange-200 bg-orange-50'
         : hasFailed
             ? 'border-red-200 bg-red-50'
             : 'border-amber-200 bg-amber-50';
+    const statusTitleTone = isAccessDenied || hasFailed
+        ? 'text-red-900'
+        : requiresManualReview
+            ? 'text-orange-900'
+            : 'text-amber-900';
+    const statusDescriptionTone = isAccessDenied || hasFailed
+        ? 'text-red-800'
+        : requiresManualReview
+            ? 'text-orange-800'
+            : 'text-amber-800';
 
-    const statusIcon = requiresManualReview ? (
+    const statusIcon = isAccessDenied ? (
+        <svg className="h-10 w-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M5.07 19h13.86A2 2 0 0 0 20.66 16L13.73 4a2 2 0 0 0-3.46 0L3.34 16a2 2 0 0 0 1.73 3Z" />
+        </svg>
+    ) : requiresManualReview ? (
         <svg className="h-10 w-10 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M10.29 3.86l-7.5 13A1 1 0 0 0 3.67 18h16.66a1 1 0 0 0 .87-1.5l-7.5-13a1 1 0 0 0-1.74 0Z" />
         </svg>
@@ -248,13 +319,15 @@ export const CheckoutPendingPage: React.FC = () => {
                 <div className="rounded-3xl border border-muted/10 bg-white p-6 shadow-sm md:p-8">
                     <div className="mx-auto max-w-2xl text-center">
                         <div className={`mx-auto flex h-20 w-20 items-center justify-center rounded-full ${
-                            requiresManualReview ? 'bg-orange-100' : hasFailed ? 'bg-red-100' : 'bg-amber-100'
+                            isAccessDenied ? 'bg-red-100' : requiresManualReview ? 'bg-orange-100' : hasFailed ? 'bg-red-100' : 'bg-amber-100'
                         }`}>
                             {statusIcon}
                         </div>
 
                         <h1 className="mt-6 text-2xl font-bold text-text md:text-3xl">
-                            {requiresManualReview
+                            {isAccessDenied
+                                ? t('checkout.pending.accessDeniedTitle')
+                                : requiresManualReview
                                 ? t('checkout.pending.reviewTitle')
                                 : hasFailed
                                 ? t('checkout.pending.failedTitle')
@@ -262,7 +335,9 @@ export const CheckoutPendingPage: React.FC = () => {
                         </h1>
 
                         <p className="mt-3 text-muted">
-                            {requiresManualReview
+                            {isAccessDenied
+                                ? t('checkout.pending.accessDeniedDescription')
+                                : requiresManualReview
                                 ? t('checkout.pending.reviewDescription')
                                 : hasFailed
                                 ? t('checkout.pending.failedDescription')
@@ -283,15 +358,19 @@ export const CheckoutPendingPage: React.FC = () => {
 
                         {!hasFailed ? (
                             <div className={`mt-6 rounded-2xl border p-5 text-left ${statusTone}`}>
-                                <p className="font-medium text-amber-900">
-                                    {requiresManualReview
+                                <p className={`font-medium ${statusTitleTone}`}>
+                                    {isAccessDenied
+                                        ? t('checkout.pending.accessDeniedStatusTitle')
+                                        : requiresManualReview
                                         ? t('checkout.pending.reviewStatusTitle')
                                         : isTimedOut
                                         ? t('checkout.pending.timeoutTitle')
                                         : t('checkout.pending.waitingTitle')}
                                 </p>
-                                <p className="mt-2 text-sm text-amber-800">
-                                    {requiresManualReview
+                                <p className={`mt-2 text-sm ${statusDescriptionTone}`}>
+                                    {isAccessDenied
+                                        ? t('checkout.pending.accessDeniedStatusDescription')
+                                        : requiresManualReview
                                         ? t('checkout.pending.reviewStatusDescription')
                                         : isTimedOut
                                         ? t('checkout.pending.timeoutDescription')
@@ -305,15 +384,45 @@ export const CheckoutPendingPage: React.FC = () => {
                             </div>
                         ) : null}
 
-                        {isLoading && !hasFailed && !requiresManualReview ? (
+                        {isLoading && !hasFailed && !isAccessDenied && !requiresManualReview ? (
                             <p className="mt-4 text-sm text-muted">
                                 {t('checkout.pending.loading')}
                             </p>
                         ) : null}
 
                         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-                            {hasFailed ? (
+                            {isAccessDenied ? (
                                 <>
+                                    <AffiliateLink
+                                        href="/checkout"
+                                        className="inline-flex items-center justify-center rounded-xl bg-primary px-5 py-3 font-medium text-white hover:bg-primary/90"
+                                    >
+                                        {t('checkout.pending.returnToCheckout')}
+                                    </AffiliateLink>
+
+                                    <button
+                                        type="button"
+                                        onClick={handleManualRefresh}
+                                        className="inline-flex items-center justify-center rounded-xl border border-muted/20 px-5 py-3 font-medium text-text hover:bg-muted/10"
+                                    >
+                                        {t('checkout.pending.refreshStatus')}
+                                    </button>
+                                </>
+                            ) : hasFailed ? (
+                                <>
+                                    {paymentStatus?.canRetryPayment ? (
+                                        <button
+                                            type="button"
+                                            onClick={handlePayAgain}
+                                            disabled={isRetrying}
+                                            className="inline-flex items-center justify-center rounded-xl bg-primary px-5 py-3 font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                            {isRetrying
+                                                ? t('checkout.pending.retrying')
+                                                : t('checkout.pending.payAgain')}
+                                        </button>
+                                    ) : null}
+
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -339,6 +448,12 @@ export const CheckoutPendingPage: React.FC = () => {
                                     >
                                         {t('checkout.pending.trackOrder')}
                                     </AffiliateLink>
+
+                                    {retryError ? (
+                                        <p className="basis-full text-sm text-red-700" role="alert">
+                                            {retryError}
+                                        </p>
+                                    ) : null}
                                 </>
                             ) : requiresManualReview ? (
                                 <>

@@ -1,4 +1,5 @@
 using PointOfSale.API.DTOs.Payments;
+using System.Text.Json.Serialization;
 using PaymentException = PointOfSale.API.Services.Payments.PaymentException;
 
 namespace PointOfSale.API.Services.Payments.Paymob;
@@ -154,6 +155,7 @@ public class PaymobPaymentIntentResponseDto
     /// <summary>
     /// Payment key for embedding in iframe.
     /// </summary>
+    [JsonIgnore]
     public string PaymentKey { get; set; } = string.Empty;
 
     /// <summary>
@@ -165,6 +167,11 @@ public class PaymobPaymentIntentResponseDto
     /// Internal payment intent ID.
     /// </summary>
     public Guid PaymentIntentId { get; set; }
+
+    /// <summary>
+    /// Absolute expiry of the storefront Paymob handoff.
+    /// </summary>
+    public DateTime ExpiresAtUtc { get; set; }
 
     /// <summary>
     /// Order ID.
@@ -203,6 +210,7 @@ public class PaymobPaymentStatusDto
     public string PaymobStatus { get; set; } = string.Empty;
     public bool IsPaid { get; set; }
     public bool IsPending { get; set; }
+    public bool CanRetryPayment { get; set; }
     public string? FailureReason { get; set; }
     public string? TransactionId { get; set; }
 }
@@ -255,7 +263,12 @@ public class TenantPaymobConfiguration
     /// API Key from Paymob dashboard (Settings > Account Info > API Key).
     /// Used for server-side authentication.
     /// </summary>
-    public string ApiKey { get; set; } = string.Empty;
+    public string PublicKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Intention API Secret Key. Server-side only.
+    /// </summary>
+    public string SecretKey { get; set; } = string.Empty;
 
     /// <summary>
     /// Integration ID from Paymob dashboard (Developers > Payment Integrations).
@@ -267,7 +280,7 @@ public class TenantPaymobConfiguration
     /// iFrame ID from Paymob dashboard (Developers > iFrames).
     /// Used for embedding payment form.
     /// </summary>
-    public string IframeId { get; set; } = string.Empty;
+    public string? IframeId { get; set; }
 
     /// <summary>
     /// HMAC Secret from Paymob dashboard (Settings > Account Info > HMAC).
@@ -276,14 +289,14 @@ public class TenantPaymobConfiguration
     public string HmacSecret { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional: Public Key for additional security.
+    /// Optional account metadata. The Intention API does not require it.
     /// </summary>
-    public string? PublicKey { get; set; }
+    public string? MerchantId { get; set; }
 
     /// <summary>
-    /// Optional: Secret Key for additional security.
+    /// Optional legacy API key for dormant legacy-only operations.
     /// </summary>
-    public string? SecretKey { get; set; }
+    public string? ApiKey { get; set; }
 }
 
 #endregion

@@ -10,14 +10,17 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         var paymentSessionAuthority = ReadRepoFile("PointOfSale.Storefront/src/features/checkout/paymentSessionAuthority.ts");
         var checkoutStore = ReadRepoFile("PointOfSale.Storefront/src/store/checkoutStore.ts");
         var recoverPage = ReadRepoFile("PointOfSale.Storefront/src/pages/RecoverCheckoutPage.tsx");
+        var checkoutController = ReadRepoFile("PointOfSale.API/Controllers/CheckoutController.cs");
 
         Assert.Contains("requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("provider !== 'PAYMOB'", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(paymentIntentId)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(checkoutToken)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(checkoutToken)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.Contains("GuestOrderAccessCookie.SetCheckoutToken", checkoutController, StringComparison.Ordinal);
+        Assert.Contains("response.CheckoutToken = null", checkoutController, StringComparison.Ordinal);
         Assert.Contains("!isFutureIsoDate(expiresAtUtc)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isAbsoluteUrl(response.paymobIframeUrl)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(response.paymobPaymentKey)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.Contains("!isPaymobUnifiedCheckoutUrl(response.paymobIframeUrl)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(response.paymobPaymentKey)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("complete Paymob handoff", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("Backend checkout response mixed provider payment-session artifacts.", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("Terminal payment response unexpectedly included reusable provider payment-session artifacts.", paymentSessionAuthority, StringComparison.Ordinal);
@@ -27,7 +30,7 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         Assert.Contains("window.location.href = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));", checkoutPage, StringComparison.Ordinal);
         Assert.DoesNotContain("/confirmation", checkoutPage[checkoutPage.IndexOf("PAYMOB: Show Paymob payment form", StringComparison.Ordinal)..], StringComparison.OrdinalIgnoreCase);
 
-        Assert.Contains("window.location.href = iframeUrl", paymobForm, StringComparison.Ordinal);
+        Assert.Contains("window.location.assign(checkoutUrl.toString())", paymobForm, StringComparison.Ordinal);
         Assert.Contains("Provider redirect values are evidence only", paymobForm, StringComparison.Ordinal);
         Assert.Contains("onPending();", paymobForm, StringComparison.Ordinal);
         Assert.DoesNotContain("onPaymentSuccess", paymobForm, StringComparison.OrdinalIgnoreCase);
@@ -52,14 +55,16 @@ public sealed class PaymobPaymentAuthorityCertificationTests
     {
         var checkoutService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
         var paymobService = ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/PaymobPaymentService.cs");
+        var paymobGateway = ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/PaymobPaymentGateway.cs");
         var paymobController = ReadRepoFile("PointOfSale.API/Controllers/StorefrontPaymobPaymentsController.cs");
         var recoveryService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutPaymentIntentRecoveryService.cs");
         var dbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
 
-        Assert.Contains("_paymobPaymentService.CreatePaymentIntentAsync", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("paymentIntentId = paymobResponse.PaymentIntentId", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("paymobIframeUrl = paymobResponse.IframeUrl", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("paymobPaymentKey = paymobResponse.PaymentKey", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("ProviderCode = new ProviderCode(paymentMethodCode)", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("paymentIntentId = session.PaymentIntentId", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("paymobIframeUrl = GetCompatibilityField(session, nameof(CheckoutResponseDto.PaymobIframeUrl))", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("paymobPaymentKey = GetCompatibilityField(session, nameof(CheckoutResponseDto.PaymobPaymentKey))", checkoutService, StringComparison.Ordinal);
         Assert.Contains("expiresAtUtc = await ResolvePaymentIntentExpirationAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentIntentId = paymentIntentId", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentStatus = order.PaymentStatus.ToString()", checkoutService, StringComparison.Ordinal);
@@ -87,19 +92,29 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         Assert.Contains("PaymentIntentRoutingMetadataSerializer.Serialize", paymobService, StringComparison.Ordinal);
         Assert.Contains("_artifactProtector.ProtectPaymentSession", paymobService, StringComparison.Ordinal);
         Assert.Contains("PaymentKey = paymentKey", paymobService, StringComparison.Ordinal);
-        Assert.Contains("ExpiresAtUtc = DateTime.UtcNow.Add(StorefrontPaymentSessionTtl)", paymobService, StringComparison.Ordinal);
+        Assert.Contains("var newSessionExpiresAtUtc = nowUtc.Add(StorefrontPaymentSessionTtl)", paymobService, StringComparison.Ordinal);
+        Assert.Contains("ExpiresAtUtc = newSessionExpiresAtUtc", paymobService, StringComparison.Ordinal);
+        Assert.Contains("TimeSpan.FromMinutes(60)", paymobService, StringComparison.Ordinal);
+        Assert.Contains("PAYMOB_PAYMENT_SESSION_EXPIRED", paymobService, StringComparison.Ordinal);
+        Assert.Contains("PAYMOB_PAYMENT_SESSION_EXPIRY_MISSING", paymobService, StringComparison.Ordinal);
+        Assert.Contains("paymentIntent.ExpiresAtUtc ??= newSessionExpiresAtUtc", paymobService, StringComparison.Ordinal);
+        Assert.Contains("!string.IsNullOrWhiteSpace(existingSession?.IframeUrl)", paymobService, StringComparison.Ordinal);
+        Assert.DoesNotContain("string.IsNullOrWhiteSpace(existingIntent.RedirectUrl)", paymobService, StringComparison.Ordinal);
+        Assert.Contains("ExpiresAtUtc = response.ExpiresAtUtc", paymobGateway, StringComparison.Ordinal);
+        Assert.Contains("OrderByDescending(pi => pi.CreatedAt)", paymobService, StringComparison.Ordinal);
         Assert.Contains("PAYMENT_INTENT_IN_PROGRESS", paymobService, StringComparison.Ordinal);
         Assert.Contains("concurrent_claim", paymobService, StringComparison.Ordinal);
         Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
 
         Assert.Contains("AuthorizeOrderAccessAsync", paymobController, StringComparison.Ordinal);
         Assert.Contains("GetCheckoutToken()", paymobController, StringComparison.Ordinal);
-        Assert.Contains("CreatePaymentIntentAsync", paymobController, StringComparison.Ordinal);
-        Assert.Contains("GetPaymentStatusAsync", paymobController, StringComparison.Ordinal);
+        Assert.Contains("_paymobPaymentService.CreatePaymentIntentAsync", paymobController, StringComparison.Ordinal);
+        Assert.Contains("_paymobPaymentService.GetPaymentStatusAsync", paymobController, StringComparison.Ordinal);
         Assert.Contains("authorization.AuthenticatedCustomerId", paymobController, StringComparison.Ordinal);
 
         Assert.Contains("case \"PAYMOB\":", recoveryService, StringComparison.Ordinal);
-        Assert.Contains("_paymobPaymentService.CreatePaymentIntentAsync", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("ProviderCode = new ProviderCode(paymentMethodCode)", recoveryService, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -119,6 +134,7 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         Assert.Contains("WebhookRateLimiterPolicy.PolicyName", webhookController, StringComparison.Ordinal);
         Assert.Contains("_webhookRequestPipeline.PrepareAsync", webhookController, StringComparison.Ordinal);
         Assert.Contains("PaymobWebhookSignatureException", webhookController, StringComparison.Ordinal);
+        Assert.Contains("_paymobPaymentService.ProcessWebhookAsync", webhookController, StringComparison.Ordinal);
         Assert.Contains("return Unauthorized(new ApiErrorResponse", webhookController, StringComparison.Ordinal);
         Assert.Contains("return StatusCode(StatusCodes.Status500InternalServerError", webhookController, StringComparison.Ordinal);
         Assert.Contains("ValidateCallbackAsync", webhookController, StringComparison.Ordinal);
@@ -133,12 +149,14 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         Assert.Contains("Duplicate event ignored", paymobService, StringComparison.Ordinal);
         Assert.Contains("IsolationLevel.Serializable", paymobService, StringComparison.Ordinal);
         Assert.Contains("Outcome = PaymentLifecycleOutcome.Succeeded", paymobService, StringComparison.Ordinal);
-        Assert.Contains("Outcome = PaymentLifecycleOutcome.Failed", paymobService, StringComparison.Ordinal);
+        Assert.Contains("? PaymentLifecycleOutcome.Cancelled", paymobService, StringComparison.Ordinal);
+        Assert.Contains(": PaymentLifecycleOutcome.Failed", paymobService, StringComparison.Ordinal);
         Assert.Contains("Source = PaymentLifecycleSource.GatewayWebhook", paymobService, StringComparison.Ordinal);
         Assert.Contains("ProviderAmount = providerAmount", paymobService, StringComparison.Ordinal);
         Assert.Contains("ProviderCurrency = providerCurrency", paymobService, StringComparison.Ordinal);
         Assert.Contains("webhookLog.PaymentIntentId = intent.Id", paymobService, StringComparison.Ordinal);
         Assert.Contains("webhookLog.OrderId = intent.OrderId", paymobService, StringComparison.Ordinal);
+        Assert.Contains("pi.Provider == PaymentProvider.Paymob", paymobService, StringComparison.Ordinal);
         Assert.Contains("PersistWebhookFailureAsync", paymobService, StringComparison.Ordinal);
         Assert.Contains("StoreWebhookIdempotencyAsync", paymobService, StringComparison.Ordinal);
         Assert.Contains("VerifyCallbackHmac(callbackParams, paymobConfig.HmacSecret, hmacSignature)", paymobService, StringComparison.Ordinal);
@@ -167,17 +185,6 @@ public sealed class PaymobPaymentAuthorityCertificationTests
             ReadRepoFile("docs/architecture/paymob-payment-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PAY5", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

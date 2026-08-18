@@ -91,11 +91,16 @@ public sealed class PaymobTenantConfigurationResolver : IPaymobTenantConfigurati
         return new PaymobTenantRuntimeCredentials(
             tenantId,
             paymentMethod.Id,
-            configuration.ApiKey,
+            configuration.PublicKey,
+            configuration.SecretKey,
             configuration.IntegrationId,
-            configuration.IframeId,
             configuration.HmacSecret,
-            paymentMethod.IsSandbox);
+            paymentMethod.IsSandbox,
+            options.Callback.WebhookUrl!,
+            options.Callback.CallbackUrl!,
+            configuration.MerchantId,
+            configuration.IframeId,
+            configuration.ApiKey);
     }
 
     private static bool IsCapabilityEnabled(
@@ -136,15 +141,22 @@ public sealed class PaymobTenantConfigurationResolver : IPaymobTenantConfigurati
             PaymobOperationalCapability.PaymentIntent or PaymobOperationalCapability.Recovery =>
                 options.FeatureFlags.PaymentExecutionEnabled &&
                 options.Capabilities.PaymentExecutionCertified &&
-                options.Capabilities.ProviderAdapterCertified,
+                options.Capabilities.ProviderAdapterCertified &&
+                options.Callback.Configured &&
+                options.Callback.WebhookUrl is { IsAbsoluteUri: true } &&
+                options.Callback.CallbackUrl is { IsAbsoluteUri: true },
             PaymobOperationalCapability.Webhook =>
                 options.FeatureFlags.WebhookExecutionEnabled &&
                 options.Capabilities.SupportsHmacVerification &&
-                options.Capabilities.CallbackCertified,
+                options.Capabilities.CallbackCertified &&
+                options.Callback.Configured &&
+                options.Callback.WebhookUrl is { IsAbsoluteUri: true },
             PaymobOperationalCapability.Callback =>
                 options.FeatureFlags.CallbackExecutionEnabled &&
                 options.Capabilities.SupportsHmacVerification &&
-                options.Capabilities.CallbackCertified,
+                options.Capabilities.CallbackCertified &&
+                options.Callback.Configured &&
+                options.Callback.CallbackUrl is { IsAbsoluteUri: true },
             PaymobOperationalCapability.Refund or
             PaymobOperationalCapability.Void or
             PaymobOperationalCapability.Capture or
@@ -172,10 +184,13 @@ public sealed class PaymobTenantConfigurationResolver : IPaymobTenantConfigurati
 
             return new TenantPaymobConfiguration
             {
-                ApiKey = validation.NormalizedConfiguration.GetValueOrDefault("apiKey", string.Empty),
+                PublicKey = validation.NormalizedConfiguration.GetValueOrDefault("publicKey", string.Empty),
+                SecretKey = validation.NormalizedConfiguration.GetValueOrDefault("secretKey", string.Empty),
                 IntegrationId = validation.NormalizedConfiguration.GetValueOrDefault("integrationId", string.Empty),
-                IframeId = validation.NormalizedConfiguration.GetValueOrDefault("iframeId", string.Empty),
-                HmacSecret = validation.NormalizedConfiguration.GetValueOrDefault("hmacSecret", string.Empty)
+                HmacSecret = validation.NormalizedConfiguration.GetValueOrDefault("hmacSecret", string.Empty),
+                MerchantId = validation.NormalizedConfiguration.GetValueOrDefault("merchantId"),
+                IframeId = validation.NormalizedConfiguration.GetValueOrDefault("iframeId"),
+                ApiKey = validation.NormalizedConfiguration.GetValueOrDefault("apiKey")
             };
         }
         catch (Exception ex)
@@ -203,9 +218,15 @@ public sealed class PaymobTenantConfigurationResolver : IPaymobTenantConfigurati
             return false;
         }
 
-        return !string.IsNullOrWhiteSpace(configuration.ApiKey) &&
+        var expectedKeyMarker = paymentMethod.IsSandbox ? "_test_" : "_live_";
+
+        return !string.IsNullOrWhiteSpace(configuration.PublicKey) &&
+               configuration.PublicKey.Contains(expectedKeyMarker, StringComparison.Ordinal) &&
+               !string.IsNullOrWhiteSpace(configuration.SecretKey) &&
+               configuration.SecretKey.Contains(expectedKeyMarker, StringComparison.Ordinal) &&
                !string.IsNullOrWhiteSpace(configuration.HmacSecret) &&
-               long.TryParse(configuration.IntegrationId, NumberStyles.Integer, CultureInfo.InvariantCulture, out _) &&
-               long.TryParse(configuration.IframeId, NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
+               PaymentMethodConfigurationValidator.TryParsePaymobIntegrationIds(
+                   configuration.IntegrationId,
+                   out _);
     }
 }

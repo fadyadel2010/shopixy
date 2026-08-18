@@ -87,7 +87,7 @@ public sealed class Payment0PlatformArchitectureCertificationTests
         var paymentMethodsController = ReadRepoFile("PointOfSale.API/Controllers/StorefrontPaymentMethodsController.cs");
 
         Assert.Contains("ProcessCheckoutAsync", checkoutController, StringComparison.Ordinal);
-        Assert.Contains("SetNoStoreHeaders();", checkoutController, StringComparison.Ordinal);
+        Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", checkoutController, StringComparison.Ordinal);
         Assert.DoesNotContain("EventUtility.ConstructEvent", checkoutController, StringComparison.Ordinal);
         Assert.DoesNotContain("VerifyHmacSignature", checkoutController, StringComparison.Ordinal);
 
@@ -127,7 +127,7 @@ public sealed class Payment0PlatformArchitectureCertificationTests
 
         Assert.Contains("EnsurePaymentCurrencyConsistencyAsync", paymentService, StringComparison.Ordinal);
         Assert.Contains("DUPLICATE_PAYMENT_INTENT", paymentService, StringComparison.Ordinal);
-        Assert.Contains("PaymentProviderNotSupportedException", paymentService, StringComparison.Ordinal);
+        Assert.Contains("PaymentProviderNotSupportedException", paymentContract, StringComparison.Ordinal);
         Assert.Contains("PaymentMismatchException", paymentContract, StringComparison.Ordinal);
         Assert.Contains("PaymentInvalidSignatureException", paymentService, StringComparison.Ordinal);
 

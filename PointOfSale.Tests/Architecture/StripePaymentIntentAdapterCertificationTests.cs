@@ -22,7 +22,9 @@ public sealed class StripePaymentIntentAdapterCertificationTests
             [StripeRequestMetadataKeys.IdempotencyKey] = "canonical-key-1",
             [StripeRequestMetadataKeys.StatementDescriptor] = "POINT SALE",
             [StripeRequestMetadataKeys.ReceiptEmail] = "customer@example.com",
-            ["OrderReference"] = "order-1001"
+            ["OrderReference"] = "order-1001",
+            ["orderId"] = "11111111-2222-3333-4444-555555555555",
+            ["paymentReference"] = "STR-1001"
         });
         var client = new CapturingStripePaymentIntentClient(CreateStripeIntent());
         var adapter = new StripePaymentIntentAdapter(client);
@@ -42,6 +44,9 @@ public sealed class StripePaymentIntentAdapterCertificationTests
         Assert.Equal("canonical-key-1", client.RequestOptions!.IdempotencyKey);
         Assert.Equal("stripe", client.Options.Metadata["provider"]);
         Assert.Equal("order-1001", client.Options.Metadata["canonical_OrderReference"]);
+        Assert.Equal("11111111-2222-3333-4444-555555555555", client.Options.Metadata["orderId"]);
+        Assert.Equal("STR-1001", client.Options.Metadata["paymentReference"]);
+        Assert.Equal("11111111-2222-3333-4444-555555555555", client.Options.Metadata["canonical_orderId"]);
         Assert.Equal(action.CorrelationId.Value, client.Options.Metadata["correlation_id"]);
     }
 

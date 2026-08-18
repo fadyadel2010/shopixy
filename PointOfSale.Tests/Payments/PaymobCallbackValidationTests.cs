@@ -168,11 +168,14 @@ public sealed class PaymobCallbackValidationTests
                 new PaymobTenantRuntimeCredentials(
                     tenantId,
                     Guid.NewGuid(),
-                    "api-key",
+                    "egy_pk_test_callback",
+                    "egy_sk_test_callback",
                     "123",
-                    "456",
                     hmacSecret,
-                    true));
+                    true,
+                    new Uri("https://api.example.test/api/paymob/webhook"),
+                    new Uri("https://store.example.test/payments/paymob/callback"),
+                    IframeId: "456"));
 
         return new PaymobPaymentService(
             dbContext,
@@ -187,6 +190,9 @@ public sealed class PaymobCallbackValidationTests
             Mock.Of<IPaymobWebhookRuntimeIntegrationService>(),
             new PaymobSensitiveArtifactProtector(dataProtectionProvider),
             CreateStorefrontUrlResolver(),
+            new PaymobRetryInventoryAuthority(
+                dbContext,
+                new PointOfSale.Infrastructure.Data.Repositories.ProductVariantStockRepository(dbContext, NullLogger<PointOfSale.Infrastructure.Data.Repositories.ProductVariantStockRepository>.Instance)),
             NullLogger<PaymobPaymentService>.Instance);
     }
 

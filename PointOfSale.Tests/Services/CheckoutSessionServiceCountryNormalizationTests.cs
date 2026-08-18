@@ -31,6 +31,16 @@ public class CheckoutSessionServiceCountryNormalizationTests : IDisposable, IAsy
             .Options;
 
         _db = new ApplicationDbContext(options);
+        _db.Tenants.Add(new Tenant
+        {
+            Id = _tenantId,
+            Name = "Checkout Country Tenant",
+            Slug = $"checkout-country-{_tenantId:N}",
+            Currency = "EGP",
+            IsActive = true,
+            Status = TenantStatus.Active,
+        });
+        _db.SaveChanges();
 
         _eventPublisher = new Mock<IEventPublisher>();
         _eventPublisher
@@ -310,8 +320,9 @@ public class CheckoutSessionServiceCountryNormalizationTests : IDisposable, IAsy
         // Verify the main update event was published (without proof data - those fields are no longer on the event)
         _eventPublisher.Verify(
             publisher => publisher.PublishAsync(
-                It.Is<CheckoutSessionUpdatedEvent>(evt =>
-                    evt.CheckoutSessionId == session.Id),
+                It.Is<IntegrationEvent>(evt =>
+                    evt.GetType() == typeof(CheckoutSessionUpdatedEvent) &&
+                    ((CheckoutSessionUpdatedEvent)evt).CheckoutSessionId == session.Id),
                 It.IsAny<CancellationToken>()),
             Times.Exactly(2));
 

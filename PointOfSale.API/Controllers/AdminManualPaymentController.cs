@@ -215,7 +215,10 @@ public class AdminManualPaymentController : ControllerBase
                 _logger.LogWarning(
                     "ApproveWalletPayment failed | PaymentIntentId: {PaymentIntentId} | Error: {Error} | TraceId: {TraceId}",
                     paymentIntentId, result.LifecycleResult.ErrorMessage, traceId);
-                return Conflict(new ApiErrorResponse("LIFECYCLE_ERROR", result.LifecycleResult.ErrorMessage ?? "Wallet approval failed", traceId));
+                return Conflict(new ApiErrorResponse(
+                    result.LifecycleResult.FailureCode ?? "LIFECYCLE_ERROR",
+                    result.LifecycleResult.ErrorMessage ?? "Wallet approval failed",
+                    traceId));
             }
 
             if (!result.LifecycleResult.StateChanged)
@@ -406,13 +409,34 @@ public class AdminManualPaymentController : ControllerBase
             return ManualPaymentAdmissionRejected(ex, traceId);
         }
 
-        // 1. Get PaymentIntent to find image path
+        // 1. Get PaymentIntent and its order so proof access is bound to the
+        // same tenant-owned manual payment/order authority before storage I/O.
         var paymentIntent = await _dbContext.PaymentIntents
             .AsNoTracking()
-            .FirstOrDefaultAsync(pi => pi.Id == paymentIntentId && pi.TenantId == tenantId, cancellationToken);
+            .Include(pi => pi.Order)
+            .FirstOrDefaultAsync(
+                pi => pi.Id == paymentIntentId &&
+                      pi.TenantId == tenantId &&
+                      pi.Provider == PaymentProvider.ManualWallet,
+                cancellationToken);
 
-        if (paymentIntent == null || string.IsNullOrEmpty(paymentIntent.ProofImageUrl))
+        if (paymentIntent == null || string.IsNullOrWhiteSpace(paymentIntent.ProofImageUrl))
         {
+            return NotFound();
+        }
+
+        if (paymentIntent.Order == null ||
+            paymentIntent.OrderId == Guid.Empty ||
+            paymentIntent.Order.Id != paymentIntent.OrderId ||
+            paymentIntent.Order.TenantId != tenantId ||
+            paymentIntent.Order.IsDeleted)
+        {
+            _logger.LogWarning(
+                "GetProofImage rejected due to payment/order authority mismatch | TenantId: {TenantId} | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | TraceId: {TraceId}",
+                tenantId,
+                paymentIntentId,
+                paymentIntent.OrderId,
+                traceId);
             return NotFound();
         }
 
@@ -441,28 +465,24 @@ public class AdminManualPaymentController : ControllerBase
         {
             try
             {
-                var downloadUrl = await _storageService.CreateDownloadUrlAsync(
+                var download = await _storageService.DownloadObjectAsync(
                     objectKey,
-                    TimeSpan.FromMinutes(10),
+                    ifMatchETag: null,
                     cancellationToken);
 
-                return Redirect(downloadUrl);
+                return File(download.Content, download.ContentType);
             }
-            catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            catch (Exception ex) when (
+                ex is FileNotFoundException ||
+                ex is AmazonS3Exception { StatusCode: HttpStatusCode.NotFound })
             {
                 _logger.LogWarning(
                     ex,
-                    "Manual wallet proof image not found in cloud storage | PaymentIntentId: {PaymentIntentId} | ObjectKey: {ObjectKey}",
+                    "Manual wallet proof image not found in storage | TenantId: {TenantId} | PaymentIntentId: {PaymentIntentId} | TraceId: {TraceId}",
+                    tenantId,
                     paymentIntentId,
-                    objectKey);
+                    traceId);
                 return NotFound();
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Manual wallet proof image could not be signed | PaymentIntentId: {PaymentIntentId}",
-                    paymentIntentId);
             }
         }
 
@@ -500,9 +520,9 @@ public class AdminManualPaymentController : ControllerBase
 
                     try
                     {
-                        var downloadUrl = await _storageService.CreateDownloadUrlAsync(
+                        var download = await _storageService.DownloadObjectAsync(
                             legacyObjectKey,
-                            TimeSpan.FromMinutes(10),
+                            ifMatchETag: null,
                             cancellationToken);
 
                         _logger.LogInformation(
@@ -510,9 +530,11 @@ public class AdminManualPaymentController : ControllerBase
                             paymentIntentId,
                             legacyObjectKey);
 
-                        return Redirect(downloadUrl);
+                        return File(download.Content, download.ContentType);
                     }
-                    catch (AmazonS3Exception ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                    catch (Exception ex) when (
+                        ex is FileNotFoundException ||
+                        ex is AmazonS3Exception { StatusCode: HttpStatusCode.NotFound })
                     {
                         _logger.LogWarning(
                             ex,

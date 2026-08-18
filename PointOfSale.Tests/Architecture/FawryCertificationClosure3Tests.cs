@@ -313,7 +313,8 @@ public sealed class FawryCertificationClosure3Tests
                 [FawryRequestMetadataKeys.CustomerEmail] = "buyer@example.test",
                 [FawryRequestMetadataKeys.PaymentMethod] = "PayAtFawry",
                 [FawryRequestMetadataKeys.Description] = "Order ORDER-123",
-                [FawryRequestMetadataKeys.Language] = "en-gb"
+                [FawryRequestMetadataKeys.Language] = "en-gb",
+                ["tenantId"] = "ffffffff-ffff-ffff-ffff-ffffffffffff"
             }));
 
     private static PaymentSession CreateSession(PaymentAction action)

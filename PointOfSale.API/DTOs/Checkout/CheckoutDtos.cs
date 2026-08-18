@@ -604,6 +604,11 @@ public class CheckoutResponseDto
     public string PaymentStatus { get; set; } = string.Empty;
 
     /// <summary>
+    /// Canonical backend-owned payment method code used to create or replay the order.
+    /// </summary>
+    public string PaymentMethodCode { get; set; } = string.Empty;
+
+    /// <summary>
     /// Redirect URL for payment (if applicable).
     /// </summary>
     public string? RedirectUrl { get; set; }
@@ -666,6 +671,7 @@ public class CheckoutResponseDto
     /// <summary>
     /// Paymob Payment Key for embedding in iframe.
     /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
     public string? PaymobPaymentKey { get; set; }
 
     /// <summary>

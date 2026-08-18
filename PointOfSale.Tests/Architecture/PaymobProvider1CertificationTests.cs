@@ -35,14 +35,15 @@ public sealed class PaymobProvider1CertificationTests
             new PaymobAdapterAuthResponse("auth-token"),
             new PaymobOrderRegistrationResponse(987654, request.OrderRequest.MerchantOrderId),
             new PaymobAdapterPaymentKeyResponse("payment-token"),
-            "https://accept.paymob.com/api/acceptance/iframes/456789?payment_token=payment-token");
+            "https://accept.paymob.com/unifiedcheckout/?publicKey=egy_pk_test_provider1&clientSecret=payment-token",
+            "intention-provider-1");
 
         var evidence = PaymobResponseMapper.ToProviderEvidence(action, request, response);
 
         Assert.Equal("paymob", evidence.Source.Value);
         Assert.Equal("987654", evidence.Reference.Value);
-        Assert.Equal("payment_key_created", evidence.Metadata.Values["external_status"]);
-        Assert.Equal("paymob:order:987654:payment_key", evidence.PayloadReference.Value);
+        Assert.Equal("intention_created", evidence.Metadata.Values["external_status"]);
+        Assert.Equal("paymob:intention:intention-provider-1", evidence.PayloadReference.Value);
     }
 
     [Theory]
@@ -227,11 +228,15 @@ public sealed class PaymobProvider1CertificationTests
     private static PaymobTenantRuntimeCredentials CreateCredentials() => new(
         Guid.Parse("99999999-9999-9999-9999-999999999999"),
         Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        "paymob-api-key-provider-1",
+        "egy_pk_test_provider1",
+        "egy_sk_test_provider1",
         "123456",
-        "456789",
         HmacSecret,
-        true);
+        true,
+        new Uri("https://api.example.test/api/paymob/webhook"),
+        new Uri("https://store.example.test/payments/paymob/callback"),
+        IframeId: "456789",
+        ApiKey: "paymob-api-key-provider-1");
 
     private static PaymentAction CreateCheckoutAction() => CreateAction(
         PaymentActionType.Redirect,
@@ -363,7 +368,8 @@ public sealed class PaymobProvider1CertificationTests
                 new PaymobAdapterAuthResponse("auth-token"),
                 new PaymobOrderRegistrationResponse(987654, request.OrderRequest.MerchantOrderId),
                 new PaymobAdapterPaymentKeyResponse("payment-token"),
-                "https://accept.paymob.com/api/acceptance/iframes/456789?payment_token=payment-token");
+                "https://accept.paymob.com/unifiedcheckout/?publicKey=egy_pk_test_provider1&clientSecret=payment-token",
+                "intention-provider-1");
             return Task.FromResult(PaymobPaymentAdapterResult.Success(
                 PaymobResponseMapper.ToProviderEvidence(action, request, response),
                 request,

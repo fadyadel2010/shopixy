@@ -336,6 +336,7 @@ public class CanonicalPaymentStatusDto
     public string PaymentStatus { get; set; } = string.Empty;
     public string? PaymentIntentStatus { get; set; }
     public string? PaymentMethod { get; set; }
+    public bool CanRetryPayment { get; set; }
     public decimal TotalAmount { get; set; }
     public string Currency { get; set; } = string.Empty;
 }

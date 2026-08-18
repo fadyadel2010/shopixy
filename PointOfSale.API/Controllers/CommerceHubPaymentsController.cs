@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Options;
 using PointOfSale.API.Attributes;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.DTOs.Storefront;
@@ -23,15 +24,18 @@ public class CommerceHubPaymentsController : ControllerBase
     private const string CustomerAuthenticationScheme = CustomerSecurityConstants.AuthenticationScheme;
     private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
     private readonly IRateLimitService _rateLimitService;
+    private readonly CommerceHubCustomerIdentityOptions _customerIdentityOptions;
     private readonly ILogger<CommerceHubPaymentsController> _logger;
 
     public CommerceHubPaymentsController(
         ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
         IRateLimitService rateLimitService,
+        IOptions<CommerceHubCustomerIdentityOptions> customerIdentityOptions,
         ILogger<CommerceHubPaymentsController> logger)
     {
         _paymentOrchestrationService = paymentOrchestrationService;
         _rateLimitService = rateLimitService;
+        _customerIdentityOptions = customerIdentityOptions.Value;
         _logger = logger;
     }
 
@@ -142,6 +146,53 @@ public class CommerceHubPaymentsController : ControllerBase
     [ProducesResponseType(typeof(CommerceHubPaymentWebhookResultDto), StatusCodes.Status500InternalServerError)]
     public Task<IActionResult> HandleLegacyPaymobWebhook(CancellationToken cancellationToken) =>
         HandleWebhookCoreAsync(CommerceHubPaymentMethods.Paymob, cancellationToken);
+
+    [HttpGet("paymob/callback")]
+    [ProducesResponseType(StatusCodes.Status302Found)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> HandlePaymobCallback(CancellationToken cancellationToken)
+    {
+        var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+        var parameters = Request.Query.ToDictionary(
+            item => item.Key,
+            item => item.Value.FirstOrDefault() ?? string.Empty,
+            StringComparer.OrdinalIgnoreCase);
+        var result = await _paymentOrchestrationService.ValidateCallbackAsync(
+            CommerceHubPaymentMethods.Paymob,
+            parameters,
+            traceId,
+            cancellationToken);
+
+        if (!result.IsValid || !result.OrderId.HasValue)
+        {
+            return BadRequest(new ApiErrorResponse(
+                "PAYMOB_CALLBACK_INVALID",
+                "The Paymob browser return could not be verified.",
+                traceId));
+        }
+
+        // The callback is only a browser-routing signal. CommerceHub reads the
+        // canonical backend order/payment state after navigation.
+        if (!Uri.TryCreate(_customerIdentityOptions.PublicBaseUrl, UriKind.Absolute, out var publicBaseUrl) ||
+            (!string.Equals(publicBaseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(publicBaseUrl.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
+        {
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(
+                    "COMMERCEHUB_PUBLIC_URL_INVALID",
+                    "CommerceHub browser return routing is not configured.",
+                    traceId));
+        }
+
+        var redirectBase = publicBaseUrl.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
+            ? publicBaseUrl
+            : new Uri(publicBaseUrl.AbsoluteUri + "/");
+        var redirectUrl = new Uri(
+            redirectBase,
+            $"orders/{result.OrderId.Value:D}?payment=pending");
+        return Redirect(redirectUrl.ToString());
+    }
 
     private async Task<IActionResult> HandleWebhookCoreAsync(
         string? providerOverride,

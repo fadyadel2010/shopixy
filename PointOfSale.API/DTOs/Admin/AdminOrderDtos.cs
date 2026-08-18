@@ -129,6 +129,11 @@ public class AdminOrderDetailsDto
     /// Current payment status.
     /// </summary>
     public PaymentStatus PaymentStatus { get; set; }
+
+    /// <summary>
+    /// Current authoritative fulfillment lifecycle status.
+    /// </summary>
+    public FulfillmentStatus? FulfillmentStatus { get; set; }
     
     /// <summary>
     /// Shipment status (null if no shipment exists).

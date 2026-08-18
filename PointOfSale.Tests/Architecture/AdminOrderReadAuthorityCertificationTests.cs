@@ -40,7 +40,8 @@ public sealed class AdminOrderReadAuthorityCertificationTests
         Assert.Contains("Currency = o.Currency", service, StringComparison.Ordinal);
         Assert.Contains("Currency = subOrder.Currency", service, StringComparison.Ordinal);
         Assert.Contains("SourceOrderId = o.SourceOrderId", service, StringComparison.Ordinal);
-        Assert.Contains("SourceOrderId = subOrder.MarketplaceOrderId.ToString()", service, StringComparison.Ordinal);
+        Assert.Contains("MarketplaceOrderId = subOrder.MarketplaceOrderId", service, StringComparison.Ordinal);
+        Assert.Contains("SourceOrderId = row.SourceOrderId ?? row.MarketplaceOrderId?.ToString()", service, StringComparison.Ordinal);
         Assert.Contains("ApplyOrderListSorting", service, StringComparison.Ordinal);
         Assert.Contains("var totalCount = await combinedQuery.CountAsync", service, StringComparison.Ordinal);
         Assert.Contains("formatCurrency(order.totalAmount, order.currency)", frontendPage, StringComparison.Ordinal);

@@ -14,6 +14,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Tests.CommerceHub;
@@ -102,6 +103,50 @@ public sealed class CommerceHubPaymentServiceTests : IDisposable
         _paymobAdapterMock.Verify(adapter => adapter.CreateSessionAsync(
             It.IsAny<PaymentProviderSessionRequest>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetConfigurationStatusAsync_WhenTenantPaymobIsEnabledButRuntimeIsDisabled_IsUnavailable()
+    {
+        var tenantId = Guid.NewGuid();
+        var tenantContext = new TenantContext();
+        tenantContext.SetTenantId(tenantId);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options, tenantContext);
+        var service = new CommerceHubPaymentService(
+            dbContext,
+            _financialWorkflowServiceMock.Object,
+            _inventoryConsistencyServiceMock.Object,
+            _financialReadinessGateMock.Object,
+            _orderAccessServiceMock.Object,
+            _eventPublisherMock.Object,
+            _lockServiceMock.Object,
+            new[] { _paymobAdapterMock.Object },
+            Options.Create(new CommerceHubPaymentsOptions()),
+            new CommerceHubPaymentOrchestrationTelemetry(),
+            NullLogger<CommerceHubPaymentService>.Instance);
+
+        dbContext.TenantPaymentMethods.Add(new TenantPaymentMethod
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Code = CommerceHubPaymentMethods.Paymob,
+            DisplayName = "Paymob",
+            IsEnabled = true,
+            SupportsOnline = true,
+            IsSandbox = true
+        });
+        await dbContext.SaveChangesAsync();
+
+        var status = await service.GetConfigurationStatusAsync(
+            CommerceHubPaymentMethods.Paymob,
+            tenantId);
+
+        Assert.False(status.IsEnabled);
+        Assert.False(status.IsConfigured);
+        Assert.Equal("PAYMOB provider adapter is not configured", status.ValidationMessage);
     }
 
     [Fact]

@@ -10,7 +10,6 @@ public sealed class PaymentRemediation002RuntimeAuthorityClosureTests
 
         Assert.DoesNotContain("HMACSHA512", service, StringComparison.Ordinal);
         Assert.DoesNotContain("VerifyPaymobCallbackHmac", service, StringComparison.Ordinal);
-        Assert.DoesNotContain("PaymobOptionsValidator", service, StringComparison.Ordinal);
         Assert.DoesNotContain("callbackParams.TryGetValue", service, StringComparison.Ordinal);
         Assert.DoesNotContain("fieldsToHash", service, StringComparison.Ordinal);
         Assert.DoesNotContain("source_data.pan", service, StringComparison.Ordinal);
@@ -22,29 +21,28 @@ public sealed class PaymentRemediation002RuntimeAuthorityClosureTests
     }
 
     [Fact]
-    public void CheckoutService_MustInitiateOnlinePaymentsThroughCommerceHubOrchestration()
+    public void StorefrontCheckout_MustInitiatePaymentsThroughItsCanonicalTenantGateway()
     {
         var checkout = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
 
-        Assert.Contains("ICommerceHubPaymentOrchestrationService _paymentOrchestrationService", checkout, StringComparison.Ordinal);
-        Assert.Contains("_paymentOrchestrationService.ExecuteAsync", checkout, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubPaymentInitiateRequestDto", checkout, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubPaymentMethods.IsOnline(paymentMethodCode)", checkout, StringComparison.Ordinal);
-
-        Assert.DoesNotContain("IPaymentGateway", checkout, StringComparison.Ordinal);
-        Assert.DoesNotContain("_paymentGateway", checkout, StringComparison.Ordinal);
+        Assert.Contains("IPaymentGateway _paymentGateway", checkout, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", checkout, StringComparison.Ordinal);
+        Assert.Contains("CanonicalPaymentRequest", checkout, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", checkout, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceHubPaymentInitiateRequestDto", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("IStripePaymentService", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobPaymentService", checkout, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void RecoveryService_MustBeProviderIndependentAndUseCanonicalRuntime()
+    public void RecoveryService_MustBeProviderIndependentAndUseCanonicalStorefrontGateway()
     {
         var recovery = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutPaymentIntentRecoveryService.cs");
 
-        Assert.Contains("IPaymentRuntime _paymentRuntime", recovery, StringComparison.Ordinal);
-        Assert.Contains("_paymentRuntime.InitiateAsync", recovery, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubPaymentInitiateRequestDto", recovery, StringComparison.Ordinal);
+        Assert.Contains("IPaymentGateway _paymentGateway", recovery, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", recovery, StringComparison.Ordinal);
+        Assert.Contains("CanonicalPaymentRequest", recovery, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceHubPaymentInitiateRequestDto", recovery, StringComparison.Ordinal);
 
         Assert.DoesNotContain("IStripePaymentService", recovery, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobPaymentService", recovery, StringComparison.Ordinal);
@@ -73,8 +71,8 @@ public sealed class PaymentRemediation002RuntimeAuthorityClosureTests
         Assert.Contains("ICommerceHubPaymentOrchestrationService", program, StringComparison.Ordinal);
         Assert.Contains("IPaymentRuntime", program, StringComparison.Ordinal);
         Assert.Contains("ICommerceHubPaymentService", program, StringComparison.Ordinal);
-        Assert.DoesNotContain("IPaymentGateway, PointOfSale.API.Services.Payments.ProviderContracts.PaymentGateway", program, StringComparison.Ordinal);
-        Assert.DoesNotContain("IProviderPaymentGateway", program, StringComparison.Ordinal);
+        Assert.Contains("IPaymentGateway, PointOfSale.API.Services.Payments.ProviderContracts.PaymentGateway", program, StringComparison.Ordinal);
+        Assert.Contains("IProviderPaymentGateway", program, StringComparison.Ordinal);
     }
 
     [Fact]

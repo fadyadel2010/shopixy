@@ -6,6 +6,7 @@ using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Payments;
+using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 
@@ -34,6 +35,7 @@ namespace PointOfSale.API.Controllers;
 public class PaymentsController : ControllerBase
 {
     private readonly IPaymentService _paymentService;
+    private readonly IPaymobPaymentService _paymobPaymentService;
     private readonly IPaymentRequestAuthorizationService _paymentRequestAuthorizationService;
     private readonly ITenantContext _tenantContext;
     private readonly ApplicationDbContext _dbContext;
@@ -46,12 +48,14 @@ public class PaymentsController : ControllerBase
 
     public PaymentsController(
         IPaymentService paymentService,
+        IPaymobPaymentService paymobPaymentService,
         IPaymentRequestAuthorizationService paymentRequestAuthorizationService,
         ITenantContext tenantContext,
         ApplicationDbContext dbContext,
         ILogger<PaymentsController> logger)
     {
         _paymentService = paymentService;
+        _paymobPaymentService = paymobPaymentService;
         _paymentRequestAuthorizationService = paymentRequestAuthorizationService;
         _tenantContext = tenantContext;
         _dbContext = dbContext;
@@ -301,6 +305,7 @@ public class PaymentsController : ControllerBase
     /// </summary>
     [AllowAnonymous]
     [HttpGet("status/{orderId:guid}")]
+    [HttpGet("/api/storefront/payments/status/{orderId:guid}")]
     [ProducesResponseType(typeof(CanonicalPaymentStatusDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
@@ -333,6 +338,17 @@ public class PaymentsController : ControllerBase
                 orderId,
                 traceId,
                 cancellationToken);
+
+            if (string.Equals(response.PaymentMethod, "PAYMOB", StringComparison.OrdinalIgnoreCase))
+            {
+                var paymobStatus = await _paymobPaymentService.GetPaymentStatusAsync(
+                    tenantId,
+                    orderId,
+                    authorization.AuthenticatedCustomerId,
+                    traceId,
+                    cancellationToken);
+                response.CanRetryPayment = paymobStatus.CanRetryPayment;
+            }
 
             return Ok(response);
         }

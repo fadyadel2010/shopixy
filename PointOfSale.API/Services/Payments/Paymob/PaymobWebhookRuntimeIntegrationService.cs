@@ -66,11 +66,12 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
         }
 
         var callback = verification.Callback;
+        var providerEventId = BuildProviderEventId(callback);
         var admission = PaymobWebhookOutcomeAdmissionService.Evaluate(callback);
         var replayContext = await PaymobWebhookPriorEvidenceLoader.LoadAsync(
             _dbContext,
             request.TenantId,
-            callback.TransactionId,
+            providerEventId,
             callback.ProviderReference,
             cancellationToken);
 
@@ -80,7 +81,7 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
             .AnyAsync(log =>
                 log.TenantId == request.TenantId &&
                 log.Provider == "paymob" &&
-                log.ProviderEventId == callback.TransactionId &&
+                log.ProviderEventId == providerEventId &&
                 (log.ProcessingStatus == WebhookProcessingStatus.Completed ||
                  log.ProcessingStatus == WebhookProcessingStatus.Skipped),
                 cancellationToken);
@@ -95,12 +96,12 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
             _logger.LogWarning(
                 "Paymob webhook admitted to application boundary but local payment intent was not found | TenantId: {TenantId} | TransactionId: {TransactionId} | ProviderReference: {ProviderReference}",
                 request.TenantId,
-                callback.TransactionId,
+                providerEventId,
                 callback.ProviderReference);
 
             return PaymobWebhookRuntimeAdmissionResult.NotAdmitted(
                 request.TenantId,
-                callback.TransactionId,
+                providerEventId,
                 callback.EventType,
                 admission with
                 {
@@ -135,7 +136,7 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
 
             return PaymobWebhookRuntimeAdmissionResult.Rejected(
                 request.TenantId,
-                callback.TransactionId,
+                providerEventId,
                 callback.EventType,
                 admission,
                 replayContext with { IsDuplicate = duplicate },
@@ -148,7 +149,7 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
         {
             return PaymobWebhookRuntimeAdmissionResult.NotAdmitted(
                 request.TenantId,
-                callback.TransactionId,
+                providerEventId,
                 callback.EventType,
                 admission,
                 replayContext);
@@ -169,11 +170,19 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
 
         return PaymobWebhookRuntimeAdmissionResult.Admitted(
             request.TenantId,
+            providerEventId,
             admission,
             replayContext,
             localPaymentIntent.Id,
             localPaymentIntent.OrderId,
             admittedResult);
+    }
+
+    private static string BuildProviderEventId(PaymobCallback callback)
+    {
+        return callback.Payload.IsRefunded
+            ? $"{callback.TransactionId}:refund:{callback.Payload.AmountCents ?? 0}"
+            : callback.TransactionId;
     }
 
     public async Task PersistReplayRecordAsync(
@@ -276,21 +285,46 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
     {
         var paymobOrderId = callback.OrderId.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var transactionId = callback.TransactionId;
-        var merchantOrderId = Guid.TryParse(callback.MerchantOrderId, out var parsedOrderId)
-            ? parsedOrderId
+        var merchantReferenceId = Guid.TryParse(callback.MerchantOrderId, out var parsedMerchantReferenceId)
+            ? parsedMerchantReferenceId
             : (Guid?)null;
 
-        return await _dbContext.PaymentIntents
+        var query = _dbContext.PaymentIntents
             .Include(intent => intent.Order)
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(intent =>
+            .Where(intent =>
                 intent.TenantId == tenantId &&
                 !intent.IsDeleted &&
-                intent.Provider == CorePaymentProvider.Paymob &&
-                ((intent.ProviderIntentId != null && intent.ProviderIntentId == paymobOrderId) ||
-                 (intent.ProviderPaymentId != null && intent.ProviderPaymentId == transactionId) ||
-                 (merchantOrderId.HasValue && intent.OrderId == merchantOrderId.Value)),
-                cancellationToken);
+                intent.Provider == CorePaymentProvider.Paymob);
+
+        var intent = await query.FirstOrDefaultAsync(
+            candidate => candidate.ProviderIntentId != null && candidate.ProviderIntentId == paymobOrderId,
+            cancellationToken);
+        intent ??= await query.FirstOrDefaultAsync(
+            candidate => candidate.ProviderPaymentId != null && candidate.ProviderPaymentId == transactionId,
+            cancellationToken);
+
+        if (intent != null || !merchantReferenceId.HasValue)
+        {
+            return intent;
+        }
+
+        intent = await query.FirstOrDefaultAsync(
+            candidate => candidate.Id == merchantReferenceId.Value,
+            cancellationToken);
+        if (intent != null)
+        {
+            return intent;
+        }
+
+        var legacyCandidates = await query
+            .Where(candidate => candidate.OrderId == merchantReferenceId.Value)
+            .OrderByDescending(candidate => candidate.CreatedAt)
+            .ThenByDescending(candidate => candidate.Id)
+            .Take(2)
+            .ToListAsync(cancellationToken);
+
+        return legacyCandidates.Count == 1 ? legacyCandidates[0] : null;
     }
 
     private static PaymobWebhookRuntimeInputs BuildRuntimeInputs(
@@ -408,16 +442,29 @@ public sealed class PaymobWebhookRuntimeIntegrationService : IPaymobWebhookRunti
         PaymobCallback callback,
         CorePaymentIntentStatus localStatus)
     {
-        if (callback.Payload.IsRefunded)
+        var finality = PaymobTransactionFinalityClassifier.Classify(
+            callback.Payload.Pending,
+            callback.Payload.Success,
+            callback.Payload.IsAuth,
+            callback.Payload.IsCapture,
+            callback.Payload.IsStandalonePayment,
+            callback.Payload.IsVoided,
+            callback.Payload.IsRefunded,
+            callback.Payload.ErrorOccured);
+
+        if (finality == PaymobTransactionFinality.Refunded)
         {
             return RuntimePaymentStatus.RefundPending;
         }
 
-        if (callback.Payload.Success && !callback.Payload.ErrorOccured)
+        if (finality == PaymobTransactionFinality.Authorized)
         {
-            return callback.Payload.IsAuth && !callback.Payload.IsCapture
-                ? RuntimePaymentStatus.Authorized
-                : RuntimePaymentStatus.Approved;
+            return RuntimePaymentStatus.Authorized;
+        }
+
+        if (finality == PaymobTransactionFinality.Captured)
+        {
+            return RuntimePaymentStatus.Approved;
         }
 
         return MapPaymentStatus(localStatus);
@@ -437,14 +484,23 @@ public static class PaymobWebhookOutcomeAdmissionService
 {
     public static PaymobWebhookOutcomeAdmission Evaluate(PaymobCallback callback)
     {
-        var classification = callback.Payload.Pending
+        var finality = PaymobTransactionFinalityClassifier.Classify(
+            callback.Payload.Pending,
+            callback.Payload.Success,
+            callback.Payload.IsAuth,
+            callback.Payload.IsCapture,
+            callback.Payload.IsStandalonePayment,
+            callback.Payload.IsVoided,
+            callback.Payload.IsRefunded,
+            callback.Payload.ErrorOccured);
+        var classification = finality == PaymobTransactionFinality.Pending
             ? PaymobWebhookOutcomeClassification.NonTerminal
-            : callback.Payload.Success || callback.Payload.IsRefunded || callback.Payload.IsVoided || callback.Payload.ErrorOccured
-                ? PaymobWebhookOutcomeClassification.Terminal
-                : PaymobWebhookOutcomeClassification.Ignored;
-        var admittedToRuntime = classification == PaymobWebhookOutcomeClassification.Terminal &&
-            (callback.Payload.Success || callback.Payload.IsRefunded);
-        var reasonCode = callback.Payload.ErrorOccured || callback.Payload.IsVoided
+            : PaymobWebhookOutcomeClassification.Terminal;
+        var terminalNegativeOutcome = callback.Payload.ErrorOccured || callback.Payload.IsVoided;
+        var admittedToRuntime =
+            classification == PaymobWebhookOutcomeClassification.Terminal &&
+            !terminalNegativeOutcome;
+        var reasonCode = terminalNegativeOutcome
             ? "TERMINAL_NEGATIVE_APPLICATION_LIFECYCLE"
             : classification.ToString().ToUpperInvariant();
 
@@ -618,6 +674,7 @@ public sealed record PaymobWebhookRuntimeAdmissionResult
 
     public static PaymobWebhookRuntimeAdmissionResult Admitted(
         Guid tenantId,
+        string providerEventId,
         PaymobWebhookOutcomeAdmission admission,
         PaymobWebhookReplayContext replayContext,
         Guid paymentIntentId,
@@ -627,7 +684,7 @@ public sealed record PaymobWebhookRuntimeAdmissionResult
         return new PaymobWebhookRuntimeAdmissionResult
         {
             TenantId = tenantId,
-            ProviderEventId = adapterResult.PaymobTransactionId ?? adapterResult.ProviderEvidence.Reference.Value,
+            ProviderEventId = providerEventId,
             EventType = adapterResult.PaymobEventType ?? string.Empty,
             Admission = admission,
             ReplayContext = replayContext,

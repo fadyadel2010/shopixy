@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Npgsql;
 using PointOfSale.Core.Discounts;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
@@ -1730,6 +1731,17 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             var order = aggregate.Order;
             var paymentIntent = aggregate.PaymentIntent;
 
+            var supersededAttemptResult = await TryRejectSupersededTerminalAttemptAsync(
+                order,
+                paymentIntent,
+                request,
+                ct);
+            if (supersededAttemptResult != null)
+            {
+                await transaction.CommitAsync(ct);
+                return supersededAttemptResult;
+            }
+
             // Check idempotent/replay terminal states BEFORE currency enforcement
             if (order.PaymentStatus == PaymentStatus.Collected ||
                 order.PaymentStatus == PaymentStatus.Settled ||
@@ -1827,14 +1839,15 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             var now = request.ProcessedAtUtc ?? DateTime.UtcNow;
             var correlationId = _correlationIdAccessor.GetCorrelationId();
 
-            var staleSuccessResult = TryRejectStaleProviderSuccessAgainstTerminalSqlTruth(
+            var supersededAttemptSuccessResult = await TryRejectSupersededTerminalAttemptAsync(
                 order,
                 paymentIntent,
-                request);
-            if (staleSuccessResult != null)
+                request,
+                ct);
+            if (supersededAttemptSuccessResult != null)
             {
                 await transaction.CommitAsync(ct);
-                return staleSuccessResult;
+                return supersededAttemptSuccessResult;
             }
 
             // Check idempotent/replay terminal states BEFORE currency enforcement
@@ -1883,10 +1896,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             if (IsLateSuccessfulPaymentQuarantineTerminal(order, paymentIntent))
             {
+                var failureCode = paymentIntent!.FailureCode!;
                 return PaymentTransitionResult.ManualReviewRequired(
                     PaymentStatus.Expired,
-                    "Provider reported a successful payment after POS released the inventory reservation. Refund or manual reconciliation is required.",
-                    "LATE_PROVIDER_SUCCESS_RECONCILIATION_REQUIRED");
+                    ResolveLateSuccessfulPaymentQuarantineReason(paymentIntent),
+                    failureCode);
             }
 
             if (IsAdminCancellationPendingQuarantineTerminal(order, paymentIntent))
@@ -1905,6 +1919,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     PaymentStatus.AmountMismatch,
                     "Provider payment amount or currency mismatch is already quarantined for manual review.",
                     "PAYMENT_AMOUNT_MISMATCH");
+            }
+
+            var staleSuccessResult = TryRejectStaleProviderSuccessAgainstTerminalSqlTruth(
+                order,
+                paymentIntent,
+                request);
+            if (staleSuccessResult != null)
+            {
+                await transaction.CommitAsync(ct);
+                return staleSuccessResult;
             }
 
             // Validate success state AFTER quarantine check to prevent overwriting terminal states
@@ -2206,9 +2230,39 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     request.OrderId);
             }
 
+            if (IsPaymentConcurrencyException(ex))
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Concurrent payment outcome rejected for order {OrderId}",
+                    request.OrderId);
+                return PaymentTransitionResult.Failed(
+                    "This payment was updated by another administrator. Refresh and try again.",
+                    "PAYMENT_CONCURRENCY_CONFLICT");
+            }
+
             _logger.LogError(ex, "Failed to finalize successful payment for order {OrderId}", request.OrderId);
             return PaymentTransitionResult.Failed($"Internal error: {ex.Message}");
         }
+    }
+
+    private static bool IsPaymentConcurrencyException(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is DbUpdateConcurrencyException)
+            {
+                return true;
+            }
+
+            if (current is PostgresException postgresException &&
+                postgresException.SqlState is PostgresErrorCodes.SerializationFailure or PostgresErrorCodes.DeadlockDetected)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<PaymentTransitionResult> HandleFailureAsync(
@@ -2233,6 +2287,17 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 PaymentLifecycleOutcome.Expired => PaymentStatus.Expired,
                 _ => PaymentStatus.Failed
             };
+
+            var supersededAttemptResult = await TryRejectSupersededTerminalAttemptAsync(
+                order,
+                paymentIntent,
+                request,
+                ct);
+            if (supersededAttemptResult != null)
+            {
+                await transaction.CommitAsync(ct);
+                return supersededAttemptResult;
+            }
 
             var staleFailureResult = TryCollapseStaleProviderFailureAgainstTerminalSqlTruth(
                 order,
@@ -2532,14 +2597,14 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             if (ignoreQueryFilters)
             {
                 query = _db.Orders.FromSqlInterpolated($@"
-                    SELECT * FROM ""Orders""
+                    SELECT xmin, * FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                     FOR UPDATE");
             }
             else
             {
                 query = _db.Orders.FromSqlInterpolated($@"
-                    SELECT * FROM ""Orders""
+                    SELECT xmin, * FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""IsDeleted"" = false
                     FOR UPDATE");
@@ -2772,7 +2837,8 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         CancellationToken ct)
     {
         // Skip resolution entirely when flag is set (order-only operations)
-        if (request.SkipPaymentIntentResolution)
+        if (request.SkipPaymentIntentResolution ||
+            request.Source == PaymentLifecycleSource.OfflineCollection)
         {
             return null;
         }
@@ -3300,6 +3366,83 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             or PaymentStatus.AmountMismatch;
     }
 
+    private static bool IsTerminalNegativePaymentIntent(PaymentIntentStatus status)
+    {
+        return status is PaymentIntentStatus.Failed
+            or PaymentIntentStatus.Cancelled
+            or PaymentIntentStatus.Rejected
+            or PaymentIntentStatus.Expired
+            or PaymentIntentStatus.AmountMismatch
+            or PaymentIntentStatus.Suspicious;
+    }
+
+    private async Task<PaymentTransitionResult?> TryRejectSupersededTerminalAttemptAsync(
+        Order order,
+        PaymentIntent? paymentIntent,
+        HandlePaymentResultRequest request,
+        CancellationToken ct)
+    {
+        if (!IsProviderCallbackSource(request.Source) ||
+            paymentIntent == null ||
+            !IsTerminalNegativePaymentIntent(paymentIntent.Status))
+        {
+            return null;
+        }
+
+        var provider = ResolvePaymentIntentProviderFilter(request);
+        if (!provider.HasValue)
+        {
+            return null;
+        }
+
+        var siblingAttempts = await _db.PaymentIntents
+            .IgnoreQueryFilters()
+            .Where(intent =>
+                intent.TenantId == paymentIntent.TenantId &&
+                intent.OrderId == paymentIntent.OrderId &&
+                intent.Provider == provider.Value &&
+                !intent.IsDeleted &&
+                intent.Id != paymentIntent.Id)
+            .Select(intent => new { intent.Id, intent.CreatedAt })
+            .ToListAsync(ct);
+        var hasNewerAttemptLineage = siblingAttempts.Any(intent =>
+            intent.CreatedAt > paymentIntent.CreatedAt ||
+            (intent.CreatedAt == paymentIntent.CreatedAt && intent.Id.CompareTo(paymentIntent.Id) > 0));
+
+        if (!hasNewerAttemptLineage)
+        {
+            return null;
+        }
+
+        _logger.LogWarning(
+            "[PAYMENT-LIFECYCLE] Superseded provider outcome rejected | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | PaymentIntentStatus: {PaymentIntentStatus} | Outcome: {Outcome} | Gateway: {Gateway} | WebhookEventId: {WebhookEventId}",
+            order.Id,
+            paymentIntent.Id,
+            paymentIntent.Status,
+            request.Outcome,
+            request.Gateway,
+            request.WebhookEventId);
+
+        if (request.Outcome == PaymentLifecycleOutcome.Succeeded)
+        {
+            await EnqueueQuarantinedCapturedPaymentSuspenseAsync(
+                order,
+                request,
+                businessEntityId: order.Id,
+                ct);
+
+            return PaymentTransitionResult.ManualReviewRequired(
+                order.PaymentStatus,
+                "Provider reported success for a superseded terminal payment attempt. The newer active/successful attempt remains authoritative.",
+                "SUPERSEDED_PAYMENT_ATTEMPT_SUCCESS_REJECTED");
+        }
+
+        return PaymentTransitionResult.Succeeded(
+            order.PaymentStatus,
+            wasIdempotent: true,
+            stateChanged: false,
+            inventoryAction: PaymentInventoryAction.None);
+    }
     private PaymentTransitionResult? TryRejectStaleProviderSuccessAgainstTerminalSqlTruth(
         Order order,
         PaymentIntent? paymentIntent,
@@ -3417,10 +3560,10 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     {
         var remainingReservedQuantity = await GetOpenReservationQuantityAsync(order.Id, ct);
         
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // CRITICAL: Always return Commit/Release based on outcome, even if inventory
         // was already finalized (remainingReservedQuantity <= 0).
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // Scenario: legacy state may already have finalized inventory before a replay.
         // Return the semantic action so callers can log the repaired lifecycle consistently;
         // authoritative outcome events are now staged in the source transaction.
@@ -4003,10 +4146,21 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         order.PaymentStatus == PaymentStatus.Expired &&
         order.Status == OrderStatus.OnHold &&
         paymentIntent?.Status == PaymentIntentStatus.Suspicious &&
-        string.Equals(
-            paymentIntent.FailureCode,
-            "LATE_PROVIDER_SUCCESS_RECONCILIATION_REQUIRED",
-            StringComparison.Ordinal);
+        paymentIntent.FailureCode is
+            "NO_STOCK_BACKED_ITEMS" or
+            "RESERVATION_MISSING" or
+            "RESERVATION_QUANTITY_SHORT" or
+            "RESERVATION_EXPIRED" or
+            "RESERVED_STOCK_NOT_ALLOCATED" or
+            "LATE_PROVIDER_SUCCESS_RECONCILIATION_REQUIRED";
+
+    private static string ResolveLateSuccessfulPaymentQuarantineReason(PaymentIntent paymentIntent)
+    {
+        const string reasonPrefix = "Provider success quarantined after POS reservation expiry: ";
+        return paymentIntent.FailureReason?.StartsWith(reasonPrefix, StringComparison.Ordinal) == true
+            ? paymentIntent.FailureReason[reasonPrefix.Length..]
+            : "Provider reported a successful payment after POS released the inventory reservation. Refund or manual reconciliation is required.";
+    }
 
     private static bool IsAdminCancellationPending(Order order) =>
         order.Status == OrderStatus.OnHold &&
@@ -4466,7 +4620,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     CommissionAmount = g.Sum(r => r.CommissionAmount)
                 });
 
-        // Build lookup: OrderItemId → total refunded amount in THIS refund
+        // Build lookup: OrderItemId -> total refunded amount in THIS refund
         var refundedAmountByItemId = refund.Lines
             .Where(line => line.Amount > 0m && line.OrderItemId != Guid.Empty)
             .GroupBy(line => line.OrderItemId)
@@ -4820,7 +4974,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         if (IsPostgresProvider())
         {
             query = _db.Promotions.FromSqlInterpolated($@"
-                SELECT *
+                SELECT xmin, *
                 FROM ""Promotions""
                 WHERE ""TenantId"" = {tenantId}
                   AND ""Id"" = {promotionId}

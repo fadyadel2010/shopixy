@@ -23,7 +23,8 @@ public sealed class CookieCsrfProtectionMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         if (!UnsafeMethods.Contains(context.Request.Method) ||
-            !AuthCookieConfiguration.HasAnyAuthenticationCookie(context.Request))
+            !AuthCookieConfiguration.HasAnyAuthenticationCookie(context.Request) ||
+            IsLeaseTokenAuthorizedUpload(context))
         {
             await _next(context);
             return;
@@ -46,4 +47,7 @@ public sealed class CookieCsrfProtectionMiddleware
                 code = "CSRF_VALIDATION_FAILED"
             });
     }
+
+    private static bool IsLeaseTokenAuthorizedUpload(HttpContext context) =>
+        context.GetEndpoint()?.Metadata.GetMetadata<LeaseTokenAuthorizedUploadAttribute>() != null;
 }

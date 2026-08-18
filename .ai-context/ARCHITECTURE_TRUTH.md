@@ -8,6 +8,7 @@
 - PASS SF-ADM2.8 Builder Preview Authority Certification.
 - PASS SF-ADM2.9 Builder Version History & Rollback Authority Certification.
 - PASS SF-ADM2.FINAL Store Builder End-to-End Authority Certification.
+- PASS SF-ADM3.4 Admin Order Fulfillment & Shipment Authority Truth.
 - PASS SF-CMS2 CMS Page Identity Authority Truth.
 - PASS SF-CMS3 CMS Content Authority Truth.
 - PASS SF-CMS4 CMS SEO Authority Truth.

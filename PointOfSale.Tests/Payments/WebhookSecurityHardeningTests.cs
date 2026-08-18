@@ -588,23 +588,8 @@ public sealed class WebhookSecurityHardeningTests
             httpContext.Request.Headers["Stripe-Signature"] = signature;
         }
 
-        var orchestration = new Mock<ICommerceHubPaymentOrchestrationService>();
-        orchestration
-            .Setup(service => service.ProcessWebhookAsync(
-                CommerceHubPaymentMethods.Stripe,
-                It.IsAny<string?>(),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CommerceHubPaymentWebhookResultDto
-            {
-                Processed = true,
-                Provider = CommerceHubPaymentMethods.Stripe,
-                Message = "processed"
-            });
-
         return new StripeWebhooksController(
-            orchestration.Object,
+            stripePaymentService,
             new PaymentWebhookRequestPipeline(
                 resolver,
                 NullLogger<PaymentWebhookRequestPipeline>.Instance),
@@ -645,23 +630,8 @@ public sealed class WebhookSecurityHardeningTests
             httpContext.Request.Headers["Hmac"] = hmac;
         }
 
-        var orchestration = new Mock<ICommerceHubPaymentOrchestrationService>();
-        orchestration
-            .Setup(service => service.ProcessWebhookAsync(
-                CommerceHubPaymentMethods.Paymob,
-                It.IsAny<string?>(),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CommerceHubPaymentWebhookResultDto
-            {
-                Processed = true,
-                Provider = CommerceHubPaymentMethods.Paymob,
-                Message = "processed"
-            });
-
         return new PaymobWebhooksController(
-            orchestration.Object,
+            paymobPaymentService,
             new PaymentWebhookRequestPipeline(
                 resolver,
                 NullLogger<PaymentWebhookRequestPipeline>.Instance),
@@ -698,21 +668,8 @@ public sealed class WebhookSecurityHardeningTests
         httpContext.Request.Path = path;
         httpContext.Request.QueryString = new QueryString(queryString);
 
-        var orchestration = new Mock<ICommerceHubPaymentOrchestrationService>();
-        orchestration
-            .Setup(service => service.ValidateCallbackAsync(
-                CommerceHubPaymentMethods.Paymob,
-                It.IsAny<IReadOnlyDictionary<string, string>>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CommerceHubPaymentCallbackResultDto
-            {
-                IsValid = false,
-                Message = "Payment callback context was not found."
-            });
-
         return new PaymobWebhooksController(
-            orchestration.Object,
+            paymobPaymentService,
             new PaymentWebhookRequestPipeline(
                 resolver,
                 NullLogger<PaymentWebhookRequestPipeline>.Instance),

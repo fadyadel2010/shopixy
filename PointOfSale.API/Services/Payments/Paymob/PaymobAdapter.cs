@@ -5,6 +5,8 @@ using Microsoft.Extensions.Options;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Instrumentation;
+using PointOfSale.API.Services.Admin;
+using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments.ProviderContracts;
 
 namespace PointOfSale.API.Services.Payments.Paymob;
@@ -16,19 +18,22 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
     private readonly IPaymobCapabilityProvider _capabilityProvider;
     private readonly PaymobOperationalTelemetry _telemetry;
     private readonly ILogger<PaymobAdapter> _logger;
+    private readonly IPaymentProviderAdministrationService? _administrationService;
 
     public PaymobAdapter(
         IPaymobOfficialApiClient client,
         IOptions<CommerceHubPaymobOptions> options,
         IPaymobCapabilityProvider capabilityProvider,
         PaymobOperationalTelemetry telemetry,
-        ILogger<PaymobAdapter> logger)
+        ILogger<PaymobAdapter> logger,
+        IPaymentProviderAdministrationService? administrationService = null)
     {
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _options = options.Value;
         _capabilityProvider = capabilityProvider ?? throw new ArgumentNullException(nameof(capabilityProvider));
         _telemetry = telemetry ?? throw new ArgumentNullException(nameof(telemetry));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _administrationService = administrationService;
     }
 
     public ProviderCode ProviderCode { get; } = new(CommerceHubPaymentMethods.Paymob);
@@ -37,6 +42,27 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
     {
         get
         {
+            if (_administrationService is not null)
+            {
+                var configuration = _administrationService.GetProviderOperationalConfiguration(CommerceHubPaymentMethods.Paymob);
+                var configured = IsModernConfigurationReady(configuration);
+                return new PaymentProviderCapabilities(
+                    SupportsAuthentication: configured,
+                    SupportsPaymentIntentionCreation: configured,
+                    SupportsPaymentSessionCreation: configured,
+                    SupportsHostedCheckout: configured,
+                    SupportsPaymentStatusLookup: false,
+                    SupportsWebhookVerification: configured,
+                    SupportsCallbackParsing: configured,
+                    SupportsRefunds: false,
+                    Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["provider"] = PaymobProviderReference.ProviderName,
+                        ["environment"] = configuration.Environment,
+                        ["configuration_authority"] = "super_admin"
+                    });
+            }
+
             var report = _capabilityProvider.GetCapabilities();
             return new PaymentProviderCapabilities(
                 SupportsAuthentication: true,
@@ -64,6 +90,11 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (_administrationService is not null)
+        {
+            return await CreateModernSessionAsync(request, cancellationToken);
+        }
+
         EnsurePaymentConfiguration();
 
         var stopwatch = Stopwatch.StartNew();
@@ -191,12 +222,12 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        EnsureWebhookConfiguration();
+        var hmacSecret = ResolveHmacSecret();
         var verification = PaymobWebhookHmacVerifier.Verify(new PaymobWebhookEvidenceRequest
         {
             RawPayload = request.RawPayload,
             HmacSignature = request.Signature,
-            HmacSecret = PaymobOptionsValidator.ResolveWebhookSecret(_options)
+            HmacSecret = hmacSecret
         });
 
         if (!verification.Succeeded)
@@ -212,6 +243,7 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         }
 
         var callback = verification.Callback!;
+        EnsureConfiguredIntegration(callback);
         _logger.LogInformation(
             "WebhookValidated | TransactionId: {TransactionId} | EventType: {EventType} | CorrelationId: {CorrelationId}",
             callback.TransactionId,
@@ -219,6 +251,15 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
             request.CorrelationId);
 
         var providerError = PaymobWebhookErrorTranslator.TranslateProviderFailure(callback);
+        var finality = PaymobTransactionFinalityClassifier.Classify(
+            callback.Payload.Pending,
+            callback.Payload.Success,
+            callback.Payload.IsAuth,
+            callback.Payload.IsCapture,
+            callback.Payload.IsStandalonePayment,
+            callback.Payload.IsVoided,
+            callback.Payload.IsRefunded,
+            callback.Payload.ErrorOccured);
         return Task.FromResult(new PaymentProviderWebhookResult
         {
             EventType = callback.EventType,
@@ -227,6 +268,7 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
             ProviderIntentId = callback.OrderId.ToString(CultureInfo.InvariantCulture),
             Pending = callback.Payload.Pending,
             Success = callback.Payload.Success,
+            AuthorizationOnly = finality == PaymobTransactionFinality.Authorized,
             IsVoided = callback.Payload.IsVoided,
             IsRefunded = callback.Payload.IsRefunded,
             AmountMinorUnits = callback.Payload.AmountCents ?? 0L,
@@ -242,7 +284,7 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        EnsureWebhookConfiguration();
+        var hmacSecret = ResolveHmacSecret();
 
         request.Parameters.TryGetValue("hmac", out var hmacSignature);
         request.Parameters.TryGetValue("id", out var transactionId);
@@ -269,7 +311,7 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         {
             RawPayload = rawPayload,
             HmacSignature = hmacSignature,
-            HmacSecret = PaymobOptionsValidator.ResolveWebhookSecret(_options)
+            HmacSecret = hmacSecret
         });
 
         if (!verification.Succeeded)
@@ -285,10 +327,20 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         }
 
         var callback = verification.Callback!;
+        EnsureConfiguredIntegration(callback);
+        var finality = PaymobTransactionFinalityClassifier.Classify(
+            callback.Payload.Pending,
+            callback.Payload.Success,
+            callback.Payload.IsAuth,
+            callback.Payload.IsCapture,
+            callback.Payload.IsStandalonePayment,
+            callback.Payload.IsVoided,
+            callback.Payload.IsRefunded,
+            callback.Payload.ErrorOccured);
         return Task.FromResult(new PaymentProviderCallbackResult
         {
             IsValid = true,
-            IsSuccess = callback.Payload.Success,
+            IsSuccess = finality == PaymobTransactionFinality.Captured,
             TransactionId = callback.TransactionId,
             ProviderIntentId = callback.OrderId.ToString(CultureInfo.InvariantCulture),
             ProviderReference = callback.MerchantOrderId,
@@ -411,6 +463,188 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
                 "CommerceHub Paymob webhook verification is not configured."));
         }
     }
+
+    private async Task<PaymentProviderSessionResult> CreateModernSessionAsync(
+        PaymentProviderSessionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var configuration = _administrationService!.GetProviderOperationalConfiguration(CommerceHubPaymentMethods.Paymob);
+        if (!IsModernConfigurationReady(configuration))
+        {
+            throw new PaymentProviderAdapterException(ConfigurationError(
+                "PAYMOB_NOT_CONFIGURED",
+                "CommerceHub Paymob is not ready in Super Admin configuration."));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.ExistingProviderIntentId))
+        {
+            throw new PaymentProviderAdapterException(
+                ConfigurationError(
+                    "PAYMOB_INTENTION_RECOVERY_REQUIRED",
+                    "An existing CommerceHub Paymob intention requires reconciliation before another intention can be created."),
+                outcomeUnknown: true,
+                providerIntentId: request.ExistingProviderIntentId);
+        }
+
+        var integrationId = int.Parse(
+            configuration.Configuration["integrationId"]!.ToString()!,
+            CultureInfo.InvariantCulture);
+        var amountMinor = ConvertToMinorUnits(request.Amount, request.Currency);
+        var (firstName, lastName) = SplitFullName(request.CustomerName);
+        var billingData = new PaymobBillingData(
+            "NA",
+            FirstNonBlank(request.Email, "customer@example.com"),
+            "NA",
+            firstName,
+            lastName,
+            FirstNonBlank(request.AddressLine, "NA"),
+            "NA",
+            FirstNonBlank(request.PhoneNumber, "+20000000000"),
+            "NA",
+            "NA",
+            FirstNonBlank(request.City, "NA"),
+            NormalizeCountry(request.CountryCode),
+            FirstNonBlank(request.Area, request.City, "NA"));
+        var intentionRequest = new PaymobIntentionRequest(
+            amountMinor,
+            NormalizeCurrency(request.Currency),
+            [integrationId],
+            [new PaymobIntentionItem(
+                $"CommerceHub {Required(request.OrderNumber, "order number")}",
+                amountMinor,
+                Required(request.ProviderReference, "provider reference"),
+                1)],
+            billingData,
+            new PaymobIntentionCustomer(
+                billingData.FirstName,
+                billingData.LastName,
+                billingData.Email),
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["internal_reference"] = request.MarketplaceOrderId.ToString("D")
+            },
+            Required(request.ProviderReference, "provider reference"),
+            3600,
+            configuration.Configuration["webhookUrl"]!.ToString()!,
+            configuration.Configuration["browserCallbackUrl"]!.ToString()!);
+
+        PaymobIntentionResponse response;
+        try
+        {
+            response = await _client.CreateIntentionAsync(
+                intentionRequest,
+                configuration.Credentials["secretKey"],
+                cancellationToken);
+        }
+        catch (Exception exception) when (IsInfrastructureFailure(exception))
+        {
+            throw new PaymentProviderAdapterException(
+                TranslateException(exception),
+                outcomeUnknown: true,
+                providerIntentId: $"{CommerceHubPaymentSessionRecoveryAuthority.ProviderSessionReinitFencePrefix}{request.PaymentId}",
+                innerException: exception);
+        }
+
+        var providerOrderId = response.ResolveOrderId().ToString(CultureInfo.InvariantCulture);
+        if (string.IsNullOrWhiteSpace(response.ClientSecret) || string.IsNullOrWhiteSpace(response.Id))
+        {
+            throw new PaymentProviderAdapterException(ProviderError(
+                CanonicalProviderErrorType.ProviderRejected,
+                "PAYMOB_INTENTION_RESPONSE_INCOMPLETE",
+                "Paymob intention response did not contain required checkout identity."));
+        }
+
+        var checkoutUrl = PaymobRedirectFactory.CreateUnifiedCheckoutUrl(
+            configuration.Configuration["publicKey"]!.ToString()!,
+            response.ClientSecret);
+        var rawResponse = JsonSerializer.Serialize(new
+        {
+            intentionId = response.Id,
+            providerOrderId,
+            merchantReference = request.ProviderReference
+        });
+
+        return new PaymentProviderSessionResult(
+            checkoutUrl,
+            response.ClientSecret,
+            providerOrderId,
+            rawResponse);
+    }
+
+    private string ResolveHmacSecret()
+    {
+        if (_administrationService is null)
+        {
+            EnsureWebhookConfiguration();
+            return PaymobOptionsValidator.ResolveWebhookSecret(_options);
+        }
+
+        var configuration = _administrationService.GetProviderOperationalConfiguration(CommerceHubPaymentMethods.Paymob);
+        if (!IsModernConfigurationReady(configuration) ||
+            !configuration.Credentials.TryGetValue("hmacSecret", out var hmacSecret) ||
+            string.IsNullOrWhiteSpace(hmacSecret))
+        {
+            throw new PaymentProviderAdapterException(ConfigurationError(
+                "PAYMOB_WEBHOOK_NOT_CONFIGURED",
+                "CommerceHub Paymob webhook verification is not configured."));
+        }
+
+        return hmacSecret;
+    }
+
+    private void EnsureConfiguredIntegration(PaymobCallback callback)
+    {
+        if (_administrationService is null)
+        {
+            return;
+        }
+
+        var configuration = _administrationService.GetProviderOperationalConfiguration(CommerceHubPaymentMethods.Paymob);
+        var configuredIntegrationId = configuration.Configuration["integrationId"]?.ToString();
+        if (!string.Equals(
+                callback.Payload.IntegrationId?.ToString(CultureInfo.InvariantCulture),
+                configuredIntegrationId,
+                StringComparison.Ordinal))
+        {
+            throw new PaymentProviderAdapterException(ValidationError(
+                "PAYMOB_INTEGRATION_MISMATCH",
+                "Paymob callback integration does not match CommerceHub Super Admin configuration."));
+        }
+    }
+
+    private static bool IsModernConfigurationReady(PaymentProviderOperationalConfiguration configuration)
+    {
+        if (!configuration.Enabled ||
+            !configuration.Configuration.TryGetValue("integrationId", out var integrationValue) ||
+            !int.TryParse(integrationValue?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var integrationId) ||
+            integrationId <= 0 ||
+            !configuration.Configuration.TryGetValue("publicKey", out var publicKeyValue) ||
+            string.IsNullOrWhiteSpace(publicKeyValue?.ToString()) ||
+            !configuration.Configuration.TryGetValue("webhookUrl", out var webhookValue) ||
+            !HasHttpsUrl(webhookValue?.ToString()) ||
+            !configuration.Configuration.TryGetValue("browserCallbackUrl", out var callbackValue) ||
+            !HasHttpsUrl(callbackValue?.ToString()) ||
+            !configuration.Credentials.TryGetValue("secretKey", out var secretKey) ||
+            string.IsNullOrWhiteSpace(secretKey) ||
+            !configuration.Credentials.TryGetValue("hmacSecret", out var hmacSecret) ||
+            string.IsNullOrWhiteSpace(hmacSecret))
+        {
+            return false;
+        }
+
+        var marker = string.Equals(configuration.Environment, "Sandbox", StringComparison.Ordinal) ? "_test_" : "_live_";
+        return publicKeyValue!.ToString()!.Contains(marker, StringComparison.Ordinal) &&
+               secretKey.Contains(marker, StringComparison.Ordinal);
+    }
+
+    private static bool HasHttpsUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeCountry(string countryCode) =>
+        string.Equals(countryCode?.Trim(), "EG", StringComparison.OrdinalIgnoreCase)
+            ? "EGY"
+            : Required(countryCode, "country code").ToUpperInvariant();
 
     private static string CreateIframeUrl(Uri baseUrl, string iframeId, string paymentKey)
     {

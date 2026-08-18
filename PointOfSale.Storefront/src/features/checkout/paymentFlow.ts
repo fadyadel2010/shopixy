@@ -47,6 +47,7 @@ export interface CanonicalPaymentStatusResponse {
     paymentStatus: string;
     paymentIntentStatus?: string;
     paymentMethod?: string;
+    canRetryPayment: boolean;
     totalAmount: number;
     currency: string;
 }
@@ -72,6 +73,7 @@ export function requireCanonicalPaymentStatusForOrder(
         typeof response.paymentStatus !== 'string' ||
         !ORDER_PAYMENT_STATUSES.has(response.paymentStatus) ||
         (response.paymentIntentStatus != null && !PAYMENT_INTENT_STATUSES.has(response.paymentIntentStatus)) ||
+        typeof response.canRetryPayment !== 'boolean' ||
         typeof response.totalAmount !== 'number' ||
         !Number.isFinite(response.totalAmount) ||
         response.totalAmount < 0 ||
@@ -102,6 +104,13 @@ export function requireCanonicalPaymentStatusForOrder(
         throw new Error('Backend payment status contradicted current manual-review evidence.');
     }
 
+    if (
+        response.canRetryPayment &&
+        (response.status !== 'FAILED' || response.paymentMethod?.trim().toUpperCase() !== 'PAYMOB')
+    ) {
+        throw new Error('Backend payment status contradicted payment retry authority.');
+    }
+
     return { ...response, orderId, orderNumber };
 }
 
@@ -110,6 +119,15 @@ export type PendingCheckoutAction =
     | { kind: 'manual_review' }
     | { kind: 'failed' }
     | { kind: 'success'; href: string };
+
+export interface PaymentStatusFailureEvidence {
+    status?: number;
+    code?: string | null;
+}
+
+export function isPaymentStatusAccessDeniedFailure(error: PaymentStatusFailureEvidence): boolean {
+    return error.status === 403 || error.code === 'ORDER_ACCESS_DENIED';
+}
 
 export function resolveBackendPaymentScreen(status: CanonicalPaymentState): PaymentResolutionScreen {
     switch (status) {

@@ -330,7 +330,7 @@ public static class StripeWebhookOutcomeAdmissionService
         var classification = stripeEvent.Type switch
         {
             "payment_intent.succeeded" => StripeWebhookOutcomeClassification.Terminal,
-            "payment_intent.payment_failed" => StripeWebhookOutcomeClassification.Terminal,
+            "payment_intent.payment_failed" => StripeWebhookOutcomeClassification.NonTerminal,
             "payment_intent.canceled" => StripeWebhookOutcomeClassification.Terminal,
             "charge.refunded" => StripeWebhookOutcomeClassification.Terminal,
             "payment_intent.processing" => StripeWebhookOutcomeClassification.NonTerminal,
@@ -345,9 +345,12 @@ public static class StripeWebhookOutcomeAdmissionService
         var admittedToRuntime = stripeEvent.Type is "payment_intent.succeeded" or "charge.refunded"
             || (stripeEvent.Type == "checkout.session.completed"
                 && classification == StripeWebhookOutcomeClassification.Terminal);
-        var reasonCode = stripeEvent.Type is "payment_intent.payment_failed" or "payment_intent.canceled"
-            ? "TERMINAL_NEGATIVE_APPLICATION_LIFECYCLE"
-            : classification.ToString().ToUpperInvariant();
+        var reasonCode = stripeEvent.Type switch
+        {
+            "payment_intent.payment_failed" => "RETRYABLE_PAYMENT_ATTEMPT_FAILED",
+            "payment_intent.canceled" => "TERMINAL_NEGATIVE_APPLICATION_LIFECYCLE",
+            _ => classification.ToString().ToUpperInvariant()
+        };
 
         return new StripeWebhookOutcomeAdmission(
             classification,
@@ -418,7 +421,8 @@ public static class StripeWebhookRuntimeObjectResolver
         };
 
         if (metadata is not null &&
-            metadata.TryGetValue("orderId", out var orderIdValue) &&
+            (metadata.TryGetValue("orderId", out var orderIdValue) ||
+             metadata.TryGetValue("canonical_orderId", out orderIdValue)) &&
             Guid.TryParse(orderIdValue, out var orderId))
         {
             return orderId;

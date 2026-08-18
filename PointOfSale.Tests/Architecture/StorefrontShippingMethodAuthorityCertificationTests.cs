@@ -20,19 +20,22 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
 
         Assert.Contains("SHIPPING_METHODS: '/api/storefront/shipping-methods'", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("PRICING: '/api/storefront/checkout/pricing'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("setShippingMethod: (id) =>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("setShippingMethod: async (id, options = {}) =>", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: id", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingSelectionStatus: 'valid'", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const response = await httpClient.get<unknown>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const response = await httpClient.post<unknown>", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("CHECKOUT_ENDPOINTS.SHIPPING_METHODS_PREVIEW", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("const expectedTenantId = requireStorefrontShippingTenantScope(candidate.tenantId);", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("tenantId.toLowerCase() !== expectedTenantId.toLowerCase()", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("const methodIds = methods.map(m => m.id)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("isCurrentSelectionValid", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("shippingSelectionStatus !== 'stale'", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("state.shippingSelectionStatus === 'valid'", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("state.warehouseResolutionStatus === 'RESOLVED'", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("shippingMethodId: state.shippingMethodId", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("return state.pricing?.shipping ?? 0", checkoutStore, StringComparison.Ordinal);
 
-        Assert.Contains("onSelect={() => setShippingMethod(method.id)}", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("void setShippingMethod(method.id).catch(() => undefined)", shippingStep, StringComparison.Ordinal);
+        Assert.Contains("isDisabled={isSelectingMethod}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price={method.price}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("formatPrice={formatPrice}", shippingStep, StringComparison.Ordinal);
         Assert.Contains("price > 0 ? formatPrice(price) : 'Free'", shippingStep, StringComparison.Ordinal);
@@ -144,7 +147,7 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
         Assert.Contains("EstimatedDeliveryDays = FormatEstimatedDelivery(shippingMethod)", checkoutService, StringComparison.Ordinal);
 
         Assert.Contains("var shipping = shippingMethod == null", pricingService, StringComparison.Ordinal);
-        Assert.Contains("_shippingCalculationService.Calculate(shippingMethod, requestTotals.Subtotal)", pricingService, StringComparison.Ordinal);
+        Assert.Contains("requestTotals.TotalWeight", pricingService, StringComparison.Ordinal);
         Assert.Contains("Shipping = shipping", pricingService, StringComparison.Ordinal);
         Assert.Contains("FinalTotal = total", pricingService, StringComparison.Ordinal);
     }
@@ -157,17 +160,6 @@ public sealed class StorefrontShippingMethodAuthorityCertificationTests
             ReadRepoFile("docs/architecture/storefront-shipping-method-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PA5.3", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

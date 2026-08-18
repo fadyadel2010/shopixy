@@ -1381,8 +1381,7 @@ public class StripePaymentService : IStripePaymentService
         }
 
         // Extract order ID from metadata
-        if (!paymentIntent.Metadata.TryGetValue("orderId", out var orderIdStr) ||
-            !Guid.TryParse(orderIdStr, out var orderId))
+        if (!TryResolveStripeOrderId(paymentIntent.Metadata, out var orderId))
         {
             throw new InvalidOperationException(
                 $"Stripe event {stripeEvent.Id} is missing a valid orderId in metadata.");
@@ -1516,8 +1515,7 @@ public class StripePaymentService : IStripePaymentService
             throw new InvalidOperationException($"Stripe event {stripeEvent.Id} did not contain a payment intent payload.");
         }
 
-        if (!paymentIntent.Metadata.TryGetValue("orderId", out var orderIdStr) ||
-            !Guid.TryParse(orderIdStr, out var orderId))
+        if (!TryResolveStripeOrderId(paymentIntent.Metadata, out var orderId))
         {
             throw new InvalidOperationException(
                 $"Stripe event {stripeEvent.Id} is missing a valid orderId in metadata.");
@@ -1532,56 +1530,24 @@ public class StripePaymentService : IStripePaymentService
             throw new PaymentIntentNotFoundException(paymentIntent.Id);
         }
 
-        var now = DateTime.UtcNow;
-
         webhookLog.PaymentIntentId = intent.Id;
         webhookLog.OrderId = orderId;
 
         var failureReason = paymentIntent.LastPaymentError?.Message ?? "Payment failed";
         var failureCode = paymentIntent.LastPaymentError?.Code;
-        var lifecycleResult = await _paymentLifecycleService.HandlePaymentResultAsync(
-            new HandlePaymentResultRequest
-            {
-                OrderId = orderId,
-                PaymentIntentId = intent.Id,
-                Outcome = PaymentLifecycleOutcome.Failed,
-                Source = PaymentLifecycleSource.GatewayWebhook,
-                Gateway = "stripe",
-                PaymentReference = paymentIntent.Id,
-                ProviderPaymentId = paymentIntent.LatestChargeId,
-                Amount = intent.Amount,
-                Currency = intent.Currency,
-                Reason = failureReason,
-                FailureCode = failureCode,
-                WebhookEventId = stripeEvent.Id,
-                ProcessedAtUtc = now
-            },
-            cancellationToken);
-
-        if (!lifecycleResult.Success)
-        {
-            _stripeTelemetry?.RecordPaymentFailed(tenantId, "webhook", lifecycleResult.FailureCode ?? "LIFECYCLE_FAILURE");
-            throw new InvalidOperationException(
-                $"Failed to record Stripe payment failure: {lifecycleResult.ErrorMessage}");
-        }
+        // Stripe emits payment_intent.payment_failed for a failed confirmation attempt
+        // while the same PaymentIntent can still be confirmed again. Keep local payment,
+        // order, and inventory authority pending until cancellation or another terminal event.
+        intent.FailureReason = failureReason;
+        intent.FailureCode = failureCode;
+        intent.LastWebhookEventId = stripeEvent.Id;
+        intent.WebhookEventCount++;
+        intent.UpdatedAt = DateTime.UtcNow;
         _stripeTelemetry?.RecordPaymentFailed(tenantId, "webhook", failureCode ?? "PAYMENT_FAILED");
-        _stripeTelemetry?.RecordRuntimeDecision(tenantId, "failed");
-
-        // ═══════════════════════════════════════════════════════════════════════
-        // Authoritative outcome events are staged inside PaymentLifecycleService.
-        // ═══════════════════════════════════════════════════════════════════════
-        // Recovery path: ensure inventory release and downstream events fire even if
-        // payment state was already committed on a prior attempt.
-        
-        if (!lifecycleResult.StateChanged)
-        {
-            _logger.LogInformation(
-                "Stripe failure replay - state unchanged; authoritative outcome events are owned by PaymentLifecycleService | OrderId: {OrderId} | StripeEventId: {StripeEventId}",
-                orderId, stripeEvent.Id);
-        }
+        _stripeTelemetry?.RecordRuntimeDecision(tenantId, "retryable_failure");
 
         _logger.LogWarning(
-            "Stripe payment failed | OrderId: {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
+            "Stripe payment attempt failed and remains retryable | OrderId: {OrderId} | Reason: {Reason} | CorrelationId: {CorrelationId}",
             orderId, failureReason, correlationId);
 
         return orderId.ToString();
@@ -1600,8 +1566,7 @@ public class StripePaymentService : IStripePaymentService
             throw new InvalidOperationException($"Stripe event {stripeEvent.Id} did not contain a payment intent payload.");
         }
 
-        if (!paymentIntent.Metadata.TryGetValue("orderId", out var orderIdStr) ||
-            !Guid.TryParse(orderIdStr, out var orderId))
+        if (!TryResolveStripeOrderId(paymentIntent.Metadata, out var orderId))
         {
             throw new InvalidOperationException(
                 $"Stripe event {stripeEvent.Id} is missing a valid orderId in metadata.");
@@ -1824,16 +1789,56 @@ public class StripePaymentService : IStripePaymentService
         }
 
         var configuration = EvaluatePaymentMethodConfiguration(paymentMethod, "status");
-        var validationMessage = configuration.IsConfigurationValid
-            ? null
-            : configuration.ValidationErrors.FirstOrDefault() ?? "Stripe configuration is incomplete";
+        if (!paymentMethod.IsEnabled)
+        {
+            return new StripeConfigurationStatusDto
+            {
+                IsEnabled = false,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = "STRIPE_PAYMENT_METHOD_DISABLED"
+            };
+        }
+
+        if (!configuration.IsConfigurationValid)
+        {
+            return new StripeConfigurationStatusDto
+            {
+                IsEnabled = true,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = configuration.ValidationErrors.FirstOrDefault() ?? "Stripe configuration is incomplete"
+            };
+        }
+
+        try
+        {
+            await _stripeTenantConfigurationResolver.ResolveCredentialsAsync(
+                tenantId,
+                StripeOperationalCapability.PaymentIntent,
+                cancellationToken);
+            await _stripeTenantConfigurationResolver.ResolveCredentialsAsync(
+                tenantId,
+                StripeOperationalCapability.Webhook,
+                cancellationToken);
+        }
+        catch (PaymentException exception)
+        {
+            return new StripeConfigurationStatusDto
+            {
+                IsEnabled = true,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = exception.ErrorCode
+            };
+        }
 
         return new StripeConfigurationStatusDto
         {
-            IsEnabled = paymentMethod.IsEnabled,
-            IsConfigured = configuration.IsConfigurationValid,
+            IsEnabled = true,
+            IsConfigured = true,
             IsSandbox = paymentMethod.IsSandbox,
-            ValidationMessage = validationMessage
+            ValidationMessage = null
         };
     }
 
@@ -2116,6 +2121,21 @@ public class StripePaymentService : IStripePaymentService
             _logger.LogWarning(ex, "Failed to decrypt Stripe configuration");
             return null;
         }
+    }
+
+    private static bool TryResolveStripeOrderId(
+        IReadOnlyDictionary<string, string> metadata,
+        out Guid orderId)
+    {
+        if ((metadata.TryGetValue("orderId", out var value) ||
+             metadata.TryGetValue("canonical_orderId", out value)) &&
+            Guid.TryParse(value, out orderId))
+        {
+            return true;
+        }
+
+        orderId = Guid.Empty;
+        return false;
     }
 
     private static long ConvertToStripeAmount(decimal amount, string currency)

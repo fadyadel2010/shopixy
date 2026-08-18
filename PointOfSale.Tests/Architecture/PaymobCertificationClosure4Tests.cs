@@ -24,9 +24,9 @@ public sealed class PaymobCertificationClosure4Tests
             .CreateAsync(CreatePaymentAction(TenantId));
 
         Assert.True(result.Succeeded);
-        Assert.Equal("tenant-paymob-api-key", client.AuthRequest?.ApiKey);
-        Assert.Equal(24680, client.PaymentKeyRequest?.IntegrationId);
-        Assert.Contains("acceptance/iframes/13579", result.ProviderResponse?.IframeUrl, StringComparison.Ordinal);
+        Assert.Equal("egy_sk_test_closure4", client.SecretKey);
+        Assert.Equal(24680, client.IntentionRequest?.PaymentMethods.Single());
+        Assert.Contains("https://accept.paymob.com/unifiedcheckout/", result.ProviderResponse?.IframeUrl, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -39,9 +39,7 @@ public sealed class PaymobCertificationClosure4Tests
 
         Assert.False(result.Succeeded);
         Assert.Equal("PAYMOB_ADAPTER_INVALID", result.Error?.Code);
-        Assert.Equal(0, client.AuthenticationCount);
-        Assert.Equal(0, client.OrderRegistrationCount);
-        Assert.Equal(0, client.PaymentKeyCount);
+        Assert.Equal(0, client.IntentionCount);
     }
 
     [Fact]
@@ -58,9 +56,7 @@ public sealed class PaymobCertificationClosure4Tests
         Assert.True(first.Succeeded);
         Assert.False(staleReuse.Succeeded);
         Assert.Equal("PAYMOB_ADAPTER_INVALID", staleReuse.Error?.Code);
-        Assert.Equal(1, client.AuthenticationCount);
-        Assert.Equal(1, client.OrderRegistrationCount);
-        Assert.Equal(1, client.PaymentKeyCount);
+        Assert.Equal(1, client.IntentionCount);
     }
 
     [Fact]
@@ -75,7 +71,7 @@ public sealed class PaymobCertificationClosure4Tests
 
         Assert.False(result.Succeeded);
         Assert.Equal("PAYMOB_ADAPTER_INVALID", result.Error?.Code);
-        Assert.Equal(0, client.AuthenticationCount);
+        Assert.Equal(0, client.IntentionCount);
     }
 
     [Fact]
@@ -102,10 +98,35 @@ public sealed class PaymobCertificationClosure4Tests
             TenantId,
             PaymobOperationalCapability.PaymentIntent);
 
-        Assert.Equal("tenant-paymob-api-key", credentials.ApiKey);
+        Assert.Equal("egy_pk_test_closure4", credentials.PublicKey);
+        Assert.Equal("egy_sk_test_closure4", credentials.SecretKey);
         Assert.Equal("24680", credentials.IntegrationId);
-        Assert.Equal("13579", credentials.IframeId);
+        Assert.Null(credentials.IframeId);
         Assert.Equal("tenant-paymob-hmac-secret", credentials.HmacSecret);
+    }
+
+    [Fact]
+    public async Task CallbackCapability_MustFailClosedWhenServerOwnedCallbackUrlsAreNotConfigured()
+    {
+        await using var dbContext = CreateDbContext();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        dbContext.TenantPaymentMethods.Add(CreateTenantPaymentMethod(dataProtectionProvider));
+        await dbContext.SaveChangesAsync();
+
+        var options = EnabledOptions() with
+        {
+            Callback = new PaymobCallbackConfiguration { Configured = false }
+        };
+        var resolver = new PaymobTenantConfigurationResolver(
+            dbContext,
+            dataProtectionProvider,
+            Options.Create(options),
+            NullLogger<PaymobTenantConfigurationResolver>.Instance);
+
+        await Assert.ThrowsAsync<PaymobNotConfiguredException>(() =>
+            resolver.ResolveCredentialsAsync(TenantId, PaymobOperationalCapability.PaymentIntent));
+        await Assert.ThrowsAsync<PaymobNotConfiguredException>(() =>
+            resolver.ResolveCredentialsAsync(TenantId, PaymobOperationalCapability.Callback));
     }
 
     [Fact]
@@ -213,19 +234,23 @@ public sealed class PaymobCertificationClosure4Tests
     private static PaymobTenantRuntimeCredentials TenantCredentials(Guid tenantId) => new(
         tenantId,
         Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        "tenant-paymob-api-key",
+        "egy_pk_test_closure4",
+        "egy_sk_test_closure4",
         "24680",
-        "13579",
         "tenant-paymob-hmac-secret",
-        true);
+        true,
+        new Uri("https://api.example.test/api/paymob/webhook"),
+        new Uri("https://store.example.test/payments/paymob/callback"),
+        IframeId: "13579",
+        ApiKey: "tenant-paymob-api-key");
 
     private static TenantPaymentMethod CreateTenantPaymentMethod(IDataProtectionProvider dataProtectionProvider)
     {
         var configuration = JsonSerializer.Serialize(new Dictionary<string, string>
         {
-            ["apiKey"] = "tenant-paymob-api-key",
+            ["publicKey"] = "egy_pk_test_closure4",
+            ["secretKey"] = "egy_sk_test_closure4",
             ["integrationId"] = "24680",
-            ["iframeId"] = "13579",
             ["hmacSecret"] = "tenant-paymob-hmac-secret"
         });
 
@@ -270,6 +295,12 @@ public sealed class PaymobCertificationClosure4Tests
             SupportsSandboxEnvironment = true,
             PaymentExecutionCertified = true,
             ProviderAdapterCertified = true
+        },
+        Callback = new PaymobCallbackConfiguration
+        {
+            Configured = true,
+            WebhookUrl = new Uri("https://api.example.test/api/paymob/webhook"),
+            CallbackUrl = new Uri("https://store.example.test/payments/paymob/callback")
         }
     };
 
@@ -283,12 +314,31 @@ public sealed class PaymobCertificationClosure4Tests
 
     private sealed class CapturingClient : IPaymobOfficialApiClient
     {
+        public int IntentionCount { get; private set; }
+        public string? SecretKey { get; private set; }
+        public PaymobIntentionRequest? IntentionRequest { get; private set; }
         public int AuthenticationCount { get; private set; }
         public int OrderRegistrationCount { get; private set; }
         public int PaymentKeyCount { get; private set; }
         public int RefundCount { get; private set; }
         public PaymobAuthRequest? AuthRequest { get; private set; }
         public PaymobPaymentKeyRequest? PaymentKeyRequest { get; private set; }
+
+        public Task<PaymobIntentionResponse> CreateIntentionAsync(
+            PaymobIntentionRequest request,
+            string secretKey,
+            CancellationToken cancellationToken)
+        {
+            IntentionCount++;
+            SecretKey = secretKey;
+            IntentionRequest = request;
+            return Task.FromResult(new PaymobIntentionResponse
+            {
+                Id = "intention-closure4",
+                ClientSecret = "client-secret-closure4",
+                IntentionOrderId = 987654
+            });
+        }
 
         public Task<PaymobAdapterAuthResponse> AuthenticateAsync(PaymobAuthRequest request, CancellationToken cancellationToken)
         {

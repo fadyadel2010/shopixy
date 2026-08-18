@@ -21,6 +21,32 @@ public sealed class CheckoutAttachmentControllerContractTests
         Assert.Contains("ApiErrorResponse.ServiceUnavailable(traceId)", method, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CheckoutAttachmentDevelopmentUpload_StaysDevelopmentOnlyAndR2RegistrationRemainsAuthoritative()
+    {
+        var controller = File.ReadAllText(RepositoryPath(
+            "PointOfSale.API",
+            "Controllers",
+            "CheckoutController.cs"));
+        var program = File.ReadAllText(RepositoryPath(
+            "PointOfSale.API",
+            "Program.cs"));
+        var developmentStorage = File.ReadAllText(RepositoryPath(
+            "PointOfSale.API",
+            "Services",
+            "DevelopmentFileStorageService.cs"));
+
+        Assert.Contains("[HttpPut(\"attachments/development-upload\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("[LeaseTokenAuthorizedUpload]", controller, StringComparison.Ordinal);
+        Assert.Contains("environment.IsDevelopment()", controller, StringComparison.Ordinal);
+        Assert.Contains("storage is not PointOfSale.API.Services.IDevelopmentPresignedUploadStorage", controller, StringComparison.Ordinal);
+        Assert.Contains("builder.Environment.IsDevelopment()", program, StringComparison.Ordinal);
+        Assert.Contains("useDevelopmentFileStorage && !r2Options.IsConfigured", program, StringComparison.Ordinal);
+        Assert.Contains("CreateInstance<PointOfSale.API.Services.R2StorageService>", program, StringComparison.Ordinal);
+        Assert.Contains("IDevelopmentPresignedUploadStorage", developmentStorage, StringComparison.Ordinal);
+        Assert.DoesNotContain("wwwroot", developmentStorage, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string RepositoryPath(params string[] segments)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

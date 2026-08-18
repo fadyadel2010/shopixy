@@ -126,6 +126,7 @@ public sealed class PaymobCertificationClosure1Tests
 
         return PaymobWebhookRuntimeAdmissionResult.Admitted(
             Guid.Parse("11111111-1111-1111-1111-111111111111"),
+            "paymob-certification-closure-1",
             new PaymobWebhookOutcomeAdmission(
                 PaymobWebhookOutcomeClassification.Terminal,
                 true,

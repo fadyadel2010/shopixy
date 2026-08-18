@@ -20,7 +20,8 @@ public sealed class AdminOrderCrossChannelPresentationAuthorityCertificationTest
         Assert.Contains("SourceOrderId = o.SourceOrderId", service, StringComparison.Ordinal);
         Assert.Contains("Source = order.Source", service, StringComparison.Ordinal);
         Assert.Contains("Source = OrderSource.Marketplace", service, StringComparison.Ordinal);
-        Assert.Contains("SourceOrderId = subOrder.MarketplaceOrderId.ToString()", service, StringComparison.Ordinal);
+        Assert.Contains("MarketplaceOrderId = subOrder.MarketplaceOrderId", service, StringComparison.Ordinal);
+        Assert.Contains("SourceOrderId = row.SourceOrderId ?? row.MarketplaceOrderId?.ToString()", service, StringComparison.Ordinal);
         Assert.Contains("AffiliateAttribution = null", service, StringComparison.Ordinal);
         Assert.Contains("MarketplaceLineage = null", service, StringComparison.Ordinal);
         Assert.Contains("AttachAffiliateAttributionEvidenceAsync", service, StringComparison.Ordinal);

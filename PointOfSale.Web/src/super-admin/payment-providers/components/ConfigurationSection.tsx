@@ -2,7 +2,7 @@ import { Settings } from 'lucide-react'
 import type { PaymentProviderConfiguration } from '../paymentProviderTypes'
 import { PaymobConfigurationForm } from './PaymobConfigurationForm'
 
-type SecretReplacementKey = 'apiKey' | 'hmacSecret'
+type SecretReplacementKey = 'apiKey' | 'secretKey' | 'hmacSecret'
 
 export function ConfigurationSection({
     provider,

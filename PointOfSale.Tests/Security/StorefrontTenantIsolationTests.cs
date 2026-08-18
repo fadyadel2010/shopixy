@@ -469,23 +469,24 @@ public sealed class StorefrontTenantIsolationTests
                 authenticatedCustomerId,
                 new PaymentOrderAccessInfo(null, authenticatedCustomerId, null, false)));
 
-        var orchestration = new Mock<ICommerceHubPaymentOrchestrationService>();
-        orchestration
-            .Setup(service => service.ExecuteAsync(
-                It.Is<CommerceHubPaymentInitiateRequestDto>(dto =>
-                    dto.OrderId == orderId.ToString() &&
-                    dto.Provider == CommerceHubPaymentMethods.Stripe &&
-                    dto.OrderAccessToken == "checkout-token"),
+        var stripePaymentService = new Mock<IStripePaymentService>();
+        stripePaymentService
+            .Setup(service => service.CreatePaymentIntentAsync(
+                tenantId,
+                orderId,
+                "checkout-token",
                 authenticatedCustomerId,
+                false,
                 It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<string?>()))
             .ThrowsAsync(new UnauthorizedAccessException("TENANT_MISMATCH"));
 
         var controller = CreateStorefrontStripePaymentsController(
             tenantId,
             authenticatedCustomerId,
             authorizationService.Object,
-            orchestration.Object);
+            stripePaymentService.Object);
 
         var result = await controller.CreatePaymentIntent(
             new CreateStripePaymentIntentRequest
@@ -500,16 +501,24 @@ public sealed class StorefrontTenantIsolationTests
         var error = Assert.IsType<ApiErrorResponse>(unauthorized.Value);
         Assert.Equal("TENANT_MISMATCH", error.Code);
 
-        orchestration.Verify(service => service.ExecuteAsync(
-            It.IsAny<CommerceHubPaymentInitiateRequestDto>(),
+        stripePaymentService.Verify(service => service.CreatePaymentIntentAsync(
+            tenantId,
+            orderId,
+            "checkout-token",
             authenticatedCustomerId,
+            false,
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Once);
-        orchestration.Verify(service => service.ExecuteAsync(
-            It.IsAny<CommerceHubPaymentInitiateRequestDto>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<string?>()), Times.Once);
+        stripePaymentService.Verify(service => service.CreatePaymentIntentAsync(
+            tenantId,
+            orderId,
+            "checkout-token",
             bodyCustomerId,
+            false,
             It.IsAny<string>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CancellationToken>(),
+            It.IsAny<string?>()), Times.Never);
     }
 
     private static CheckoutService CreateCheckoutService(ApplicationDbContext dbContext)
@@ -527,6 +536,14 @@ public sealed class StorefrontTenantIsolationTests
                 It.IsAny<MongoCollectionSettings>()))
             .Returns(Mock.Of<IMongoCollection<StorefrontConfigDocument>>());
 
+        var runtimeReadiness = new Mock<IStorefrontPaymentRuntimeReadinessService>();
+        runtimeReadiness
+            .Setup(service => service.EvaluateAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(StorefrontPaymentRuntimeReadiness.Ready);
+
         return new CheckoutService(
             dbContext,
             Mock.Of<IProductVariantReadRepository>(),
@@ -538,8 +555,8 @@ public sealed class StorefrontTenantIsolationTests
             Mock.Of<IEventPublisher>(),
             Mock.Of<ICouponValidationService>(),
             Mock.Of<IPromotionEngine>(),
-            Mock.Of<IPaymentService>(),
-            Mock.Of<ICommerceHubPaymentOrchestrationService>(),
+            Mock.Of<PointOfSale.API.Services.Payments.ProviderContracts.IPaymentGateway>(),
+            runtimeReadiness.Object,
             Mock.Of<PointOfSale.API.Services.Pricing.IStorefrontPricingService>(),
             Mock.Of<ICheckoutExecutionLockManager>(),
             Mock.Of<ICheckoutRequestIdempotencyCoordinator>(),
@@ -723,7 +740,7 @@ public sealed class StorefrontTenantIsolationTests
         Guid tenantId,
         Guid customerId,
         IPaymentRequestAuthorizationService? paymentAuthorizationServiceOverride = null,
-        ICommerceHubPaymentOrchestrationService? orchestrationOverride = null)
+        IStripePaymentService? stripePaymentServiceOverride = null)
     {
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
@@ -763,28 +780,30 @@ public sealed class StorefrontTenantIsolationTests
             paymentAuthorizationService = paymentAuthorizationMock.Object;
         }
 
-        var orchestration = orchestrationOverride;
-        if (orchestration == null)
+        var stripePaymentService = stripePaymentServiceOverride;
+        if (stripePaymentService == null)
         {
-            var orchestrationMock = new Mock<ICommerceHubPaymentOrchestrationService>();
-            orchestrationMock
-                .Setup(service => service.ExecuteAsync(
-                    It.IsAny<CommerceHubPaymentInitiateRequestDto>(),
-                    customerId,
+            var stripePaymentServiceMock = new Mock<IStripePaymentService>();
+            stripePaymentServiceMock
+                .Setup(service => service.CreatePaymentIntentAsync(
+                    tenantId,
+                    It.IsAny<Guid>(),
                     It.IsAny<string>(),
-                    It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new CommerceHubPaymentInitiateResponseDto
+                    customerId,
+                    It.IsAny<bool>(),
+                    It.IsAny<string>(),
+                    It.IsAny<CancellationToken>(),
+                    It.IsAny<string?>()))
+                .ReturnsAsync(new StripePaymentIntentResponseDto
                 {
-                    PaymentId = Guid.NewGuid(),
-                    MarketplaceOrderId = Guid.NewGuid(),
-                    Provider = CommerceHubPaymentMethods.Stripe,
-                    Status = "pending"
+                    PaymentIntentId = Guid.NewGuid(),
+                    OrderId = Guid.NewGuid()
                 });
-            orchestration = orchestrationMock.Object;
+            stripePaymentService = stripePaymentServiceMock.Object;
         }
 
         return new StorefrontStripePaymentsController(
-            orchestration,
+            stripePaymentService,
             paymentAuthorizationService,
             NullLogger<StorefrontStripePaymentsController>.Instance)
         {
@@ -847,6 +866,9 @@ public sealed class StorefrontTenantIsolationTests
         return new CheckoutRequestDto
         {
             CartId = Guid.NewGuid(),
+            CheckoutSessionId = Guid.NewGuid(),
+            WarehouseResolutionId = Guid.NewGuid(),
+            WarehouseResolutionVersion = 1,
             ShippingMethodId = Guid.NewGuid(),
             PaymentMethod = "STRIPE",
             ShippingAddress = new AddressDto

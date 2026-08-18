@@ -24,6 +24,15 @@ public static class CheckoutInventoryAuthorityGuard
             return;
         }
 
+        await EnsureOrderReservationsActiveAsync(dbContext, order, cancellationToken);
+    }
+
+    public static async Task EnsureOrderReservationsActiveAsync(
+        ApplicationDbContext dbContext,
+        Order order,
+        CancellationToken cancellationToken)
+    {
+
         var ownsTransaction = dbContext.Database.IsRelational() &&
                               dbContext.Database.CurrentTransaction == null;
 
@@ -77,6 +86,7 @@ public static class CheckoutInventoryAuthorityGuard
                 item.Id,
                 item.ProductId,
                 VariantId = item.VariantId!.Value,
+                item.WarehouseId,
                 RequiredQuantity = (decimal)item.Quantity
             })
             .ToListAsync(cancellationToken);
@@ -176,22 +186,46 @@ public static class CheckoutInventoryAuthorityGuard
             .GroupBy(reservation => new
             {
                 reservation.OrderItemId,
-                reservation.VariantId
+                reservation.VariantId,
+                reservation.WarehouseId
             })
             .ToDictionary(
-                group => (group.Key.OrderItemId, group.Key.VariantId),
+                group => (group.Key.OrderItemId, group.Key.VariantId, group.Key.WarehouseId),
                 group => group.Sum(reservation => reservation.RemainingReservedQuantity));
 
+        var validatedReservationKeys = new HashSet<(Guid OrderItemId, Guid VariantId, Guid WarehouseId)>();
         foreach (var item in reservableItems)
         {
-            var reservedQuantity = activeReservedByLine.GetValueOrDefault((item.Id, item.VariantId));
-            if (reservedQuantity < item.RequiredQuantity)
+            var warehouseId = item.WarehouseId ?? order.WarehouseId;
+            var matchingReservationLines = warehouseId.HasValue
+                ? activeReservedByLine
+                    .Where(line => line.Key == (item.Id, item.VariantId, warehouseId.Value))
+                    .ToList()
+                : activeReservedByLine
+                    .Where(line =>
+                        line.Key.OrderItemId == item.Id &&
+                        line.Key.VariantId == item.VariantId)
+                    .ToList();
+            var reservedQuantity = matchingReservationLines.Count == 1
+                ? matchingReservationLines[0].Value
+                : 0m;
+            if (reservedQuantity != item.RequiredQuantity)
             {
                 throw BuildInventoryAuthorityLost(
                     order.Id,
                     $"Required:{item.RequiredQuantity};ActiveReserved:{reservedQuantity};OrderItem:{item.Id};Variant:{item.VariantId}",
                     "ActiveSqlInventoryReservation");
             }
+
+            validatedReservationKeys.Add(matchingReservationLines[0].Key);
+        }
+
+        if (activeReservedByLine.Keys.Any(key => !validatedReservationKeys.Contains(key)))
+        {
+            throw BuildInventoryAuthorityLost(
+                order.Id,
+                "Active reservation set contains rows that do not map exactly to an authoritative order line.",
+                "ExactSqlInventoryReservationSet");
         }
 
         await EnsureReservedStockRowsStillCoverReservationsAsync(

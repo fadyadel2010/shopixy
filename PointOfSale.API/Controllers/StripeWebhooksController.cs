@@ -6,8 +6,6 @@ using PointOfSale.API.Attributes;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.RateLimiting;
 using PointOfSale.API.Security;
-using PointOfSale.API.DTOs.CommerceHub;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Stripe;
 
@@ -40,18 +38,18 @@ namespace PointOfSale.API.Controllers;
 [AllowAnonymousTenant]
 public class StripeWebhooksController : ControllerBase
 {
-    private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
+    private readonly IStripePaymentService _stripePaymentService;
     private readonly IPaymentWebhookRequestPipeline _webhookRequestPipeline;
     private readonly ILogger<StripeWebhooksController> _logger;
 
     private const string TenantIdHeader = "X-Tenant-Id";
 
     public StripeWebhooksController(
-        ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
+        IStripePaymentService stripePaymentService,
         IPaymentWebhookRequestPipeline webhookRequestPipeline,
         ILogger<StripeWebhooksController> logger)
     {
-        _paymentOrchestrationService = paymentOrchestrationService;
+        _stripePaymentService = stripePaymentService;
         _webhookRequestPipeline = webhookRequestPipeline;
         _logger = logger;
     }
@@ -126,8 +124,8 @@ public class StripeWebhooksController : ControllerBase
 
         try
         {
-            var result = await _paymentOrchestrationService.ProcessWebhookAsync(
-                CommerceHubPaymentMethods.Stripe,
+            var result = await _stripePaymentService.ProcessWebhookAsync(
+                webhookContext.TenantId,
                 webhookContext.Signature,
                 webhookContext.RawPayload,
                 traceId,
@@ -135,22 +133,22 @@ public class StripeWebhooksController : ControllerBase
 
             _logger.LogInformation(
                 "Stripe webhook processed | EventType: {EventType} | Processed: {Processed} | TraceId: {TraceId}",
-                result.Provider, result.Processed, traceId);
+                result.EventType, result.Processed, traceId);
 
             if (!result.Processed)
             {
                 _logger.LogError(
                     "Stripe webhook processing did not complete successfully | TenantId: {TenantId} | EventType: {EventType} | TraceId: {TraceId}",
                     webhookContext.TenantId,
-                    result.Provider,
+                    result.EventType,
                     traceId);
 
-                return StatusCode(StatusCodes.Status500InternalServerError, MapStripeWebhookResult(result));
+                return StatusCode(StatusCodes.Status500InternalServerError, result);
             }
 
-            return Ok(MapStripeWebhookResult(result));
+            return Ok(result);
         }
-        catch (CommerceHubCheckoutException ex) when (ex.StatusCode == StatusCodes.Status401Unauthorized)
+        catch (StripeWebhookSignatureException)
         {
             WebhookRequestBodyReader.RecordInvalidSignature(HttpContext, "stripe", "payment");
             _logger.LogWarning(
@@ -163,13 +161,13 @@ public class StripeWebhooksController : ControllerBase
                 "Webhook signature is invalid.",
                 traceId));
         }
-        catch (CommerceHubCheckoutException ex)
+        catch (PaymentException ex)
         {
             _logger.LogError(
                 ex,
                 "Stripe webhook validation failed | TenantId: {TenantId} | Code: {Code} | TraceId: {TraceId}",
                 webhookContext.TenantId,
-                ex.Code,
+                ex.ErrorCode,
                 traceId);
 
             return StatusCode(StatusCodes.Status500InternalServerError, new StripeWebhookResultDto
@@ -213,18 +211,6 @@ public class StripeWebhooksController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
-    }
-
-    private static StripeWebhookResultDto MapStripeWebhookResult(CommerceHubPaymentWebhookResultDto result)
-    {
-        return new StripeWebhookResultDto
-        {
-            Processed = result.Processed,
-            Message = result.Message,
-            OrderId = result.MarketplaceOrderId?.ToString(),
-            EventType = result.Provider,
-            EventLogId = result.PaymentId
-        };
     }
 
     #endregion

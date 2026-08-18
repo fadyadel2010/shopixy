@@ -70,6 +70,31 @@ public sealed class StripeFoundationCertificationTests
     }
 
     [Fact]
+    public void TenantFeatureActivation_MustNotRequireDuplicatedGlobalCredentials()
+    {
+        var options = new StripeOptions
+        {
+            Enabled = false,
+            Environment = StripeEnvironment.Sandbox,
+            SandboxMode = true,
+            FeatureFlags = new StripeFeatureFlags
+            {
+                Enabled = true,
+                SandboxEnabled = true,
+                PaymentIntentsEnabled = true,
+                WebhooksEnabled = true
+            }
+        };
+
+        var result = StripeCredentialValidator.Validate(options);
+
+        Assert.True(StripeOptionsValidator.IsRuntimeEnabled(options));
+        Assert.False(StripeOptionsValidator.RequiresGlobalCredentials(options));
+        Assert.True(result.IsValid);
+        Assert.False(result.CredentialsConfigured);
+    }
+
+    [Fact]
     public void CredentialValidation_MustEnforceEnvironmentSeparation()
     {
         var sandboxWithLiveKeys = StripeCredentialValidator.Validate(new StripeOptions

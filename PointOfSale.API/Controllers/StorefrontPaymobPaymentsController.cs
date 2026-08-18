@@ -2,10 +2,8 @@ using System.Diagnostics;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Storefront;
-using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Helpers;
 using PointOfSale.API.Security;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.Infrastructure.MultiTenancy;
@@ -32,18 +30,18 @@ namespace PointOfSale.API.Controllers;
 [AllowAnonymous]
 public class StorefrontPaymobPaymentsController : ControllerBase
 {
-    private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
+    private readonly IPaymobPaymentService _paymobPaymentService;
     private readonly IPaymentRequestAuthorizationService _paymentRequestAuthorizationService;
     private readonly TenantContext _tenantContext;
     private readonly ILogger<StorefrontPaymobPaymentsController> _logger;
 
     public StorefrontPaymobPaymentsController(
-        ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
+        IPaymobPaymentService paymobPaymentService,
         IPaymentRequestAuthorizationService paymentRequestAuthorizationService,
         TenantContext tenantContext,
         ILogger<StorefrontPaymobPaymentsController> logger)
     {
-        _paymentOrchestrationService = paymentOrchestrationService;
+        _paymobPaymentService = paymobPaymentService;
         _paymentRequestAuthorizationService = paymentRequestAuthorizationService;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -99,25 +97,14 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 return authorization.ToActionResult();
             }
 
-            var status = await _paymentOrchestrationService.GetPaymentStatusAsync(
-                CommerceHubPaymentMethods.Paymob,
+            var status = await _paymobPaymentService.GetPaymentStatusAsync(
+                tenantId.Value,
                 orderId,
                 authorization.AuthenticatedCustomerId,
-                GetCheckoutToken(),
                 correlationId,
                 cancellationToken);
 
-            return Ok(new PaymobPaymentStatusDto
-            {
-                OrderId = status.OrderId,
-                OrderNumber = status.OrderNumber,
-                PaymentStatus = status.PaymentStatus,
-                PaymobStatus = status.ProviderStatus,
-                IsPaid = status.IsPaid,
-                IsPending = status.IsPending,
-                FailureReason = status.FailureReason,
-                TransactionId = status.TransactionId
-            });
+            return Ok(status);
         }
         catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
         {
@@ -142,17 +129,13 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 orderId, correlationId);
             return NotFound(new { error = "Order not found" });
         }
-        catch (CommerceHubCheckoutException ex)
-        {
-            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.Code, ex.Message, correlationId));
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "GetPaymobPaymentStatus error | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
                 orderId, correlationId);
 
-            return BadRequest(new { error = "Failed to get payment status" });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Failed to get payment status" });
         }
     }
 
@@ -175,18 +158,11 @@ public class StorefrontPaymobPaymentsController : ControllerBase
 
         try
         {
-            var status = await _paymentOrchestrationService.GetConfigurationStatusAsync(
-                CommerceHubPaymentMethods.Paymob,
+            var status = await _paymobPaymentService.GetConfigurationStatusAsync(
                 tenantId.Value,
                 cancellationToken);
 
-            return Ok(new PaymobConfigurationStatusDto
-            {
-                IsEnabled = status.IsEnabled,
-                IsConfigured = status.IsConfigured,
-                IsSandbox = status.IsSandbox,
-                ValidationMessage = status.ValidationMessage
-            });
+            return Ok(status);
         }
         catch (Exception ex)
         {
@@ -247,28 +223,16 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 return authorization.ToActionResult();
             }
 
-            var response = await _paymentOrchestrationService.ExecuteAsync(
-                new CommerceHubPaymentInitiateRequestDto
-                {
-                    OrderId = orderId.ToString(),
-                    Provider = CommerceHubPaymentMethods.Paymob,
-                    OrderAccessToken = GetCheckoutToken()
-                },
+            var response = await _paymobPaymentService.CreatePaymentIntentAsync(
+                tenantId.Value,
+                orderId,
                 authorization.AuthenticatedCustomerId,
+                false,
                 correlationId,
-                cancellationToken);
+                cancellationToken,
+                Request.Headers["Idempotency-Key"].FirstOrDefault());
 
-            return Ok(new PaymobPaymentIntentResponseDto
-            {
-                IframeUrl = response.PaymentUrl ?? string.Empty,
-                PaymentKey = response.PaymentToken ?? string.Empty,
-                IntentionId = response.ProviderIntentId ?? response.ProviderReference,
-                PaymentIntentId = response.PaymentId,
-                OrderId = response.MarketplaceOrderId,
-                OrderNumber = response.OrderNumber,
-                Amount = response.Amount,
-                Currency = response.Currency
-            });
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
         {
@@ -293,13 +257,9 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 orderId, correlationId);
             return NotFound(new { error = "Order not found" });
         }
-        catch (CommerceHubCheckoutException ex)
-        {
-            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.Code, ex.Message, correlationId));
-        }
         catch (PaymobNotConfiguredException)
         {
-            return BadRequest(new { error = "Paymob is not configured for this store" });
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new { error = "Paymob is unavailable for this store" });
         }
         catch (PaymentOrderInvalidStateException ex)
         {
@@ -311,7 +271,19 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 "Paymob API error | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
                 orderId, correlationId);
 
-            return BadRequest(new { error = "Payment service error. Please try again." });
+            return StatusCode(StatusCodes.Status502BadGateway, new { error = "Payment service error. Please try again." });
+        }
+        catch (PaymentException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Paymob payment intent request rejected | OrderId: {OrderId} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
+                orderId,
+                ex.ErrorCode,
+                correlationId);
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(ex.ErrorCode, "The selected payment provider is temporarily unavailable.", correlationId));
         }
         catch (Exception ex)
         {
@@ -319,7 +291,7 @@ public class StorefrontPaymobPaymentsController : ControllerBase
                 "CreatePaymobPaymentIntent error | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
                 orderId, correlationId);
 
-            return BadRequest(new { error = "Failed to create payment intent" });
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Failed to create payment intent" });
         }
     }
 

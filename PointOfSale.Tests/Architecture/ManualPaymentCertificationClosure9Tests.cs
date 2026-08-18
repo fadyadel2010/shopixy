@@ -5,47 +5,34 @@ public sealed class ManualPaymentCertificationClosure9Tests
     [Fact]
     public void ManualWalletMigrations_MustBeDiscoverableContextSpecificEfMigrations()
     {
-        var recovery = CertificationSource.ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260419190000_AddCheckoutSessionManualWalletRecovery.cs");
-        var normalization = CertificationSource.ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260420103000_NormalizeManualWalletProofReferences.cs");
+        var baseline = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
+        var designer = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.Designer.cs");
 
-        Assert.Contains("[Migration(\"20260419190000_AddCheckoutSessionManualWalletRecovery\")]", recovery, StringComparison.Ordinal);
-        Assert.Contains("[DbContext(typeof(ApplicationDbContext))]", recovery, StringComparison.Ordinal);
-        Assert.Contains("public partial class AddCheckoutSessionManualWalletRecovery : Migration", recovery, StringComparison.Ordinal);
-        Assert.Contains("AddColumn<string>", recovery, StringComparison.Ordinal);
-        Assert.Contains("ProofImageUrl", recovery, StringComparison.Ordinal);
-        Assert.Contains("WalletPhoneNumber", recovery, StringComparison.Ordinal);
-        Assert.Contains("WalletType", recovery, StringComparison.Ordinal);
-
-        Assert.Contains("[Migration(\"20260420103000_NormalizeManualWalletProofReferences\")]", normalization, StringComparison.Ordinal);
-        Assert.Contains("[DbContext(typeof(ApplicationDbContext))]", normalization, StringComparison.Ordinal);
-        Assert.Contains("public partial class NormalizeManualWalletProofReferences : Migration", normalization, StringComparison.Ordinal);
-        Assert.Contains("ActiveProvider.Contains(\"Npgsql\"", normalization, StringComparison.Ordinal);
-        Assert.Contains("= \"TenantId\"::text", normalization, StringComparison.Ordinal);
-        Assert.DoesNotContain("DELETE FROM", normalization, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("__EFMigrationsHistory", normalization, StringComparison.Ordinal);
+        Assert.Contains("[Migration(\"20260723214642_Baseline_Recovery3\")]", designer, StringComparison.Ordinal);
+        Assert.Contains("[DbContext(typeof(ApplicationDbContext))]", designer, StringComparison.Ordinal);
+        Assert.Contains("public partial class Baseline_Recovery3 : Migration", baseline, StringComparison.Ordinal);
+        Assert.Contains("name: \"CheckoutSessions\"", baseline, StringComparison.Ordinal);
+        Assert.Contains("ProofImageUrl = table.Column<string>", baseline, StringComparison.Ordinal);
+        Assert.Contains("WalletPhoneNumber = table.Column<string>", baseline, StringComparison.Ordinal);
+        Assert.Contains("WalletType = table.Column<string>", baseline, StringComparison.Ordinal);
+        Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", baseline, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ManualWalletStandaloneSql_MustNotBeWeakerThanEfGovernance()
+    public void ManualWalletCurrentEfGovernance_MustRemainTenantScopedAndFailClosed()
     {
-        var normalizationSql = CertificationSource.ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260420103000_NormalizeManualWalletProofReferences.sql");
-        var activeIntentSql = CertificationSource.ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260419222000_AddPaymentIntentActiveProviderIdempotency.sql");
+        var dbContext = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
+        var baseline = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
-        Assert.Contains("substring(\"ProofImageUrl\" from 'tenants/([^?#/]+)/manual-wallet-proofs/') = \"TenantId\"::text", normalizationSql, StringComparison.Ordinal);
-        Assert.Contains("substring(\"ProofImageUrl\" from 'tenants/([^?#/]+)/manual-wallet-proofs/') != \"TenantId\"::text", normalizationSql, StringComparison.Ordinal);
-        Assert.DoesNotContain("tenants/[^?#]*manual-wallet-proofs", normalizationSql, StringComparison.Ordinal);
-        Assert.DoesNotContain("DELETE FROM", normalizationSql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("__EFMigrationsHistory", normalizationSql, StringComparison.Ordinal);
-
-        Assert.Contains("operational evidence only", activeIntentSql, StringComparison.Ordinal);
-        Assert.Contains("RAISE EXCEPTION 'MANUAL_PAYMENT_MIGRATION_PRECHECK_FAILED", activeIntentSql, StringComparison.Ordinal);
-        Assert.DoesNotContain("DELETE FROM \"PaymentIntents\"", activeIntentSql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("INSERT INTO \"__EFMigrationsHistory\"", activeIntentSql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", activeIntentSql, StringComparison.Ordinal);
+        Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
+        Assert.Contains("HasFilter(\"\\\"IsDeleted\\\" = false AND \\\"Status\\\" IN (0, 1, 2, 7)\")", dbContext, StringComparison.Ordinal);
+        Assert.Contains("columns: new[] { \"TenantId\", \"OrderId\", \"Provider\" }", baseline, StringComparison.Ordinal);
+        Assert.Contains("filter: \"\\\"IsDeleted\\\" = false AND \\\"Status\\\" IN (0, 1, 2, 7)\"", baseline, StringComparison.Ordinal);
+        Assert.DoesNotContain("DELETE FROM \"PaymentIntents\"", baseline, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

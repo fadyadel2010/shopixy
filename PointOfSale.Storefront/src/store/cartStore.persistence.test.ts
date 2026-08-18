@@ -179,4 +179,24 @@ describe('cart persistence regression', () => {
         expect(useCartStore.getState().cart?.items[0].productId).toBe('product-refresh');
         expect(useCartStore.getState().cart?.itemCount).toBe(3);
     });
+
+    it('coalesces concurrent hydration callers and resolves both from one authoritative fetch', async () => {
+        const persistedCart = makeCart({ cartId: 'coalesced-cart' });
+        let resolveFetch!: (cart: CartDto) => void;
+        fetchCartMock.mockReturnValueOnce(new Promise<CartDto>((resolve) => {
+            resolveFetch = resolve;
+        }));
+
+        const first = useCartStore.getState().fetchCart();
+        const second = useCartStore.getState().fetchCart();
+
+        expect(fetchCartMock).toHaveBeenCalledTimes(1);
+        expect(useCartStore.getState().isLoading).toBe(true);
+
+        resolveFetch(persistedCart);
+        await Promise.all([first, second]);
+
+        expect(useCartStore.getState().cart?.cartId).toBe('coalesced-cart');
+        expect(useCartStore.getState().isLoading).toBe(false);
+    });
 });

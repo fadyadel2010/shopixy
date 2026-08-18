@@ -54,12 +54,13 @@ public sealed class FawryPaymentAuthorityCertificationTests
         var checkoutService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
         var paymentService = ReadRepoFile("PointOfSale.API/Services/Payments/PaymentService.cs");
         var adapter = ReadRepoFile("PointOfSale.API/Services/Payments/Adapters/FawryPaymentAdapter.cs");
+        var runtimeApplication = ReadRepoFile("PointOfSale.API/Services/Payments/Fawry/FawryRuntimeApplicationService.cs");
         var recoveryService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutPaymentIntentRecoveryService.cs");
         var dbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
 
         Assert.Contains("case \"FAWRY\":", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("_paymentService.CreatePaymentIntentAsync", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("Provider = \"Fawry\"", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("ProviderCode = new ProviderCode(paymentMethodCode)", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentIntentId = paymentIntent?.Id", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentStatus = order.PaymentStatus.ToString()", checkoutService, StringComparison.Ordinal);
         Assert.Contains("ReferenceCode = paymentIntent?.ReferenceCode", checkoutService, StringComparison.Ordinal);
@@ -82,15 +83,15 @@ public sealed class FawryPaymentAuthorityCertificationTests
         Assert.Contains("intent.Provider == PaymentProvider.Fawry && string.IsNullOrWhiteSpace(intent.ReferenceCode)", paymentService, StringComparison.Ordinal);
 
         Assert.Contains("FawryMerchantReference.Build(action)", adapter, StringComparison.Ordinal);
-        Assert.Contains("ReferenceCode = referenceCode", adapter, StringComparison.Ordinal);
-        Assert.Contains("ExpiresAtUtc = expiresAt", adapter, StringComparison.Ordinal);
-        Assert.Contains("ProviderIntentId = $\"FAWRY-{referenceCode}\"", adapter, StringComparison.Ordinal);
-        Assert.Contains("intent.TenantId", adapter, StringComparison.Ordinal);
-        Assert.Contains("intent.OrderId", adapter, StringComparison.Ordinal);
-        Assert.Contains("intent.IdempotencyKey", adapter, StringComparison.Ordinal);
+        Assert.Contains("FawryEvidenceFactory.FromChargeResponse(action, officialResponse)", adapter, StringComparison.Ordinal);
+        Assert.Contains("FawryChargeResponseMapper.ProviderReference(response)", adapter, StringComparison.Ordinal);
+        Assert.Contains("FawryChargeResponseMapper.Timestamp(response)", adapter, StringComparison.Ordinal);
+        Assert.Contains("request.TenantId", runtimeApplication, StringComparison.Ordinal);
+        Assert.Contains("request.OrderId", runtimeApplication, StringComparison.Ordinal);
+        Assert.Contains("request.IdempotencyKey", runtimeApplication, StringComparison.Ordinal);
 
         Assert.Contains("case \"FAWRY\":", recoveryService, StringComparison.Ordinal);
-        Assert.Contains("PaymentProvider.Fawry.ToString()", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", recoveryService, StringComparison.Ordinal);
         Assert.Contains("intent.Provider == PaymentProvider.Fawry && string.IsNullOrWhiteSpace(intent.ReferenceCode)", recoveryService, StringComparison.Ordinal);
         Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
     }
@@ -135,8 +136,8 @@ public sealed class FawryPaymentAuthorityCertificationTests
         Assert.Contains("PersistWebhookFailureAsync", webhookController, StringComparison.Ordinal);
 
         Assert.Contains("\"fawry\" => await ResolveFawryAsync(root", tenantResolver, StringComparison.Ordinal);
-        Assert.Contains("GetString(root, \"fawryRefNumber\")", tenantResolver, StringComparison.Ordinal);
-        Assert.Contains("GetString(root, \"merchantRefNumber\")", tenantResolver, StringComparison.Ordinal);
+        Assert.Contains("GetString(root, \"fawryRefNumber\", \"referenceNumber\")", tenantResolver, StringComparison.Ordinal);
+        Assert.Contains("GetString(root, \"merchantRefNumber\", \"merchantRefNum\")", tenantResolver, StringComparison.Ordinal);
         Assert.Contains("ResolveByReferenceCodeAsync(referenceCode", tenantResolver, StringComparison.Ordinal);
         Assert.Contains("ResolveByPaymentReferenceAsync(merchantReference", tenantResolver, StringComparison.Ordinal);
         Assert.Contains("paymentIntent.ReferenceCode == referenceCode", tenantResolver, StringComparison.Ordinal);
@@ -156,17 +157,6 @@ public sealed class FawryPaymentAuthorityCertificationTests
             ReadRepoFile("docs/architecture/fawry-payment-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PAY7", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

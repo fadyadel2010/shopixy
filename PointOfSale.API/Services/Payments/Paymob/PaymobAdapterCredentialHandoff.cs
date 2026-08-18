@@ -95,10 +95,12 @@ public sealed class PaymobAdapterCredentialHandoff : IPaymobAdapterCredentialHan
     {
         if (credentials.TenantId == Guid.Empty ||
             credentials.TenantPaymentMethodId == Guid.Empty ||
-            string.IsNullOrWhiteSpace(credentials.ApiKey) ||
+            string.IsNullOrWhiteSpace(credentials.PublicKey) ||
+            string.IsNullOrWhiteSpace(credentials.SecretKey) ||
             string.IsNullOrWhiteSpace(credentials.IntegrationId) ||
-            string.IsNullOrWhiteSpace(credentials.IframeId) ||
-            string.IsNullOrWhiteSpace(credentials.HmacSecret))
+            string.IsNullOrWhiteSpace(credentials.HmacSecret) ||
+            !credentials.NotificationUrl.IsAbsoluteUri ||
+            !credentials.RedirectionUrl.IsAbsoluteUri)
         {
             throw new InvalidOperationException(
                 "The tenant Paymob credential handoff is incomplete and cannot authorize adapter execution.");

@@ -112,13 +112,20 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                 <div className="p-4 space-y-3 max-h-60 overflow-y-auto">
                     {items.map((item) => {
                         const imageSrc = resolveProductImage(item);
+                        const productName = item.productName?.trim() || 'Product unavailable';
+                        const sku = item.sku?.trim();
+                        const variantLabel = item.variantAttributes
+                            ?.map((attribute) => attribute.value?.trim())
+                            .filter(Boolean)
+                            .join(' / ');
+                        const lineKey = item.variantId || `${item.productId}:${sku || 'default'}`;
 
                         return (
-                        <div key={item.productId} className="flex gap-3">
+                        <div key={lineKey} className="flex gap-3">
                             {/* Image */}
                             <OptimizedImage
                                 src={imageSrc}
-                                alt={item.productName}
+                                alt={productName}
                                 sizes="80px"
                                 className="w-12 h-12 object-cover rounded-lg bg-muted/10"
                             />
@@ -126,10 +133,23 @@ export const OrderSummary: React.FC<OrderSummaryProps> = ({
                             {/* Details */}
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-text truncate">
-                                    {item.productName}
+                                    {productName}
                                 </p>
+                                {variantLabel && (
+                                    <p className="text-xs text-primary/80 truncate">
+                                        {variantLabel}
+                                    </p>
+                                )}
+                                {sku && (
+                                    <p className="text-xs text-muted truncate">
+                                        SKU: {sku}
+                                    </p>
+                                )}
                                 <p className="text-xs text-muted">
                                     Qty: {item.quantity}
+                                </p>
+                                <p className="text-xs text-muted">
+                                    {formatMoney(item.unitPrice, currency)} each
                                 </p>
                                 {/* PHASE: Promotions - Show promotion badge if active */}
                                 {item.hasActivePromotion && item.promotionBadge && (

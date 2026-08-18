@@ -60,10 +60,44 @@ public class CodPaymentLifecycleTests : IDisposable
         _mockInventoryReservationMetrics = new Mock<IInventoryReservationMetricsService>();
         var mockLogger = new Mock<ILogger<PaymentLifecycleService>>();
 
+        _mockEventPublisher.SetReturnsDefault(Task.CompletedTask);
+        _mockMarketplaceEventOutbox.SetReturnsDefault(Task.CompletedTask);
+
         // Setup outbox to return success
         _mockOutbox
             .Setup(x => x.EnqueueCodDeliveredAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(OutboxEnqueueResult.Created(Guid.NewGuid(), "cod-test"));
+            .Returns(async (Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            {
+                var idempotencyKey = $"COD_DELIVERED:{tenantId}:{orderId}";
+                var existing = await _dbContext.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(message =>
+                        message.TenantId == tenantId &&
+                        message.IdempotencyKey == idempotencyKey,
+                        cancellationToken);
+
+                if (existing != null)
+                {
+                    return OutboxEnqueueResult.Exists(existing.Id, "PENDING", idempotencyKey);
+                }
+
+                var trackedOrder = _dbContext.ChangeTracker
+                    .Entries<Order>()
+                    .Single(entry => entry.Entity.Id == orderId);
+                var aggregateVersion = checked((int)(trackedOrder.Entity.ProjectionMutationVersion + 1));
+                var message = PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage.Create(
+                    tenantId,
+                    "CodDelivered",
+                    orderId,
+                    "CodDelivered",
+                    $"{{\"OrderId\":\"{orderId:D}\",\"MutationVersion\":{aggregateVersion}}}",
+                    idempotencyKey,
+                    "cod-test-correlation",
+                    aggregateVersion);
+                _dbContext.AccountingOutboxMessages.Add(message);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return OutboxEnqueueResult.Created(message.Id, idempotencyKey);
+            });
         _mockCommerceAccounting
             .Setup(service => service.PostCodDeliveredAsync(It.IsAny<Order>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "COD-JOURNAL-TEST"));
@@ -164,7 +198,7 @@ public class CodPaymentLifecycleTests : IDisposable
         var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
 
         // Assert
-        Assert.True(result.Success);
+        Assert.True(result.Success, result.ErrorMessage);
         Assert.Equal(PaymentStatus.Collected, result.NewStatus);
         
         // Verify order updated
@@ -267,7 +301,7 @@ public class CodPaymentLifecycleTests : IDisposable
         var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
 
         // Assert
-        Assert.True(result.Success);
+        Assert.True(result.Success, result.ErrorMessage);
         
         // Verify ledger journal enqueued with correct parameters
         _mockOutbox.Verify(

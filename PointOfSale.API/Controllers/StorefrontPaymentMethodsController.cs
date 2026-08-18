@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Services.Payments;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -32,6 +33,7 @@ public class StorefrontPaymentMethodsController : ControllerBase
 {
     private readonly IPaymentMethodReadRepository _paymentMethodReadRepository;
     private readonly ApplicationDbContext _dbContext;
+    private readonly IStorefrontPaymentRuntimeReadinessService _runtimeReadinessService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly TenantContext _tenantContext;
     private readonly ILogger<StorefrontPaymentMethodsController> _logger;
@@ -39,12 +41,14 @@ public class StorefrontPaymentMethodsController : ControllerBase
     public StorefrontPaymentMethodsController(
         IPaymentMethodReadRepository paymentMethodReadRepository,
         ApplicationDbContext dbContext,
+        IStorefrontPaymentRuntimeReadinessService runtimeReadinessService,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         TenantContext tenantContext,
         ILogger<StorefrontPaymentMethodsController> logger)
     {
         _paymentMethodReadRepository = paymentMethodReadRepository;
         _dbContext = dbContext;
+        _runtimeReadinessService = runtimeReadinessService;
         _reliabilityTelemetry = reliabilityTelemetry;
         _tenantContext = tenantContext;
         _logger = logger;
@@ -67,6 +71,7 @@ public class StorefrontPaymentMethodsController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> GetPaymentMethods(CancellationToken cancellationToken)
     {
+        SetNoStoreHeaders();
 
         var traceId = GetTraceId();
         if (_tenantContext.TenantId is not Guid tenantId || tenantId == Guid.Empty)
@@ -104,10 +109,38 @@ public class StorefrontPaymentMethodsController : ControllerBase
                     traceId);
             }
 
+            var unavailableRuntimeGates = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var providerCode in documents
+                         .Where(document =>
+                             document.IsConfigurationValid == true &&
+                             IsSupportedStorefrontPaymentMethod(document.Code))
+                         .Select(document => document.Code.Trim().ToUpperInvariant())
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var runtimeStatus = await _runtimeReadinessService.EvaluateAsync(
+                    tenantId,
+                    providerCode,
+                    cancellationToken);
+                if (!runtimeStatus.IsReady)
+                {
+                    unavailableRuntimeGates[providerCode] = runtimeStatus.FirstFailedGate ?? "RUNTIME_NOT_READY";
+                }
+            }
+
+            if (unavailableRuntimeGates.Count > 0)
+            {
+                _logger.LogWarning(
+                    "Suppressed storefront payment methods whose execution runtime is unavailable | TenantId: {TenantId} | Gates: {Gates} | TraceId: {TraceId}",
+                    tenantId,
+                    string.Join(", ", unavailableRuntimeGates.Select(pair => $"{pair.Key}:{pair.Value}")),
+                    traceId);
+            }
+
             var response = documents
                 .Where(document =>
                     document.IsConfigurationValid == true &&
-                    IsSupportedStorefrontPaymentMethod(document.Code))
+                    IsSupportedStorefrontPaymentMethod(document.Code) &&
+                    !unavailableRuntimeGates.ContainsKey(document.Code.Trim()))
                 .Select(MapToDto)
                 .ToList();
 
@@ -167,6 +200,12 @@ public class StorefrontPaymentMethodsController : ControllerBase
     private string GetTraceId()
     {
         return Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+    }
+
+    private void SetNoStoreHeaders()
+    {
+        Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
+        Response.Headers["Pragma"] = "no-cache";
     }
 }
 

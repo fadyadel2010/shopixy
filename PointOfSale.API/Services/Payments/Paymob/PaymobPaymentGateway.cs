@@ -31,10 +31,10 @@ public sealed class PaymobPaymentGateway : IProviderPaymentGateway
             PaymentIntentId = response.PaymentIntentId,
             PaymentReference = response.IntentionId,
             RedirectUrl = response.IframeUrl,
+            ExpiresAtUtc = response.ExpiresAtUtc,
             CompatibilityFields = new Dictionary<string, string?>
             {
-                ["PaymobIframeUrl"] = response.IframeUrl,
-                ["PaymobPaymentKey"] = response.PaymentKey
+                ["PaymobIframeUrl"] = response.IframeUrl
             }
         };
     }

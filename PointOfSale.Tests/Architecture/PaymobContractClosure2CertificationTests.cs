@@ -11,7 +11,7 @@ public sealed class PaymobContractClosure2CertificationTests
     {
         var entity = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/PaymobWebhookReplayRecord.cs");
         var dbContext = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
-        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260713120000_PaymobContractClosure2WebhookReplay.cs");
+        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
         var snapshot = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/ApplicationDbContextModelSnapshot.cs");
 
         Assert.Contains("public class PaymobWebhookReplayRecord", entity, StringComparison.Ordinal);

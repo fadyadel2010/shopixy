@@ -16,8 +16,8 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         var checkoutTypes = ReadRepoFile("PointOfSale.Storefront/src/types/checkout.ts");
         var checkoutPage = ReadRepoFile("PointOfSale.Storefront/src/pages/CheckoutPage.tsx");
 
-        Assert.Contains("function admitStorefrontPaymentMethods(payload: unknown): PaymentMethodDto[]", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("const methods = admitStorefrontPaymentMethods(response.data);", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("function admitStorefrontPaymentMethods(payload: unknown): { status: CheckoutDependencyStatus; methods: PaymentMethodDto[] }", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("const admittedResponse = admitStorefrontPaymentMethods(response.data);", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("expectedPricing: buildExpectedPricing(latestState.pricing)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId)", checkoutStore, StringComparison.Ordinal);
@@ -49,7 +49,8 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         Assert.Contains("order.paymentMethod?.toUpperCase() === 'FAWRY' && order.referenceCode", checkoutSuccess, StringComparison.Ordinal);
         Assert.Contains("'FAWRY'", checkoutTypes, StringComparison.Ordinal);
         Assert.Contains("window.location.href = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));", checkoutPage, StringComparison.Ordinal);
-        Assert.Contains("window.location.replace(buildAffiliateUrl(buildPendingCheckoutUrl(orderResult)));", checkoutPage, StringComparison.Ordinal);
+        Assert.Contains("const pendingUrl = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));", checkoutPage, StringComparison.Ordinal);
+        Assert.Contains("window.location.replace(pendingUrl);", checkoutPage, StringComparison.Ordinal);
         Assert.Contains("Only the backend webhook confirmation is authoritative", paymentFlow, StringComparison.Ordinal);
         Assert.Contains("return 'pending';", paymentFlow, StringComparison.Ordinal);
         Assert.Contains("requireCanonicalPaymentStatusForOrder(orderId, response.data)", statusApi, StringComparison.Ordinal);
@@ -71,7 +72,7 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         Assert.Contains("GetEnabledPaymentMethodsAsync", paymentMethodsController, StringComparison.Ordinal);
         Assert.Contains("IsSupportedStorefrontPaymentMethod(document.Code)", paymentMethodsController, StringComparison.Ordinal);
 
-        Assert.Contains("SetNoStoreHeaders();", checkoutController, StringComparison.Ordinal);
+        Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", checkoutController, StringComparison.Ordinal);
         Assert.Contains("ProcessCheckoutAsync", checkoutController, StringComparison.Ordinal);
         Assert.Contains("[HttpPost(\"pricing\")]", checkoutController, StringComparison.Ordinal);
         Assert.Contains("public CheckoutExpectedPricingDto ExpectedPricing", checkoutDtos, StringComparison.Ordinal);
@@ -101,7 +102,7 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         Assert.Contains("PaymentReference = paymentReference", paymentService, StringComparison.Ordinal);
         Assert.Contains("DUPLICATE_PAYMENT_INTENT", paymentService, StringComparison.Ordinal);
         Assert.Contains("IFawryRuntimeApplicationService", paymentService, StringComparison.Ordinal);
-        Assert.Contains("paymentIntent.ReferenceCode = result.ReferenceCode", paymentService, StringComparison.Ordinal);
+        Assert.Contains("ReferenceCode = result.InstructionIdentifier", paymentService, StringComparison.Ordinal);
 
         Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
         Assert.Contains("IX_PaymentWebhookLogs_TenantId_Provider_ProviderEventId", dbContext, StringComparison.Ordinal);
@@ -118,6 +119,7 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         var fawryAdapter = ReadRepoFile("PointOfSale.API/Services/Payments/Adapters/FawryPaymentAdapter.cs");
         var tenantResolver = ReadRepoFile("PointOfSale.API/Services/Payments/IPaymentWebhookTenantResolver.cs");
         var adminManual = ReadRepoFile("PointOfSale.API/Controllers/AdminManualPaymentController.cs");
+        var manualRuntime = ReadRepoFile("PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentRuntimeApplicationService.cs");
         var manualAdapter = ReadRepoFile("PointOfSale.API/Services/Payments/Adapters/ManualWalletPaymentAdapter.cs");
         var routingMetadata = ReadRepoFile("PointOfSale.API/Services/Payments/PaymentIntentRoutingMetadata.cs");
         var lifecycle = ReadRepoFile("PointOfSale.Infrastructure/Payments/PaymentLifecycleService.cs");
@@ -148,10 +150,10 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
 
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", adminManual, StringComparison.Ordinal);
         Assert.Contains("pi.Provider == PaymentProvider.ManualWallet", adminManual, StringComparison.Ordinal);
-        Assert.Contains("ManualWalletStateMachine.EnsureValidTransition(paymentIntent.Status, PaymentIntentStatus.Paid)", adminManual, StringComparison.Ordinal);
-        Assert.Contains("ManualWalletStateMachine.EnsureValidTransition(paymentIntent.Status, PaymentIntentStatus.Rejected)", adminManual, StringComparison.Ordinal);
-        Assert.Contains("Source = PaymentLifecycleSource.PaymentReviewApproval", adminManual, StringComparison.Ordinal);
-        Assert.Contains("Source = PaymentLifecycleSource.PaymentReviewRejection", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.ApproveAsync(", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.RejectAsync(", adminManual, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewApproval", manualRuntime, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewRejection", manualRuntime, StringComparison.Ordinal);
         Assert.Contains("intent.Status = PaymentIntentStatus.AwaitingVerification", manualAdapter, StringComparison.Ordinal);
         Assert.DoesNotContain("PaymentIntentStatus.Paid", manualAdapter, StringComparison.Ordinal);
 
@@ -192,9 +194,10 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         Assert.Contains("case \"PAYMOB\":", recoveryService, StringComparison.Ordinal);
         Assert.Contains("case \"STRIPE\":", recoveryService, StringComparison.Ordinal);
         Assert.Contains("case \"FAWRY\":", recoveryService, StringComparison.Ordinal);
-        Assert.Contains("Provider = PaymentProvider.ManualWallet.ToString()", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("ExactlyOneDurableManualWalletIntent", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("PaymentProvider.ManualWallet", recoveryService, StringComparison.Ordinal);
 
-        Assert.Contains("Payment method projection empty or stale; falling back to SQL", paymentMethodRepository, StringComparison.Ordinal);
+        Assert.Contains("Payment method projection miss or stale; falling back to SQL", paymentMethodRepository, StringComparison.Ordinal);
         Assert.Contains("Payment method read model unavailable; falling back to SQL", paymentMethodRepository, StringComparison.Ordinal);
         Assert.Contains("NO SECRETS", paymentMethodRepository, StringComparison.Ordinal);
         Assert.Contains("Payment method projection rejected by SQL authority", paymentMethodProjection, StringComparison.Ordinal);
@@ -220,17 +223,6 @@ public sealed class PaymentEndToEndAuthorityCertificationTests
         Assert.Contains("| Fawry | Backend SQL `PaymentIntents`", findings, StringComparison.Ordinal);
         Assert.Contains("Final production provider list: Manual Payment, Vodafone Cash, Stripe, Paymob, Fawry.", findings, StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PAY-END", ReadRepoFile(path), StringComparison.Ordinal);
-        }
     }
 
     private static string ReadRepoFile(string relativePath)

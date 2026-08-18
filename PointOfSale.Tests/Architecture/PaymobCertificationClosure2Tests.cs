@@ -13,7 +13,7 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class PaymobCertificationClosure2Tests
 {
     [Fact]
-    public async Task ProviderOrderCheckpoint_MustCommitBeforePaymentKeyCreation()
+    public async Task IntentionCheckpoint_MustProtectCheckoutSecretAfterProviderAcceptance()
     {
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -22,17 +22,7 @@ public sealed class PaymobCertificationClosure2Tests
         await using var dbContext = CreateDbContext(Guid.NewGuid().ToString("N"));
         await SeedIntentAsync(dbContext, tenantId, orderId, intentId);
 
-        var client = new CheckpointAwareClient(async () =>
-        {
-            var intent = await dbContext.PaymentIntents
-                .IgnoreQueryFilters()
-                .AsNoTracking()
-                .SingleAsync(row => row.Id == intentId);
-            var metadata = PaymentIntentRoutingMetadataSerializer.Deserialize(intent.ProviderMetadata);
-
-            Assert.Equal("987654", intent.ProviderIntentId);
-            Assert.Equal(PaymobProviderCheckpointStore.OrderAcceptedState, metadata?.PaymobCheckpointState);
-        });
+        var client = new CheckpointAwareClient();
         var result = await ExecuteAdapterAsync(
             client,
             new PaymobProviderCheckpointStore(dbContext, protector),
@@ -40,8 +30,7 @@ public sealed class PaymobCertificationClosure2Tests
             tenantId);
 
         Assert.True(result.Succeeded);
-        Assert.Equal(1, client.OrderRegistrations);
-        Assert.Equal(1, client.PaymentKeyCreations);
+        Assert.Equal(1, client.IntentionCreations);
 
         var persisted = await dbContext.PaymentIntents
             .IgnoreQueryFilters()
@@ -49,15 +38,15 @@ public sealed class PaymobCertificationClosure2Tests
             .SingleAsync(row => row.Id == intentId);
         var persistedMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(persisted.ProviderMetadata);
         Assert.Null(persistedMetadata?.PaymentKey);
-        Assert.DoesNotContain("payment-token", persisted.ProviderMetadata, StringComparison.Ordinal);
+        Assert.DoesNotContain("client-secret", persisted.ProviderMetadata, StringComparison.Ordinal);
         var protectedSession = protector.UnprotectPaymentSession(persistedMetadata!.ProtectedPaymobSession!);
-        Assert.Equal("payment-token", protectedSession.PaymentKey);
+        Assert.Equal("client-secret", protectedSession.PaymentKey);
         Assert.Equal(PaymobProviderCheckpointStore.PaymentKeyAcceptedState, persistedMetadata?.PaymobCheckpointState);
         Assert.Null(persisted.RedirectUrl);
     }
 
     [Fact]
-    public async Task Recovery_MustReuseAcceptedProviderOrderWithoutRegisteringAnotherOrder()
+    public async Task Recovery_MustFenceAcceptedIntentionWithoutDurableCheckoutSecret()
     {
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -79,14 +68,13 @@ public sealed class PaymobCertificationClosure2Tests
             CreateAction(tenantId, orderId, intentId),
             tenantId);
 
-        Assert.True(result.Succeeded);
-        Assert.Equal(0, client.OrderRegistrations);
-        Assert.Equal(1, client.PaymentKeyCreations);
-        Assert.Equal("987654", client.LastPaymentKeyOrderId);
+        Assert.False(result.Succeeded);
+        Assert.Equal("PAYMOB_INTENTION_RECOVERY_REQUIRED", result.Error?.Code);
+        Assert.Equal(0, client.IntentionCreations);
     }
 
     [Fact]
-    public async Task RetryAfterPaymentKeyFailure_MustReuseTheCheckpointedProviderOrder()
+    public async Task RetryAfterIndeterminateIntentionFailure_MustFenceDuplicateCreation()
     {
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -96,7 +84,7 @@ public sealed class PaymobCertificationClosure2Tests
         await SeedIntentAsync(dbContext, tenantId, orderId, intentId);
         var store = new PaymobProviderCheckpointStore(dbContext, protector);
 
-        var failedClient = new CheckpointAwareClient(failPaymentKey: true);
+        var failedClient = new CheckpointAwareClient(failIntention: true);
         var firstAttempt = await ExecuteAdapterAsync(
             failedClient,
             store,
@@ -104,7 +92,7 @@ public sealed class PaymobCertificationClosure2Tests
             tenantId);
 
         Assert.False(firstAttempt.Succeeded);
-        Assert.Equal(1, failedClient.OrderRegistrations);
+        Assert.Equal(1, failedClient.IntentionCreations);
 
         var retryClient = new CheckpointAwareClient();
         var retry = await ExecuteAdapterAsync(
@@ -113,10 +101,9 @@ public sealed class PaymobCertificationClosure2Tests
             CreateAction(tenantId, orderId, intentId),
             tenantId);
 
-        Assert.True(retry.Succeeded);
-        Assert.Equal(0, retryClient.OrderRegistrations);
-        Assert.Equal(1, retryClient.PaymentKeyCreations);
-        Assert.Equal("987654", retryClient.LastPaymentKeyOrderId);
+        Assert.False(retry.Succeeded);
+        Assert.Equal("PAYMOB_PROVIDER_ORDER_OUTCOME_UNKNOWN", retry.Error?.Code);
+        Assert.Equal(0, retryClient.IntentionCreations);
     }
 
     [Fact]
@@ -217,6 +204,27 @@ public sealed class PaymobCertificationClosure2Tests
         }
     }
 
+    [Fact]
+    public void P5SeededCheckoutIntent_MustRepairRoutingMetadataBeforeProviderExecution()
+    {
+        var root = DiscoverSolutionRoot(AppContext.BaseDirectory);
+        var service = Read(root, "PointOfSale.API/Services/Payments/Paymob/PaymobPaymentService.cs");
+        var adapter = Read(root, "PointOfSale.API/Services/Payments/Paymob/PaymobPaymentAdapter.cs");
+        var runtimeApplication = Read(root, "PointOfSale.API/Services/Payments/Paymob/PaymobRuntimeApplicationService.cs");
+        var storefrontAuthority = Read(root, "PointOfSale.Storefront/src/features/checkout/paymentSessionAuthority.ts");
+
+        Assert.Contains(
+            "Repaired seeded Paymob payment intent routing metadata before provider execution",
+            service,
+            StringComparison.Ordinal);
+        Assert.Contains("existingIntent.ProviderMetadata = BuildRoutingMetadata", service, StringComparison.Ordinal);
+        Assert.Contains("string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId)", service, StringComparison.Ordinal);
+        Assert.Contains("PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent", service, StringComparison.Ordinal);
+        Assert.Contains("https://accept.paymob.com/unifiedcheckout/", adapter, StringComparison.Ordinal);
+        Assert.Contains("\"accept.paymob.com\"", runtimeApplication, StringComparison.Ordinal);
+        Assert.Contains("'/unifiedcheckout'", storefrontAuthority, StringComparison.Ordinal);
+    }
+
     private static async Task SeedIntentAsync(
         ApplicationDbContext dbContext,
         Guid tenantId,
@@ -292,11 +300,15 @@ public sealed class PaymobCertificationClosure2Tests
         using var credentialLease = handoff.Begin(new PaymobTenantRuntimeCredentials(
             tenantId,
             Guid.NewGuid(),
-            "paymob-api-key-12345",
+            "egy_pk_test_closure2",
+            "egy_sk_test_closure2",
             "123456",
-            "456789",
             "paymob-hmac-secret-12345",
-            true));
+            true,
+            new Uri("https://api.example.test/api/paymob/webhook"),
+            new Uri("https://store.example.test/payments/paymob/callback"),
+            IframeId: "456789",
+            ApiKey: "paymob-api-key-12345"));
         return await new PaymobPaymentAdapter(client, handoff, store).CreateAsync(action);
     }
 
@@ -345,18 +357,36 @@ public sealed class PaymobCertificationClosure2Tests
 
     private sealed class CheckpointAwareClient : IPaymobOfficialApiClient
     {
-        private readonly Func<Task>? _beforePaymentKey;
-        private readonly bool _failPaymentKey;
+        private readonly bool _failIntention;
 
         public int Authentications { get; private set; }
         public int OrderRegistrations { get; private set; }
         public int PaymentKeyCreations { get; private set; }
         public string? LastPaymentKeyOrderId { get; private set; }
+        public int IntentionCreations { get; private set; }
 
-        public CheckpointAwareClient(Func<Task>? beforePaymentKey = null, bool failPaymentKey = false)
+        public CheckpointAwareClient(bool failIntention = false)
         {
-            _beforePaymentKey = beforePaymentKey;
-            _failPaymentKey = failPaymentKey;
+            _failIntention = failIntention;
+        }
+
+        public Task<PaymobIntentionResponse> CreateIntentionAsync(
+            PaymobIntentionRequest request,
+            string secretKey,
+            CancellationToken cancellationToken)
+        {
+            IntentionCreations++;
+            if (_failIntention)
+            {
+                throw new HttpRequestException("Simulated intention transport failure.");
+            }
+
+            return Task.FromResult(new PaymobIntentionResponse
+            {
+                Id = "intention-checkpoint",
+                ClientSecret = "client-secret",
+                IntentionOrderId = 987654
+            });
         }
 
         public Task<PaymobAdapterAuthResponse> AuthenticateAsync(PaymobAuthRequest request, CancellationToken cancellationToken)
@@ -381,16 +411,6 @@ public sealed class PaymobCertificationClosure2Tests
         {
             PaymentKeyCreations++;
             LastPaymentKeyOrderId = request.OrderId;
-            if (_beforePaymentKey is not null)
-            {
-                await _beforePaymentKey();
-            }
-
-            if (_failPaymentKey)
-            {
-                throw new HttpRequestException("Simulated payment-key transport failure.");
-            }
-
             return new PaymobAdapterPaymentKeyResponse("payment-token");
         }
 

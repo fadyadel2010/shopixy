@@ -412,7 +412,8 @@ export interface CheckoutResponse {
     promotionWarningMessage?: string | null;
     promotionWarningCode?: string | null;
     promotionWarningParams?: Record<string, string> | null;
-    paymentStatus: 'pending' | 'completed' | 'failed';
+    paymentStatus: string;
+    paymentMethodCode?: string | null;
     createdAt: string;
     paymentReference?: string;
     redirectUrl?: string;
@@ -426,9 +427,9 @@ export interface CheckoutResponse {
     expiresAtUtc?: string;
     // Manual Wallet (Phase P3)
     isManualWallet?: boolean;
-    merchantWalletNumber?: string;
-    walletType?: string;
-    walletInstructions?: string;
+    merchantWalletNumber?: string | null;
+    walletType?: string | null;
+    walletInstructions?: string | null;
     totals?: any; // Add totals if needed, or map properly
 }
 
@@ -478,6 +479,7 @@ export interface OrderResult {
     promotionWarningCode?: string | null;
     promotionWarningParams?: Record<string, string> | null;
     paymentMethod: PaymentMethod;
+    paymentMethodCode?: string | null;
     stripeClientSecret?: string;
     stripePublishableKey?: string;
     // Paymob payment fields (Phase 10.4.D5)
@@ -488,9 +490,9 @@ export interface OrderResult {
     expiresAtUtc?: string;
     // Manual Wallet (Phase P3)
     isManualWallet?: boolean;
-    merchantWalletNumber?: string;
-    walletType?: string;
-    walletInstructions?: string;
+    merchantWalletNumber?: string | null;
+    walletType?: string | null;
+    walletInstructions?: string | null;
     // Map backend response fields
     totalAmount?: number;
     redirectUrl?: string;

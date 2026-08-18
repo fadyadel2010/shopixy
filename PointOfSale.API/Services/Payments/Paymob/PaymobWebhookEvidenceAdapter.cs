@@ -554,7 +554,7 @@ public static class PaymobWebhookPayloadParser
             payload.Order?.MerchantOrderId ?? string.Empty,
             providerReference,
             transactionReference,
-            $"paymob:webhook:{transactionId}",
+            BuildIdempotencyKey(transactionId, payload),
             MapExternalStatus(payload),
             occurredAtUtc,
             payloadHash,
@@ -606,7 +606,7 @@ public static class PaymobWebhookPayloadParser
             string.Empty,
             providerReference,
             transactionReference,
-            $"paymob:webhook:{transactionId}",
+            BuildIdempotencyKey(transactionId, payload),
             MapExternalStatus(payload),
             occurredAtUtc,
             payloadHash,
@@ -622,6 +622,13 @@ public static class PaymobWebhookPayloadParser
         }
 
         return root.TryGetProperty("obj", out _) ? "TRANSACTION" : "CALLBACK";
+    }
+
+    private static string BuildIdempotencyKey(long transactionId, PaymobOfficialCallbackPayload payload)
+    {
+        return payload.IsRefunded
+            ? $"paymob:webhook:{transactionId}:refund:{payload.AmountCents ?? 0}"
+            : $"paymob:webhook:{transactionId}";
     }
 
     private static string BuildHmacPayload(JsonElement transaction)
@@ -709,6 +716,16 @@ public static class PaymobWebhookPayloadParser
             return "pending";
         }
 
+        if (payload.IsRefunded)
+        {
+            return "refunded";
+        }
+
+        if (payload.IsVoided)
+        {
+            return "voided";
+        }
+
         if (payload.Success)
         {
             return payload.IsAuth && !payload.IsCapture
@@ -719,16 +736,6 @@ public static class PaymobWebhookPayloadParser
         if (payload.ErrorOccured)
         {
             return "failed";
-        }
-
-        if (payload.IsVoided)
-        {
-            return "voided";
-        }
-
-        if (payload.IsRefunded)
-        {
-            return "refunded";
         }
 
         return "declined";

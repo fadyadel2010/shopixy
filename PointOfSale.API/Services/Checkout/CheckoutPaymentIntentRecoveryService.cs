@@ -1,9 +1,8 @@
 using Microsoft.EntityFrameworkCore;
-using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.DTOs.Payments;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.ManualPayment;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.API.Security;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
@@ -35,7 +34,7 @@ public sealed class CheckoutPaymentIntentRecoveryService
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IPaymentService _paymentService;
-    private readonly IPaymentRuntime _paymentRuntime;
+    private readonly IPaymentGateway _paymentGateway;
     private readonly ICheckoutSessionTokenService _checkoutSessionTokenService;
     private readonly IProductVariantStockRepository _stockRepository;
     private readonly ICouponValidationService _couponValidationService;
@@ -46,7 +45,7 @@ public sealed class CheckoutPaymentIntentRecoveryService
     public CheckoutPaymentIntentRecoveryService(
         ApplicationDbContext dbContext,
         IPaymentService paymentService,
-        IPaymentRuntime paymentRuntime,
+        IPaymentGateway paymentGateway,
         ICheckoutSessionTokenService checkoutSessionTokenService,
         IProductVariantStockRepository stockRepository,
         ICouponValidationService couponValidationService,
@@ -56,7 +55,7 @@ public sealed class CheckoutPaymentIntentRecoveryService
     {
         _dbContext = dbContext;
         _paymentService = paymentService;
-        _paymentRuntime = paymentRuntime;
+        _paymentGateway = paymentGateway;
         _checkoutSessionTokenService = checkoutSessionTokenService;
         _stockRepository = stockRepository;
         _couponValidationService = couponValidationService;
@@ -274,38 +273,22 @@ public sealed class CheckoutPaymentIntentRecoveryService
         switch (paymentMethodCode)
         {
             case "STRIPE":
-                var checkoutToken = _checkoutSessionTokenService.CreatePaymentToken(order.TenantId, order.Id);
-                await _paymentRuntime.InitiateAsync(
-                    new CommerceHubPaymentInitiateRequestDto
-                    {
-                        OrderId = order.Id.ToString(),
-                        Provider = CommerceHubPaymentMethods.Stripe,
-                        OrderAccessToken = checkoutToken
-                    },
-                    order.OnlineCustomerId,
-                    correlationId,
-                    cancellationToken);
-                return;
             case "PAYMOB":
-                await _paymentRuntime.InitiateAsync(
-                    new CommerceHubPaymentInitiateRequestDto
-                    {
-                        OrderId = order.Id.ToString(),
-                        Provider = CommerceHubPaymentMethods.Paymob,
-                        OrderAccessToken = _checkoutSessionTokenService.CreatePaymentToken(order.TenantId, order.Id)
-                    },
-                    order.OnlineCustomerId,
-                    correlationId,
-                    cancellationToken);
-                return;
             case "FAWRY":
-                await _paymentService.CreatePaymentIntentAsync(
-                    order.TenantId,
-                    order.Id,
-                    new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
-                    order.PromotionCalculationFailed,
-                    idempotencyKey,
-                    correlationId,
+                await _paymentGateway.CreateSessionAsync(
+                    new CanonicalPaymentRequest
+                    {
+                        TenantId = order.TenantId,
+                        OrderId = order.Id,
+                        ProviderCode = new ProviderCode(paymentMethodCode),
+                        CheckoutToken = paymentMethodCode == "STRIPE"
+                            ? _checkoutSessionTokenService.CreatePaymentToken(order.TenantId, order.Id)
+                            : null,
+                        CustomerId = order.OnlineCustomerId,
+                        PromotionCalculationFailed = order.PromotionCalculationFailed,
+                        RequestId = idempotencyKey,
+                        CorrelationId = correlationId
+                    },
                     cancellationToken);
                 return;
             case "COD":
@@ -433,7 +416,7 @@ public sealed class CheckoutPaymentIntentRecoveryService
         {
             return await _dbContext.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""TenantId"" = {tenantId}

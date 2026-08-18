@@ -11,7 +11,7 @@ public sealed class StripeContractClosure2CertificationTests
     {
         var entity = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/StripeWebhookReplayRecord.cs");
         var dbContext = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
-        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260712160000_StripeContractClosure2WebhookReplay.cs");
+        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("public class StripeWebhookReplayRecord", entity, StringComparison.Ordinal);
         Assert.Contains("ITenantOwned", entity, StringComparison.Ordinal);
@@ -47,9 +47,10 @@ public sealed class StripeContractClosure2CertificationTests
         Assert.Contains("\"payment_intent.processing\" => StripeWebhookOutcomeClassification.NonTerminal", integration, StringComparison.Ordinal);
         Assert.Contains("\"payment_intent.requires_action\" => StripeWebhookOutcomeClassification.NonTerminal", integration, StringComparison.Ordinal);
         Assert.Contains("\"payment_intent.succeeded\" => StripeWebhookOutcomeClassification.Terminal", integration, StringComparison.Ordinal);
-        Assert.Contains("\"payment_intent.payment_failed\" => StripeWebhookOutcomeClassification.Terminal", integration, StringComparison.Ordinal);
+        Assert.Contains("\"payment_intent.payment_failed\" => StripeWebhookOutcomeClassification.NonTerminal", integration, StringComparison.Ordinal);
         Assert.Contains("\"charge.refunded\" => StripeWebhookOutcomeClassification.Terminal", integration, StringComparison.Ordinal);
         Assert.Contains("TERMINAL_NEGATIVE_APPLICATION_LIFECYCLE", integration, StringComparison.Ordinal);
+        Assert.Contains("RETRYABLE_PAYMENT_ATTEMPT_FAILED", integration, StringComparison.Ordinal);
         Assert.Contains("stripeEvent.Type is \"payment_intent.succeeded\" or \"charge.refunded\"", integration, StringComparison.Ordinal);
         Assert.Contains("StripeWebhookOutcomeClassification.Ignored", integration, StringComparison.Ordinal);
         Assert.Contains("StripeWebhookOutcomeClassification.Disputed", integration, StringComparison.Ordinal);

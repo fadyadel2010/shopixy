@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using PointOfSale.API.DTOs.Checkout;
 using PointOfSale.API.Services.Checkout;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.Infrastructure;
 using System.Reflection;
@@ -294,8 +295,54 @@ public sealed class CheckoutRequestIdempotencyCoordinatorTests
                 .SingleAsync();
 
             Assert.Equal(orderId, record.OrderId);
-            Assert.NotNull(record.CompletedAtUtc);
+            Assert.Null(record.CompletedAtUtc);
+            Assert.Null(record.ResponseStatusCode);
+            Assert.Null(record.ResponsePayload);
         }
+    }
+
+    [Fact]
+    public async Task DeleteClaimAsync_WhenTrackerContainsDirtyCheckoutSnapshot_DeletesClaimWithoutSavingUnrelatedState()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var store = await SqliteCheckoutIdempotencyStore.CreateAsync(tenantId);
+        await using var context = store.CreateDbContext();
+
+        var coordinator = CreateCoordinator(context);
+        var claim = await coordinator.TryClaimAsync(
+            tenantId,
+            Guid.NewGuid().ToString("D"),
+            "hash-cleanup-dirty-tracker",
+            "snapshot-cleanup-dirty-tracker",
+            CancellationToken.None);
+
+        Assert.Equal(CheckoutIdempotencyClaimStatus.Claimed, claim.Status);
+
+        var dirtySnapshot = new OrderCheckoutFieldSnapshot
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            OrderId = Guid.NewGuid(),
+            CheckoutFieldDefinitionId = Guid.NewGuid(),
+            FieldKind = CheckoutFieldKind.Custom,
+            FieldType = CheckoutFieldType.Text,
+            Label = "Rolled back evidence",
+            IsRequired = false,
+            IsEnabled = true,
+            DisplayOrder = 1,
+            ConfigurationSchemaVersion = 1,
+            ConfigurationJson = "{}",
+            ValueJson = "\"value\"",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        context.Attach(dirtySnapshot);
+        context.Entry(dirtySnapshot).State = EntityState.Modified;
+
+        await coordinator.DeleteClaimAsync(claim.Record!, CancellationToken.None);
+
+        Assert.Equal(0, await context.OrderRequestIdempotencyRecords.IgnoreQueryFilters().CountAsync());
+        Assert.Equal(EntityState.Modified, context.Entry(dirtySnapshot).State);
     }
 
     [Fact]
@@ -335,7 +382,9 @@ public sealed class CheckoutRequestIdempotencyCoordinatorTests
                 .SingleAsync();
 
             Assert.Equal(orderId, record.OrderId);
-            Assert.NotNull(record.CompletedAtUtc);
+            Assert.Null(record.CompletedAtUtc);
+            Assert.Null(record.ResponseStatusCode);
+            Assert.Null(record.ResponsePayload);
         }
     }
 
@@ -423,7 +472,9 @@ public sealed class CheckoutRequestIdempotencyCoordinatorTests
                              property.PropertyType.IsGenericType &&
                              property.PropertyType.GetGenericTypeDefinition() == typeof(DbSet<>))
                          .Select(property => property.PropertyType.GetGenericArguments()[0])
-                         .Where(entityType => entityType != typeof(OrderRequestIdempotency)))
+                         .Where(entityType =>
+                             entityType != typeof(OrderRequestIdempotency) &&
+                             entityType != typeof(OrderCheckoutFieldSnapshot)))
             {
                 modelBuilder.Ignore(entityType);
             }
@@ -438,6 +489,14 @@ public sealed class CheckoutRequestIdempotencyCoordinatorTests
                 entity.Property(record => record.SnapshotHash).HasMaxLength(64);
                 entity.Property(record => record.ResponsePayload).HasColumnType("TEXT");
                 entity.Property(record => record.ClaimToken).HasMaxLength(32);
+            });
+
+            modelBuilder.Entity<OrderCheckoutFieldSnapshot>(entity =>
+            {
+                entity.ToTable("OrderCheckoutFieldSnapshots");
+                entity.HasKey(snapshot => snapshot.Id);
+                entity.Property(snapshot => snapshot.ConfigurationJson).HasColumnType("TEXT");
+                entity.Property(snapshot => snapshot.ValueJson).HasColumnType("TEXT");
             });
         }
     }

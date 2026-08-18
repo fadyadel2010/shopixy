@@ -38,7 +38,7 @@ export default function PaymentProvidersPage() {
     const { showError, showSuccess } = useToast()
     const [state, dispatch] = usePaymentProviderAdministrationState()
     const secretReplacementsRef = useRef<Record<string, string>>({})
-    const [secretReplacementDirty, setSecretReplacementDirty] = useState({ apiKey: false, hmacSecret: false })
+    const [secretReplacementDirty, setSecretReplacementDirty] = useState({ apiKey: false, secretKey: false, hmacSecret: false })
     const [formResetVersion, setFormResetVersion] = useState(0)
     const [rotatingSecretType, setRotatingSecretType] = useState<string | null>(null)
 
@@ -78,7 +78,7 @@ export default function PaymentProvidersPage() {
             }),
         onSuccess: (response) => {
             secretReplacementsRef.current = {}
-            setSecretReplacementDirty({ apiKey: false, hmacSecret: false })
+            setSecretReplacementDirty({ apiKey: false, secretKey: false, hmacSecret: false })
             setFormResetVersion((value) => value + 1)
             dispatch({
                 type: 'save:success',
@@ -165,7 +165,7 @@ export default function PaymentProvidersPage() {
 
     function handleProviderSelect(providerCode: string) {
         secretReplacementsRef.current = {}
-        setSecretReplacementDirty({ apiKey: false, hmacSecret: false })
+        setSecretReplacementDirty({ apiKey: false, secretKey: false, hmacSecret: false })
         setFormResetVersion((value) => value + 1)
         setRotatingSecretType(null)
         dispatch({ type: 'select', providerCode })
@@ -188,7 +188,7 @@ export default function PaymentProvidersPage() {
 
     function handleCancel() {
         secretReplacementsRef.current = {}
-        setSecretReplacementDirty({ apiKey: false, hmacSecret: false })
+        setSecretReplacementDirty({ apiKey: false, secretKey: false, hmacSecret: false })
         setFormResetVersion((value) => value + 1)
         dispatch({ type: 'configuration:reset' })
     }
@@ -212,7 +212,7 @@ export default function PaymentProvidersPage() {
         dispatch({ type: 'configuration:update', configuration })
     }
 
-    function handleSecretReplacementChange(key: 'apiKey' | 'hmacSecret', value: string) {
+    function handleSecretReplacementChange(key: 'apiKey' | 'secretKey' | 'hmacSecret', value: string) {
         const trimmedValue = value.trim()
         if (trimmedValue) {
             secretReplacementsRef.current[key] = trimmedValue

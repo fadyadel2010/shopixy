@@ -4,9 +4,9 @@ using Moq;
 using PointOfSale.API.DTOs.Payments;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.ManualPayment;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -186,7 +186,7 @@ public sealed class ManualPaymentCertificationClosure4Tests
         new(
             dbContext,
             paymentService,
-            Mock.Of<IPaymentRuntime>(),
+            Mock.Of<IPaymentGateway>(),
             Mock.Of<ICheckoutSessionTokenService>(),
             Mock.Of<IProductVariantStockRepository>(),
             Mock.Of<ICouponValidationService>(),

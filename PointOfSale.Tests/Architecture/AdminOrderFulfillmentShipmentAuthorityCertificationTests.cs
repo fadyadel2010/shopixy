@@ -8,22 +8,29 @@ public sealed class AdminOrderFulfillmentShipmentAuthorityCertificationTests
         var dto = ReadRepoFile("PointOfSale.API/DTOs/Admin/AdminOrderDtos.cs");
         var service = ReadRepoFile("PointOfSale.API/Services/Admin/AdminOrderService.cs");
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminOrdersController.cs");
+        var fulfillmentController = ReadRepoFile("PointOfSale.API/Controllers/OrderFulfillmentController.cs");
         var webPage = ReadRepoFile("PointOfSale.Web/src/pages/Orders.jsx");
         var webService = ReadRepoFile("PointOfSale.Web/src/services/adminOrdersApi.js");
 
         Assert.Contains("[ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]", controller, StringComparison.Ordinal);
         Assert.Contains("_tenantContext.RequiredTenantId", controller, StringComparison.Ordinal);
         Assert.Contains("public ShipmentStatus? ShipmentStatus", dto, StringComparison.Ordinal);
+        Assert.Contains("public FulfillmentStatus? FulfillmentStatus", dto, StringComparison.Ordinal);
         Assert.Contains("public AdminShipmentDto? Shipment", dto, StringComparison.Ordinal);
         Assert.Contains("public string? TrackingNumber", dto, StringComparison.Ordinal);
         Assert.Contains("public string? CarrierName", dto, StringComparison.Ordinal);
         Assert.Contains("var shipment = await _context.Shipments", service, StringComparison.Ordinal);
         Assert.Contains(".Where(s => s.OrderId == orderId && s.TenantId == tenantId)", service, StringComparison.Ordinal);
+        Assert.Contains("FulfillmentStatus = order.FulfillmentStatus", service, StringComparison.Ordinal);
         Assert.Contains("ShipmentStatus = shipment?.Status", service, StringComparison.Ordinal);
         Assert.Contains("TrackingNumber = shipment.TrackingNumber", service, StringComparison.Ordinal);
         Assert.Contains("CarrierName = shipment.CarrierCode", service, StringComparison.Ordinal);
         Assert.Contains("order.shipmentStatus || 'No shipment'", webPage, StringComparison.Ordinal);
+        Assert.Contains("order.fulfillmentStatus || fulfillmentAuthority?.currentStatus", webPage, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", webService, StringComparison.Ordinal);
+        Assert.Contains("IsCurrentTenantOrderAsync", fulfillmentController, StringComparison.Ordinal);
+        Assert.Contains("order.TenantId == tenantId", fulfillmentController, StringComparison.Ordinal);
+        Assert.Contains("return NotFound(new { error = \"ORDER_NOT_FOUND\"", fulfillmentController, StringComparison.Ordinal);
     }
 
     [Fact]

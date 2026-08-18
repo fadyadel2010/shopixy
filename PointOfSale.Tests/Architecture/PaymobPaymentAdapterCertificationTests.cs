@@ -32,26 +32,39 @@ public sealed class PaymobPaymentAdapterCertificationTests
         var result = await ExecuteAdapterAsync(client, action);
 
         Assert.True(result.Succeeded);
-        Assert.NotNull(client.AuthRequest);
-        Assert.Equal("paymob-api-key-12345", client.AuthRequest.ApiKey);
-        Assert.NotNull(client.OrderRequest);
-        Assert.Equal("auth-token", client.OrderRequest.AuthToken);
-        Assert.Equal("false", client.OrderRequest.DeliveryNeeded);
-        Assert.Equal(12345, client.OrderRequest.AmountCents);
-        Assert.Equal("EGP", client.OrderRequest.Currency);
-        Assert.Equal("canonical-order-1001", client.OrderRequest.MerchantOrderId);
-        Assert.Equal("Order 1001", client.OrderRequest.Items.Single().Name);
-        Assert.NotNull(client.PaymentKeyRequest);
-        Assert.Equal("auth-token", client.PaymentKeyRequest.AuthToken);
-        Assert.Equal("987654", client.PaymentKeyRequest.OrderId);
-        Assert.Equal(12345, client.PaymentKeyRequest.AmountCents);
-        Assert.Equal(1800, client.PaymentKeyRequest.Expiration);
-        Assert.Equal(123456, client.PaymentKeyRequest.IntegrationId);
-        Assert.True(client.PaymentKeyRequest.LockOrderWhenPaid);
-        Assert.Equal("customer@example.com", client.PaymentKeyRequest.BillingData.Email);
-        Assert.Equal("Nora", client.PaymentKeyRequest.BillingData.FirstName);
-        Assert.Equal("Ali", client.PaymentKeyRequest.BillingData.LastName);
+        Assert.Equal("egy_sk_test_adapter", client.SecretKey);
+        Assert.NotNull(client.IntentionRequest);
+        Assert.Equal(12345, client.IntentionRequest.Amount);
+        Assert.Equal("EGP", client.IntentionRequest.Currency);
+        Assert.Equal(123456, client.IntentionRequest.PaymentMethods.Single());
+        Assert.Equal("canonical-order-1001", client.IntentionRequest.SpecialReference);
+        Assert.Equal("Order 1001", client.IntentionRequest.Items.Single().Name);
+        Assert.Equal(1800, client.IntentionRequest.Expiration);
+        Assert.Equal("customer@example.com", client.IntentionRequest.BillingData.Email);
+        Assert.Equal("Nora", client.IntentionRequest.BillingData.FirstName);
+        Assert.Equal("Ali", client.IntentionRequest.BillingData.LastName);
+        Assert.Equal("Nora", client.IntentionRequest.Customer.FirstName);
+        Assert.Equal("Ali", client.IntentionRequest.Customer.LastName);
+        Assert.Equal("customer@example.com", client.IntentionRequest.Customer.Email);
+        Assert.Equal("EGY", client.IntentionRequest.BillingData.Country);
+        Assert.Equal("https://api.example.test/api/paymob/webhook", client.IntentionRequest.NotificationUrl);
+        Assert.Equal("https://store.example.test/payments/paymob/callback", client.IntentionRequest.RedirectionUrl);
         Assert.Equal("order-1001", result.Request!.CanonicalMetadata["canonical_OrderReference"]);
+    }
+
+    [Fact]
+    public async Task RequestMapping_MustSendEveryConfiguredIntegrationToUnifiedCheckout()
+    {
+        var action = CreateAction();
+        var client = new CapturingPaymobOfficialApiClient();
+        var handoff = new PaymobAdapterCredentialHandoff();
+        using var credentialLease = handoff.Begin(CreateCredentials("123456, 654321"));
+
+        var result = await new PaymobPaymentAdapter(client, handoff).CreateAsync(action);
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(client.IntentionRequest);
+        Assert.Equal([123456, 654321], client.IntentionRequest.PaymentMethods);
     }
 
     [Fact]
@@ -69,12 +82,12 @@ public sealed class PaymobPaymentAdapterCertificationTests
         Assert.Equal("987654", evidence.Reference.Value);
         Assert.Equal("paymob", evidence.Source.Value);
         Assert.Equal(action.CorrelationId, evidence.CorrelationId);
-        Assert.Equal("paymob:order:987654:payment_key", evidence.PayloadReference.Value);
-        Assert.Equal("payment_key_created", evidence.Metadata.Values["provider_status"]);
+        Assert.Equal("paymob:intention:intention-123", evidence.PayloadReference.Value);
+        Assert.Equal("intention_created", evidence.Metadata.Values["provider_status"]);
         Assert.Equal("987654", evidence.Metadata.Values["provider_reference"]);
-        Assert.Equal("payment-token", evidence.Metadata.Values["transaction_reference"]);
-        Assert.Equal("payment_key_created", evidence.Metadata.Values["external_status"]);
-        Assert.Contains("acceptance/iframes/456789", evidence.Metadata.Values["iframe_url"], StringComparison.Ordinal);
+        Assert.Equal("intention-123", evidence.Metadata.Values["transaction_reference"]);
+        Assert.Equal("intention_created", evidence.Metadata.Values["external_status"]);
+        Assert.Contains("https://accept.paymob.com/unifiedcheckout/", evidence.Metadata.Values["iframe_url"], StringComparison.Ordinal);
         Assert.NotEqual(Guid.Empty, evidence.Id.Value);
         Assert.False(string.IsNullOrWhiteSpace(evidence.Hash.Value));
     }
@@ -140,9 +153,8 @@ public sealed class PaymobPaymentAdapterCertificationTests
     {
         var source = ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/PaymobPaymentAdapter.cs");
 
-        Assert.Contains("\"auth/tokens\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"ecommerce/orders\"", source, StringComparison.Ordinal);
-        Assert.Contains("\"acceptance/payment_keys\"", source, StringComparison.Ordinal);
+        Assert.Contains("\"../v1/intention/\"", source, StringComparison.Ordinal);
+        Assert.Contains("authenticationScheme: \"Token\"", source, StringComparison.Ordinal);
         Assert.Contains("PaymobFoundationServiceCollectionExtensions.HttpClientName", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Refund", source, StringComparison.Ordinal);
         Assert.DoesNotContain("Capture", source, StringComparison.Ordinal);
@@ -214,14 +226,18 @@ public sealed class PaymobPaymentAdapterCertificationTests
         return await new PaymobPaymentAdapter(client, handoff).CreateAsync(action);
     }
 
-    private static PaymobTenantRuntimeCredentials CreateCredentials() => new(
+    private static PaymobTenantRuntimeCredentials CreateCredentials(string integrationIds = "123456") => new(
         TenantId,
         Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        "paymob-api-key-12345",
-        "123456",
-        "456789",
+        "egy_pk_test_adapter",
+        "egy_sk_test_adapter",
+        integrationIds,
         "paymob-hmac-secret-12345",
-        true);
+        true,
+        new Uri("https://api.example.test/api/paymob/webhook"),
+        new Uri("https://store.example.test/payments/paymob/callback"),
+        IframeId: "456789",
+        ApiKey: "paymob-api-key-12345");
 
     private static readonly Guid TenantId = Guid.Parse("99999999-9999-9999-9999-999999999999");
 
@@ -249,9 +265,26 @@ public sealed class PaymobPaymentAdapterCertificationTests
 
     private sealed class CapturingPaymobOfficialApiClient : IPaymobOfficialApiClient
     {
+        public PaymobIntentionRequest? IntentionRequest { get; private set; }
+        public string? SecretKey { get; private set; }
         public PaymobAuthRequest? AuthRequest { get; private set; }
         public PaymobOrderRegistrationRequest? OrderRequest { get; private set; }
         public PaymobPaymentKeyRequest? PaymentKeyRequest { get; private set; }
+
+        public Task<PaymobIntentionResponse> CreateIntentionAsync(
+            PaymobIntentionRequest request,
+            string secretKey,
+            CancellationToken cancellationToken)
+        {
+            IntentionRequest = request;
+            SecretKey = secretKey;
+            return Task.FromResult(new PaymobIntentionResponse
+            {
+                Id = "intention-123",
+                ClientSecret = "client-secret",
+                IntentionOrderId = 987654
+            });
+        }
 
         public Task<PaymobAdapterAuthResponse> AuthenticateAsync(
             PaymobAuthRequest request,
@@ -292,6 +325,14 @@ public sealed class PaymobPaymentAdapterCertificationTests
         public ThrowingPaymobOfficialApiClient(Exception exception)
         {
             _exception = exception;
+        }
+
+        public Task<PaymobIntentionResponse> CreateIntentionAsync(
+            PaymobIntentionRequest request,
+            string secretKey,
+            CancellationToken cancellationToken)
+        {
+            throw _exception;
         }
 
         public Task<PaymobAdapterAuthResponse> AuthenticateAsync(

@@ -104,7 +104,7 @@ public sealed class PaymentProviderAdministrationFoundationTests
         Assert.Contains("MISSING_PROVIDER", serviceSource, StringComparison.Ordinal);
         Assert.Contains("PROVIDER_SECRET_NOT_ACCEPTED", serviceSource, StringComparison.Ordinal);
         Assert.DoesNotContain("HttpClient", serviceSource, StringComparison.Ordinal);
-        Assert.DoesNotContain("Rotate", serviceSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("RotateSecretsAsync(", serviceSource, StringComparison.Ordinal);
 
         var providers = service.GetProviders();
         Assert.Single(providers);

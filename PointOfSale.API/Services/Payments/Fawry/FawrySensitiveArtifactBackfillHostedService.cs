@@ -8,37 +8,25 @@ public sealed class FawrySensitiveArtifactBackfillHostedService(
     IServiceScopeFactory scopeFactory,
     ILogger<FawrySensitiveArtifactBackfillHostedService> logger) : IHostedService
 {
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Fire-and-forget: this backfill scans potentially large tables and must not
-        // block host startup (Kestrel) if the store is slow or a row is unclassifiable.
-        _ = Task.Run(() => RunBackfillAsync(cancellationToken), CancellationToken.None);
-        return Task.CompletedTask;
-    }
+    public Task StartAsync(CancellationToken cancellationToken) =>
+        RunBackfillAsync(cancellationToken);
 
     private async Task RunBackfillAsync(CancellationToken cancellationToken)
     {
-        try
-        {
-            await using var scope = scopeFactory.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var protector = scope.ServiceProvider.GetRequiredService<IFawrySensitiveArtifactProtector>();
+        await using var scope = scopeFactory.CreateAsyncScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var protector = scope.ServiceProvider.GetRequiredService<IFawrySensitiveArtifactProtector>();
 
-            var changedArtifacts = await ProtectLegacyArtifactsAsync(
-                dbContext,
-                protector,
-                cancellationToken);
+        var changedArtifacts = await ProtectLegacyArtifactsAsync(
+            dbContext,
+            protector,
+            cancellationToken);
 
-            if (changedArtifacts > 0)
-            {
-                logger.LogInformation(
-                    "Protected {ArtifactCount} legacy Fawry durable security artifacts.",
-                    changedArtifacts);
-            }
-        }
-        catch (Exception ex)
+        if (changedArtifacts > 0)
         {
-            logger.LogError(ex, "Fawry sensitive artifact backfill failed during startup; continuing without it.");
+            logger.LogInformation(
+                "Protected {ArtifactCount} legacy Fawry durable security artifacts.",
+                changedArtifacts);
         }
     }
 

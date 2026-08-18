@@ -337,10 +337,23 @@ public sealed class InventoryReservationLifecycleIntegrationTests
                 gateway: "stripe",
                 webhookEventId: "evt-late-success"));
 
+        var replayResult = await service.HandlePaymentResultAsync(
+            CreatePaymentResultRequest(
+                scenario,
+                PaymentLifecycleOutcome.Succeeded,
+                PaymentLifecycleSource.GatewayWebhook,
+                gateway: "stripe",
+                webhookEventId: "evt-late-success"));
+
         Assert.False(result.Success);
         Assert.True(result.RequiresManualReview);
         Assert.Equal("RESERVATION_EXPIRED", result.FailureCode);
         Assert.Equal(PaymentStatus.Expired, result.NewStatus);
+        Assert.False(replayResult.Success);
+        Assert.True(replayResult.RequiresManualReview);
+        Assert.Equal(result.FailureCode, replayResult.FailureCode);
+        Assert.Equal(result.ErrorMessage, replayResult.ErrorMessage);
+        Assert.Equal(result.NewStatus, replayResult.NewStatus);
 
         await using var verifyContext = await CreateDbContextAsync(connection, tenantId);
         var order = await verifyContext.Orders.SingleAsync(item => item.Id == scenario.OrderId);
@@ -352,8 +365,9 @@ public sealed class InventoryReservationLifecycleIntegrationTests
         Assert.Equal(CheckoutState.Expired, order.CheckoutState);
         Assert.False(order.IsPaid);
         Assert.Null(order.PaidAt);
-        Assert.Equal(OrderStatus.Cancelled, order.Status);
-        Assert.Equal(PaymentIntentStatus.Expired, paymentIntent.Status);
+        Assert.Equal(OrderStatus.OnHold, order.Status);
+        Assert.Equal(PaymentIntentStatus.Suspicious, paymentIntent.Status);
+        Assert.Equal("RESERVATION_EXPIRED", paymentIntent.FailureCode);
         Assert.False(paymentIntent.InventoryCommitted);
         Assert.Equal(InventoryReservationStatus.Released, reservation.Status);
         Assert.Equal(2m, reservation.ReleasedQuantity);
@@ -925,8 +939,8 @@ public sealed class InventoryReservationLifecycleIntegrationTests
             m => m.ReleaseCouponReservationAsync(
                 It.Is<Guid>(g => g == tenantId),
                 It.Is<Guid>(g => g == scenario.OrderId),
-                It.Is<string>(s => s == "inventory_reservation_cleanup_job"),
-                It.Is<string>(s => s == "inventory_reservation_expired"),
+                It.Is<string>(s => s == "inventory-lifecycle-tests"),
+                It.Is<string>(s => s == "Inventory reservation expired and was released by cleanup."),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -991,8 +1005,8 @@ public sealed class InventoryReservationLifecycleIntegrationTests
             m => m.ReleaseCouponReservationAsync(
                 It.Is<Guid>(g => g == tenantId),
                 It.Is<Guid>(g => g == scenario.OrderId),
-                It.Is<string>(s => s == "inventory_reservation_cleanup_job"),
-                It.Is<string>(s => s == "inventory_reservation_expired"),
+                It.Is<string>(s => s == "inventory-lifecycle-tests"),
+                It.Is<string>(s => s == "Inventory reservation expired and was released by cleanup."),
                 It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -1125,8 +1139,8 @@ public sealed class InventoryReservationLifecycleIntegrationTests
 
         Assert.False(result.Success);
         Assert.Contains("Database provider", result.ErrorMessage);
-        Assert.Contains("not supported for production payment flows", result.ErrorMessage);
-        Assert.Contains("Row-level locking is required", result.ErrorMessage);
+        Assert.Contains("not supported for production payment lifecycle flows", result.ErrorMessage);
+        Assert.Contains("row-level locking", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Sqlite", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         
         // Verify system state was not mutated after CaptureOnlinePaymentAsync threw
@@ -1291,6 +1305,39 @@ public sealed class InventoryReservationLifecycleIntegrationTests
                     idempotencyKey,
                     "inventory-lifecycle-tests"));
                 await context.SaveChangesAsync(cancellationToken);
+            });
+
+        outbox
+            .Setup(service => service.EnqueueCodDeliveredAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async (Guid tenantId, Guid orderId, CancellationToken cancellationToken) =>
+            {
+                var idempotencyKey = $"COD_DELIVERED:{tenantId}:{orderId}";
+                var existing = await context.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(message =>
+                        message.TenantId == tenantId &&
+                        message.IdempotencyKey == idempotencyKey,
+                        cancellationToken);
+
+                if (existing != null)
+                {
+                    return OutboxEnqueueResult.Exists(existing.Id, "PENDING", idempotencyKey);
+                }
+
+                var message = PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage.Create(
+                    tenantId,
+                    "CodDelivered",
+                    orderId,
+                    "CodDelivered",
+                    $"{{\"OrderId\":\"{orderId:D}\"}}",
+                    idempotencyKey,
+                    "inventory-lifecycle-tests");
+                context.AccountingOutboxMessages.Add(message);
+                await context.SaveChangesAsync(cancellationToken);
+                return OutboxEnqueueResult.Created(message.Id, idempotencyKey);
             });
 
         return new PaymentLifecycleService(

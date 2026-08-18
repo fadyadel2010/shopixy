@@ -15,6 +15,7 @@ interface PaymobPaymentFormProps {
     orderNumber: string;
     amount: number;
     currency: string;
+    expiresAtUtc?: string | null;
     onPending: () => void;
     onError: (error: string | null) => void;
 }
@@ -36,6 +37,7 @@ export const PaymobPaymentForm: React.FC<PaymobPaymentFormProps> = ({
     orderNumber,
     amount,
     currency,
+    expiresAtUtc,
     onPending,
     onError,
 }) => {
@@ -85,14 +87,36 @@ export const PaymobPaymentForm: React.FC<PaymobPaymentFormProps> = ({
     }, [currency, amount, isRTL, onError]);
 
     const handlePayWithPaymob = () => {
-        if (!iframeUrl) {
+        const expiresAt = expiresAtUtc ? Date.parse(expiresAtUtc) : Number.NaN;
+        if (!iframeUrl || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
             const message = t('checkout.pending.paymobUnavailable');
+            setPaymentError(message);
+            onError(message);
+            return;
+        }
+
+        let checkoutUrl: URL;
+        try {
+            checkoutUrl = new URL(iframeUrl);
+        } catch {
+            const message = t('checkout.pending.paymobUnavailable');
+            setPaymentError(message);
+            onError(message);
+            return;
+        }
+
+        if (
+            checkoutUrl.origin !== 'https://accept.paymob.com' ||
+            checkoutUrl.pathname.replace(/\/$/, '') !== '/unifiedcheckout'
+        ) {
+            const message = t('checkout.pending.paymobUnavailable');
+            setPaymentError(message);
             onError(message);
             return;
         }
 
         setIsLoading(true);
-        window.location.href = iframeUrl;
+        window.location.assign(checkoutUrl.toString());
     };
 
     useEffect(() => {

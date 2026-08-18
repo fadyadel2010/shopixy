@@ -292,6 +292,11 @@ public class PaymentLifecycleTests
             "PointOfSale.API",
             "Controllers",
             "PaymentLifecycleController.cs");
+        var manualPaymentControllerPath = Path.Combine(
+            GetSolutionDirectory(),
+            "PointOfSale.API",
+            "Controllers",
+            "AdminManualPaymentController.cs");
 
         if (!File.Exists(controllerPath))
         {
@@ -299,12 +304,19 @@ public class PaymentLifecycleTests
             return;
         }
 
+        Assert.True(File.Exists(manualPaymentControllerPath), "AdminManualPaymentController.cs must exist");
+
         var sourceCode = File.ReadAllText(controllerPath);
+        var manualPaymentSourceCode = File.ReadAllText(manualPaymentControllerPath);
 
         // Act - Check for required endpoints
         var hasCodDelivered = sourceCode.Contains("cod-delivered");
-        var hasWalletApprove = sourceCode.Contains("wallet-approve");
-        var hasWalletReject = sourceCode.Contains("wallet-reject");
+        var legacyWalletRoutesDisabled =
+            sourceCode.Contains("[NonAction]") &&
+            !sourceCode.Contains("[HttpPost(\"{orderId:guid}/wallet-approve\")]") &&
+            !sourceCode.Contains("[HttpPost(\"{orderId:guid}/wallet-reject\")]");
+        var hasManualWalletConfirm = manualPaymentSourceCode.Contains("[HttpPost(\"{paymentIntentId:guid}/confirm\")]");
+        var hasManualWalletReject = manualPaymentSourceCode.Contains("[HttpPost(\"{paymentIntentId:guid}/reject\")]");
         var hasRefund = sourceCode.Contains("/refund");
         var hasCodSettlement = sourceCode.Contains("/settlements/cod");
         var hasGatewaySettlement = sourceCode.Contains("/settlements/gateway");
@@ -313,10 +325,12 @@ public class PaymentLifecycleTests
         // Assert
         Assert.True(hasCodDelivered, 
             "PaymentLifecycleController must have cod-delivered endpoint");
-        Assert.True(hasWalletApprove, 
-            "PaymentLifecycleController must have wallet-approve endpoint");
-        Assert.True(hasWalletReject, 
-            "PaymentLifecycleController must have wallet-reject endpoint");
+        Assert.True(legacyWalletRoutesDisabled,
+            "PaymentLifecycleController legacy wallet routes must remain non-actions");
+        Assert.True(hasManualWalletConfirm,
+            "AdminManualPaymentController must own the manual-wallet confirm endpoint");
+        Assert.True(hasManualWalletReject,
+            "AdminManualPaymentController must own the manual-wallet reject endpoint");
         Assert.True(hasRefund, 
             "PaymentLifecycleController must have refund endpoint");
         Assert.True(hasCodSettlement, 

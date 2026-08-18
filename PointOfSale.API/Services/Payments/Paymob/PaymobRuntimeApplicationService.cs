@@ -45,6 +45,16 @@ public sealed class PaymobRuntimeApplicationService : IPaymobRuntimeApplicationS
             cancellationToken);
         using var credentialHandoff = _adapterCredentialHandoff.Begin(credentials);
 
+        _logger.LogInformation(
+            "Paymob payment initialization context resolved | TenantId: {TenantId} | OrderId: {OrderId} | LocalPaymentIntentId: {LocalPaymentIntentId} | IntegrationId: {IntegrationId} | Amount: {Amount} | Currency: {Currency} | CorrelationId: {CorrelationId}",
+            request.TenantId,
+            request.OrderId,
+            request.LocalPaymentIntentId,
+            credentials.IntegrationId,
+            request.Amount,
+            request.Currency,
+            request.CorrelationId);
+
         var session = BuildRuntimeSession(request);
         var action = BuildRuntimeAction(request, session);
         var runtimeRequest = PaymobExecutionFactory.CreateRequest(
@@ -82,9 +92,20 @@ public sealed class PaymobRuntimeApplicationService : IPaymobRuntimeApplicationS
         }
 
         var metadata = execution.ProviderEvidence.Metadata.Values;
-        var paymentKey = RequiredMetadata(metadata, "transaction_reference", "payment key");
         var paymobOrderId = RequiredMetadata(metadata, "provider_order_id", "Paymob order id");
         var iframeUrl = RequiredMetadata(metadata, "iframe_url", "iframe URL");
+        var paymentKey = ResolveUnifiedCheckoutClientSecret(iframeUrl);
+
+        _logger.LogInformation(
+            "Paymob payment initialization handoff materialized | TenantId: {TenantId} | OrderId: {OrderId} | LocalPaymentIntentId: {LocalPaymentIntentId} | IntegrationId: {IntegrationId} | ProviderOrderIdPresent: {ProviderOrderIdPresent} | ClientSecretPresent: {ClientSecretPresent} | HandoffUrlPresent: {HandoffUrlPresent} | CorrelationId: {CorrelationId}",
+            request.TenantId,
+            request.OrderId,
+            request.LocalPaymentIntentId,
+            credentials.IntegrationId,
+            !string.IsNullOrWhiteSpace(paymobOrderId),
+            !string.IsNullOrWhiteSpace(paymentKey),
+            !string.IsNullOrWhiteSpace(iframeUrl),
+            request.CorrelationId);
 
         return new PaymobRuntimeApplicationResult(
             iframeUrl,
@@ -93,6 +114,34 @@ public sealed class PaymobRuntimeApplicationService : IPaymobRuntimeApplicationS
             execution.ProviderEvidence,
             execution.RuntimeResult,
             execution);
+    }
+
+    private static string ResolveUnifiedCheckoutClientSecret(string checkoutUrl)
+    {
+        if (!Uri.TryCreate(checkoutUrl, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, "accept.paymob.com", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.AbsolutePath.TrimEnd('/'), "/unifiedcheckout", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new PaymobApiException(
+                "Paymob payment creation returned an invalid Unified Checkout URL.",
+                "PAYMOB_CHECKOUT_URL_INVALID",
+                "runtime_validation");
+        }
+
+        var values = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        var clientSecret = values.TryGetValue("clientSecret", out var candidate)
+            ? candidate.ToString()
+            : string.Empty;
+        if (string.IsNullOrWhiteSpace(clientSecret))
+        {
+            throw new PaymobApiException(
+                "Paymob payment creation did not return a Unified Checkout client secret.",
+                "PAYMOB_CHECKOUT_SECRET_MISSING",
+                "runtime_validation");
+        }
+
+        return clientSecret;
     }
 
     private static PaymentSession BuildRuntimeSession(PaymobRuntimePaymentIntentApplicationRequest request)
@@ -169,7 +218,7 @@ public sealed class PaymobRuntimeApplicationService : IPaymobRuntimeApplicationS
             {
                 [PaymobRequestMetadataKeys.Amount] = request.Amount.ToString(CultureInfo.InvariantCulture),
                 [PaymobRequestMetadataKeys.Currency] = request.Currency,
-                [PaymobRequestMetadataKeys.MerchantOrderId] = request.OrderId.ToString("D"),
+                [PaymobRequestMetadataKeys.MerchantOrderId] = request.LocalPaymentIntentId.ToString("D"),
                 [PaymobRequestMetadataKeys.ItemName] = $"Order {request.OrderNumber}",
                 [PaymobRequestMetadataKeys.ExpirationSeconds] = "3600",
                 [PaymobRequestMetadataKeys.Email] = request.Email,
@@ -280,8 +329,13 @@ public sealed record PaymobRuntimeApplicationResult(
 public sealed record PaymobTenantRuntimeCredentials(
     Guid TenantId,
     Guid TenantPaymentMethodId,
-    string ApiKey,
+    string PublicKey,
+    string SecretKey,
     string IntegrationId,
-    string IframeId,
     string HmacSecret,
-    bool IsSandbox);
+    bool IsSandbox,
+    Uri NotificationUrl,
+    Uri RedirectionUrl,
+    string? MerchantId = null,
+    string? IframeId = null,
+    string? ApiKey = null);

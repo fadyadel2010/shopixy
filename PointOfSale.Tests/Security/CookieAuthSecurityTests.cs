@@ -2,12 +2,14 @@ using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Customers;
 using PointOfSale.API.Middleware;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.Services.Storefront;
 
 namespace PointOfSale.Tests.Security;
 
@@ -22,6 +24,60 @@ public sealed class CookieAuthSecurityTests
         Assert.True(options.Secure);
         Assert.Equal(SameSiteMode.Strict, options.SameSite);
         Assert.Equal("/api/customers", options.Path);
+    }
+
+    [Fact]
+    public void StorefrontCookieHelper_SetAccessTokenCookie_ScopesAccessCookieToStorefrontAndPayments()
+    {
+        var helper = CreateStorefrontCookieHelper();
+        var httpContext = new DefaultHttpContext();
+
+        helper.SetAccessTokenCookie(
+            httpContext.Response,
+            "access-token",
+            DateTime.UtcNow.AddMinutes(15));
+
+        var setCookieHeaders = httpContext.Response.Headers["Set-Cookie"].ToArray();
+
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=access-token", StringComparison.Ordinal) &&
+            value.Contains("path=/api/storefront", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=access-token", StringComparison.Ordinal) &&
+            value.Contains("path=/api/payments", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=", StringComparison.Ordinal) &&
+            value.Contains("path=/api;", StringComparison.OrdinalIgnoreCase) &&
+            value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void StorefrontCookieHelper_ClearAccessTokenCookie_ExpiresStorefrontPaymentsAndBroadApiCookiePaths()
+    {
+        var helper = CreateStorefrontCookieHelper();
+        var httpContext = new DefaultHttpContext();
+
+        helper.ClearAccessTokenCookie(httpContext.Response);
+
+        var setCookieHeaders = httpContext.Response.Headers["Set-Cookie"].ToArray();
+        var headerDump = string.Join(Environment.NewLine, setCookieHeaders);
+
+        var clearsStorefrontPath = setCookieHeaders.Any(value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/storefront", StringComparison.OrdinalIgnoreCase) &&
+            value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
+        var clearsPaymentsPath = setCookieHeaders.Any(value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/payments", StringComparison.OrdinalIgnoreCase) &&
+            value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
+        var clearsBroadApiPath = setCookieHeaders.Any(value =>
+            value.StartsWith($"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=", StringComparison.Ordinal) &&
+            value.Contains("path=/api;", StringComparison.OrdinalIgnoreCase) &&
+            value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(clearsStorefrontPath, headerDump);
+        Assert.True(clearsPaymentsPath, headerDump);
+        Assert.True(clearsBroadApiPath, headerDump);
     }
 
     [Fact]
@@ -72,6 +128,56 @@ public sealed class CookieAuthSecurityTests
 
         Assert.True(nextCalled);
         Assert.NotEqual(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CookieCsrfProtectionMiddleware_AllowsLeaseTokenAuthorizedUploadEndpoint_WithoutCsrfHeader()
+    {
+        var nextCalled = false;
+        var middleware = new CookieCsrfProtectionMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        var context = new DefaultHttpContext();
+        context.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(new LeaseTokenAuthorizedUploadAttribute()),
+            "development checkout attachment upload"));
+        context.Request.Method = HttpMethods.Put;
+        context.Request.Path = "/api/storefront/checkout/attachments/development-upload";
+        context.Request.Headers["Cookie"] =
+            $"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=token; {AuthCookieConfiguration.CsrfCookieName}=cookie-value";
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(nextCalled);
+        Assert.NotEqual(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task CookieCsrfProtectionMiddleware_BlocksUnmarkedDevelopmentUploadPath_WithoutCsrfHeader()
+    {
+        var nextCalled = false;
+        var middleware = new CookieCsrfProtectionMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Put;
+        context.Request.Path = "/api/storefront/checkout/attachments/development-upload";
+        context.Request.Headers["Cookie"] =
+            $"{AuthCookieConfiguration.StorefrontAccessTokenCookieName}=token; {AuthCookieConfiguration.CsrfCookieName}=cookie-value";
+        context.Response.Body = new MemoryStream();
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
     }
 
     [Fact]
@@ -369,5 +475,22 @@ public sealed class CookieAuthSecurityTests
 
         controller.HttpContext.Response.Body = new MemoryStream();
         return controller;
+    }
+
+    private static StorefrontCookieHelper CreateStorefrontCookieHelper()
+    {
+        var settings = Options.Create(new StorefrontCookieSettings
+        {
+            AccessTokenCookiePath = StorefrontCookieSettings.DefaultAccessTokenCookiePath,
+            PaymentAccessTokenCookiePath = StorefrontCookieSettings.DefaultPaymentAccessTokenCookiePath,
+            CookiePath = "/api/storefront/auth",
+            SameSiteMode = "Lax",
+            AllowNonSecureInDevelopment = true
+        });
+
+        var mockEnv = new Mock<IWebHostEnvironment>();
+        mockEnv.SetupGet(e => e.EnvironmentName).Returns("Development");
+
+        return new StorefrontCookieHelper(settings, mockEnv.Object);
     }
 }

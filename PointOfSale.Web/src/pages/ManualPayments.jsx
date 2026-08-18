@@ -16,6 +16,13 @@ function getApiErrorMessage(error, fallback) {
     return error?.response?.data?.message || fallback
 }
 
+export function isManualPaymentConfigurationError(error) {
+    const code = error?.response?.data?.code || error?.response?.data?.error
+    return code === 'MANUAL_PAYMENT_CONFIGURATION_INVALID'
+        || code === 'MANUAL_PAYMENT_CONFIGURATION_MISSING'
+        || code === 'MANUAL_PAYMENT_PROVIDER_DISABLED'
+}
+
 function buildManualPaymentActionId(action, paymentIntentId) {
     return `manual-payment-${action}-${paymentIntentId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
@@ -57,6 +64,7 @@ export default function ManualPayments() {
     const [payments, setPayments] = useState([])
     const [loading, setLoading] = useState(true)
     const [listError, setListError] = useState('')
+    const [listErrorType, setListErrorType] = useState('')
     const [selectedProof, setSelectedProof] = useState(null)
     const [proofImageUrl, setProofImageUrl] = useState('')
     const [proofMimeType, setProofMimeType] = useState('')
@@ -118,6 +126,7 @@ export default function ManualPayments() {
         try {
             setLoading(true)
             setListError('')
+            setListErrorType('')
             const response = await api.get('/admin/payments/manual-wallet/pending', {
                 params: {
                     page: nextPage,
@@ -152,9 +161,13 @@ export default function ManualPayments() {
             }
 
             console.error('Error fetching payments:', error)
-            const message = getApiErrorMessage(error, t('ManualPayments.messages.loadError'))
+            const configurationError = isManualPaymentConfigurationError(error)
+            const message = configurationError
+                ? t('ManualPayments.messages.configurationRequired', 'Configuration required.')
+                : getApiErrorMessage(error, t('ManualPayments.messages.loadError'))
             setPayments([])
             setListError(message)
+            setListErrorType(configurationError ? 'configuration' : 'failure')
             showError(message)
         } finally {
             if (!signal?.aborted) {
@@ -230,7 +243,10 @@ export default function ManualPayments() {
                 }
 
                 console.error('Error loading proof image:', error)
-                showError(getApiErrorMessage(error, t('ManualPayments.messages.loadError')))
+                showError(getApiErrorMessage(
+                    error,
+                    t('ManualPayments.messages.proofLoadError', 'Failed to load payment proof'),
+                ))
             } finally {
                 if (!controller.signal.aborted) {
                     setProofLoading(false)
@@ -376,7 +392,7 @@ export default function ManualPayments() {
         if (!proofImageUrl) {
             return (
                 <div className="flex min-h-[16rem] min-w-[16rem] items-center justify-center p-10 text-sm text-gray-200">
-                    {t('ManualPayments.messages.loadError')}
+                    {t('ManualPayments.messages.proofLoadError', 'Failed to load payment proof')}
                 </div>
             )
         }
@@ -436,6 +452,14 @@ export default function ManualPayments() {
                         <tbody className="divide-y divide-gray-100">
                             {loading ? (
                                 <tr><td colSpan="7" className="p-8 text-center text-gray-500">{t('ManualPayments.loading')}</td></tr>
+                            ) : listError ? (
+                                <tr>
+                                    <td colSpan="7" className="p-8 text-center text-gray-500">
+                                        {listErrorType === 'configuration'
+                                            ? t('ManualPayments.messages.configurationRequired', 'Configuration required.')
+                                            : t('ManualPayments.messages.failedToLoad', 'Failed to load pending payments.')}
+                                    </td>
+                                </tr>
                             ) : payments.length === 0 ? (
                                 <tr><td colSpan="7" className="p-8 text-center text-gray-500">{t('ManualPayments.no_pending_manual_payments_found')}</td></tr>
                             ) : (

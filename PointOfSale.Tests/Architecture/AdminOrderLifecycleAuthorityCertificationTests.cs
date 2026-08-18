@@ -34,9 +34,16 @@ public sealed class AdminOrderLifecycleAuthorityCertificationTests
         Assert.Contains("OPERATIONAL_LIFECYCLE_BYPASS_ATTEMPT", service, StringComparison.Ordinal);
         Assert.Contains("OrderStatusSaveChangesInterceptor.BeginAuthorizedContext", service, StringComparison.Ordinal);
         Assert.Contains("OrderStatusChangedEvent", service, StringComparison.Ordinal);
+        Assert.Contains("getDirectOrderStatusMutationOptions", webPage, StringComparison.Ordinal);
+        Assert.Contains("GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES", webPage, StringComparison.Ordinal);
+        Assert.Contains("!GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES.has(status)", webPage, StringComparison.Ordinal);
+        Assert.Contains("getAdminOrderFulfillmentActions", webPage, StringComparison.Ordinal);
+        Assert.Contains("runAdminOrderFulfillmentAction", webPage, StringComparison.Ordinal);
         Assert.Contains("Submit candidate", webPage, StringComparison.Ordinal);
         Assert.Contains("rowVersion: order.rowVersion", webPage, StringComparison.Ordinal);
         Assert.Contains("'If-Match': rowVersion", webService, StringComparison.Ordinal);
+        Assert.Contains("api.get(`/orders/${orderId}/fulfillment/actions`", webService, StringComparison.Ordinal);
+        Assert.Contains("`/orders/${orderId}/fulfillment/${actionCode}`", webService, StringComparison.Ordinal);
         Assert.Contains("requireMarketplaceOrderLifecycleAuthority", webService, StringComparison.Ordinal);
         Assert.Contains("missing status concurrency evidence", admission, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage", webPage, StringComparison.OrdinalIgnoreCase);

@@ -217,11 +217,15 @@ public sealed class PaymobAdvancedOperationsAdapterCertificationTests
     private static PaymobTenantRuntimeCredentials Credentials() => new(
         TenantId,
         Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
-        "paymob-api-key",
+        "egy_pk_test_advanced",
+        "egy_sk_test_advanced",
         "12345",
-        "67890",
         "0123456789abcdef0123456789abcdef01234567",
-        true);
+        true,
+        new Uri("https://api.example.test/api/paymob/webhook"),
+        new Uri("https://store.example.test/payments/paymob/callback"),
+        IframeId: "67890",
+        ApiKey: "paymob-api-key");
 
     private static readonly Guid TenantId = Guid.Parse("99999999-9999-9999-9999-999999999999");
 

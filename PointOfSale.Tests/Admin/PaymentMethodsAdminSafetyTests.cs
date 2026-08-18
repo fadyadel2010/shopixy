@@ -19,6 +19,137 @@ namespace PointOfSale.Tests.Admin;
 public sealed class PaymentMethodsAdminSafetyTests
 {
     [Fact]
+    public async Task GetProviderCatalog_WhenTenantHasNoPaymentMethods_ReturnsSupportedProvidersWithoutSeedingRows()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = controller.GetProviderCatalog();
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var catalog = Assert.IsAssignableFrom<IEnumerable<PaymentMethodCatalogProviderDto>>(ok.Value);
+        var codes = catalog.Select(provider => provider.Code).ToArray();
+
+        Assert.Equal(new[] { "COD", "STRIPE", "PAYMOB", "FAWRY", "MANUALWALLET" }, codes);
+        Assert.Empty(await dbContext.TenantPaymentMethods.ToListAsync());
+    }
+
+    [Fact]
+    public async Task UpdateConfiguration_WhenProviderDoesNotExist_CreatesDisabledTenantRowWithValidConfiguration()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.UpdateConfiguration(
+            "STRIPE",
+            new UpsertPaymentMethodDto
+            {
+                Configuration = new Dictionary<string, string>
+                {
+                    ["publishableKey"] = "pk_test_valid",
+                    ["apiKey"] = "sk_test_valid",
+                    ["webhookSecret"] = "whsec_test_valid"
+                }
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<PaymentMethodResponseDto>(ok.Value);
+        var paymentMethod = await dbContext.TenantPaymentMethods.SingleAsync(method => method.Code == "STRIPE");
+
+        Assert.Equal(tenantId, paymentMethod.TenantId);
+        Assert.False(paymentMethod.IsEnabled);
+        Assert.True(response.IsConfigurationValid);
+        Assert.False(response.IsEnabled);
+    }
+
+    [Fact]
+    public async Task EnablePaymentMethod_WhenCodDoesNotExist_CreatesAndEnablesWithoutCredentials()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.EnablePaymentMethod("COD", CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<PaymentMethodResponseDto>(ok.Value);
+        var paymentMethod = await dbContext.TenantPaymentMethods.SingleAsync(method => method.Code == "COD");
+
+        Assert.Equal(tenantId, paymentMethod.TenantId);
+        Assert.True(paymentMethod.IsEnabled);
+        Assert.True(response.IsConfigurationValid);
+        Assert.False(response.RequiresConfiguration);
+    }
+
+    [Fact]
+    public async Task EnablePaymentMethod_WhenManualWalletConfigurationIsMissing_ReturnsValidationErrorAndDoesNotPersistEnabledRow()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.EnablePaymentMethod("MANUALWALLET", CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
+        var payload = SerializeToJson(badRequest.Value);
+
+        Assert.Equal("INVALID_PAYMENT_CONFIGURATION", payload.RootElement.GetProperty("error").GetString());
+        Assert.Contains(
+            payload.RootElement.GetProperty("validationErrors").EnumerateArray().Select(item => item.GetString()),
+            value => value == "Manual wallet number is required.");
+        Assert.Empty(await dbContext.TenantPaymentMethods.ToListAsync());
+    }
+
+    [Fact]
+    public async Task GetPaymentMethods_ReturnsOnlyCurrentTenantRows()
+    {
+        var tenantId = Guid.NewGuid();
+        var otherTenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+
+        dbContext.TenantPaymentMethods.AddRange(
+            new TenantPaymentMethod
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Code = "COD",
+                DisplayName = "Cash on Delivery",
+                SupportsOffline = true,
+                FeeType = "fixed",
+                CreatedAt = DateTime.UtcNow
+            },
+            new TenantPaymentMethod
+            {
+                Id = Guid.NewGuid(),
+                TenantId = otherTenantId,
+                Code = "STRIPE",
+                DisplayName = "Stripe",
+                SupportsOnline = true,
+                FeeType = "fixed",
+                CreatedAt = DateTime.UtcNow
+            });
+        await dbContext.SaveChangesAsync();
+
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.GetPaymentMethods(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<List<PaymentMethodResponseDto>>(ok.Value);
+        var method = Assert.Single(response);
+
+        Assert.Equal("COD", method.Code);
+    }
+
+    [Fact]
     public async Task UpsertPaymentMethod_WhenConfigurationPayloadIsEmpty_PreservesExistingSecrets()
     {
         var tenantId = Guid.NewGuid();
@@ -79,6 +210,93 @@ public sealed class PaymentMethodsAdminSafetyTests
         publisher.Verify(p => p.PublishAsync(
             It.Is<object>(e => IsUpdatedEvent(e, true)),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task UpdateConfiguration_WhenPaymobApiKeyIsSubmitted_EncryptsAndRedactsIt()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.UpdateConfiguration(
+            "PAYMOB",
+            new UpsertPaymentMethodDto
+            {
+                Configuration = new Dictionary<string, string>
+                {
+                    ["publicKey"] = "egy_pk_test_public-placeholder",
+                    ["apiKey"] = "paymob-dashboard-api-key",
+                    ["secretKey"] = "egy_sk_test_secret-placeholder",
+                    ["integrationId"] = "3153090",
+                    ["hmacSecret"] = "paymob-hmac-secret"
+                }
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<PaymentMethodResponseDto>(ok.Value);
+        var paymentMethod = await dbContext.TenantPaymentMethods.SingleAsync(method => method.Code == "PAYMOB");
+        var decrypted = UnprotectConfiguration(dataProtectionProvider, paymentMethod.ConfigEncrypted!);
+        var serializedResponse = JsonSerializer.Serialize(response);
+
+        Assert.Equal("paymob-dashboard-api-key", decrypted["apiKey"]);
+        Assert.DoesNotContain("paymob-dashboard-api-key", serializedResponse, StringComparison.Ordinal);
+        Assert.DoesNotContain("apiKey", serializedResponse, StringComparison.Ordinal);
+        Assert.True(response.IsConfigurationValid);
+    }
+
+    [Fact]
+    public async Task UpdateConfiguration_WhenPaymobApiKeyIsBlank_PreservesExistingEncryptedApiKey()
+    {
+        var tenantId = Guid.NewGuid();
+        var dataProtectionProvider = new EphemeralDataProtectionProvider();
+        await using var dbContext = CreateDbContext(tenantId);
+
+        dbContext.TenantPaymentMethods.Add(new TenantPaymentMethod
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Code = "PAYMOB",
+            DisplayName = "Paymob",
+            IsEnabled = false,
+            SupportsOnline = true,
+            SupportsOffline = false,
+            ConfigEncrypted = ProtectConfiguration(dataProtectionProvider, new Dictionary<string, string>
+            {
+                ["publicKey"] = "egy_pk_test_public-placeholder",
+                ["apiKey"] = "paymob-dashboard-api-key",
+                ["secretKey"] = "egy_sk_test_secret-placeholder",
+                ["integrationId"] = "3153090",
+                ["hmacSecret"] = "paymob-hmac-secret"
+            }),
+            FeeType = "fixed",
+            CreatedAt = DateTime.UtcNow
+        });
+        await dbContext.SaveChangesAsync();
+
+        var controller = CreateController(dbContext, tenantId, dataProtectionProvider);
+
+        var result = await controller.UpdateConfiguration(
+            "PAYMOB",
+            new UpsertPaymentMethodDto
+            {
+                Configuration = new Dictionary<string, string>
+                {
+                    ["apiKey"] = " ",
+                    ["integrationId"] = "3153090"
+                }
+            },
+            CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var response = Assert.IsType<PaymentMethodResponseDto>(ok.Value);
+        var paymentMethod = await dbContext.TenantPaymentMethods.SingleAsync(method => method.Code == "PAYMOB");
+        var decrypted = UnprotectConfiguration(dataProtectionProvider, paymentMethod.ConfigEncrypted!);
+
+        Assert.Equal("paymob-dashboard-api-key", decrypted["apiKey"]);
+        Assert.True(response.IsConfigurationValid);
     }
 
     [Fact]
@@ -262,7 +480,7 @@ public sealed class PaymentMethodsAdminSafetyTests
         Assert.Equal("INVALID_PAYMENT_CONFIGURATION", payload.RootElement.GetProperty("error").GetString());
         Assert.Contains(
             payload.RootElement.GetProperty("validationErrors").EnumerateArray().Select(item => item.GetString()),
-            value => value == "Paymob iframe ID is required.");
+            value => value == "Gateway public key is required.");
 
         var paymentMethod = await dbContext.TenantPaymentMethods.SingleAsync(method => method.Code == "PAYMOB");
         Assert.False(paymentMethod.IsEnabled);
@@ -389,6 +607,15 @@ public sealed class PaymentMethodsAdminSafetyTests
     {
         var protector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
         return protector.Protect(JsonSerializer.Serialize(configuration));
+    }
+
+    private static Dictionary<string, string> UnprotectConfiguration(
+        IDataProtectionProvider dataProtectionProvider,
+        string protectedConfiguration)
+    {
+        var protector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
+        var json = protector.Unprotect(protectedConfiguration);
+        return JsonSerializer.Deserialize<Dictionary<string, string>>(json)!;
     }
 
     private static JsonDocument SerializeToJson(object? value) =>

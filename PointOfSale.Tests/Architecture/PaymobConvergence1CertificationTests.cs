@@ -15,7 +15,7 @@ public sealed class PaymobConvergence1CertificationTests
         Assert.Contains("case \"PAYMOB\":", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("_paymobPaymentService.CreatePaymentIntentAsync", checkout, StringComparison.Ordinal);
         Assert.Contains("case \"PAYMOB\":", recovery, StringComparison.Ordinal);
-        Assert.Contains("_paymobPaymentService.CreatePaymentIntentAsync", recovery, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", recovery, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -73,11 +73,11 @@ public sealed class PaymobConvergence1CertificationTests
         var dtoContract = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/IPaymobPaymentService.cs");
         var runtimeDirectory = ReadRepoFiles("PointOfSale.Core/Payments/Runtime");
 
-        Assert.Contains("ICommerceHubPaymentOrchestrationService", storefrontController, StringComparison.Ordinal);
-        Assert.DoesNotContain("IPaymobPaymentService", storefrontController, StringComparison.Ordinal);
+        Assert.Contains("IPaymobPaymentService", storefrontController, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", storefrontController, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobRuntimeApplicationService", storefrontController, StringComparison.Ordinal);
-        Assert.Contains("ICommerceHubPaymentOrchestrationService", webhookController, StringComparison.Ordinal);
-        Assert.DoesNotContain("IPaymobPaymentService", webhookController, StringComparison.Ordinal);
+        Assert.Contains("IPaymobPaymentService", webhookController, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", webhookController, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobRuntimeApplicationService", webhookController, StringComparison.Ordinal);
         Assert.Contains("PaymobPaymentIntentResponseDto", dtoContract, StringComparison.Ordinal);
         Assert.DoesNotContain("Paymob", runtimeDirectory, StringComparison.Ordinal);

@@ -162,6 +162,9 @@ public sealed class CheckoutControllerIdempotencyHeaderTests
         new()
         {
             CartId = cartId,
+            CheckoutSessionId = Guid.NewGuid(),
+            WarehouseResolutionId = Guid.NewGuid(),
+            WarehouseResolutionVersion = 1,
             ShippingMethodId = Guid.NewGuid(),
             PaymentMethod = "COD",
             ShippingAddress = new AddressDto

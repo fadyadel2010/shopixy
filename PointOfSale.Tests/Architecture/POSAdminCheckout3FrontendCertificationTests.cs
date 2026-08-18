@@ -62,7 +62,7 @@ public sealed class POSAdminCheckout3FrontendCertificationTests
         var review = CertificationSource.ReadRepoFile("PointOfSale.Storefront/src/components/checkout/ReviewStep.tsx");
 
         Assert.Contains("fetchShippingMethods", store, StringComparison.Ordinal);
-        Assert.Contains("admitStorefrontShippingMethods(response.data)", store, StringComparison.Ordinal);
+        Assert.Contains("admitStorefrontShippingMethodsPreview(response.data)", store, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", store, StringComparison.Ordinal);
         Assert.Contains("shippingMethods.map", shippingStep, StringComparison.Ordinal);
         Assert.Contains("name={method.name}", shippingStep, StringComparison.Ordinal);

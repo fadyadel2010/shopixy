@@ -729,7 +729,7 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         {
             return await _db.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""IsDeleted"" = FALSE

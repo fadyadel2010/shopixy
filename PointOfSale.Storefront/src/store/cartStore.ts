@@ -239,6 +239,8 @@ function getCartMutationErrorCode(error: unknown): string | null {
  * Cart store
  */
 export const useCartStore = create<CartState & CartActions>((set, get) => {
+    let cartFetchInFlight: Promise<void> | null = null;
+
     const syncCartFromServer = async (): Promise<boolean> => {
         const cart = await fetchCart();
         const mismatchReason = detectCartStateMismatch(cart);
@@ -324,60 +326,76 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
      * Fetch cart from API
      */
     fetchCart: async () => {
-        // Prevent duplicate fetches
-        if (get().isLoading) return;
-
-        if (get().skipNextFetch && get().cart) {
-            set({
-                error: null,
-                isInitialized: true,
-                isLoading: false,
-                skipNextFetch: false,
-            });
+        if (cartFetchInFlight) {
+            await cartFetchInFlight;
             return;
         }
 
-        set({ isLoading: true, error: null });
+        // A mutation owns isLoading and will synchronize its authoritative response.
+        if (get().isLoading) return;
 
-        try {
-            const cart = await fetchCart();
-            const mismatchReason = detectCartStateMismatch(cart);
-            if (mismatchReason) {
-                rejectMismatchedCart(mismatchReason);
+        const operation = (async () => {
+            if (get().skipNextFetch && get().cart) {
                 set({
-                    cart: get().cart ?? EMPTY_CART,
-                    isLoading: false,
+                    error: null,
                     isInitialized: true,
-                    error: CART_MISMATCH_MESSAGE,
+                    isLoading: false,
+                    skipNextFetch: false,
                 });
                 return;
             }
 
-            set({
-                cart,
-                isLoading: false,
-                isInitialized: true,
-                hydrationSource: 'api',
-                skipNextFetch: false,
-                recoveryMessage: null,
-            });
-        } catch (error) {
-            console.error('[CartStore] Failed to fetch cart:', error);
-            const previousCart = get().cart;
-            const previousHydrationSource = get().hydrationSource;
-            const resolution = resolveCartFetchFailure(
-                previousCart,
-                EMPTY_CART,
-                error
-            );
-            set({
-                cart: resolution.nextCart,
-                isLoading: false,
-                error: resolution.message,
-                isInitialized: true,
-                hydrationSource: resolution.preserveLastValidCart ? previousHydrationSource : null,
-                skipNextFetch: false,
-            });
+            set({ isLoading: true, error: null });
+
+            try {
+                const cart = await fetchCart();
+                const mismatchReason = detectCartStateMismatch(cart);
+                if (mismatchReason) {
+                    rejectMismatchedCart(mismatchReason);
+                    set({
+                        cart: get().cart ?? EMPTY_CART,
+                        isLoading: false,
+                        isInitialized: true,
+                        error: CART_MISMATCH_MESSAGE,
+                    });
+                    return;
+                }
+
+                set({
+                    cart,
+                    isLoading: false,
+                    isInitialized: true,
+                    hydrationSource: 'api',
+                    skipNextFetch: false,
+                    recoveryMessage: null,
+                });
+            } catch (error) {
+                console.error('[CartStore] Failed to fetch cart:', error);
+                const previousCart = get().cart;
+                const previousHydrationSource = get().hydrationSource;
+                const resolution = resolveCartFetchFailure(
+                    previousCart,
+                    EMPTY_CART,
+                    error
+                );
+                set({
+                    cart: resolution.nextCart,
+                    isLoading: false,
+                    error: resolution.message,
+                    isInitialized: true,
+                    hydrationSource: resolution.preserveLastValidCart ? previousHydrationSource : null,
+                    skipNextFetch: false,
+                });
+            }
+        })();
+
+        cartFetchInFlight = operation;
+        try {
+            await operation;
+        } finally {
+            if (cartFetchInFlight === operation) {
+                cartFetchInFlight = null;
+            }
         }
     },
 

@@ -4,8 +4,6 @@ using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Helpers;
 using PointOfSale.API.Security;
-using PointOfSale.API.DTOs.CommerceHub;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Stripe;
 using PointOfSale.Infrastructure.MultiTenancy;
@@ -31,18 +29,18 @@ namespace PointOfSale.API.Controllers;
 [AllowAnonymous]
 public class StorefrontStripePaymentsController : ControllerBase
 {
-    private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
+    private readonly IStripePaymentService _stripePaymentService;
     private readonly IPaymentRequestAuthorizationService _paymentRequestAuthorizationService;
     private readonly ILogger<StorefrontStripePaymentsController> _logger;
 
     private const string TenantIdHeader = "X-Tenant-Id";
 
     public StorefrontStripePaymentsController(
-        ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
+        IStripePaymentService stripePaymentService,
         IPaymentRequestAuthorizationService paymentRequestAuthorizationService,
         ILogger<StorefrontStripePaymentsController> logger)
     {
-        _paymentOrchestrationService = paymentOrchestrationService;
+        _stripePaymentService = stripePaymentService;
         _paymentRequestAuthorizationService = paymentRequestAuthorizationService;
         _logger = logger;
     }
@@ -124,28 +122,17 @@ public class StorefrontStripePaymentsController : ControllerBase
                 "CreatePaymentIntent request | OrderId: {OrderId} | TenantId: {TenantId} | TraceId: {TraceId}",
                 request.OrderId, tenantId, traceId);
 
-            var response = await _paymentOrchestrationService.ExecuteAsync(
-                new CommerceHubPaymentInitiateRequestDto
-                {
-                    OrderId = request.OrderId.ToString(),
-                    Provider = CommerceHubPaymentMethods.Stripe,
-                    OrderAccessToken = effectiveCheckoutToken
-                },
+            var response = await _stripePaymentService.CreatePaymentIntentAsync(
+                tenantId.Value,
+                request.OrderId,
+                effectiveCheckoutToken ?? string.Empty,
                 authenticatedCustomerId,
+                false,
                 traceId,
-                cancellationToken);
+                cancellationToken,
+                Request.Headers["Idempotency-Key"].FirstOrDefault());
 
-            return Ok(new StripePaymentIntentResponseDto
-            {
-                ClientSecret = response.PaymentToken ?? string.Empty,
-                PublishableKey = response.PublishableKey ?? string.Empty,
-                PaymentIntentId = response.PaymentId,
-                OrderId = response.MarketplaceOrderId,
-                OrderNumber = response.OrderNumber,
-                Amount = response.Amount,
-                Currency = response.Currency,
-                StripePaymentIntentId = response.ProviderIntentId ?? response.ProviderReference
-            });
+            return Ok(response);
         }
         catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
         {
@@ -168,17 +155,15 @@ public class StorefrontStripePaymentsController : ControllerBase
 
             return Unauthorized(new ApiErrorResponse("UNAUTHORIZED_ACCESS", ex.Message, traceId));
         }
-        catch (CommerceHubCheckoutException ex)
-        {
-            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.Code, ex.Message, traceId));
-        }
         catch (StripeNotConfiguredException ex)
         {
             _logger.LogWarning(
                 "Stripe not configured | TenantId: {TenantId} | TraceId: {TraceId}",
                 tenantId, traceId);
 
-            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(ex.ErrorCode, "Stripe is unavailable for this store.", traceId));
         }
         catch (PaymentOrderNotFoundException ex)
         {
@@ -265,24 +250,14 @@ public class StorefrontStripePaymentsController : ControllerBase
                 return authorization.ToActionResult();
             }
 
-            var response = await _paymentOrchestrationService.GetPaymentStatusAsync(
-                CommerceHubPaymentMethods.Stripe,
+            var response = await _stripePaymentService.GetPaymentIntentStatusAsync(
+                tenantId.Value,
                 orderId,
-                authorization.AuthenticatedCustomerId,
                 effectiveCheckoutToken,
                 traceId,
                 cancellationToken);
 
-            return Ok(new StripePaymentStatusDto
-            {
-                OrderId = response.OrderId,
-                OrderNumber = response.OrderNumber,
-                PaymentStatus = response.PaymentStatus,
-                StripeStatus = response.ProviderStatus,
-                IsPaid = response.IsPaid,
-                RequiresAction = response.RequiresAction,
-                FailureReason = response.FailureReason
-            });
+            return Ok(response);
         }
         catch (PaymentOrderNotFoundException ex)
         {
@@ -294,10 +269,6 @@ public class StorefrontStripePaymentsController : ControllerBase
                 "Unauthorized payment status access | OrderId: {OrderId} | TraceId: {TraceId}",
                 orderId, traceId);
             return Unauthorized(new ApiErrorResponse("UNAUTHORIZED", ex.Message, traceId));
-        }
-        catch (CommerceHubCheckoutException ex)
-        {
-            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.Code, ex.Message, traceId));
         }
     }
 
@@ -318,18 +289,11 @@ public class StorefrontStripePaymentsController : ControllerBase
             return BadRequest(ApiErrorResponse.TenantHeaderMissing(traceId));
         }
 
-        var response = await _paymentOrchestrationService.GetConfigurationStatusAsync(
-            CommerceHubPaymentMethods.Stripe,
+        var response = await _stripePaymentService.GetConfigurationStatusAsync(
             tenantId.Value,
             cancellationToken);
 
-        return Ok(new StripeConfigurationStatusDto
-        {
-            IsEnabled = response.IsEnabled,
-            IsConfigured = response.IsConfigured,
-            IsSandbox = response.IsSandbox,
-            ValidationMessage = response.ValidationMessage
-        });
+        return Ok(response);
     }
 
     #region Helper Methods

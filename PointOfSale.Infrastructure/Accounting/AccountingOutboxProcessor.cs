@@ -1153,7 +1153,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         {
             query = db.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""Id"" = {orderId}

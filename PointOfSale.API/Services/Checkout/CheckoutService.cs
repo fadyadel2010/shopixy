@@ -21,12 +21,10 @@ using PointOfSale.API.Infrastructure.Http;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Infrastructure.DocumentNumbers;
 using PointOfSale.API.Configuration;
-using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.Cart;
 using PointOfSale.API.Services.Catalog;
-using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Affiliate;
@@ -43,6 +41,7 @@ using PointOfSale.Core.Interfaces.WhatsApp;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Payments;
 using PointOfSale.API.Services.Payments;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Infrastructure.Payments;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
@@ -54,6 +53,7 @@ using PointOfSale.API.Services.Pricing;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Discounts;
 using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Shipping;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -243,8 +243,8 @@ public class CheckoutService : ICheckoutService
     private readonly IEventPublisher _eventPublisher;
     private readonly ICouponValidationService _couponValidationService;
     private readonly IPromotionEngine _promotionEngine;
-    private readonly IPaymentService _paymentService;
-    private readonly ICommerceHubPaymentOrchestrationService _paymentOrchestrationService;
+    private readonly IPaymentGateway _paymentGateway;
+    private readonly IStorefrontPaymentRuntimeReadinessService _paymentRuntimeReadinessService;
     private readonly IStorefrontPricingService _storefrontPricingService;
     private readonly ICheckoutExecutionLockManager _checkoutExecutionLockManager;
     private readonly ICheckoutRequestIdempotencyCoordinator _checkoutRequestIdempotencyCoordinator;
@@ -310,8 +310,8 @@ public class CheckoutService : ICheckoutService
         IEventPublisher eventPublisher,
         ICouponValidationService couponValidationService,
         IPromotionEngine promotionEngine,
-        IPaymentService paymentService,
-        ICommerceHubPaymentOrchestrationService paymentOrchestrationService,
+        IPaymentGateway paymentGateway,
+        IStorefrontPaymentRuntimeReadinessService paymentRuntimeReadinessService,
         IStorefrontPricingService storefrontPricingService,
         ICheckoutExecutionLockManager checkoutExecutionLockManager,
         ICheckoutRequestIdempotencyCoordinator checkoutRequestIdempotencyCoordinator,
@@ -349,8 +349,8 @@ public class CheckoutService : ICheckoutService
         _eventPublisher = eventPublisher;
         _couponValidationService = couponValidationService;
         _promotionEngine = promotionEngine;
-        _paymentService = paymentService;
-        _paymentOrchestrationService = paymentOrchestrationService;
+        _paymentGateway = paymentGateway;
+        _paymentRuntimeReadinessService = paymentRuntimeReadinessService;
         _storefrontPricingService = storefrontPricingService;
         _checkoutExecutionLockManager = checkoutExecutionLockManager;
         _checkoutRequestIdempotencyCoordinator = checkoutRequestIdempotencyCoordinator;
@@ -490,6 +490,22 @@ public class CheckoutService : ICheckoutService
                     checkoutId,
                     correlationId,
                     cancellationToken);
+
+                if (!IsPostCommitPaymentRecoveryResponseSafe(recoveryResponse))
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Checkout post-commit payment intent recovery did not produce a safe provider handoff | OrderId: {OrderId} | TenantId: {TenantId} | PaymentMethod: {PaymentMethod} | PaymentIntentIdPresent: {PaymentIntentIdPresent} | PaymobHandoffPresent: {PaymobHandoffPresent} | StripeHandoffPresent: {StripeHandoffPresent} | CorrelationId: {CorrelationId}",
+                        recoveryOrderId,
+                        tenantId,
+                        recoveryResponse.PaymentMethodCode,
+                        recoveryResponse.PaymentIntentId.HasValue,
+                        HasPaymobCheckoutHandoff(recoveryResponse),
+                        HasStripeCheckoutHandoff(recoveryResponse),
+                        correlationId);
+
+                    return null;
+                }
 
                 _logger.LogWarning(
                     ex,
@@ -970,12 +986,8 @@ public class CheckoutService : ICheckoutService
             if (existingActiveOrder != null)
             {
                 _reliabilityTelemetry?.RecordCheckoutDuplicateOrderPrevented("pre_create_guard");
-                await _checkoutRequestIdempotencyCoordinator.MarkOrderCreatedAsync(
-                    idempotencyRecord!,
-                    existingActiveOrder.Id,
-                    cancellationToken);
 
-                return await BuildReplayResponseFromExistingOrderAsync(
+                var existingOrderReplayResponse = await BuildReplayResponseFromExistingOrderAsync(
                     tenantId,
                     existingActiveOrder.Id,
                     sessionId,
@@ -984,6 +996,18 @@ public class CheckoutService : ICheckoutService
                     checkoutId,
                     correlationId,
                     cancellationToken);
+
+                await _checkoutRequestIdempotencyCoordinator.MarkOrderCreatedAsync(
+                    idempotencyRecord!,
+                    existingActiveOrder.Id,
+                    cancellationToken);
+
+                await _checkoutRequestIdempotencyCoordinator.CompleteAsync(
+                    idempotencyRecord!,
+                    existingOrderReplayResponse,
+                    cancellationToken);
+
+                return existingOrderReplayResponse;
             }
 
             // =================================================================
@@ -1387,6 +1411,20 @@ public class CheckoutService : ICheckoutService
             }
             catch (Exception ex)
             {
+                if (ex is WarehouseResolutionException warehouseResolutionException)
+                {
+                    _logger.LogWarning(warehouseResolutionException,
+                        "Checkout warehouse resolution rejected during order creation | CartId: {CartId} | CheckoutSessionId: {CheckoutSessionId} | ResolutionId: {ResolutionId} | FailurePhase: {FailurePhase} | StatusCode: {StatusCode} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
+                        request.CartId,
+                        request.CheckoutSessionId,
+                        request.WarehouseResolutionId,
+                        activeStep,
+                        warehouseResolutionException.StatusCode,
+                        warehouseResolutionException.ErrorCode,
+                        correlationId);
+                    throw;
+                }
+
                 _logger.LogError(ex,
                     "Order creation failed - rolling back | CartId: {CartId} | CorrelationId: {CorrelationId}",
                     request.CartId, correlationId);
@@ -1636,6 +1674,7 @@ public class CheckoutService : ICheckoutService
                 PaymentReference = paymentReference,
                 PaymentIntentId = paymentIntentId,
                 PaymentStatus = order.PaymentStatus.ToString(),
+                PaymentMethodCode = paymentMethod.Code,
                 RedirectUrl = redirectUrl,
                 CheckoutToken = checkoutToken,
                 TrackingToken = ShouldIssueGuestTrackingToken(order)
@@ -1672,7 +1711,7 @@ public class CheckoutService : ICheckoutService
                     PaymentFee = order.PaymentFee,
                     GrandTotal = order.Total
                 },
-                ReferenceCode = referenceCode,
+                ReferenceCode = GetStorefrontReferenceCode(paymentMethod.Code, referenceCode),
                 ExpiresAtUtc = expiresAtUtc,
                 // ManualWallet fields
                 IsManualWallet = isManualWallet,
@@ -1694,6 +1733,7 @@ public class CheckoutService : ICheckoutService
                 PaymentReference = response.PaymentReference,
                 PaymentIntentId = response.PaymentIntentId,
                 PaymentStatus = response.PaymentStatus,
+                PaymentMethodCode = response.PaymentMethodCode,
                 RedirectUrl = paymentMethod.Code.Equals("PAYMOB", StringComparison.OrdinalIgnoreCase)
                     ? null
                     : response.RedirectUrl,
@@ -1723,6 +1763,32 @@ public class CheckoutService : ICheckoutService
                 idempotencyRecord!,
                 replayResponse,
                 cancellationToken);
+
+            if (paymentMethod.Code.Equals("MANUALWALLET", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await _cartService.ClearCartAsync(
+                        tenantId,
+                        new CartOwner { OwnerType = ownerType, OwnerId = ownerId },
+                        correlationId,
+                        cancellationToken);
+                }
+                catch (Exception ex)
+                {
+                    // The durable replay record is already complete. The storefront
+                    // repeats this cleanup, so a transient cart outage cannot turn a
+                    // committed order into a false checkout failure.
+                    _logger.LogWarning(
+                        ex,
+                        "Manual Wallet checkout committed but server cart cleanup failed | TenantId: {TenantId} | CartId: {CartId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
+                        tenantId,
+                        request.CartId,
+                        order.Id,
+                        correlationId);
+                }
+            }
+
             steps.Add(new CheckoutStepResult
             {
                 StepName = "StoreIdempotency",
@@ -1811,6 +1877,37 @@ public class CheckoutService : ICheckoutService
             }
 
             // Re-throw checkout exceptions as-is
+            throw;
+        }
+        catch (PaymentException ex)
+        {
+            _reliabilityTelemetry?.RecordCheckoutProcessed(tenantId, canonicalPaymentMethodCode ?? request.PaymentMethod, "failed");
+
+            _logger.LogError(
+                ex,
+                "Checkout payment provider failed | TenantId: {TenantId} | CartId: {CartId} | Step: {Step} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
+                tenantId,
+                request.CartId,
+                activeStep,
+                ex.ErrorCode,
+                correlationId);
+
+            if (orderCommitted)
+            {
+                var recoveryResponse = await TryRecoverPaymentIntentPostCommitFailureAsync(ex);
+                if (recoveryResponse != null)
+                {
+                    return recoveryResponse;
+                }
+
+                await TryCloseUnrecoverablePaymentIntentGapAsync(ex);
+            }
+
+            if (idempotencyRecord?.OrderId == null)
+            {
+                await _checkoutRequestIdempotencyCoordinator.DeleteClaimAsync(idempotencyRecord, CancellationToken.None);
+            }
+
             throw;
         }
         catch (UnauthorizedAccessException ex) when (string.Equals(ex.Message, TenantErrorCodes.TenantMismatch, StringComparison.Ordinal))
@@ -2893,6 +2990,7 @@ public class CheckoutService : ICheckoutService
         response.PaymentReference = null; // S40: Scrub payment provider identifier for terminal orders
         response.PaymentIntentId = null;
         response.PaymentStatus = order.PaymentStatus.ToString();
+        response.PaymentMethodCode = order.PaymentMethodCode ?? response.PaymentMethodCode;
         response.RedirectUrl = null;
         response.ReferenceCode = null;
         response.PaymobIframeUrl = null;
@@ -2940,6 +3038,8 @@ public class CheckoutService : ICheckoutService
                 $"Checkout replay could not find order {orderId} for tenant {tenantId}.");
         }
 
+        var paymentMethodCode = order.PaymentMethodCode?.Trim().ToUpperInvariant();
+
         // S40: Check terminal state IMMEDIATELY after loading order, before any payment intent operations
         // Terminal orders (Paid/Failed/Cancelled/Expired) should be short-circuited without creating intents
         var isTerminalState = order.CheckoutState == CheckoutState.Paid ||
@@ -2967,6 +3067,7 @@ public class CheckoutService : ICheckoutService
                 PaymentReference = null, // S40: Scrub payment provider identifier for terminal orders
                 PaymentIntentId = null,
                 PaymentStatus = order.PaymentStatus.ToString(),
+                PaymentMethodCode = paymentMethodCode ?? string.Empty,
                 CartId = request.CartId,
                 // S19C: Restore promotion fallback state from persisted order
                 PromotionCalculationFailed = order.PromotionCalculationFailed,
@@ -3043,6 +3144,7 @@ public class CheckoutService : ICheckoutService
             PaymentReference = paymentIntent?.PaymentReference ?? order.PaymentReference,
             PaymentIntentId = paymentIntent?.Id,
             PaymentStatus = order.PaymentStatus.ToString(),
+            PaymentMethodCode = paymentMethodCode ?? string.Empty,
             RedirectUrl = paymentIntent?.RedirectUrl,
             CheckoutToken = ShouldIssueCheckoutToken(order)
                 ? CreateCheckoutPaymentToken(tenantId, order.Id)
@@ -3074,11 +3176,9 @@ public class CheckoutService : ICheckoutService
                 PaymentFee = order.PaymentFee,
                 GrandTotal = order.Total
             },
-            ReferenceCode = paymentIntent?.ReferenceCode,
+            ReferenceCode = GetStorefrontReferenceCode(paymentMethodCode, paymentIntent?.ReferenceCode),
             ExpiresAtUtc = paymentIntent?.ExpiresAtUtc
         };
-
-        var paymentMethodCode = order.PaymentMethodCode?.Trim().ToUpperInvariant();
 
         // Check if payment intent has expired - clear time-limited fields
         var isExpired = paymentIntent?.ExpiresAtUtc.HasValue == true && 
@@ -3104,6 +3204,27 @@ public class CheckoutService : ICheckoutService
 
             // Preserve guest tracking token even when payment intent expires
             // (TrackingToken was already set correctly in response initialization above)
+
+            paymentIntent = await TryRegenerateReplayOnlineProviderHandoffAsync(
+                tenantId,
+                order,
+                sessionId,
+                customerId,
+                request,
+                checkoutId,
+                correlationId,
+                response,
+                paymentIntent,
+                "existing_order_expired_intent",
+                cancellationToken);
+
+            EnsureReplayResponseContainsOnlineProviderHandoff(
+                response,
+                tenantId,
+                order.Id,
+                checkoutId,
+                correlationId,
+                "existing_order_expired_intent");
 
             return response;
         }
@@ -3142,12 +3263,33 @@ public class CheckoutService : ICheckoutService
                 break;
         }
 
+        paymentIntent = await TryRegenerateReplayOnlineProviderHandoffAsync(
+            tenantId,
+            order,
+            sessionId,
+            customerId,
+            request,
+            checkoutId,
+            correlationId,
+            response,
+            paymentIntent,
+            "existing_order",
+            cancellationToken);
+
         _logger.LogInformation(
             "Checkout replay recovered from persisted order | TenantId: {TenantId} | OrderId: {OrderId} | CheckoutId: {CheckoutId} | CorrelationId: {CorrelationId}",
             tenantId,
             orderId,
             checkoutId,
             correlationId);
+
+        EnsureReplayResponseContainsOnlineProviderHandoff(
+            response,
+            tenantId,
+            order.Id,
+            checkoutId,
+            correlationId,
+            "existing_order");
 
         return response;
     }
@@ -3243,7 +3385,7 @@ public class CheckoutService : ICheckoutService
             replayResponse.PaymentReference = paymentIntent.PaymentReference ?? order.PaymentReference;
             replayResponse.PaymentIntentId = paymentIntent.Id;
             replayResponse.PaymentStatus = order.PaymentStatus.ToString();
-            replayResponse.ReferenceCode = paymentIntent.ReferenceCode;
+            replayResponse.ReferenceCode = GetStorefrontReferenceCode(paymentMethodCode, paymentIntent.ReferenceCode);
             replayResponse.ExpiresAtUtc = paymentIntent.ExpiresAtUtc;
         }
 
@@ -3273,6 +3415,27 @@ public class CheckoutService : ICheckoutService
             replayResponse.TrackingToken = ShouldIssueGuestTrackingToken(order)
                 ? CreateGuestTrackingToken(tenantId, order.Id, order.SessionId)
                 : null;
+
+            paymentIntent = await TryRegenerateReplayOnlineProviderHandoffAsync(
+                tenantId,
+                order,
+                sessionId,
+                customerId,
+                request,
+                checkoutId,
+                correlationId,
+                replayResponse,
+                paymentIntent,
+                "stored_replay_expired_intent",
+                cancellationToken);
+
+            EnsureReplayResponseContainsOnlineProviderHandoff(
+                replayResponse,
+                tenantId,
+                order.Id,
+                checkoutId,
+                correlationId,
+                "stored_replay_expired_intent");
 
             return replayResponse;
         }
@@ -3316,11 +3479,32 @@ public class CheckoutService : ICheckoutService
                 break;
         }
 
+        paymentIntent = await TryRegenerateReplayOnlineProviderHandoffAsync(
+            tenantId,
+            order,
+            sessionId,
+            customerId,
+            request,
+            checkoutId,
+            correlationId,
+            replayResponse,
+            paymentIntent,
+            "stored_replay",
+            cancellationToken);
+
         _logger.LogDebug(
             "Replay response enriched with fresh tokens | OrderId: {OrderId} | PaymentMethod: {PaymentMethod} | CorrelationId: {CorrelationId}",
             replayResponse.OrderId,
             paymentMethodCode,
             correlationId);
+
+        EnsureReplayResponseContainsOnlineProviderHandoff(
+            replayResponse,
+            tenantId,
+            order.Id,
+            checkoutId,
+            correlationId,
+            "stored_replay");
 
         return replayResponse;
     }
@@ -3684,11 +3868,262 @@ public class CheckoutService : ICheckoutService
         return latestIntent;
     }
 
+    private async Task<PaymentIntent?> TryRegenerateReplayOnlineProviderHandoffAsync(
+        Guid tenantId,
+        Order order,
+        string? sessionId,
+        Guid? customerId,
+        CheckoutRequestDto request,
+        string checkoutId,
+        string correlationId,
+        CheckoutResponseDto response,
+        PaymentIntent? paymentIntent,
+        string replaySource,
+        CancellationToken cancellationToken)
+    {
+        var paymentMethodCode = order.PaymentMethodCode?.Trim().ToUpperInvariant();
+        if (!IsOnlineProviderRequiringStorefrontHandoff(paymentMethodCode) ||
+            HasOnlineProviderHandoff(paymentMethodCode, response) ||
+            !CanRegenerateOnlineProviderHandoff(paymentIntent))
+        {
+            return paymentIntent;
+        }
+
+        _logger.LogWarning(
+            "Checkout replay regenerating online provider handoff after recoverable initialization failure | TenantId: {TenantId} | OrderId: {OrderId} | CheckoutId: {CheckoutId} | PaymentMethod: {PaymentMethod} | PreviousPaymentIntentId: {PaymentIntentId} | PreviousPaymentIntentStatus: {PaymentIntentStatus} | ReplaySource: {ReplaySource} | CorrelationId: {CorrelationId}",
+            tenantId,
+            order.Id,
+            checkoutId,
+            paymentMethodCode,
+            paymentIntent?.Id,
+            paymentIntent?.Status.ToString() ?? "None",
+            replaySource,
+            correlationId);
+
+        var session = await CreateCheckoutPaymentSessionAsync(
+            tenantId,
+            order,
+            paymentMethodCode!,
+            CreateCheckoutPaymentToken(tenantId, order.Id),
+            customerId,
+            order.PromotionCalculationFailed,
+            checkoutId,
+            correlationId,
+            walletType: null,
+            walletPhoneNumber: null,
+            proofFileKey: null,
+            cancellationToken: cancellationToken);
+
+        await ApplyReplayPaymentSessionAsync(
+            tenantId,
+            order,
+            paymentMethodCode,
+            response,
+            session,
+            cancellationToken);
+
+        _logger.LogInformation(
+            "Checkout replay regenerated online provider handoff | TenantId: {TenantId} | OrderId: {OrderId} | CheckoutId: {CheckoutId} | PaymentMethod: {PaymentMethod} | NewPaymentIntentIdPresent: {PaymentIntentIdPresent} | PaymobHandoffPresent: {PaymobHandoffPresent} | StripeHandoffPresent: {StripeHandoffPresent} | CorrelationId: {CorrelationId}",
+            tenantId,
+            order.Id,
+            checkoutId,
+            paymentMethodCode,
+            response.PaymentIntentId.HasValue,
+            HasPaymobCheckoutHandoff(response),
+            HasStripeCheckoutHandoff(response),
+            correlationId);
+
+        return response.PaymentIntentId.HasValue
+            ? await LoadLatestPaymentIntentAsync(tenantId, order.Id, cancellationToken)
+            : paymentIntent;
+    }
+
+    private async Task ApplyReplayPaymentSessionAsync(
+        Guid tenantId,
+        Order order,
+        string paymentMethodCode,
+        CheckoutResponseDto response,
+        CheckoutPaymentSession session,
+        CancellationToken cancellationToken)
+    {
+        response.PaymentIntentId = session.PaymentIntentId;
+        response.PaymentReference = !string.IsNullOrWhiteSpace(session.PaymentReference)
+            ? session.PaymentReference
+            : order.PaymentReference;
+        response.RedirectUrl = session.RedirectUrl;
+        response.ReferenceCode = GetStorefrontReferenceCode(paymentMethodCode, session.ReferenceCode);
+        response.ExpiresAtUtc = session.ExpiresAtUtc;
+        response.CheckoutToken = ShouldIssueCheckoutToken(order)
+            ? CreateCheckoutPaymentToken(tenantId, order.Id)
+            : null;
+
+        if (response.PaymentIntentId.HasValue && !response.ExpiresAtUtc.HasValue)
+        {
+            response.ExpiresAtUtc = await ResolvePaymentIntentExpirationAsync(
+                tenantId,
+                response.PaymentIntentId.Value,
+                cancellationToken);
+        }
+
+        switch (paymentMethodCode)
+        {
+            case "STRIPE":
+                response.StripeClientSecret = GetCompatibilityField(session, nameof(CheckoutResponseDto.StripeClientSecret));
+                response.StripePublishableKey = GetCompatibilityField(session, nameof(CheckoutResponseDto.StripePublishableKey));
+                response.PaymobIframeUrl = null;
+                response.PaymobPaymentKey = null;
+                response.RedirectUrl = null;
+                break;
+            case "PAYMOB":
+                response.PaymobIframeUrl = GetCompatibilityField(session, nameof(CheckoutResponseDto.PaymobIframeUrl))
+                                          ?? session.RedirectUrl;
+                response.PaymobPaymentKey = GetCompatibilityField(session, nameof(CheckoutResponseDto.PaymobPaymentKey));
+                response.RedirectUrl = response.PaymobIframeUrl;
+                response.StripeClientSecret = null;
+                response.StripePublishableKey = null;
+                break;
+            case "FAWRY":
+                response.PaymobIframeUrl = null;
+                response.PaymobPaymentKey = null;
+                response.StripeClientSecret = null;
+                response.StripePublishableKey = null;
+                break;
+        }
+    }
+
+    private static bool IsOnlineProviderRequiringStorefrontHandoff(string? paymentMethodCode) =>
+        paymentMethodCode is "STRIPE" or "PAYMOB" or "FAWRY";
+
+    private static bool HasOnlineProviderHandoff(string? paymentMethodCode, CheckoutResponseDto response) =>
+        paymentMethodCode switch
+        {
+            "STRIPE" => HasStripeCheckoutHandoff(response),
+            "PAYMOB" => HasPaymobCheckoutHandoff(response),
+            "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
+                       response.ExpiresAtUtc.HasValue,
+            _ => true
+        };
+
+    private static bool CanRegenerateOnlineProviderHandoff(PaymentIntent? paymentIntent)
+    {
+        if (paymentIntent == null)
+        {
+            return true;
+        }
+
+        if (paymentIntent.Status is PaymentIntentStatus.Failed or PaymentIntentStatus.Cancelled or PaymentIntentStatus.Expired)
+        {
+            return true;
+        }
+
+        return paymentIntent.Status == PaymentIntentStatus.Pending &&
+               paymentIntent.ExpiresAtUtc.HasValue &&
+               paymentIntent.ExpiresAtUtc.Value <= DateTime.UtcNow;
+    }
+
     private static bool IsLocalPaymentIntentFailure(Exception ex)
     {
         return ex is CheckoutManualWalletNotConfiguredException
             or PaymentManualWalletNotConfiguredException
             or PaymentProviderNotSupportedException;
+    }
+
+    private static bool IsPostCommitPaymentRecoveryResponseSafe(CheckoutResponseDto response)
+    {
+        var paymentMethodCode = response.PaymentMethodCode?.Trim().ToUpperInvariant();
+        return paymentMethodCode switch
+        {
+            "STRIPE" => HasStripeCheckoutHandoff(response),
+            "PAYMOB" => HasPaymobCheckoutHandoff(response),
+            "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
+                       response.ExpiresAtUtc.HasValue,
+            "MANUALWALLET" => response.PaymentIntentId.HasValue &&
+                              response.IsManualWallet &&
+                              !string.IsNullOrWhiteSpace(response.WalletType),
+            _ => !string.IsNullOrWhiteSpace(response.PaymentReference)
+        };
+    }
+
+    private void EnsureReplayResponseContainsOnlineProviderHandoff(
+        CheckoutResponseDto response,
+        Guid tenantId,
+        Guid orderId,
+        string checkoutId,
+        string correlationId,
+        string replaySource)
+    {
+        var paymentMethodCode = response.PaymentMethodCode?.Trim().ToUpperInvariant();
+        var isSafe = paymentMethodCode switch
+        {
+            "STRIPE" => HasStripeCheckoutHandoff(response),
+            "PAYMOB" => HasPaymobCheckoutHandoff(response),
+            "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
+                       response.ExpiresAtUtc.HasValue,
+            _ => true
+        };
+
+        if (isSafe)
+        {
+            return;
+        }
+
+        _logger.LogWarning(
+            "Checkout replay blocked because online provider handoff is missing | TenantId: {TenantId} | OrderId: {OrderId} | CheckoutId: {CheckoutId} | PaymentMethod: {PaymentMethod} | PaymentIntentIdPresent: {PaymentIntentIdPresent} | PaymobHandoffPresent: {PaymobHandoffPresent} | StripeHandoffPresent: {StripeHandoffPresent} | ReplaySource: {ReplaySource} | CorrelationId: {CorrelationId}",
+            tenantId,
+            orderId,
+            checkoutId,
+            paymentMethodCode,
+            response.PaymentIntentId.HasValue,
+            HasPaymobCheckoutHandoff(response),
+            HasStripeCheckoutHandoff(response),
+            replaySource,
+            correlationId);
+
+        throw new PaymentException(
+            "PAYMENT_HANDOFF_MISSING",
+            "The previous online payment attempt did not produce a provider checkout handoff.");
+    }
+
+    private static bool HasStripeCheckoutHandoff(CheckoutResponseDto response)
+    {
+        return response.PaymentIntentId.HasValue &&
+               !string.IsNullOrWhiteSpace(response.CheckoutToken) &&
+               response.ExpiresAtUtc.HasValue &&
+               !string.IsNullOrWhiteSpace(response.StripeClientSecret) &&
+               !string.IsNullOrWhiteSpace(response.StripePublishableKey);
+    }
+
+    private static bool HasPaymobCheckoutHandoff(CheckoutResponseDto response)
+    {
+        if (!response.PaymentIntentId.HasValue ||
+            string.IsNullOrWhiteSpace(response.CheckoutToken) ||
+            !response.ExpiresAtUtc.HasValue ||
+            response.ExpiresAtUtc.Value <= DateTime.UtcNow ||
+            string.IsNullOrWhiteSpace(response.PaymobIframeUrl))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(response.PaymobIframeUrl, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.Host, "accept.paymob.com", StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(uri.AbsolutePath.TrimEnd('/'), "/unifiedcheckout", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var values = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
+        return values.TryGetValue("publicKey", out var publicKey) &&
+               !string.IsNullOrWhiteSpace(publicKey.ToString()) &&
+               values.TryGetValue("clientSecret", out var clientSecret) &&
+               !string.IsNullOrWhiteSpace(clientSecret.ToString());
     }
 
     private async Task<PaymentIntent?> LoadLatestPaymentIntentAsync(
@@ -3700,6 +4135,7 @@ public class CheckoutService : ICheckoutService
             .AsNoTracking()
             .Where(intent => intent.TenantId == tenantId && intent.OrderId == orderId && !intent.IsDeleted)
             .OrderByDescending(intent => intent.CreatedAt)
+            .ThenByDescending(intent => intent.Id)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -4048,7 +4484,7 @@ public class CheckoutService : ICheckoutService
         CheckoutSession? proofSession = null;
         if (orderId.HasValue)
         {
-            proofSession = await _dbContext.CheckoutSessions
+            var convertedSessionCandidates = _dbContext.CheckoutSessions
                 .IgnoreQueryFilters()
                 .AsNoTracking()
                 .Where(session => session.TenantId == tenantId &&
@@ -4057,26 +4493,38 @@ public class CheckoutService : ICheckoutService
                                   session.ConvertedOrderId == orderId.Value)
                 .Where(session => ownerIsCustomer
                     ? session.OnlineCustomerId == customerId
-                    : session.SessionId == effectiveSessionId)
-                .OrderByDescending(session => session.UpdatedAt)
+                    : session.SessionId == effectiveSessionId);
+
+            proofSession = await CheckoutSessionService.OrderCanonicalSessions(convertedSessionCandidates)
                 .FirstOrDefaultAsync(cancellationToken);
         }
 
-        proofSession ??= await _dbContext.CheckoutSessions
+        var activeSessionCandidates = _dbContext.CheckoutSessions
             .IgnoreQueryFilters()
             .AsNoTracking()
             .Where(session => session.TenantId == tenantId &&
                               session.CartId == cartId &&
+                              session.InvalidatedAtUtc == null &&
                               (session.Status == CheckoutSessionStatus.Active ||
                                session.Status == CheckoutSessionStatus.Abandoned))
             .Where(session => ownerIsCustomer
                 ? session.OnlineCustomerId == customerId
-                : session.SessionId == effectiveSessionId)
-            .OrderByDescending(session => session.UpdatedAt)
+                : session.SessionId == effectiveSessionId);
+
+        proofSession ??= await CheckoutSessionService.OrderCanonicalSessions(activeSessionCandidates)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (proofSession == null)
         {
+            _logger.LogWarning(
+                "Manual wallet proof validation rejected because no authoritative checkout session matched | TenantId: {TenantId} | CartId: {CartId} | OwnerType: {OwnerType} | SessionIdPresent: {SessionIdPresent} | CustomerIdPresent: {CustomerIdPresent} | OrderId: {OrderId}",
+                tenantId,
+                cartId,
+                ownerType,
+                !string.IsNullOrWhiteSpace(effectiveSessionId),
+                customerId.HasValue,
+                orderId);
+
             throw new CheckoutManualWalletProofException(
                 "Manual wallet proof is no longer attached to this checkout. Re-upload the proof and try again.");
         }
@@ -4088,12 +4536,27 @@ public class CheckoutService : ICheckoutService
                 out var storedProofFileKey) ||
             !string.Equals(storedProofFileKey, normalizedProofFileKey, StringComparison.Ordinal))
         {
+            _logger.LogWarning(
+                "Manual wallet proof validation rejected because stored proof does not match submitted key | TenantId: {TenantId} | CartId: {CartId} | CheckoutSessionId: {CheckoutSessionId} | OwnerType: {OwnerType} | OrderId: {OrderId}",
+                tenantId,
+                cartId,
+                proofSession.Id,
+                ownerType,
+                orderId);
+
             throw new CheckoutManualWalletProofException(
                 "Manual wallet proof is missing or has been replaced. Re-upload the proof and try again.");
         }
 
         return normalizedProofFileKey;
     }
+
+    internal static string? GetStorefrontReferenceCode(
+        string? paymentMethodCode,
+        string? referenceCode) =>
+        string.Equals(paymentMethodCode?.Trim(), "FAWRY", StringComparison.OrdinalIgnoreCase)
+            ? referenceCode
+            : null;
 
     #endregion
 
@@ -4793,7 +5256,7 @@ public class CheckoutService : ICheckoutService
             var productIdsList = string.Join(", ", productIds.Select(id => $"'{id}'"));
             await _dbContext.Products
                 .FromSqlRaw($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Products""
                     WHERE ""TenantId"" = '{tenantId}'
                       AND ""Id"" IN ({productIdsList})
@@ -5457,6 +5920,22 @@ public class CheckoutService : ICheckoutService
                 tenantId,
                 correlationId);
             throw new CheckoutPaymentMethodException(normalizedCode, "Payment method is not fully configured");
+        }
+
+        var runtimeReadiness = await _paymentRuntimeReadinessService.EvaluateAsync(
+            tenantId,
+            normalizedCode,
+            cancellationToken);
+        if (!runtimeReadiness.IsReady)
+        {
+            var firstFailedGate = runtimeReadiness.FirstFailedGate ?? "RUNTIME_NOT_READY";
+            _logger.LogWarning(
+                "Payment method runtime readiness rejected at checkout | Code: {Code} | TenantId: {TenantId} | FirstFailedGate: {FirstFailedGate} | CorrelationId: {CorrelationId}",
+                normalizedCode,
+                tenantId,
+                firstFailedGate,
+                correlationId);
+            throw new CheckoutPaymentRuntimeUnavailableException(normalizedCode, firstFailedGate);
         }
 
         _logger.LogDebug(
@@ -6481,9 +6960,6 @@ public class CheckoutService : ICheckoutService
             {
                 orderItem.WarehouseId = finalWarehouseResolution.WarehouseId;
             }
-            RefreshOrderCheckoutFieldSnapshots(
-                order,
-                transactionScopedAuthority.CheckoutFieldSnapshots);
 
             inventoryReservation = await ValidateAndReserveInventoryAsync(
                 snapshot,
@@ -6506,6 +6982,23 @@ public class CheckoutService : ICheckoutService
             // Add order
             _dbContext.Orders.Add(order);
             await _dbContext.SaveChangesAsync(cancellationToken);
+
+            await _warehouseResolutionService.MarkOrderedAsync(
+                tenantId,
+                finalWarehouseResolution.Resolution.Id,
+                order.Id,
+                cancellationToken);
+
+            var checkoutFieldSnapshots = await ValidateCheckoutFieldDefinitionsAsync(
+                tenantId,
+                ownerId,
+                ownerType,
+                sessionId,
+                customerId,
+                request,
+                order.Id,
+                cancellationToken);
+            RefreshOrderCheckoutFieldSnapshots(order, checkoutFieldSnapshots);
 
             await _variantStockRepository.BindOrderReservationsAsync(
                 tenantId,
@@ -6605,12 +7098,6 @@ public class CheckoutService : ICheckoutService
                     correlationId,
                     cancellationToken);
             }
-
-            await _warehouseResolutionService.MarkOrderedAsync(
-                tenantId,
-                finalWarehouseResolution.Resolution.Id,
-                order.Id,
-                cancellationToken);
 
             await EmitOrderCreatedEventAsync(
                 tenantId,
@@ -7200,7 +7687,7 @@ public class CheckoutService : ICheckoutService
         {
             promotion = await _dbContext.Promotions
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Promotions""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""Id"" = {promotionId}
@@ -7334,7 +7821,7 @@ public class CheckoutService : ICheckoutService
             sessionId,
             customerId,
             request,
-            orderId,
+            orderId: null,
             cancellationToken);
 
         return new TransactionScopedCheckoutAuthoritySnapshot(
@@ -7483,7 +7970,7 @@ public class CheckoutService : ICheckoutService
         }
     }
 
-    private static void RefreshOrderCheckoutFieldSnapshots(
+    private void RefreshOrderCheckoutFieldSnapshots(
         Order order,
         CheckoutFieldSnapshotAdmission admission)
     {
@@ -7491,7 +7978,7 @@ public class CheckoutService : ICheckoutService
 
         foreach (var snapshot in admission.Snapshots)
         {
-            order.CheckoutFieldSnapshots.Add(new OrderCheckoutFieldSnapshot
+            var entity = new OrderCheckoutFieldSnapshot
             {
                 Id = Guid.NewGuid(),
                 TenantId = order.TenantId,
@@ -7509,7 +7996,10 @@ public class CheckoutService : ICheckoutService
                 ConfigurationJson = snapshot.ConfigurationJson,
                 ValueJson = snapshot.ValueJson,
                 CreatedAt = DateTime.UtcNow
-            });
+            };
+
+            order.CheckoutFieldSnapshots.Add(entity);
+            _dbContext.Entry(entity).State = EntityState.Added;
         }
     }
 
@@ -8168,7 +8658,7 @@ public class CheckoutService : ICheckoutService
         {
             "card" => PaymentMethod.Card,
             "cash" or "cash_on_delivery" or "cod" => PaymentMethod.Cash,
-            "bank" or "bank_transfer" => PaymentMethod.BankTransfer,
+            "bank" or "bank_transfer" or "manualwallet" => PaymentMethod.BankTransfer,
             _ => PaymentMethod.Card
         };
     }
@@ -8216,64 +8706,32 @@ public class CheckoutService : ICheckoutService
         string? proofFileKey,
         CancellationToken cancellationToken)
     {
-        if (CommerceHubPaymentMethods.IsOnline(paymentMethodCode))
-        {
-            var response = await _paymentOrchestrationService.ExecuteAsync(
-                new CommerceHubPaymentInitiateRequestDto
-                {
-                    OrderId = order.Id.ToString(),
-                    Provider = paymentMethodCode,
-                    OrderAccessToken = checkoutToken
-                },
-                customerId,
-                correlationId,
-                cancellationToken);
-
-            return new CheckoutPaymentSession
+        var response = await _paymentGateway.CreateSessionAsync(
+            new CanonicalPaymentRequest
             {
-                PaymentIntentId = response.PaymentId,
-                PaymentReference = response.ProviderIntentId ?? response.ProviderReference,
-                RedirectUrl = response.PaymentUrl,
-                CompatibilityFields = new Dictionary<string, string?>
-                {
-                    [nameof(CheckoutResponseDto.StripeClientSecret)] = response.PaymentToken,
-                    [nameof(CheckoutResponseDto.StripePublishableKey)] = response.PublishableKey,
-                    [nameof(CheckoutResponseDto.PaymobIframeUrl)] = response.PaymentUrl,
-                    [nameof(CheckoutResponseDto.PaymobPaymentKey)] = response.PaymentToken
-                }
-            };
-        }
-
-        var provider = paymentMethodCode.Trim().ToUpperInvariant() switch
-        {
-            "FAWRY" => PaymentProvider.Fawry.ToString(),
-            "MANUALWALLET" => PaymentProvider.ManualWallet.ToString(),
-            _ => paymentMethodCode
-        };
-
-        var legacyResponse = await _paymentService.CreatePaymentIntentAsync(
-            tenantId,
-            order.Id,
-            new CreatePaymentIntentRequestDto
-            {
-                Provider = provider,
+                TenantId = tenantId,
+                OrderId = order.Id,
+                ProviderCode = new ProviderCode(paymentMethodCode),
+                CheckoutToken = checkoutToken,
+                CustomerId = customerId,
+                PromotionCalculationFailed = promotionCalculationFailed,
+                RequestId = requestId,
+                CorrelationId = correlationId,
                 WalletType = walletType,
                 WalletPhoneNumber = walletPhoneNumber,
                 ProofFileKey = proofFileKey
             },
-            promotionCalculationFailed,
-            requestId,
-            correlationId,
             cancellationToken);
 
         return new CheckoutPaymentSession
         {
-            PaymentIntentId = legacyResponse.PaymentIntentId,
-            PaymentReference = legacyResponse.PaymentReference,
-            RedirectUrl = legacyResponse.RedirectUrl,
-            ReferenceCode = legacyResponse.ReferenceCode,
-            ExpiresAtUtc = legacyResponse.ExpiresAtUtc,
-            IsManualPayment = string.Equals(paymentMethodCode, "MANUALWALLET", StringComparison.OrdinalIgnoreCase)
+            PaymentIntentId = response.PaymentIntentId,
+            PaymentReference = response.PaymentReference,
+            RedirectUrl = response.RedirectUrl,
+            ReferenceCode = response.ReferenceCode,
+            ExpiresAtUtc = response.ExpiresAtUtc,
+            IsManualPayment = response.IsManualPayment,
+            CompatibilityFields = response.CompatibilityFields
         };
     }
 
@@ -8717,10 +9175,13 @@ public class CheckoutService : ICheckoutService
             // This event is consumed by OrderProjectionConsumer to create the
             // OrderDocument in MongoDB for Storefront CQRS reads.
             // =====================================================================
+            var orderCreatedEventVersion = PointOfSale.Core.Helpers.ProductEventVersionHelper.ToProductEventVersion(
+                Math.Max(1L, order.ProjectionMutationVersion));
+
             var coreEvent = new PointOfSale.Core.Events.OrderCreatedEvent
             {
                 TenantId = tenantId,
-                EventVersion = PointOfSale.Core.Helpers.ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1),
+                EventVersion = orderCreatedEventVersion,
                 OrderId = order.Id,
                 OrderNumber = order.OrderNumber,
                 CustomerId = order.CustomerId,
@@ -8777,7 +9238,7 @@ public class CheckoutService : ICheckoutService
                 EntityId = order.Id,
                 AggregateRootId = order.Id,
                 TenantId = order.TenantId,
-                Version = PointOfSale.Core.Helpers.ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1),
+                Version = orderCreatedEventVersion,
                 OrderNumber = order.OrderNumber,
                 CustomerId = order.CustomerId,
                 OnlineCustomerId = order.OnlineCustomerId,
@@ -8884,7 +9345,7 @@ public class CheckoutService : ICheckoutService
                     AffiliateUserId = affiliateAuthority?.AffiliateUserId,
                     CorrelationId = correlationId,
                     OccurredAtUtc = DateTime.UtcNow,
-                    EventVersion = PointOfSale.Core.Helpers.ProductEventVersionHelper.ToProductEventVersion(order.ProjectionMutationVersion + 1)
+                    EventVersion = orderCreatedEventVersion
                 };
 
                 await _eventPublisher.PublishAsync(affiliateEvt, cancellationToken);

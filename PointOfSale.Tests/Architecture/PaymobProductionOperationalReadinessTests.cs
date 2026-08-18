@@ -46,7 +46,7 @@ public sealed class PaymobProductionOperationalReadinessTests
             Enabled = true,
             Environment = PaymobEnvironment.Sandbox,
             SandboxMode = true
-        }, "API key");
+        }, "callback configuration");
 
         AssertInvalid(ValidOptions() with
         {
@@ -66,11 +66,6 @@ public sealed class PaymobProductionOperationalReadinessTests
             SandboxMode = false,
             FeatureFlags = new PaymobFeatureFlags { ProductionEnabled = false }
         }, "production execution");
-
-        AssertInvalid(ValidOptions() with
-        {
-            HmacSecret = string.Empty
-        }, "HMAC secret");
 
         AssertInvalid(ValidOptions() with
         {

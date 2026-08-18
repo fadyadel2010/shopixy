@@ -55,7 +55,7 @@ public sealed class AffiliateAttributionCertificationTests
         var authoritySelection = Slice(
             checkout,
             "AffiliateAttributionAuthority? resolvedAffiliateAuthority = null;",
-            "var affiliateCommissionPolicySnapshots = resolvedAffiliateAuthority != null");
+            "var affiliateOrderLineAdmissions = resolvedAffiliateAuthority != null");
         var dbContext = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
 
         Assert.Contains("middleware-validated, tenant-bound", authoritySelection, StringComparison.Ordinal);

@@ -17,7 +17,7 @@ public sealed class StripePaymentAuthorityCertificationTests
         Assert.Contains("requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("provider !== 'STRIPE'", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(paymentIntentId)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(checkoutToken)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("complete Stripe handoff for the selected provider. Missing checkout token", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isFutureIsoDate(expiresAtUtc)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(response.stripeClientSecret)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(response.stripePublishableKey)", paymentSessionAuthority, StringComparison.Ordinal);
@@ -57,10 +57,10 @@ public sealed class StripePaymentAuthorityCertificationTests
         var stripeController = ReadRepoFile("PointOfSale.API/Controllers/StorefrontStripePaymentsController.cs");
         var recoveryService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutPaymentIntentRecoveryService.cs");
 
-        Assert.Contains("_stripePaymentService.CreatePaymentIntentAsync", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("checkoutToken = CreateCheckoutPaymentToken(tenantId, order.Id)", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("stripeClientSecret = stripeResponse.ClientSecret", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("paymentIntentId = stripeResponse.PaymentIntentId", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("stripeClientSecret = GetCompatibilityField(session, nameof(CheckoutResponseDto.StripeClientSecret))", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("paymentIntentId = session.PaymentIntentId", checkoutService, StringComparison.Ordinal);
         Assert.Contains("expiresAtUtc = await ResolvePaymentIntentExpirationAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("StripeClientSecret = stripeClientSecret", checkoutService, StringComparison.Ordinal);
         Assert.Contains("StripePublishableKey = stripePublishableKey", checkoutService, StringComparison.Ordinal);
@@ -92,7 +92,7 @@ public sealed class StripePaymentAuthorityCertificationTests
         Assert.Contains("CreatePaymentIntentAsync", stripeController, StringComparison.Ordinal);
 
         Assert.Contains("CreatePaymentToken(order.TenantId, order.Id)", recoveryService, StringComparison.Ordinal);
-        Assert.Contains("_stripePaymentService.CreatePaymentIntentAsync", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("_paymentGateway.CreateSessionAsync", recoveryService, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -126,7 +126,8 @@ public sealed class StripePaymentAuthorityCertificationTests
         Assert.Contains("payment_intent.canceled", stripeService, StringComparison.Ordinal);
         Assert.Contains("FindPaymentIntentWithFallbackAsync", stripeService, StringComparison.Ordinal);
         Assert.Contains("Outcome = PaymentLifecycleOutcome.Succeeded", stripeService, StringComparison.Ordinal);
-        Assert.Contains("Outcome = PaymentLifecycleOutcome.Failed", stripeService, StringComparison.Ordinal);
+        Assert.Contains("Stripe payment attempt failed and remains retryable", stripeService, StringComparison.Ordinal);
+        Assert.Contains("intent.LastWebhookEventId = stripeEvent.Id", stripeService, StringComparison.Ordinal);
         Assert.Contains("Outcome = PaymentLifecycleOutcome.Cancelled", stripeService, StringComparison.Ordinal);
         Assert.Contains("Source = PaymentLifecycleSource.GatewayWebhook", stripeService, StringComparison.Ordinal);
         Assert.Contains("ProviderAmount = providerAmount", stripeService, StringComparison.Ordinal);

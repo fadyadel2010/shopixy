@@ -27,8 +27,8 @@ public sealed class PaymobContractClosureApplicationCertificationTests
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/PaymobPaymentService.cs");
         var dtoContract = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Payments/Paymob/IPaymobPaymentService.cs");
 
-        Assert.Contains("ICommerceHubPaymentOrchestrationService", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("IPaymobPaymentService", controller, StringComparison.Ordinal);
+        Assert.Contains("IPaymobPaymentService", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobRuntimeApplicationService", controller, StringComparison.Ordinal);
         Assert.Contains("PaymobPaymentIntentResponseDto", controller, StringComparison.Ordinal);
         Assert.Contains("IPaymobRuntimeApplicationService _paymobRuntimeApplicationService", service, StringComparison.Ordinal);

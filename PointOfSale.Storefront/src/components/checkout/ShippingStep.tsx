@@ -11,7 +11,7 @@
  * Phase 7.7: Checkout UI Implementation
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from '@/i18n';
 import {
     useCheckoutStore,
@@ -19,6 +19,7 @@ import {
     selectShippingMethodId,
     selectShippingMethodsStatus,
     selectShippingMethodsLoading,
+    selectShippingSelectionLoading,
     selectShippingMethodsError,
     selectShippingSelectionStatus,
     selectStaleShippingSelection,
@@ -325,11 +326,19 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
     const [uploadError, setUploadError] = useState<string | null>(null);
     const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const uploadAbortControllerRef = useRef<AbortController | null>(null);
     const cartId = useCartStore((state) => state.cart?.cartId ?? null);
+    const beginAttachmentUpload = useCheckoutStore((state) => state.beginAttachmentUpload);
+    const endAttachmentUpload = useCheckoutStore((state) => state.endAttachmentUpload);
     const attachments = parseAttachments(value);
     const maxFiles = field.fieldType === 'MULTI_IMAGE' ? (field.configuration.maxFiles ?? 5) : 1;
     const accept = field.configuration.allowedMimeTypes?.join(',') || (field.fieldType === 'FILE' ? undefined : 'image/jpeg,image/png,image/webp');
     const hasError = Boolean(error || uploadError);
+
+    useEffect(() => () => {
+        uploadAbortControllerRef.current?.abort();
+        uploadAbortControllerRef.current = null;
+    }, [cartId]);
 
     const updateAttachments = (next: CheckoutAttachment[]) => {
         onChange(JSON.stringify(next));
@@ -344,20 +353,23 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
         }
 
         setUploadError(null);
+        const controller = new AbortController();
+        uploadAbortControllerRef.current = controller;
+        beginAttachmentUpload();
         const next = [...attachments];
-        for (const file of Array.from(files)) {
-            if (next.length >= maxFiles) {
-                setUploadError(`${field.label} allows at most ${maxFiles} file(s).`);
-                break;
-            }
+        try {
+            for (const file of Array.from(files)) {
+                if (next.length >= maxFiles) {
+                    setUploadError(`${field.label} allows at most ${maxFiles} file(s).`);
+                    break;
+                }
 
-            const maxFileSize = field.configuration.maxFileSize;
-            if (maxFileSize && file.size > maxFileSize) {
-                setUploadError(`${file.name} must be ${formatFileSize(maxFileSize)} or smaller.`);
-                continue;
-            }
+                const maxFileSize = field.configuration.maxFileSize;
+                if (maxFileSize && file.size > maxFileSize) {
+                    setUploadError(`${file.name} must be ${formatFileSize(maxFileSize)} or smaller.`);
+                    continue;
+                }
 
-            try {
                 setUploadingFileName(file.name);
                 const lease = await httpClient.post('/api/storefront/checkout/attachments/upload-lease', {
                     cartId,
@@ -365,12 +377,13 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                     fileName: file.name,
                     contentType: file.type,
                     fileSizeBytes: file.size,
-                });
+                }, { signal: controller.signal });
 
                 const uploadResponse = await fetch(lease.data.uploadUrl, {
                     method: lease.data.uploadMethod || 'PUT',
                     headers: { 'Content-Type': lease.data.contentType },
                     body: file,
+                    signal: controller.signal,
                 });
 
                 if (!uploadResponse.ok) {
@@ -381,16 +394,23 @@ const DynamicUploadField: React.FC<DynamicCustomFieldProps> = ({ field, value, e
                     cartId,
                     fieldId: field.id,
                     attachmentId: lease.data.attachmentId,
-                });
+                }, { signal: controller.signal });
                 next.push(confirmed.data);
                 updateAttachments(next);
-            } catch (err) {
-                const apiError = err as { response?: { data?: { message?: string } }; message?: string };
-                setUploadError(apiError.response?.data?.message || apiError.message || `Unable to upload ${file.name}.`);
-            } finally {
                 setUploadingFileName(null);
-                if (fileInputRef.current) fileInputRef.current.value = '';
             }
+        } catch (err) {
+            if (!controller.signal.aborted) {
+                const apiError = err as { response?: { data?: { message?: string } }; message?: string };
+                setUploadError(apiError.response?.data?.message || apiError.message || 'Unable to upload the selected file.');
+            }
+        } finally {
+            if (uploadAbortControllerRef.current === controller) {
+                uploadAbortControllerRef.current = null;
+            }
+            endAttachmentUpload();
+            setUploadingFileName(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
@@ -465,6 +485,7 @@ interface ShippingMethodCardProps {
     formatPrice: (amount: number) => string;
     estimatedDays?: number;
     isSelected: boolean;
+    isDisabled: boolean;
     onSelect: () => void;
 }
 
@@ -476,14 +497,16 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
     formatPrice,
     estimatedDays,
     isSelected,
+    isDisabled,
     onSelect,
 }) => {
     return (
         <label
             className={`
                 flex items-start gap-3 p-4
-                border rounded-lg cursor-pointer
+                border rounded-lg
                 transition-all duration-200
+                ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}
                 ${isSelected
                     ? 'border-primary bg-primary/5 ring-2 ring-primary/20'
                     : 'border-muted/20 hover:border-muted/40 hover:bg-muted/5'
@@ -495,6 +518,7 @@ const ShippingMethodCard: React.FC<ShippingMethodCardProps> = ({
                 name="shippingMethod"
                 value={id}
                 checked={isSelected}
+                disabled={isDisabled}
                 onChange={onSelect}
                 className="mt-1 w-4 h-4 text-primary border-muted/30 focus:ring-primary"
             />
@@ -536,6 +560,7 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
     const selectedMethodId = useCheckoutStore(selectShippingMethodId);
     const shippingMethodsStatus = useCheckoutStore(selectShippingMethodsStatus);
     const isLoadingMethods = useCheckoutStore(selectShippingMethodsLoading);
+    const isSelectingMethod = useCheckoutStore(selectShippingSelectionLoading);
     const shippingMethodsError = useCheckoutStore(selectShippingMethodsError);
     const shippingSelectionStatus = useCheckoutStore(selectShippingSelectionStatus);
     const staleShippingSelection = useCheckoutStore(selectStaleShippingSelection);
@@ -778,6 +803,11 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                     </div>
                 ) : (
                     <div className="space-y-3">
+                        {isSelectingMethod && (
+                            <p className="text-sm text-muted" role="status" aria-live="polite">
+                                Confirming shipping availability...
+                            </p>
+                        )}
                         {shippingSelectionStatus === 'stale' && staleShippingSelection && (
                             <div 
                                 className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
@@ -801,7 +831,8 @@ export const ShippingStep: React.FC<ShippingStepProps> = ({ onContinue }) => {
                                 formatPrice={formatPrice}
                                 estimatedDays={method.estimatedDays}
                                 isSelected={selectedMethodId === method.id}
-                                onSelect={() => setShippingMethod(method.id)}
+                                isDisabled={isSelectingMethod}
+                                onSelect={() => { void setShippingMethod(method.id).catch(() => undefined); }}
                             />
                         ))}
                     </div>

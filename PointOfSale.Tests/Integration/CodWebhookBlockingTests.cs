@@ -177,7 +177,7 @@ public class CodWebhookBlockingTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // COD-WEBHOOK-4: Valid providers should NOT be blocked
+    // COD-WEBHOOK-4: Non-COD providers must enter signature verification, not COD handling
     // ═══════════════════════════════════════════════════════════════════════════
 
     [Theory]
@@ -185,25 +185,26 @@ public class CodWebhookBlockingTests : IDisposable
     [InlineData("paymob")]
     [InlineData("paypal")]
     [InlineData("tap")]
-    public async Task ProcessWebhook_ValidProviders_ShouldNotBlock(string provider)
+    public async Task ProcessWebhook_NonCodProviders_ShouldFailAtSignatureVerification(string provider)
     {
         // Arrange
         var rawPayload = "{\"event\":\"payment.succeeded\",\"amount\":100}";
 
         // Act
-        var result = await _paymentService.ProcessWebhookAsync(
-            tenantId: _tenantId,
-            provider: provider,
-            signature: "fake-signature",
-            rawPayload: rawPayload,
-            correlationId: "test-correlation",
-            sourceIp: "1.2.3.4",
-            userAgent: "valid-gateway",
-            cancellationToken: CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<PaymentInvalidSignatureException>(() =>
+            _paymentService.ProcessWebhookAsync(
+                tenantId: _tenantId,
+                provider: provider,
+                signature: "fake-signature",
+                rawPayload: rawPayload,
+                correlationId: "test-correlation",
+                sourceIp: "1.2.3.4",
+                userAgent: "valid-gateway",
+                cancellationToken: CancellationToken.None));
 
         // Assert
-        // Should NOT be blocked (will fail for other reasons like invalid payload, but not blocked)
-        Assert.DoesNotContain("COD webhooks are not supported", result.Message ?? "");
+        Assert.Equal(provider, exception.Provider, ignoreCase: true);
+        Assert.DoesNotContain("COD", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

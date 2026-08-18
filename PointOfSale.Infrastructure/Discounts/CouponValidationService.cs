@@ -885,7 +885,7 @@ public sealed class CouponValidationService : ICouponValidationService
         {
             lockedCoupon = await _dbContext.Coupons
                 .FromSqlInterpolated($@"
-                    SELECT * FROM ""Coupons""
+                    SELECT xmin, * FROM ""Coupons""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""Id"" = {couponId}
                       AND ""IsDeleted"" = false

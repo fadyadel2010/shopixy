@@ -955,6 +955,9 @@ public sealed class StorefrontProductionBlockerFixTests
     private static CheckoutRequestDto ValidCheckoutRequest() => new()
     {
         CartId = Guid.NewGuid(),
+        CheckoutSessionId = Guid.NewGuid(),
+        WarehouseResolutionId = Guid.NewGuid(),
+        WarehouseResolutionVersion = 1,
         ShippingMethodId = Guid.NewGuid(),
         PaymentMethod = "STRIPE",
         ExpectedPricing = new CheckoutExpectedPricingDto

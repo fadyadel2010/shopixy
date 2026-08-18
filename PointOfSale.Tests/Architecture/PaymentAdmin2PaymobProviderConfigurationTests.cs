@@ -17,13 +17,15 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
         Assert.Equal("Sandbox", provider.Environment);
         Assert.False(provider.Enabled);
         Assert.Equal("POST", provider.Configuration["webhookMethod"]);
-        Assert.Equal("/api/commercehub/payments/paymob/webhook", provider.Configuration["webhookUrl"]);
+        Assert.Equal("/api/payments/paymob/webhook", provider.Configuration["webhookPath"]);
         Assert.Equal("GET", provider.Configuration["browserCallbackMethod"]);
-        Assert.Equal("/api/commercehub/payments/paymob/callback", provider.Configuration["browserCallbackUrl"]);
-        Assert.Equal("**************", provider.Configuration["apiKeyMask"]);
+        Assert.Equal("/api/commercehub/payments/paymob/callback", provider.Configuration["browserCallbackPath"]);
+        Assert.Equal("**************", provider.Configuration["secretKeyMask"]);
         Assert.Equal("**************", provider.Configuration["hmacSecretMask"]);
-        Assert.False((bool)provider.Configuration["apiKeyConfigured"]!);
+        Assert.Equal("**************", provider.Configuration["apiKeyMask"]);
+        Assert.False((bool)provider.Configuration["secretKeyConfigured"]!);
         Assert.False((bool)provider.Configuration["hmacSecretConfigured"]!);
+        Assert.False((bool)provider.Configuration["apiKeyConfigured"]!);
     }
 
     [Fact]
@@ -40,7 +42,8 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
                 Configuration = ValidConfiguration("Production"),
                 SecretReplacements = new Dictionary<string, string?>
                 {
-                    ["apiKey"] = "paymob-live-api-key",
+                    ["apiKey"] = "paymob-dashboard-api-key",
+                    ["secretKey"] = "egy_sk_live_test-credential",
                     ["hmacSecret"] = "paymob-live-hmac-secret"
                 }
             });
@@ -48,14 +51,20 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
         Assert.Equal("Configured", result.Provider.Status);
         Assert.True(result.Provider.Enabled);
         Assert.Equal("Production", result.Provider.Environment);
-        Assert.True((bool)result.Provider.Configuration["apiKeyConfigured"]!);
+        Assert.True((bool)result.Provider.Configuration["secretKeyConfigured"]!);
         Assert.True((bool)result.Provider.Configuration["hmacSecretConfigured"]!);
+        Assert.True((bool)result.Provider.Configuration["apiKeyConfigured"]!);
+        Assert.Contains("credentials.accountApiKey:redacted", result.RedactedChangedFields);
         Assert.Contains("credentials.apiCredential:redacted", result.RedactedChangedFields);
         Assert.Contains("credentials.signatureCredential:redacted", result.RedactedChangedFields);
 
         var serialized = JsonSerializer.Serialize(result.Provider, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.DoesNotContain("paymob-live-api-key", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("paymob-dashboard-api-key", serialized, StringComparison.Ordinal);
+        Assert.DoesNotContain("egy_sk_live_test-credential", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("paymob-live-hmac-secret", serialized, StringComparison.Ordinal);
+
+        var operational = service.GetProviderOperationalConfiguration("PAYMOB");
+        Assert.Equal("paymob-dashboard-api-key", operational.Credentials["apiKey"]);
     }
 
     [Fact]
@@ -65,7 +74,6 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
         var configuration = ValidConfiguration("Mars");
         configuration["currency"] = "EG";
         configuration["integrationId"] = "0";
-        configuration["iframeId"] = "abc";
         configuration["timeoutSeconds"] = "-1";
         configuration["retryCount"] = "-2";
 
@@ -80,10 +88,9 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
                 }));
 
         Assert.Equal("PAYMOB_CONFIGURATION_VALIDATION_FAILED", exception.Code);
-        Assert.Contains("Missing API Key", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Missing Secret Key", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Missing HMAC Secret", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Invalid Integration ID", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("Invalid iFrame ID", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Negative Timeout", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Negative Retry Count", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Invalid Currency", exception.Message, StringComparison.Ordinal);
@@ -104,6 +111,43 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
                 }));
 
         Assert.Equal("PROVIDER_SECRET_NOT_ACCEPTED", exception.Code);
+    }
+
+    [Fact]
+    public void PaymobConfiguration_BlankSecretReplacementPreservesExistingApiKey()
+    {
+        var service = new PaymentProviderAdministrationService();
+        var initial = service.SaveProviderConfiguration(
+            "PAYMOB",
+            new PaymentProviderConfigurationRequest
+            {
+                Enabled = false,
+                Environment = "Sandbox",
+                Configuration = ValidConfiguration("Sandbox"),
+                SecretReplacements = new Dictionary<string, string?>
+                {
+                    ["apiKey"] = "paymob-dashboard-api-key",
+                    ["secretKey"] = "egy_sk_test_checkout-secret",
+                    ["hmacSecret"] = "paymob-test-hmac-secret"
+                }
+            });
+
+        var second = service.SaveProviderConfiguration(
+            "PAYMOB",
+            new PaymentProviderConfigurationRequest
+            {
+                Enabled = false,
+                Environment = "Sandbox",
+                Configuration = ValidConfiguration("Sandbox"),
+                SecretReplacements = new Dictionary<string, string?>
+                {
+                    ["apiKey"] = "   "
+                }
+            });
+
+        Assert.True((bool)initial.Provider.Configuration["apiKeyConfigured"]!);
+        Assert.True((bool)second.Provider.Configuration["apiKeyConfigured"]!);
+        Assert.Equal("paymob-dashboard-api-key", service.GetProviderOperationalConfiguration("PAYMOB").Credentials["apiKey"]);
     }
 
     [Fact]
@@ -134,6 +178,9 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
         Assert.Contains("secretReplacementsRef", page, StringComparison.Ordinal);
         Assert.Contains("secretReplacements: secretReplacementsRef.current", page, StringComparison.Ordinal);
         Assert.Contains("PaymobConfigurationForm", form, StringComparison.Ordinal);
+        Assert.Contains("apiKeyConfigured", form, StringComparison.Ordinal);
+        Assert.Contains("onSecretReplacementChange('apiKey'", form, StringComparison.Ordinal);
+        Assert.Contains("API Key", form, StringComparison.Ordinal);
         Assert.Contains("type=\"password\"", form, StringComparison.Ordinal);
         Assert.Contains("autoComplete=\"new-password\"", form, StringComparison.Ordinal);
         Assert.Contains("readOnly", form, StringComparison.Ordinal);
@@ -183,12 +230,14 @@ public sealed class PaymentAdmin2PaymobProviderConfigurationTests
             ["currency"] = "EGP",
             ["description"] = "Paymob provider account for CommerceHub.",
             ["integrationId"] = "123456",
-            ["iframeId"] = "654321",
+            ["publicKey"] = environment == "Production" ? "egy_pk_live_test-public" : "egy_pk_test_test-public",
             ["merchantIdentifier"] = "merchant-1",
             ["providerAccountName"] = "CommerceHub Paymob",
             ["timeoutSeconds"] = "30",
             ["retryCount"] = "2",
             ["requestTimeoutSeconds"] = "30",
-            ["maximumRetryAttempts"] = "3"
+            ["maximumRetryAttempts"] = "3",
+            ["webhookUrl"] = "https://api.example.test/api/payments/paymob/webhook",
+            ["browserCallbackUrl"] = "https://market.example.test/payments/paymob/callback"
         };
 }

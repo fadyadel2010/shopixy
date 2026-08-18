@@ -43,8 +43,8 @@ public sealed class StripeContractClosureApplicationCertificationTests
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/StorefrontStripePaymentsController.cs");
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Payments/Stripe/StripePaymentService.cs");
 
-        Assert.Contains("ICommerceHubPaymentOrchestrationService", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("IStripePaymentService", controller, StringComparison.Ordinal);
+        Assert.Contains("IStripePaymentService", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("IStripeRuntimeApplicationService", controller, StringComparison.Ordinal);
         Assert.Contains("StripePaymentIntentResponseDto", controller, StringComparison.Ordinal);
         Assert.Contains("IStripeRuntimeApplicationService _stripeRuntimeApplicationService", service, StringComparison.Ordinal);

@@ -250,10 +250,10 @@ export const PaymentStep: React.FC<PaymentStepProps> = ({ onContinue, onBack }) 
 
     // Fetch payment methods on mount
     useEffect(() => {
-        if (paymentMethods.length === 0 && !isLoading) {
-            fetchPaymentMethods();
+        if (paymentMethodsStatus === 'IDLE') {
+            void fetchPaymentMethods();
         }
-    }, [paymentMethods.length, isLoading, fetchPaymentMethods]);
+    }, [paymentMethodsStatus, fetchPaymentMethods]);
 
     /**
      * Check if a method is disabled based on order amount limits

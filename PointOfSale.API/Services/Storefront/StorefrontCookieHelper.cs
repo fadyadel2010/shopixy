@@ -16,13 +16,18 @@ namespace PointOfSale.API.Services.Storefront;
 /// - HttpOnly = true: Prevents XSS token theft
 /// - Secure = true: HTTPS only (except in Development)
 /// - SameSite = Strict: Prevents CSRF attacks
-/// - Path = /api/storefront/auth: Limits cookie scope
+/// - Access token Path = /api/storefront plus /api/payments:
+///   covers Storefront APIs and Storefront-owned payment status endpoints.
+/// - Refresh token Path = /api/storefront/auth: limits long-lived refresh scope.
 /// 
 /// Phase: 10.3.x - Authentication Hardening
 /// </summary>
 public class StorefrontCookieSettings
 {
     public const string SectionName = "StorefrontCookie";
+    public const string DefaultAccessTokenCookiePath = "/api/storefront";
+    public const string DefaultPaymentAccessTokenCookiePath = "/api/payments";
+    public const string BroadApiAccessTokenCookiePath = "/api";
 
     /// <summary>
     /// Cookie name for access token.
@@ -32,7 +37,12 @@ public class StorefrontCookieSettings
     /// <summary>
     /// Cookie path for access token.
     /// </summary>
-    public string AccessTokenCookiePath { get; set; } = "/api/storefront";
+    public string AccessTokenCookiePath { get; set; } = DefaultAccessTokenCookiePath;
+
+    /// <summary>
+    /// Cookie path for payment status access token.
+    /// </summary>
+    public string PaymentAccessTokenCookiePath { get; set; } = DefaultPaymentAccessTokenCookiePath;
 
     /// <summary>
     /// Cookie name for refresh token.
@@ -164,17 +174,25 @@ public class StorefrontCookieHelper : IStorefrontCookieHelper
         string accessToken,
         DateTime expiresAtUtc)
     {
+        ClearLegacyAccessTokenCookie(response);
+
         response.Cookies.Append(
             _settings.AccessTokenCookieName,
             accessToken,
             CreateAccessCookieOptions(expiresAtUtc));
+
+        response.Cookies.Append(
+            _settings.AccessTokenCookieName,
+            accessToken,
+            CreatePaymentAccessCookieOptions(expiresAtUtc));
     }
 
     public void ClearAccessTokenCookie(Microsoft.AspNetCore.Http.HttpResponse response)
     {
-        response.Cookies.Delete(
-            _settings.AccessTokenCookieName,
-            CreateAccessCookieOptions(DateTime.UtcNow.AddDays(-1)));
+        AppendExpiredAccessTokenCookie(response, _settings.AccessTokenCookiePath);
+        AppendExpiredAccessTokenCookie(response, _settings.PaymentAccessTokenCookiePath);
+
+        ClearLegacyAccessTokenCookie(response);
     }
 
     public string? GetRefreshTokenFromCookie(Microsoft.AspNetCore.Http.HttpRequest request)
@@ -211,6 +229,32 @@ public class StorefrontCookieHelper : IStorefrontCookieHelper
     private Microsoft.AspNetCore.Http.CookieOptions CreateAccessCookieOptions(DateTime expiresAtUtc)
     {
         return CreateCookieOptions(expiresAtUtc, _settings.AccessTokenCookiePath);
+    }
+
+    private Microsoft.AspNetCore.Http.CookieOptions CreatePaymentAccessCookieOptions(DateTime expiresAtUtc)
+    {
+        return CreateCookieOptions(expiresAtUtc, _settings.PaymentAccessTokenCookiePath);
+    }
+
+    private void ClearLegacyAccessTokenCookie(Microsoft.AspNetCore.Http.HttpResponse response)
+    {
+        if (string.Equals(
+                _settings.AccessTokenCookiePath,
+                StorefrontCookieSettings.BroadApiAccessTokenCookiePath,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        AppendExpiredAccessTokenCookie(response, StorefrontCookieSettings.BroadApiAccessTokenCookiePath);
+    }
+
+    private void AppendExpiredAccessTokenCookie(Microsoft.AspNetCore.Http.HttpResponse response, string path)
+    {
+        response.Cookies.Append(
+            _settings.AccessTokenCookieName,
+            string.Empty,
+            CreateCookieOptions(DateTime.UnixEpoch, path));
     }
 
     private Microsoft.AspNetCore.Http.CookieOptions CreateCookieOptions(DateTime expiresAtUtc, string path)

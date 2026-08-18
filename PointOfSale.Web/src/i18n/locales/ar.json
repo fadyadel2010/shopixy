@@ -4609,6 +4609,7 @@
     "rejectionReasonPlaceholder": "سبب الرفض (سيتم إرساله إلى العميل)...",
     "messages": {
       "loadError": "فشل في تحميل المدفوعات المعلّقة",
+      "proofLoadError": "تعذر تحميل إثبات الدفع",
       "approveConfirm": "هل أنت متأكد من أنك تريد الموافقة على هذه الدفعة؟",
       "approveSuccess": "تم تأكيد الدفعة بنجاح",
       "approveError": "فشل في الموافقة على الدفعة",

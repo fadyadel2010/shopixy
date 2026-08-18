@@ -57,6 +57,11 @@ public sealed class StripeOptionsValidator : IValidateOptions<StripeOptions>
         return options.Enabled || options.FeatureFlags.Enabled;
     }
 
+    public static bool RequiresGlobalCredentials(StripeOptions options)
+    {
+        return options.Enabled;
+    }
+
     public static bool IsSecretConfigured(StripeOptions options)
     {
         return !string.IsNullOrWhiteSpace(options.PublishableKey)
@@ -117,7 +122,9 @@ public static class StripeCredentialValidator
             errors.Add("Stripe production execution must be explicitly enabled by the production feature flag.");
         }
 
-        if (enabled)
+        // Global CommerceHub execution uses these options directly. Tenant storefront
+        // execution is independently feature-gated and resolves encrypted tenant keys.
+        if (StripeOptionsValidator.RequiresGlobalCredentials(options))
         {
             ValidateRequiredCredential(options.PublishableKey, "publishable key", errors);
             ValidateRequiredCredential(options.SecretKey, "secret key", errors);

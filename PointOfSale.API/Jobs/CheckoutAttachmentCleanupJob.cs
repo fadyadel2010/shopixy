@@ -3,6 +3,7 @@ using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PointOfSale.API.Services;
+using PointOfSale.API.Services.Checkout;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 
@@ -31,15 +32,17 @@ public sealed class CheckoutAttachmentCleanupJob
         try
         {
             var nowUtc = DateTime.UtcNow;
+            var pendingLeaseCutoffUtc = nowUtc.AddMinutes(-CheckoutAttachmentService.UploadUrlExpiryMinutes);
             var expiredAttachments = await _dbContext.CheckoutAttachments
                 .IgnoreQueryFilters()
                 .Where(attachment =>
                     attachment.OrderId == null &&
                     !attachment.IsDeleted &&
                     (attachment.Status == CheckoutAttachmentStatus.Deleting ||
+                     (attachment.Status == CheckoutAttachmentStatus.Pending &&
+                      (attachment.ExpiresAtUtc <= nowUtc || attachment.CreatedAt <= pendingLeaseCutoffUtc)) ||
                      (attachment.ExpiresAtUtc <= nowUtc &&
-                      (attachment.Status == CheckoutAttachmentStatus.Pending ||
-                       attachment.Status == CheckoutAttachmentStatus.Uploaded ||
+                      (attachment.Status == CheckoutAttachmentStatus.Uploaded ||
                        attachment.Status == CheckoutAttachmentStatus.Finalized ||
                        attachment.Status == CheckoutAttachmentStatus.Failed))))
                 .OrderBy(attachment => attachment.ExpiresAtUtc)
@@ -120,15 +123,17 @@ public sealed class CheckoutAttachmentCleanupJob
             return true;
         }
 
+        var pendingLeaseCutoffUtc = nowUtc.AddMinutes(-CheckoutAttachmentService.UploadUrlExpiryMinutes);
         var claimed = await _dbContext.CheckoutAttachments
             .IgnoreQueryFilters()
             .Where(item => item.Id == attachment.Id &&
                            item.OrderId == null &&
                            !item.IsDeleted &&
                            (item.Status == CheckoutAttachmentStatus.Deleting ||
+                            (item.Status == CheckoutAttachmentStatus.Pending &&
+                             (item.ExpiresAtUtc <= nowUtc || item.CreatedAt <= pendingLeaseCutoffUtc)) ||
                             (item.ExpiresAtUtc <= nowUtc &&
-                             (item.Status == CheckoutAttachmentStatus.Pending ||
-                              item.Status == CheckoutAttachmentStatus.Uploaded ||
+                             (item.Status == CheckoutAttachmentStatus.Uploaded ||
                               item.Status == CheckoutAttachmentStatus.Finalized ||
                               item.Status == CheckoutAttachmentStatus.Failed))))
             .ExecuteUpdateAsync(setters => setters

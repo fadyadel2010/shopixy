@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Data;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -66,11 +67,15 @@ public class PaymobPaymentService : IPaymobPaymentService
     private readonly IPaymobWebhookRuntimeIntegrationService _paymobWebhookRuntimeIntegrationService;
     private readonly IPaymobSensitiveArtifactProtector _artifactProtector;
     private readonly StorefrontUrlResolver _storefrontUrlResolver;
+    private readonly IPaymobRetryInventoryAuthority _retryInventoryAuthority;
     private readonly ILogger<PaymobPaymentService> _logger;
     private readonly CommerceReliabilityTelemetry? _reliabilityTelemetry;
 
     private const string DataProtectorPurpose = "PaymentMethodSecrets";
-    private static readonly TimeSpan StorefrontPaymentSessionTtl = TimeSpan.FromMinutes(30);
+    // Keep the local authority aligned with the Intention API expiration sent by
+    // PaymobPaymentRequestFactory. A shorter local TTL makes a provider-valid
+    // Unified Checkout URL look expired to the storefront.
+    private static readonly TimeSpan StorefrontPaymentSessionTtl = TimeSpan.FromMinutes(60);
 
     public PaymobPaymentService(
         ApplicationDbContext dbContext,
@@ -83,6 +88,7 @@ public class PaymobPaymentService : IPaymobPaymentService
         IPaymobWebhookRuntimeIntegrationService paymobWebhookRuntimeIntegrationService,
         IPaymobSensitiveArtifactProtector artifactProtector,
         StorefrontUrlResolver storefrontUrlResolver,
+        IPaymobRetryInventoryAuthority retryInventoryAuthority,
         ILogger<PaymobPaymentService> logger,
         CommerceReliabilityTelemetry? reliabilityTelemetry = null)
     {
@@ -96,6 +102,7 @@ public class PaymobPaymentService : IPaymobPaymentService
         _paymobWebhookRuntimeIntegrationService = paymobWebhookRuntimeIntegrationService;
         _artifactProtector = artifactProtector;
         _storefrontUrlResolver = storefrontUrlResolver;
+        _retryInventoryAuthority = retryInventoryAuthority;
         _logger = logger;
         _reliabilityTelemetry = reliabilityTelemetry;
     }
@@ -141,17 +148,6 @@ public class PaymobPaymentService : IPaymobPaymentService
         idempotencyKey = NormalizeCheckoutPaymentIdempotencyKey(
             idempotencyKey,
             $"paymob:intent:{tenantId:N}:{orderId:N}");
-
-        // Validate order status
-        if (order.Status != OrderStatus.Pending || order.PaymentStatus != PaymentStatus.Pending)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw new PaymentOrderInvalidStateException(
-                orderId,
-                $"Order:{order.Status}/Payment:{order.PaymentStatus}",
-                "Order:Pending/Payment:Pending");
-        }
-
         // Validate payment method is Paymob
         if (!order.PaymentMethodCode.Equals("PAYMOB", StringComparison.OrdinalIgnoreCase))
         {
@@ -205,32 +201,169 @@ public class PaymobPaymentService : IPaymobPaymentService
             "Currency validated for Paymob payment | OrderId: {OrderId} | Currency: {Currency} | CorrelationId: {CorrelationId}",
             orderId, validatedOrderCurrency, correlationId);
 
-        await CheckoutInventoryAuthorityGuard.EnsureStorefrontOrderReservationsActiveAsync(
-            _dbContext,
-            order,
-            cancellationToken);
-
         var storefrontBaseUrl = _storefrontUrlResolver.Resolve(tenant);
 
         CorePaymentIntent? seededPendingIntent = null;
 
         // Step 4: Check if PaymentIntent already exists for this order while holding row lock
         var existingIntent = await _dbContext.PaymentIntents
-            .FirstOrDefaultAsync(
-                pi => pi.OrderId == orderId && pi.TenantId == tenantId && pi.Provider == PaymentProvider.Paymob,
+            .Where(pi => pi.OrderId == orderId &&
+                         pi.TenantId == tenantId &&
+                         pi.Provider == PaymentProvider.Paymob)
+            .OrderByDescending(pi => pi.CreatedAt)
+            .ThenByDescending(pi => pi.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var nowUtc = DateTime.UtcNow;
+        var newSessionExpiresAtUtc = nowUtc.Add(StorefrontPaymentSessionTtl);
+        var hasExpiredPendingIntent = existingIntent != null &&
+                                      existingIntent.Status == PaymentIntentStatus.Pending &&
+                                      existingIntent.ExpiresAtUtc.HasValue &&
+                                      existingIntent.ExpiresAtUtc.Value <= nowUtc;
+
+        var retryDecision = await EvaluatePaymobRetryAuthorityAsync(
+            order,
+            existingIntent,
+            cancellationToken);
+
+        if (order.Status != OrderStatus.Pending ||
+            (order.PaymentStatus != PaymentStatus.Pending && !retryDecision.CanRetry))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            throw new PaymentOrderInvalidStateException(
+                orderId,
+                $"Order:{order.Status}/Payment:{order.PaymentStatus}",
+                "Order:Pending/Payment:Pending or PaymobRetry:Pending/Failed");
+        }
+
+        if (retryDecision.CanRetry)
+        {
+            await PrepareOrderForPaymobRetryAsync(
+                order,
+                newSessionExpiresAtUtc,
+                correlationId,
                 cancellationToken);
+        }
+        else if (hasExpiredPendingIntent)
+        {
+            await _retryInventoryAuthority.EnsureRetryReservationAuthorityAsync(
+                order,
+                newSessionExpiresAtUtc,
+                cancellationToken);
+            await CheckoutInventoryAuthorityGuard.EnsureOrderReservationsActiveAsync(
+                _dbContext,
+                order,
+                cancellationToken);
+        }
+        else
+        {
+            await CheckoutInventoryAuthorityGuard.EnsureOrderReservationsActiveAsync(
+                _dbContext,
+                order,
+                cancellationToken);
+
+            await _retryInventoryAuthority.EnsureRetryReservationAuthorityAsync(
+                order,
+                existingIntent?.ExpiresAtUtc ?? newSessionExpiresAtUtc,
+                cancellationToken);
+        }
 
         if (existingIntent != null && existingIntent.Status == PaymentIntentStatus.Pending)
         {
-            var existingSession = GetStoredPaymentSession(existingIntent);
+            var routingMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(existingIntent.ProviderMetadata);
+            PaymobProtectedPaymentSession? existingSession;
+            try
+            {
+                existingSession = GetStoredPaymentSession(existingIntent);
+            }
+            catch (CryptographicException) when (hasExpiredPendingIntent)
+            {
+                await transaction.RollbackAsync(cancellationToken);
+                throw new PaymentException(
+                    "PAYMOB_PAYMENT_SESSION_EXPIRED",
+                    "The expired Paymob checkout session could not be verified for safe replacement.");
+            }
+
             var existingPaymentKey = existingSession?.PaymentKey;
+            var hasCompleteExistingSession =
+                !string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) &&
+                !string.IsNullOrWhiteSpace(existingPaymentKey) &&
+                !string.IsNullOrWhiteSpace(existingSession?.IframeUrl) &&
+                PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(routingMetadata, tenantId, orderId) &&
+                !PaymentIntentRoutingMetadataSerializer.HasPendingPaymobCheckpoint(existingIntent.ProviderMetadata);
+
+            if (hasExpiredPendingIntent)
+            {
+                var hasNoDurableProviderState =
+                    string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) &&
+                    existingSession == null &&
+                    !PaymentIntentRoutingMetadataSerializer.HasPendingPaymobCheckpoint(existingIntent.ProviderMetadata) &&
+                    (string.IsNullOrWhiteSpace(existingIntent.ProviderMetadata) ||
+                     PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(routingMetadata, tenantId, orderId));
+
+                if (!hasCompleteExistingSession && !hasNoDurableProviderState)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    _logger.LogWarning(
+                        "Expired Paymob payment session rejected because provider checkpoint state is ambiguous | TenantId: {TenantId} | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | ProviderIntentIdPresent: {ProviderIntentIdPresent} | CheckpointState: {CheckpointState} | CorrelationId: {CorrelationId}",
+                        tenantId,
+                        orderId,
+                        existingIntent.Id,
+                        !string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId),
+                        routingMetadata?.PaymobCheckpointState,
+                        correlationId);
+
+                    throw new PaymentException(
+                        "PAYMOB_PAYMENT_SESSION_EXPIRED",
+                        "The expired Paymob checkout session requires provider reconciliation before another attempt can start.");
+                }
+
+                existingIntent.Status = PaymentIntentStatus.Expired;
+                existingIntent.FailedAt = nowUtc;
+                existingIntent.FailureCode = "PAYMOB_CHECKOUT_SESSION_EXPIRED_SUPERSEDED";
+                existingIntent.FailureReason = "Expired Paymob checkout session was superseded by a new payment attempt.";
+                existingIntent.RedirectUrl = null;
+                existingIntent.ClientSecretEncrypted = null;
+                existingIntent.ProviderMetadata = BuildRoutingMetadata(
+                    tenantId,
+                    orderId,
+                    storefrontBaseUrl,
+                    protectedPaymobSession: null);
+
+                // The filtered active-attempt unique index is immediate. Persist the
+                // terminal transition before inserting its replacement in this transaction.
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                _logger.LogInformation(
+                    "Expired Paymob payment session superseded by a fresh attempt | TenantId: {TenantId} | OrderId: {OrderId} | PreviousPaymentIntentId: {PaymentIntentId} | PreviousProviderIntentId: {ProviderIntentId} | ExpiresAtUtc: {ExpiresAtUtc} | CorrelationId: {CorrelationId}",
+                    tenantId,
+                    orderId,
+                    existingIntent.Id,
+                    existingIntent.ProviderIntentId,
+                    existingIntent.ExpiresAtUtc,
+                    correlationId);
+            }
+            else
+            {
+
+                if (hasCompleteExistingSession && !existingIntent.ExpiresAtUtc.HasValue)
+                {
+                    await transaction.RollbackAsync(cancellationToken);
+                    _logger.LogWarning(
+                        "Paymob payment session rejected because its expiry authority is missing | TenantId: {TenantId} | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | CorrelationId: {CorrelationId}",
+                        tenantId,
+                        orderId,
+                        existingIntent.Id,
+                        correlationId);
+
+                    throw new PaymentException(
+                        "PAYMOB_PAYMENT_SESSION_EXPIRY_MISSING",
+                        "The previous Paymob checkout session has no verifiable expiry. Check the order status before starting another payment attempt.");
+                }
             
             // A checkpointed Paymob artifact is resumed on this same durable local intent.
             // Never replace the intent or create a second provider order during recovery.
-            if (string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) ||
-                string.IsNullOrWhiteSpace(existingIntent.RedirectUrl) ||
-                string.IsNullOrWhiteSpace(existingPaymentKey) ||
-                PaymentIntentRoutingMetadataSerializer.HasPendingPaymobCheckpoint(existingIntent.ProviderMetadata))
+            if (!hasCompleteExistingSession)
             {
                 // Different idempotency keys cannot take over the durable provider checkpoint.
                 if (!string.IsNullOrWhiteSpace(existingIntent.IdempotencyKey) &&
@@ -250,6 +383,26 @@ public class PaymobPaymentService : IPaymobPaymentService
                         "A payment intent is already in progress for this order with a different request. Please retry with the original request.");
                 }
 
+                if (string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) &&
+                    !PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(routingMetadata, tenantId, orderId))
+                {
+                    existingIntent.RedirectUrl = null;
+                    existingIntent.ProviderMetadata = BuildRoutingMetadata(
+                        tenantId,
+                        orderId,
+                        storefrontBaseUrl,
+                        protectedPaymobSession: null);
+                    existingIntent.FailureCode = null;
+                    existingIntent.FailureReason = null;
+                    existingIntent.FailedAt = null;
+
+                    _logger.LogInformation(
+                        "Repaired seeded Paymob payment intent routing metadata before provider execution | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
+                        existingIntent.Id,
+                        orderId,
+                        correlationId);
+                }
+
                 seededPendingIntent = existingIntent;
                 _logger.LogInformation(
                     "Resuming durable Paymob provider checkpoint | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | ProviderOrderId: {ProviderOrderId} | CheckpointState: {CheckpointState} | CorrelationId: {CorrelationId}",
@@ -262,7 +415,6 @@ public class PaymobPaymentService : IPaymobPaymentService
             else
             {
                 // Intent is complete, check if routing metadata needs update
-                var routingMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(existingIntent.ProviderMetadata);
                 if (!PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(routingMetadata, tenantId, orderId) ||
                     string.IsNullOrWhiteSpace(routingMetadata?.ProtectedPaymobSession))
                 {
@@ -298,8 +450,10 @@ public class PaymobPaymentService : IPaymobPaymentService
                     OrderId = orderId,
                     OrderNumber = order.OrderNumber,
                     Amount = order.Total,
-                    Currency = order.Currency
+                    Currency = order.Currency,
+                    ExpiresAtUtc = existingIntent.ExpiresAtUtc!.Value
                 };
+            }
             }
         }
 
@@ -322,8 +476,13 @@ public class PaymobPaymentService : IPaymobPaymentService
                 storefrontBaseUrl,
                 protectedPaymobSession: null),
             CreatedAt = DateTime.UtcNow,
-            ExpiresAtUtc = DateTime.UtcNow.Add(StorefrontPaymentSessionTtl)
+            ExpiresAtUtc = newSessionExpiresAtUtc
         };
+
+        // The transactional checkout seed intentionally has no provider artifact yet.
+        // Establish its absolute session expiry before any external Paymob call so the
+        // first response and every replay share one durable time authority.
+        paymentIntent.ExpiresAtUtc ??= newSessionExpiresAtUtc;
 
         if (seededPendingIntent == null)
         {
@@ -344,9 +503,12 @@ public class PaymobPaymentService : IPaymobPaymentService
 
             var claimedIntent = await _dbContext.PaymentIntents
                 .AsNoTracking()
-                .FirstOrDefaultAsync(
-                    pi => pi.OrderId == orderId && pi.TenantId == tenantId && pi.Provider == PaymentProvider.Paymob,
-                    cancellationToken);
+                .Where(pi => pi.OrderId == orderId &&
+                             pi.TenantId == tenantId &&
+                             pi.Provider == PaymentProvider.Paymob)
+                .OrderByDescending(pi => pi.CreatedAt)
+                .ThenByDescending(pi => pi.Id)
+                .FirstOrDefaultAsync(cancellationToken);
 
             var claimedMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(claimedIntent?.ProviderMetadata);
             var claimedSession = claimedIntent == null ? null : GetStoredPaymentSession(claimedIntent);
@@ -357,6 +519,8 @@ public class PaymobPaymentService : IPaymobPaymentService
                 !string.IsNullOrWhiteSpace(claimedPaymentKey) &&
                 !string.IsNullOrWhiteSpace(claimedSession?.IframeUrl) &&
                 !string.IsNullOrWhiteSpace(claimedMetadata?.ProtectedPaymobSession) &&
+                claimedIntent.ExpiresAtUtc.HasValue &&
+                claimedIntent.ExpiresAtUtc.Value > DateTime.UtcNow &&
                 !PaymentIntentRoutingMetadataSerializer.HasPendingPaymobCheckpoint(claimedIntent.ProviderMetadata))
             {
                 // PRODUCTION HARDENING: Commit transaction before returning claimed intent
@@ -371,7 +535,8 @@ public class PaymobPaymentService : IPaymobPaymentService
                     OrderId = orderId,
                     OrderNumber = order.OrderNumber,
                     Amount = order.Total,
-                    Currency = order.Currency
+                    Currency = order.Currency,
+                    ExpiresAtUtc = claimedIntent.ExpiresAtUtc.Value
                 };
             }
 
@@ -436,7 +601,8 @@ public class PaymobPaymentService : IPaymobPaymentService
             OrderId = orderId,
             OrderNumber = order.OrderNumber,
             Amount = order.Total,
-            Currency = order.Currency
+            Currency = order.Currency,
+            ExpiresAtUtc = paymentIntent.ExpiresAtUtc!.Value
         };
 
         stopwatch.Stop();
@@ -449,6 +615,105 @@ public class PaymobPaymentService : IPaymobPaymentService
 
     }
 
+    private async Task<PaymobRetryAuthorityDecision> EvaluatePaymobRetryAuthorityAsync(
+        Order order,
+        CorePaymentIntent? latestPaymobIntent,
+        CancellationToken cancellationToken)
+    {
+        if (order.Status != OrderStatus.Pending || order.PaymentStatus != PaymentStatus.Failed)
+        {
+            return PaymobRetryAuthorityDecision.Rejected;
+        }
+
+        if (latestPaymobIntent == null || latestPaymobIntent.Provider != PaymentProvider.Paymob)
+        {
+            return PaymobRetryAuthorityDecision.Rejected;
+        }
+
+        if (!IsRetryableTerminalPaymobIntent(latestPaymobIntent.Status))
+        {
+            return PaymobRetryAuthorityDecision.Rejected;
+        }
+
+        var hasOtherActiveAttempt = await _dbContext.PaymentIntents
+            .AnyAsync(intent =>
+                intent.TenantId == order.TenantId &&
+                intent.OrderId == order.Id &&
+                intent.Provider == PaymentProvider.Paymob &&
+                !intent.IsDeleted &&
+                intent.Id != latestPaymobIntent.Id &&
+                (intent.Status == PaymentIntentStatus.Pending ||
+                 intent.Status == PaymentIntentStatus.Authorized ||
+                 intent.Status == PaymentIntentStatus.AwaitingVerification),
+                cancellationToken);
+
+        return hasOtherActiveAttempt
+            ? PaymobRetryAuthorityDecision.Rejected
+            : PaymobRetryAuthorityDecision.Accepted;
+    }
+
+    private async Task PrepareOrderForPaymobRetryAsync(
+        Order order,
+        DateTime reservationExpiresAtUtc,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        await _retryInventoryAuthority.EnsureRetryReservationAuthorityAsync(
+            order,
+            reservationExpiresAtUtc,
+            cancellationToken);
+
+        await CheckoutInventoryAuthorityGuard.EnsureOrderReservationsActiveAsync(
+            _dbContext,
+            order,
+            cancellationToken);
+
+        PaymentStatusSaveChangesInterceptor.EnableAuthorizedContext();
+        try
+        {
+            if (order.CheckoutState == CheckoutState.Failed || order.CheckoutState == CheckoutState.Expired)
+            {
+                order.TransitionCheckoutState(CheckoutState.PendingPaymentIntent);
+            }
+
+            if (order.CheckoutState == CheckoutState.PendingPaymentIntent)
+            {
+                order.TransitionCheckoutState(CheckoutState.PaymentPending);
+            }
+
+            order.PaymentStatus = PaymentStatus.Pending;
+            order.AcceptPaymentStatusChange();
+            order.IsPaid = false;
+            order.PaidAt = null;
+        }
+        finally
+        {
+            PaymentStatusSaveChangesInterceptor.DisableAuthorizedContext();
+        }
+
+        _logger.LogInformation(
+            "Paymob payment retry authority accepted | TenantId: {TenantId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
+            order.TenantId,
+            order.Id,
+            correlationId);
+    }
+
+    private static bool IsRetryableTerminalPaymobIntent(PaymentIntentStatus status) =>
+        status is PaymentIntentStatus.Failed
+            or PaymentIntentStatus.Cancelled
+            or PaymentIntentStatus.Rejected
+            or PaymentIntentStatus.Expired;
+
+    private static bool IsActivePaymentIntentStatus(PaymentIntentStatus status) =>
+        status is PaymentIntentStatus.Pending
+            or PaymentIntentStatus.Authorized
+            or PaymentIntentStatus.AwaitingVerification;
+
+    private sealed record PaymobRetryAuthorityDecision(bool CanRetry)
+    {
+        public static readonly PaymobRetryAuthorityDecision Accepted = new(true);
+        public static readonly PaymobRetryAuthorityDecision Rejected = new(false);
+    }
     private async Task<PaymobRuntimeApplicationResult> CreatePaymobProviderIntentAsync(
         Guid tenantId,
         Order order,
@@ -685,6 +950,7 @@ public class PaymobPaymentService : IPaymobPaymentService
         var paymentIntent = await _dbContext.PaymentIntents
             .Where(pi => pi.OrderId == orderId && pi.TenantId == tenantId && pi.Provider == PaymentProvider.Paymob)
             .OrderByDescending(pi => pi.CreatedAt)
+            .ThenByDescending(pi => pi.Id)
             .FirstOrDefaultAsync(cancellationToken);
 
         if (paymentIntent == null)
@@ -696,9 +962,15 @@ public class PaymobPaymentService : IPaymobPaymentService
                 PaymentStatus = "NotStarted",
                 PaymobStatus = "none",
                 IsPaid = false,
-                IsPending = false
+                IsPending = false,
+                CanRetryPayment = false
             };
         }
+
+        var retryDecision = await EvaluatePaymobRetryAuthorityAsync(
+            order,
+            paymentIntent,
+            cancellationToken);
 
         var paymobStatus = paymentIntent.Status switch
         {
@@ -717,6 +989,7 @@ public class PaymobPaymentService : IPaymobPaymentService
             PaymobStatus = paymobStatus,
             IsPaid = CanonicalPaymentStatusResolver.IsPaidState(order.PaymentStatus),
             IsPending = paymentIntent.Status == PaymentIntentStatus.Pending,
+            CanRetryPayment = retryDecision.CanRetry,
             FailureReason = paymentIntent.FailureReason,
             TransactionId = paymentIntent.ProviderPaymentId
         };
@@ -802,11 +1075,32 @@ public class PaymobPaymentService : IPaymobPaymentService
             throw new PaymobApiException("Missing transaction object in webhook payload");
         }
 
+        if (!PaymentMethodConfigurationValidator.TryParsePaymobIntegrationIds(
+                paymobConfig.IntegrationId,
+                out var configuredIntegrationIds) ||
+            !payload.Obj.IntegrationId.HasValue ||
+            !configuredIntegrationIds.Any(id => id == payload.Obj.IntegrationId.Value))
+        {
+            throw new PaymentException(
+                "PAYMOB_INTEGRATION_MISMATCH",
+                "Paymob callback integration does not match the tenant payment configuration.");
+        }
+
+        if (!IsPaymobMerchantOwnerValid(paymobConfig.MerchantId, payload.Obj.Owner))
+        {
+            throw new PaymentException(
+                "PAYMOB_MERCHANT_MISMATCH",
+                "Paymob callback merchant owner does not match the tenant payment configuration.");
+        }
+
         _logger.LogInformation(
             "Paymob webhook verified | TransactionId: {TransactionId} | Success: {Success} | IsRefunded: {IsRefunded} | CorrelationId: {CorrelationId}",
             payload.Obj.Id, payload.Obj.Success, payload.Obj.IsRefunded, correlationId);
 
         var transactionId = payload.Obj.Id.ToString();
+        var providerEventId = payload.Obj.IsRefunded
+            ? $"{transactionId}:refund:{payload.Obj.AmountCents ?? 0}"
+            : transactionId;
         
         // PRODUCTION HARDENING: Include refund-specific suffix in idempotency key when IsRefunded is true
         // to allow incremental refund webhooks for the same transaction to be processed.
@@ -900,7 +1194,7 @@ public class PaymobPaymentService : IPaymobPaymentService
             {
                 var preparation = await PrepareWebhookLogAsync(
                     tenantId,
-                    transactionId,
+                    providerEventId,
                     eventType,
                     rawPayload,
                     hmacSignature,
@@ -953,7 +1247,7 @@ public class PaymobPaymentService : IPaymobPaymentService
                 await transaction.RollbackAsync(cancellationToken);
                 _dbContext.ChangeTracker.Clear();
 
-                var existingLog = await TryGetWebhookLogAsync(tenantId, transactionId, cancellationToken);
+                var existingLog = await TryGetWebhookLogAsync(tenantId, providerEventId, cancellationToken);
                 if (existingLog != null &&
                     (existingLog.ProcessingStatus == WebhookProcessingStatus.Completed ||
                      existingLog.ProcessingStatus == WebhookProcessingStatus.Skipped))
@@ -1052,7 +1346,7 @@ public class PaymobPaymentService : IPaymobPaymentService
                 await PersistWebhookFailureAsync(
                     webhookLog,
                     tenantId,
-                    transactionId,
+                    providerEventId,
                     eventType,
                     rawPayload,
                     hmacSignature,
@@ -1086,7 +1380,11 @@ public class PaymobPaymentService : IPaymobPaymentService
         // Find our payment intent by Paymob order ID
         var intent = await _dbContext.PaymentIntents
             .Include(pi => pi.Order)
-            .FirstOrDefaultAsync(pi => pi.ProviderIntentId == paymobOrderId && pi.TenantId == tenantId, cancellationToken);
+            .FirstOrDefaultAsync(
+                pi => pi.Provider == PaymentProvider.Paymob &&
+                      pi.ProviderIntentId == paymobOrderId &&
+                      pi.TenantId == tenantId,
+                cancellationToken);
 
         // HARDENING: Fallback lookup by scanning pending Paymob intents if ProviderIntentId lookup fails.
         // This handles the edge case where SaveChangesAsync failed after receiving Paymob response,
@@ -1109,8 +1407,7 @@ public class PaymobPaymentService : IPaymobPaymentService
                 throw new PaymentIntentNotFoundException(paymobOrderId);
             }
 
-            // Parse MerchantOrderId as Order.Id (Guid)
-            if (!Guid.TryParse(merchantOrderId, out var orderId))
+            if (!Guid.TryParse(merchantOrderId, out var merchantReferenceId))
             {
                 _logger.LogError(
                     "MerchantOrderId is not a valid Guid, cannot perform deterministic fallback lookup | MerchantOrderId: {MerchantOrderId} | PaymobOrderId: {PaymobOrderId} | CorrelationId: {CorrelationId}",
@@ -1119,18 +1416,34 @@ public class PaymobPaymentService : IPaymobPaymentService
                 throw new PaymentIntentNotFoundException(paymobOrderId);
             }
 
-            // Deterministically match by OrderId from webhook's MerchantOrderId
-            // Include Cancelled intents to handle rehydration scenarios where the original intent
-            // was superseded but the original Paymob session succeeded
+            // New attempts use the local payment-intent ID as the provider merchant
+            // reference. The order-ID lookup remains only for unambiguous legacy rows.
             intent = await _dbContext.PaymentIntents
                 .Include(pi => pi.Order)
-                .FirstOrDefaultAsync(pi => 
-                    pi.OrderId == orderId &&
+                .FirstOrDefaultAsync(pi =>
+                    pi.Id == merchantReferenceId &&
                     pi.TenantId == tenantId && 
                     pi.Provider == PaymentProvider.Paymob && 
                     (pi.Status == PaymentIntentStatus.Pending || pi.Status == PaymentIntentStatus.Cancelled) &&
                     (pi.ProviderIntentId == null || pi.ProviderIntentId == string.Empty),
                     cancellationToken);
+
+            if (intent == null)
+            {
+                var legacyCandidates = await _dbContext.PaymentIntents
+                    .Include(pi => pi.Order)
+                    .Where(pi =>
+                        pi.OrderId == merchantReferenceId &&
+                        pi.TenantId == tenantId &&
+                        pi.Provider == PaymentProvider.Paymob &&
+                        (pi.Status == PaymentIntentStatus.Pending || pi.Status == PaymentIntentStatus.Cancelled) &&
+                        (pi.ProviderIntentId == null || pi.ProviderIntentId == string.Empty))
+                    .OrderByDescending(pi => pi.CreatedAt)
+                    .ThenByDescending(pi => pi.Id)
+                    .ToListAsync(cancellationToken);
+
+                intent = legacyCandidates.Count == 1 ? legacyCandidates[0] : null;
+            }
 
             if (intent != null)
             {
@@ -1139,8 +1452,8 @@ public class PaymobPaymentService : IPaymobPaymentService
                     : string.Empty;
                     
                 _logger.LogInformation(
-                    "Payment intent found via deterministic fallback (matched by OrderId from MerchantOrderId), backfilling ProviderIntentId{StatusNote} | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | PaymobOrderId: {PaymobOrderId} | Status: {Status} | CorrelationId: {CorrelationId}",
-                    statusNote, intent.Id, orderId, paymobOrderId, intent.Status, correlationId);
+                    "Payment intent found via deterministic merchant reference fallback, backfilling ProviderIntentId{StatusNote} | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | PaymobOrderId: {PaymobOrderId} | Status: {Status} | CorrelationId: {CorrelationId}",
+                    statusNote, intent.Id, intent.OrderId, paymobOrderId, intent.Status, correlationId);
                 
                 intent.ProviderIntentId = paymobOrderId;
 
@@ -1150,7 +1463,7 @@ public class PaymobPaymentService : IPaymobPaymentService
                 {
                     _logger.LogInformation(
                         "Clearing stale failure metadata from revived intent | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
-                        intent.Id, orderId, correlationId);
+                        intent.Id, intent.OrderId, correlationId);
                     
                     intent.FailureCode = null;
                     intent.FailureReason = null;
@@ -1162,8 +1475,8 @@ public class PaymobPaymentService : IPaymobPaymentService
             else
             {
                 _logger.LogError(
-                    "No matching payment intent found via deterministic fallback | OrderId: {OrderId} | PaymobOrderId: {PaymobOrderId} | CorrelationId: {CorrelationId}",
-                    orderId, paymobOrderId, correlationId);
+                    "No unambiguous payment intent found via merchant reference fallback | MerchantOrderId: {MerchantOrderId} | PaymobOrderId: {PaymobOrderId} | CorrelationId: {CorrelationId}",
+                    merchantOrderId, paymobOrderId, correlationId);
                 
                 throw new PaymentIntentNotFoundException(paymobOrderId);
             }
@@ -1177,14 +1490,82 @@ public class PaymobPaymentService : IPaymobPaymentService
         webhookLog.PaymentIntentId = intent.Id;
         webhookLog.OrderId = intent.OrderId;
 
-        if (transaction.IsRefunded && CanReconcileProviderRefund(intent.Order.PaymentStatus))
+        var finality = PaymobTransactionFinalityClassifier.Classify(
+            transaction.Pending,
+            transaction.Success,
+            transaction.IsAuth,
+            transaction.IsCapture,
+            transaction.IsStandalonePayment,
+            transaction.IsVoided,
+            transaction.IsRefunded,
+            transaction.ErrorOccured);
+
+        if (finality == PaymobTransactionFinality.Refunded)
         {
+            if (!CanReconcileProviderRefund(intent.Order.PaymentStatus))
+            {
+                throw new InvalidOperationException(
+                    $"Paymob refund webhook {transaction.Id} arrived before captured payment authority was available; retry reconciliation.");
+            }
+
             return await HandlePaymentRefundedAsync(intent, transaction, webhookLog, correlationId, cancellationToken);
         }
 
-        return transaction.Success && !transaction.IsVoided && !transaction.IsRefunded
+        if (finality == PaymobTransactionFinality.Authorized)
+        {
+            return await HandlePaymentAuthorizedAsync(intent, transaction, webhookLog, correlationId, cancellationToken);
+        }
+
+        return finality == PaymobTransactionFinality.Captured
             ? await HandlePaymentSuccessAsync(intent, transaction, webhookLog, correlationId, cancellationToken)
             : await HandlePaymentFailureAsync(intent, transaction, webhookLog, correlationId, cancellationToken);
+    }
+
+    private async Task<PaymobWebhookResultDto> HandlePaymentAuthorizedAsync(
+        CorePaymentIntent intent,
+        PaymobTransactionObject transaction,
+        PaymentWebhookLog webhookLog,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var lifecycleResult = await _paymentLifecycleService.HandlePaymentResultAsync(
+            new HandlePaymentResultRequest
+            {
+                OrderId = intent.OrderId,
+                PaymentIntentId = intent.Id,
+                Outcome = PaymentLifecycleOutcome.Authorized,
+                Source = PaymentLifecycleSource.GatewayWebhook,
+                Gateway = "paymob",
+                PaymentReference = intent.ProviderIntentId ?? intent.PaymentReference,
+                ProviderPaymentId = transaction.Id.ToString(),
+                Amount = intent.Amount,
+                Currency = intent.Currency,
+                WebhookEventId = transaction.Id.ToString(),
+                ProcessedAtUtc = DateTime.UtcNow
+            },
+            cancellationToken);
+
+        if (!lifecycleResult.Success)
+        {
+            throw new InvalidOperationException(
+                $"Failed to record Paymob payment authorization: {lifecycleResult.ErrorMessage}");
+        }
+
+        _logger.LogInformation(
+            "Paymob payment authorized without capture | OrderId: {OrderId} | TransactionId: {TransactionId} | CorrelationId: {CorrelationId}",
+            intent.OrderId,
+            transaction.Id,
+            correlationId);
+
+        return new PaymobWebhookResultDto
+        {
+            Processed = true,
+            Message = "Payment authorized; capture is still required",
+            EventLogId = webhookLog.Id,
+            OrderId = intent.OrderId.ToString(),
+            TransactionId = transaction.Id.ToString(),
+            EventType = "payment_authorized"
+        };
     }
 
     /// <summary>
@@ -1251,9 +1632,9 @@ public class PaymobPaymentService : IPaymobPaymentService
                 $"Failed to capture Paymob payment: {lifecycleResult.ErrorMessage}");
         }
 
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // Authoritative outcome events are staged inside PaymentLifecycleService.
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // Recovery path: ensure inventory commit and downstream events fire even if
         // payment state was already committed on a prior attempt.
         
@@ -1412,7 +1793,9 @@ public class PaymobPaymentService : IPaymobPaymentService
             {
                 OrderId = intent.OrderId,
                 PaymentIntentId = intent.Id,
-                Outcome = PaymentLifecycleOutcome.Failed,
+                Outcome = transaction.IsVoided
+                    ? PaymentLifecycleOutcome.Cancelled
+                    : PaymentLifecycleOutcome.Failed,
                 Source = PaymentLifecycleSource.GatewayWebhook,
                 Gateway = "paymob",
                 PaymentReference = intent.ProviderIntentId ?? intent.PaymentReference,
@@ -1432,9 +1815,9 @@ public class PaymobPaymentService : IPaymobPaymentService
                 $"Failed to record Paymob payment failure: {lifecycleResult.ErrorMessage}");
         }
 
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // Authoritative outcome events are staged inside PaymentLifecycleService.
-        // ═══════════════════════════════════════════════════════════════════════
+        // ----------------------------------------------------------------------
         // Recovery path: ensure inventory release and downstream events fire even if
         // payment state was already committed on a prior attempt.
         
@@ -1548,6 +1931,21 @@ public class PaymobPaymentService : IPaymobPaymentService
                 continue;
             }
 
+
+            if (!callbackParams.TryGetValue("integration_id", out var callbackIntegrationId) ||
+                !int.TryParse(callbackIntegrationId, out var parsedCallbackIntegrationId) ||
+                !PaymentMethodConfigurationValidator.TryParsePaymobIntegrationIds(
+                    paymobConfig.IntegrationId,
+                    out var configuredIntegrationIds) ||
+                !configuredIntegrationIds.Contains(parsedCallbackIntegrationId))
+            {
+                _logger.LogWarning(
+                    "Paymob callback integration mismatch | PaymentIntentId: {PaymentIntentId} | TenantId: {TenantId}",
+                    candidate.Id,
+                    candidate.TenantId);
+                continue;
+            }
+
             var routingMetadata = PaymentIntentRoutingMetadataSerializer.Deserialize(candidate.ProviderMetadata);
             if (!PaymentIntentRoutingMetadataSerializer.MatchesStoredIntent(routingMetadata, candidate.TenantId, candidate.OrderId))
             {
@@ -1646,16 +2044,60 @@ public class PaymobPaymentService : IPaymobPaymentService
         }
 
         var configuration = EvaluatePaymentMethodConfiguration(paymentMethod, "status");
-        var validationMessage = configuration.IsConfigurationValid
-            ? null
-            : configuration.ValidationErrors.FirstOrDefault() ?? "Paymob configuration is incomplete";
+        if (!paymentMethod.IsEnabled)
+        {
+            return new PaymobConfigurationStatusDto
+            {
+                IsEnabled = false,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = "PAYMOB_PAYMENT_METHOD_DISABLED"
+            };
+        }
+
+        if (!configuration.IsConfigurationValid)
+        {
+            return new PaymobConfigurationStatusDto
+            {
+                IsEnabled = true,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = configuration.ValidationErrors.FirstOrDefault() ?? "Paymob configuration is incomplete"
+            };
+        }
+
+        try
+        {
+            await _tenantConfigurationResolver.ResolveCredentialsAsync(
+                tenantId,
+                PaymobOperationalCapability.PaymentIntent,
+                cancellationToken);
+            await _tenantConfigurationResolver.ResolveCredentialsAsync(
+                tenantId,
+                PaymobOperationalCapability.Webhook,
+                cancellationToken);
+            await _tenantConfigurationResolver.ResolveCredentialsAsync(
+                tenantId,
+                PaymobOperationalCapability.Callback,
+                cancellationToken);
+        }
+        catch (PaymentException exception)
+        {
+            return new PaymobConfigurationStatusDto
+            {
+                IsEnabled = true,
+                IsConfigured = false,
+                IsSandbox = paymentMethod.IsSandbox,
+                ValidationMessage = exception.ErrorCode
+            };
+        }
 
         return new PaymobConfigurationStatusDto
         {
-            IsEnabled = paymentMethod.IsEnabled,
-            IsConfigured = configuration.IsConfigurationValid,
+            IsEnabled = true,
+            IsConfigured = true,
             IsSandbox = paymentMethod.IsSandbox,
-            ValidationMessage = validationMessage
+            ValidationMessage = null
         };
     }
 
@@ -1901,6 +2343,18 @@ public class PaymobPaymentService : IPaymobPaymentService
     {
         var decimalPlaces = PointOfSale.Infrastructure.Payments.CurrencyHelper.GetDecimalPlaces(currency);
         return amount / (decimal)Math.Pow(10, decimalPlaces);
+    }
+
+    private static bool IsPaymobMerchantOwnerValid(string? configuredMerchantId, long? callbackOwner)
+    {
+        if (string.IsNullOrWhiteSpace(configuredMerchantId))
+        {
+            return true;
+        }
+
+        return long.TryParse(configuredMerchantId.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var merchantId) &&
+               callbackOwner.HasValue &&
+               callbackOwner.Value == merchantId;
     }
 
     private static string GeneratePaymentReference(Guid orderId)

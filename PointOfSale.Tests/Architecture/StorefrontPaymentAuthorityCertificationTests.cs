@@ -76,13 +76,16 @@ public sealed class StorefrontPaymentAuthorityCertificationTests
         var adminManual = ReadRepoFile("PointOfSale.API/Controllers/AdminManualPaymentController.cs");
         var lifecycle = ReadRepoFile("PointOfSale.Infrastructure/Payments/PaymentLifecycleService.cs");
         var manualStateMachine = ReadRepoFile("PointOfSale.API/Services/Payments/ManualWalletStateMachine.cs");
+        var reviewApplication = ReadRepoFile("PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentRuntimeApplicationService.cs");
         var fulfillment = ReadRepoFile("PointOfSale.Infrastructure/Fulfillment/OrderFulfillmentService.cs");
 
         Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", adminManual, StringComparison.Ordinal);
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", adminManual, StringComparison.Ordinal);
-        Assert.Contains("ManualWalletStateMachine.EnsureValidTransition", adminManual, StringComparison.Ordinal);
-        Assert.Contains("PaymentLifecycleSource.PaymentReviewApproval", adminManual, StringComparison.Ordinal);
-        Assert.Contains("PaymentLifecycleSource.PaymentReviewRejection", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.ApproveAsync", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.RejectAsync", adminManual, StringComparison.Ordinal);
+        Assert.DoesNotContain("ManualWalletStateMachine.EnsureValidTransition", adminManual, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewApproval", reviewApplication, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewRejection", reviewApplication, StringComparison.Ordinal);
 
         Assert.Contains("PaymentIntentStatus.AwaitingVerification", manualStateMachine, StringComparison.Ordinal);
         Assert.Contains("PaymentIntentStatus.Rejected", manualStateMachine, StringComparison.Ordinal);

@@ -1112,17 +1112,34 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
             return;
         }
 
+        var normalizedChanges = pendingChanges
+            .GroupBy(change => (change.VariantId, change.WarehouseId))
+            .Select(group =>
+            {
+                var first = group.First();
+                var last = group.Last();
+                return new PendingRepositoryStockSyncChange(
+                    first.VariantId,
+                    first.WarehouseId,
+                    first.OldQuantity,
+                    last.NewQuantity,
+                    last.Reason,
+                    last.ReferenceId,
+                    last.ReferenceType);
+            })
+            .ToList();
+
         await TouchVariantStockTimestampsAsync(
             tenantId,
-            pendingChanges.Select(change => change.VariantId),
+            normalizedChanges.Select(change => change.VariantId),
             cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
-        var variantIds = pendingChanges
+        var variantIds = normalizedChanges
             .Select(change => change.VariantId)
             .Distinct()
             .ToList();
-        var warehouseIds = pendingChanges
+        var warehouseIds = normalizedChanges
             .Select(change => change.WarehouseId)
             .Distinct()
             .ToList();
@@ -1165,7 +1182,7 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
             })
             .ToDictionaryAsync(item => item.Id, item => item.Name, cancellationToken);
 
-        foreach (var change in pendingChanges)
+        foreach (var change in normalizedChanges)
         {
             if (!variantMetadata.TryGetValue(change.VariantId, out var variant))
             {

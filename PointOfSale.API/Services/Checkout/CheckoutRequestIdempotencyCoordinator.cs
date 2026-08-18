@@ -321,11 +321,10 @@ public sealed class CheckoutRequestIdempotencyCoordinator : ICheckoutRequestIdem
     {
         var currentRecord = await LoadOwnedRecordForMutationAsync(record, cancellationToken);
 
-        if (currentRecord.OrderId != orderId || !currentRecord.CompletedAtUtc.HasValue)
+        if (currentRecord.OrderId != orderId)
         {
             var nowUtc = DateTime.UtcNow;
             currentRecord.OrderId = orderId;
-            currentRecord.CompletedAtUtc ??= nowUtc;
             currentRecord.UpdatedAt = nowUtc;
         }
 
@@ -369,6 +368,7 @@ public sealed class CheckoutRequestIdempotencyCoordinator : ICheckoutRequestIdem
 
         var currentRecord = await _context.OrderRequestIdempotencyRecords
             .IgnoreQueryFilters()
+            .AsNoTracking()
             .FirstOrDefaultAsync(item => item.Id == record.Id, cancellationToken);
 
         if (currentRecord == null)
@@ -393,7 +393,26 @@ public sealed class CheckoutRequestIdempotencyCoordinator : ICheckoutRequestIdem
             return;
         }
 
-        _context.OrderRequestIdempotencyRecords.Remove(currentRecord);
+        if (IsPostgresProvider() || IsSqlServerProvider() || IsSqliteProvider())
+        {
+            var rowsDeleted = await DeleteUncompletedOwnedClaimAsync(currentRecord, cancellationToken);
+            if (rowsDeleted == 0)
+            {
+                _logger.LogInformation(
+                    "Checkout idempotency cleanup found no uncompleted owned claim to delete | RecordId: {RecordId}",
+                    currentRecord.Id);
+            }
+
+            DetachTrackedRecord(currentRecord.Id);
+            return;
+        }
+
+        var trackedRecord = _context.ChangeTracker
+            .Entries<OrderRequestIdempotency>()
+            .Select(entry => entry.Entity)
+            .FirstOrDefault(entity => entity.Id == currentRecord.Id);
+
+        _context.OrderRequestIdempotencyRecords.Remove(trackedRecord ?? currentRecord);
         await _context.SaveChangesAsync(cancellationToken);
     }
 
@@ -402,6 +421,9 @@ public sealed class CheckoutRequestIdempotencyCoordinator : ICheckoutRequestIdem
 
     private bool IsSqlServerProvider() =>
         _context.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;
+
+    private bool IsSqliteProvider() =>
+        _context.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
 
     private async Task<OrderRequestIdempotency> LoadOwnedRecordAsync(
         OrderRequestIdempotency record,
@@ -616,6 +638,33 @@ public sealed class CheckoutRequestIdempotencyCoordinator : ICheckoutRequestIdem
 
         _context.OrderRequestIdempotencyRecords.Remove(record);
         return await _context.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<int> DeleteUncompletedOwnedClaimAsync(
+        OrderRequestIdempotency record,
+        CancellationToken cancellationToken)
+    {
+        return await _context.OrderRequestIdempotencyRecords
+            .IgnoreQueryFilters()
+            .Where(item =>
+                item.Id == record.Id &&
+                item.TenantId == record.TenantId &&
+                item.ClaimToken == record.ClaimToken &&
+                item.OrderId == null &&
+                item.ResponseStatusCode == null &&
+                item.CompletedAtUtc == null)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
+    private void DetachTrackedRecord(Guid recordId)
+    {
+        foreach (var entry in _context.ChangeTracker
+                     .Entries<OrderRequestIdempotency>()
+                     .Where(entry => entry.Entity.Id == recordId)
+                     .ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
     }
 
     private static string BuildStorageKey(string checkoutId) =>

@@ -76,18 +76,21 @@ public sealed class CommerceHubPaymentOrchestrationArchitectureTests
     }
 
     [Fact]
-    public void ProviderGateways_MustNotBeRegisteredAsCommerceHubOnlineRuntimeAuthority()
+    public void StorefrontProviderGateways_MustCoexistWithoutReplacingCommerceHubRuntimeAuthority()
     {
         var program = ReadRepoFile("PointOfSale.API/Program.cs");
 
-        Assert.DoesNotContain(
+        Assert.Contains(
             "AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IPaymentGateway, PointOfSale.API.Services.Payments.ProviderContracts.PaymentGateway>",
             program,
             StringComparison.Ordinal);
-        Assert.DoesNotContain(
+        Assert.Contains(
             "AddScoped<PointOfSale.API.Services.Payments.ProviderContracts.IProviderPaymentGateway",
             program,
             StringComparison.Ordinal);
+
+        var commerceHubController = ReadRepoFile("PointOfSale.API/Controllers/CommerceHubPaymentsController.cs");
+        Assert.DoesNotContain("IPaymentGateway", commerceHubController, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

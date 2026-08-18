@@ -109,6 +109,49 @@ public sealed class CheckoutPromotionCorrectnessControllerTests
     }
 
     [Fact]
+    public async Task Checkout_WhenPhoneVerificationIsRequired_ReturnsBadRequestWithActionableCode()
+    {
+        var tenantId = Guid.NewGuid();
+        const string sessionId = "guest-session-phone";
+        var checkoutService = BuildThrowingCheckoutService(
+            tenantId,
+            sessionId,
+            new CheckoutException(
+                "PHONE_VERIFICATION_REQUIRED",
+                "Please verify your phone number before placing the order.",
+                "PhoneVerification"));
+        var controller = BuildController(checkoutService.Object, tenantId, sessionId);
+
+        var result = await controller.Checkout(BuildValidRequest(Guid.NewGuid()), CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status400BadRequest, objectResult.StatusCode);
+        var error = Assert.IsType<ApiErrorResponse>(objectResult.Value);
+        Assert.Equal("PHONE_VERIFICATION_REQUIRED", error.Code);
+        Assert.Contains("verify", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Checkout_WhenUnexpectedFailureOccurs_ReturnsInternalServerError()
+    {
+        var tenantId = Guid.NewGuid();
+        const string sessionId = "guest-session-unexpected";
+        var checkoutService = BuildThrowingCheckoutService(
+            tenantId,
+            sessionId,
+            new InvalidOperationException("sensitive root failure"));
+        var controller = BuildController(checkoutService.Object, tenantId, sessionId);
+
+        var result = await controller.Checkout(BuildValidRequest(Guid.NewGuid()), CancellationToken.None);
+
+        var objectResult = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status500InternalServerError, objectResult.StatusCode);
+        var error = Assert.IsType<ApiErrorResponse>(objectResult.Value);
+        Assert.Equal("UNEXPECTED_CHECKOUT_FAILURE", error.Code);
+        Assert.DoesNotContain("sensitive", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task PreviewPricing_WhenPromotionCalculationFails_ReturnsServiceUnavailable()
     {
         var tenantId = Guid.NewGuid();
@@ -174,10 +217,49 @@ public sealed class CheckoutPromotionCorrectnessControllerTests
         return httpContext;
     }
 
+    private static Mock<ICheckoutService> BuildThrowingCheckoutService(
+        Guid tenantId,
+        string sessionId,
+        Exception exception)
+    {
+        var checkoutService = new Mock<ICheckoutService>();
+        checkoutService
+            .Setup(service => service.ProcessCheckoutAsync(
+                tenantId,
+                It.IsAny<string>(),
+                "session",
+                sessionId,
+                null,
+                It.IsAny<string>(),
+                It.IsAny<CheckoutRequestDto>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(exception);
+        return checkoutService;
+    }
+
+    private static CheckoutController BuildController(
+        ICheckoutService checkoutService,
+        Guid tenantId,
+        string sessionId) =>
+        new(
+            checkoutService,
+            Mock.Of<ICheckoutAttachmentService>(),
+            NullLogger<CheckoutController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = BuildHttpContext(tenantId, sessionId)
+            }
+        };
+
     private static CheckoutRequestDto BuildValidRequest(Guid cartId) =>
         new()
         {
             CartId = cartId,
+            CheckoutSessionId = Guid.NewGuid(),
+            WarehouseResolutionId = Guid.NewGuid(),
+            WarehouseResolutionVersion = 1,
             ShippingMethodId = Guid.NewGuid(),
             PaymentMethod = "COD",
             ShippingAddress = new AddressDto

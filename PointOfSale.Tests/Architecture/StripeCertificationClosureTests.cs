@@ -21,12 +21,15 @@ public sealed class StripeCertificationClosureTests
     public void ReplayMigration_MustBeDiscoverableAndSnapshotConsistent()
     {
         var migration = CertificationSource.ReadRepoFile(
-            "PointOfSale.Infrastructure/Migrations/20260712160000_StripeContractClosure2WebhookReplay.cs");
+            "PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
+        var migrationDesigner = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.Designer.cs");
         var snapshot = CertificationSource.ReadRepoFile(
             "PointOfSale.Infrastructure/Migrations/ApplicationDbContextModelSnapshot.cs");
 
-        Assert.Contains("[DbContext(typeof(ApplicationDbContext))]", migration, StringComparison.Ordinal);
-        Assert.Contains("[Migration(\"20260712160000_StripeContractClosure2WebhookReplay\")]", migration, StringComparison.Ordinal);
+        Assert.Contains("[DbContext(typeof(ApplicationDbContext))]", migrationDesigner, StringComparison.Ordinal);
+        Assert.Contains("[Migration(\"20260723214642_Baseline_Recovery3\")]", migrationDesigner, StringComparison.Ordinal);
+        Assert.Contains("IX_StripeWebhookReplayRecords_Tenant_Provider_Event", migration, StringComparison.Ordinal);
         Assert.Contains("PointOfSale.Core.Entities.StripeWebhookReplayRecord", snapshot, StringComparison.Ordinal);
         Assert.Contains("IX_StripeWebhookReplayRecords_Tenant_Provider_Event", snapshot, StringComparison.Ordinal);
         Assert.Contains("StripeWebhookReplayRecords", snapshot, StringComparison.Ordinal);
@@ -176,7 +179,7 @@ public sealed class StripeCertificationClosureTests
     }
 
     [Fact]
-    public void WebhookAdmission_MustKeepNegativeTerminalEvidenceOutOfFinancialRuntime()
+    public void WebhookAdmission_MustKeepRetryableFailureAndCancellationOutOfFinancialRuntime()
     {
         var failed = StripeWebhookOutcomeAdmissionService.Evaluate(new Event
         {
@@ -199,9 +202,9 @@ public sealed class StripeCertificationClosureTests
             Type = "charge.refunded"
         });
 
-        Assert.Equal(StripeWebhookOutcomeClassification.Terminal, failed.Classification);
+        Assert.Equal(StripeWebhookOutcomeClassification.NonTerminal, failed.Classification);
         Assert.False(failed.AdmittedToRuntime);
-        Assert.Equal("TERMINAL_NEGATIVE_APPLICATION_LIFECYCLE", failed.ReasonCode);
+        Assert.Equal("RETRYABLE_PAYMENT_ATTEMPT_FAILED", failed.ReasonCode);
         Assert.False(cancelled.AdmittedToRuntime);
         Assert.True(succeeded.AdmittedToRuntime);
         Assert.True(refunded.AdmittedToRuntime);

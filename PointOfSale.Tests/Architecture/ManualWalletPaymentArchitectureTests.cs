@@ -21,7 +21,7 @@ public class ManualWalletPaymentArchitectureTests
     #region Controller Architecture Tests
 
     [Fact]
-    public void AdminManualPaymentController_MustReference_IPaymentLifecycleService()
+    public void AdminManualPaymentController_MustReference_ReviewApplicationService()
     {
         // Arrange
         var solutionDir = GetSolutionDirectory();
@@ -38,9 +38,9 @@ public class ManualWalletPaymentArchitectureTests
 
         // Act & Assert
         Assert.True(
-            sourceCode.Contains("IPaymentLifecycleService"),
-            "AdminManualPaymentController MUST reference IPaymentLifecycleService. " +
-            "All wallet payment approvals/rejections MUST go through the lifecycle service " +
+            sourceCode.Contains("IManualPaymentReviewApplicationService"),
+            "AdminManualPaymentController MUST reference IManualPaymentReviewApplicationService. " +
+            "All wallet payment approvals/rejections MUST go through the review application service and lifecycle service " +
             "to ensure ledger journal creation (DEBIT 1140 Wallet Clearing, CREDIT 4020 Revenue).");
     }
 
@@ -61,11 +61,11 @@ public class ManualWalletPaymentArchitectureTests
         var sourceCode = File.ReadAllText(controllerPath);
 
         // Act
-        var hasField = sourceCode.Contains("_paymentLifecycleService");
+        var hasField = sourceCode.Contains("_manualPaymentReviewApplicationService");
 
         // Assert
         Assert.True(hasField,
-            "AdminManualPaymentController MUST have a _paymentLifecycleService field. " +
+            "AdminManualPaymentController MUST have a _manualPaymentReviewApplicationService field. " +
             "This is the ONLY authorized path for wallet payment mutations.");
     }
 
@@ -84,15 +84,18 @@ public class ManualWalletPaymentArchitectureTests
         }
 
         var sourceCode = File.ReadAllText(controllerPath);
+        var applicationService = File.ReadAllText(Path.Combine(solutionDir,
+            "PointOfSale.API", "Services", "Payments", "ManualPayment", "ManualPaymentRuntimeApplicationService.cs"));
 
         var confirmBlock = ExtractMethodBlock(sourceCode, "ConfirmPayment(");
-        var callsLifecycle = confirmBlock.Contains("HandlePaymentResultAsync");
-        var usesSuccessOutcome = confirmBlock.Contains("PaymentLifecycleOutcome.Succeeded");
-        var usesWalletApprovalSource = confirmBlock.Contains("PaymentLifecycleSource.PaymentReviewApproval");
+        var callsReviewApplication = confirmBlock.Contains("_manualPaymentReviewApplicationService.ApproveAsync");
+        var callsLifecycle = applicationService.Contains("_paymentLifecycleService.HandlePaymentResultAsync");
+        var usesSuccessOutcome = applicationService.Contains("PaymentLifecycleOutcome.Succeeded");
+        var usesWalletApprovalSource = applicationService.Contains("PaymentLifecycleSource.PaymentReviewApproval");
 
         // Assert
-        Assert.True(callsLifecycle && usesSuccessOutcome && usesWalletApprovalSource,
-            "AdminManualPaymentController MUST call IPaymentLifecycleService.HandlePaymentResultAsync() " +
+        Assert.True(callsReviewApplication && callsLifecycle && usesSuccessOutcome && usesWalletApprovalSource,
+            "AdminManualPaymentController MUST call the review application service, which must route to IPaymentLifecycleService.HandlePaymentResultAsync() " +
             "with Outcome=Succeeded and Source=WalletApproval for manual payment confirmations. " +
             "Direct PaymentStatus writes are FORBIDDEN.");
     }
@@ -112,15 +115,18 @@ public class ManualWalletPaymentArchitectureTests
         }
 
         var sourceCode = File.ReadAllText(controllerPath);
+        var applicationService = File.ReadAllText(Path.Combine(solutionDir,
+            "PointOfSale.API", "Services", "Payments", "ManualPayment", "ManualPaymentRuntimeApplicationService.cs"));
 
         var rejectBlock = ExtractMethodBlock(sourceCode, "RejectPayment(");
-        var callsLifecycle = rejectBlock.Contains("HandlePaymentResultAsync");
-        var usesRejectedOutcome = rejectBlock.Contains("PaymentLifecycleOutcome.Rejected");
-        var usesWalletRejectionSource = rejectBlock.Contains("PaymentLifecycleSource.PaymentReviewRejection");
+        var callsReviewApplication = rejectBlock.Contains("_manualPaymentReviewApplicationService.RejectAsync");
+        var callsLifecycle = applicationService.Contains("_paymentLifecycleService.HandlePaymentResultAsync");
+        var usesRejectedOutcome = applicationService.Contains("PaymentLifecycleOutcome.Rejected");
+        var usesWalletRejectionSource = applicationService.Contains("PaymentLifecycleSource.PaymentReviewRejection");
 
         // Assert
-        Assert.True(callsLifecycle && usesRejectedOutcome && usesWalletRejectionSource,
-            "AdminManualPaymentController MUST call IPaymentLifecycleService.HandlePaymentResultAsync() " +
+        Assert.True(callsReviewApplication && callsLifecycle && usesRejectedOutcome && usesWalletRejectionSource,
+            "AdminManualPaymentController MUST call the review application service, which must route to IPaymentLifecycleService.HandlePaymentResultAsync() " +
             "with Outcome=Rejected and Source=WalletRejection for manual payment rejections.");
     }
 

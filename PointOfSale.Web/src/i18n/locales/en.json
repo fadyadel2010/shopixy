@@ -4615,6 +4615,7 @@
     "rejectionReasonPlaceholder": "Reason for rejection (sent to customer)...",
     "messages": {
       "loadError": "Failed to load pending payments",
+      "proofLoadError": "Failed to load payment proof",
       "approveConfirm": "Are you sure you want to approve this payment?",
       "approveSuccess": "Payment confirmed successfully",
       "approveError": "Failed to approve payment",

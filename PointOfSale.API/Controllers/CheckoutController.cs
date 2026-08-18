@@ -12,6 +12,7 @@ using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.Http;
 using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
+using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Storefront;
 
 namespace PointOfSale.API.Controllers;
@@ -123,6 +124,7 @@ public class CheckoutController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     [EnableRateLimiting("checkout")]
     public async Task<IActionResult> Checkout(
@@ -152,6 +154,15 @@ public class CheckoutController : ControllerBase
                 errorCode, validation.TenantId, traceId);
             return BadRequest(new ApiErrorResponse(errorCode, errorMessage!, traceId));
         }
+
+        using var checkoutLogScope = _logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["Operation"] = "StorefrontCheckout",
+            ["TenantId"] = validation.TenantId,
+            ["CartId"] = request.CartId,
+            ["CheckoutSessionId"] = request.CheckoutSessionId,
+            ["TraceId"] = traceId,
+        });
 
         _logger.LogInformation(
             "Checkout request | TenantId: {TenantId} | CartId: {CartId} | CheckoutId: {CheckoutId} | OwnerType: {OwnerType} | TraceId: {TraceId}",
@@ -331,6 +342,49 @@ public class CheckoutController : ControllerBase
                 traceId);
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (PaymentOrderNotFoundException ex)
+        {
+            return NotFound(new ApiErrorResponse(ex.ErrorCode, "Order not found", traceId));
+        }
+        catch (PaymentUnauthorizedAccessException ex)
+        {
+            _logger.LogWarning(
+                "Checkout payment ownership rejected | OrderId: {OrderId} | TraceId: {TraceId}",
+                ex.OrderId,
+                traceId);
+            return NotFound(new ApiErrorResponse(ex.ErrorCode, "Order not found", traceId));
+        }
+        catch (PaymentOrderInvalidStateException ex)
+        {
+            return Conflict(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentMismatchException ex)
+        {
+            return Conflict(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentProviderNotSupportedException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentManualWalletNotConfiguredException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentManualWalletProofException ex)
+        {
+            return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentException ex)
+        {
+            _logger.LogError(
+                ex,
+                "Checkout payment runtime unavailable | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                ex.ErrorCode,
+                traceId);
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new ApiErrorResponse(ex.ErrorCode, "The selected payment provider is temporarily unavailable.", traceId));
+        }
         catch (WarehouseResolutionException ex)
         {
             _logger.LogWarning(
@@ -369,19 +423,36 @@ public class CheckoutController : ControllerBase
         }
         catch (CheckoutException ex)
         {
-            _logger.LogError(ex,
-                "Checkout failed | Step: {Step} | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
-                ex.Step, ex.ErrorCode, traceId);
-            return StatusCode(StatusCodes.Status500InternalServerError,
-                new ApiErrorResponse(ex.ErrorCode, "Checkout could not be completed. Please try again.", traceId));
+            var statusCode = ResolveCheckoutExceptionStatusCode(ex.ErrorCode);
+            if (statusCode >= StatusCodes.Status500InternalServerError)
+            {
+                _logger.LogError(ex,
+                    "Checkout failed | Step: {Step} | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                    ex.Step, ex.ErrorCode, traceId);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "Checkout rejected | Step: {Step} | ErrorCode: {ErrorCode} | TraceId: {TraceId}",
+                    ex.Step, ex.ErrorCode, traceId);
+            }
+
+            var responseMessage = statusCode == StatusCodes.Status500InternalServerError
+                ? "Checkout could not be completed. Please try again."
+                : ex.Message;
+            return StatusCode(statusCode, new ApiErrorResponse(ex.ErrorCode, responseMessage, traceId));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
                 "Checkout unexpected error | TenantId: {TenantId} | CartId: {CartId} | TraceId: {TraceId}",
                 validation.TenantId, request.CartId, traceId);
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                ApiErrorResponse.ServiceUnavailable(traceId));
+            return StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new ApiErrorResponse(
+                    "UNEXPECTED_CHECKOUT_FAILURE",
+                    "Checkout could not be completed. Please try again.",
+                    traceId));
         }
     }
 
@@ -575,6 +646,65 @@ public class CheckoutController : ControllerBase
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             _logger.LogError(ex, "Checkout attachment confirmation failed | TenantId: {TenantId} | CartId: {CartId} | AttachmentId: {AttachmentId} | TraceId: {TraceId}", validation.TenantId, request.CartId, request.AttachmentId, traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
+    [HttpPut("attachments/development-upload")]
+    [LeaseTokenAuthorizedUpload]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [RequestSizeLimit(50 * 1024 * 1024)]
+    public async Task<IActionResult> UploadDevelopmentAttachmentObject(
+        [FromQuery] string? token,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var environment = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
+        if (!environment.IsDevelopment())
+        {
+            return NotFound();
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return BadRequest(new ApiErrorResponse(
+                "CHECKOUT_ATTACHMENT_UPLOAD_TOKEN_REQUIRED",
+                "Upload lease token is required.",
+                traceId));
+        }
+
+        var storage = HttpContext.RequestServices.GetRequiredService<PointOfSale.API.Services.IR2StorageService>();
+        if (storage is not PointOfSale.API.Services.IDevelopmentPresignedUploadStorage developmentStorage)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            await developmentStorage.StorePresignedUploadAsync(
+                token,
+                Request.ContentType,
+                Request.ContentLength,
+                Request.Body,
+                cancellationToken);
+            return Ok();
+        }
+        catch (PointOfSale.API.Services.DevelopmentPresignedUploadException ex)
+        {
+            var statusCode = ex.ErrorCode switch
+            {
+                "CHECKOUT_ATTACHMENT_UPLOAD_LEASE_EXPIRED" => StatusCodes.Status410Gone,
+                "CHECKOUT_ATTACHMENT_UPLOAD_REPLAYED" => StatusCodes.Status409Conflict,
+                "CHECKOUT_ATTACHMENT_UPLOAD_TOKEN_INVALID" or
+                "CHECKOUT_ATTACHMENT_UPLOAD_LEASE_NOT_FOUND" => StatusCodes.Status403Forbidden,
+                _ => StatusCodes.Status400BadRequest
+            };
+
+            return StatusCode(statusCode, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Development checkout attachment upload failed | TraceId: {TraceId}", traceId);
             return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
         }
     }
@@ -1124,6 +1254,31 @@ public class CheckoutController : ControllerBase
         "RATE_LIMIT_EXCEEDED" or "OTP_ATTEMPTS_EXCEEDED" => StatusCodes.Status429TooManyRequests,
         "OTP_REQUEST_IN_PROGRESS" or "OTP_VERIFICATION_IN_PROGRESS" => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status400BadRequest
+    };
+
+    private static int ResolveCheckoutExceptionStatusCode(string errorCode) => errorCode switch
+    {
+        "PHONE_VERIFICATION_REQUIRED" or
+        "INVALID_GEOGRAPHIC_CANDIDATE" or
+        "CURRENCY_MISMATCH" or
+        "CURRENCY_NOT_SET" or
+        "CURRENCY_INVALID" or
+        "AFFILIATE_IDENTITY_MISSING" or
+        "AFFILIATE_IDENTITY_INVALID" or
+        "AFFILIATE_PROMOTION_LINK_INVALID" or
+        "AFFILIATE_PROMOTION_LINK_MISMATCH" => StatusCodes.Status400BadRequest,
+
+        "AFFILIATE_AUTHORITY_STALE" or
+        "AFFILIATE_PROMOTION_LINK_STALE" => StatusCodes.Status409Conflict,
+
+        "GEOGRAPHIC_ADMISSION_UNAVAILABLE" or
+        "GEOGRAPHIC_ADDRESS_ADMISSION_FAILED" or
+        "STOREFRONT_AVAILABILITY_UNCERTAIN" or
+        "PAYMENT_RUNTIME_UNAVAILABLE" or
+        "AFFILIATE_POLICY_AUTHORITY_CONFLICT" or
+        "AFFILIATE_REFERRAL_CODE_NOT_UNIQUE" => StatusCodes.Status503ServiceUnavailable,
+
+        _ => StatusCodes.Status500InternalServerError,
     };
 
     private (Guid? CustomerId, ActionResult? Error) ResolveAuthorizedCustomerHeader(

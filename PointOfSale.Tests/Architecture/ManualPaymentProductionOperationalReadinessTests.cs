@@ -72,6 +72,27 @@ public sealed class ManualPaymentProductionOperationalReadinessTests
     }
 
     [Fact]
+    public void OperationalReadiness_MustRemainHealthyWhenCertifiedReviewAndPersistenceCapabilitiesAreEnabled()
+    {
+        var options = ValidOptions() with
+        {
+            Capabilities = ValidOptions().Capabilities with
+            {
+                ReviewWorkflowCertified = true,
+                ApprovalWorkflowCertified = true,
+                PersistenceCertified = true
+            }
+        };
+        var foundation = new ManualPaymentFoundationHealthContributor(Options.Create(options));
+        var readiness = new ManualPaymentOperationalReadinessHealthContributor(foundation);
+
+        var result = readiness.GetStatus();
+
+        Assert.True(result.Healthy);
+        Assert.True(result.Checks["capabilityConsistencyHealth"]);
+    }
+
+    [Fact]
     public void StartupValidation_MustFailClosedForRequiredManualPaymentConfigurationModes()
     {
         AssertInvalid(new ManualPaymentOptions

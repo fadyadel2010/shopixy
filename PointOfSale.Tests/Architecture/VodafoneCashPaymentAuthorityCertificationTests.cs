@@ -11,9 +11,10 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
         var checkoutStore = ReadRepoFile("PointOfSale.Storefront/src/store/checkoutStore.ts");
         var paymentSessionAuthority = ReadRepoFile("PointOfSale.Storefront/src/features/checkout/paymentSessionAuthority.ts");
         var recoverPage = ReadRepoFile("PointOfSale.Storefront/src/pages/RecoverCheckoutPage.tsx");
+        var checkoutService = ReadRepoFile("PointOfSale.API/Services/Checkout/CheckoutService.cs");
 
-        Assert.Contains("code: 'VodafoneCash'", manualFields, StringComparison.Ordinal);
-        Assert.Contains("Vodafone Cash", manualFields, StringComparison.Ordinal);
+        Assert.Contains("manualWalletConfig?.walletTypes", manualFields, StringComparison.Ordinal);
+        Assert.Contains("walletTypes.map((wallet)", manualFields, StringComparison.Ordinal);
         Assert.Contains("merchantWalletNumber", manualFields, StringComparison.Ordinal);
         Assert.Contains("navigator.clipboard.writeText(merchantWalletNumber)", manualFields, StringComparison.Ordinal);
         Assert.Contains("setManualWalletType(wallet.code)", manualFields, StringComparison.Ordinal);
@@ -32,18 +33,22 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
         Assert.Contains("walletPhoneNumber: latestState.manualWalletPhoneNumber", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("proofFileKey: latestState.manualWalletProofFileKey", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId)", checkoutStore, StringComparison.Ordinal);
+        Assert.Contains("await _cartService.ClearCartAsync(", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("paymentMethod.Code.Equals(\"MANUALWALLET\"", checkoutService, StringComparison.Ordinal);
 
         Assert.Contains("provider === 'MANUALWALLET'", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("MANUAL_WALLET_PENDING_STATUSES", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.Contains("backendPaymentMethodCode !== provider", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(paymentIntentId)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("response.isManualWallet !== true", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(response.merchantWalletNumber)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("!isNonEmptyString(response.walletType)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(response.walletInstructions)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(response.merchantWalletNumber)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(response.walletInstructions)", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("pending ManualWallet payment-session evidence", paymentSessionAuthority, StringComparison.Ordinal);
 
         Assert.Contains("requiresPendingRoute", checkoutPage, StringComparison.Ordinal);
-        Assert.Contains("window.location.replace(buildAffiliateUrl(buildPendingCheckoutUrl(orderResult)));", checkoutPage, StringComparison.Ordinal);
+        Assert.Contains("const pendingUrl = buildAffiliateUrl(buildPendingCheckoutUrl(orderResult));", checkoutPage, StringComparison.Ordinal);
+        Assert.Contains("window.location.replace(pendingUrl);", checkoutPage, StringComparison.Ordinal);
         Assert.Contains("requiresManualWalletReentry", recoverPage, StringComparison.Ordinal);
         Assert.Contains("manualWalletType: null", recoverPage, StringComparison.Ordinal);
         Assert.Contains("manualWalletProofFileKey: null", recoverPage, StringComparison.Ordinal);
@@ -79,6 +84,8 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
         Assert.Contains("session.OnlineCustomerId == customerId", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentIntentId = paymentIntentId", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentStatus = order.PaymentStatus.ToString()", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("PaymentMethodCode = paymentMethod.Code", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("PaymentMethodCode = paymentMethodCode ?? string.Empty", checkoutService, StringComparison.Ordinal);
         Assert.Contains("response.MerchantWalletNumber = manualWalletDetails.MerchantWalletNumber", checkoutService, StringComparison.Ordinal);
         Assert.Contains("response.WalletInstructions = manualWalletDetails.WalletInstructions", checkoutService, StringComparison.Ordinal);
 
@@ -107,6 +114,7 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
     {
         var adminManual = ReadRepoFile("PointOfSale.API/Controllers/AdminManualPaymentController.cs");
         var lifecycle = ReadRepoFile("PointOfSale.Infrastructure/Payments/PaymentLifecycleService.cs");
+        var reviewApplication = ReadRepoFile("PointOfSale.API/Services/Payments/ManualPayment/ManualPaymentRuntimeApplicationService.cs");
         var interceptor = ReadRepoFile("PointOfSale.Infrastructure/Data/PaymentStatusSaveChangesInterceptor.cs");
         var checkoutStore = ReadRepoFile("PointOfSale.Storefront/src/store/checkoutStore.ts");
         var recoverPage = ReadRepoFile("PointOfSale.Storefront/src/pages/RecoverCheckoutPage.tsx");
@@ -114,10 +122,11 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
         var cleanupJob = ReadRepoFile("PointOfSale.API/Jobs/ManualWalletProofCleanupJob.cs");
 
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", adminManual, StringComparison.Ordinal);
-        Assert.Contains("PaymentLifecycleSource.PaymentReviewApproval", adminManual, StringComparison.Ordinal);
-        Assert.Contains("PaymentLifecycleSource.PaymentReviewRejection", adminManual, StringComparison.Ordinal);
-        Assert.Contains("ManualWalletStateMachine.EnsureValidTransition(paymentIntent.Status, PaymentIntentStatus.Paid)", adminManual, StringComparison.Ordinal);
-        Assert.Contains("ManualWalletStateMachine.EnsureValidTransition(paymentIntent.Status, PaymentIntentStatus.Rejected)", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.ApproveAsync", adminManual, StringComparison.Ordinal);
+        Assert.Contains("_manualPaymentReviewApplicationService.RejectAsync", adminManual, StringComparison.Ordinal);
+        Assert.DoesNotContain("ManualWalletStateMachine.EnsureValidTransition", adminManual, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewApproval", reviewApplication, StringComparison.Ordinal);
+        Assert.Contains("PaymentLifecycleSource.PaymentReviewRejection", reviewApplication, StringComparison.Ordinal);
         Assert.Contains("pi.TenantId == tenantId", adminManual, StringComparison.Ordinal);
         Assert.Contains("pi.Provider == PaymentProvider.ManualWallet", adminManual, StringComparison.Ordinal);
         Assert.Contains("DbUpdateConcurrencyException", adminManual, StringComparison.Ordinal);
@@ -144,7 +153,8 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
         Assert.Contains("if (state.isSubmitting)", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("CHECKOUT_IN_PROGRESS", checkoutStore, StringComparison.Ordinal);
         Assert.Contains("requiresManualWalletReentry", recoverPage, StringComparison.Ordinal);
-        Assert.Contains("Provider = PaymentProvider.ManualWallet.ToString()", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("MANUAL_WALLET_RECOVERY_FACTS_MISSING", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("\"MANUALWALLET\" => false", recoveryService, StringComparison.Ordinal);
         Assert.Contains("intent.Provider == PaymentProvider.ManualWallet", recoveryService, StringComparison.Ordinal);
         Assert.Contains("PaymentProvider.ManualWallet", cleanupJob, StringComparison.Ordinal);
         Assert.Contains("TryNormalizeTenantScopedObjectKey", cleanupJob, StringComparison.Ordinal);
@@ -176,17 +186,10 @@ public sealed class VodafoneCashPaymentAuthorityCertificationTests
             ReadRepoFile("docs/architecture/vodafone-cash-payment-authority-certification-findings.md"),
             StringComparison.Ordinal);
 
-        foreach (var path in new[]
-                 {
-                     ".ai-context/PROJECT_CONTEXT.md",
-                     ".ai-context/ARCHITECTURE_TRUTH.md",
-                     ".ai-context/KNOWN_RISKS.md",
-                     ".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md",
-                     ".ai-context/CODEX_RULES.md"
-                 })
-        {
-            Assert.Contains("PASS SF-PAY6", ReadRepoFile(path), StringComparison.Ordinal);
-        }
+        Assert.Contains(
+            "manualWalletConfig?.walletTypes",
+            ReadRepoFile("PointOfSale.Storefront/src/components/checkout/ManualWalletFields.tsx"),
+            StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

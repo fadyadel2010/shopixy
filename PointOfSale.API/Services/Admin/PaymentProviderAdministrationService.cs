@@ -19,8 +19,8 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
     private const string ProviderSettingsCategory = "CommerceHubPaymentProviders";
     private const string LocalSecretMarker = "local-secret-redacted";
     private const string SecretMask = "**************";
-    private const string WebhookUrl = "/api/commercehub/payments/paymob/webhook";
-    private const string BrowserCallbackUrl = "/api/commercehub/payments/paymob/callback";
+    private const string WebhookPath = "/api/payments/paymob/webhook";
+    private const string BrowserCallbackPath = "/api/commercehub/payments/paymob/callback";
     private const string PaymobProviderCode = "PAYMOB";
     private const string LifecycleMetadataKey = "secretLifecycle";
     private const string ActiveStatus = "Active";
@@ -44,6 +44,8 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
     {
         "apiKeyConfigured",
         "apiKeyMask",
+        "secretKeyConfigured",
+        "secretKeyMask",
         "hmacSecretConfigured",
         "hmacSecretMask"
     };
@@ -51,6 +53,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
     private static readonly ISet<string> AllowedSecretReplacementKeys = new HashSet<string>(StringComparer.Ordinal)
     {
         "apiKey",
+        "secretKey",
         "hmacSecret"
     };
 
@@ -58,6 +61,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         new Dictionary<string, DashboardSecretDefinition>(StringComparer.OrdinalIgnoreCase)
         {
             ["apiKey"] = new("apiKey", "API Key"),
+            ["secretKey"] = new("secretKey", "Secret Key"),
             ["hmacSecret"] = new("hmacSecret", "HMAC Secret")
         };
 
@@ -230,6 +234,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         var currentState = LoadProviderState(normalizedProviderCode);
         var current = currentState.Configuration;
         var normalizedConfiguration = BuildPaymobConfiguration(current, request);
+        ValidatePaymobSecretReplacements(normalizedConfiguration, secretReplacements);
         var protectedSecrets = new Dictionary<string, string>(currentState.ProtectedSecrets, StringComparer.Ordinal);
 
         foreach (var replacement in secretReplacements)
@@ -255,7 +260,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
                 ["administrationPhase"] = "PAYMENT-ADMIN-2",
                 ["providerConfigurationImplemented"] = true
             }),
-            Status = protectedSecrets.Count >= 2 ? "Configured" : "PendingConfiguration"
+            Status = HasRequiredPaymobCheckoutSecrets(protectedSecrets) ? "Configured" : "PendingConfiguration"
         };
 
         PersistProviderState(next, protectedSecrets);
@@ -346,21 +351,21 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             new PaymentProviderCapability(
                 "refunds",
                 "Refunds",
-                "Support provider-backed refund workflows.",
-                true,
-                true),
+                "Provider-backed refunds are not certified for the modern credential contract.",
+                false,
+                false),
             new PaymentProviderCapability(
                 "capture",
                 "Capture",
                 "Capture authorized payment amounts.",
-                true,
-                true),
+                false,
+                false),
             new PaymentProviderCapability(
                 "void",
                 "Void",
                 "Void an authorized payment before capture.",
-                true,
-                true),
+                false,
+                false),
             new PaymentProviderCapability(
                 "recurring",
                 "Recurring",
@@ -439,7 +444,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             ["currency"] = "EGP",
             ["description"] = registration.Description,
             ["integrationId"] = string.Empty,
-            ["iframeId"] = string.Empty,
+            ["publicKey"] = string.Empty,
             ["merchantIdentifier"] = string.Empty,
             ["providerAccountName"] = string.Empty,
             ["timeoutSeconds"] = 30,
@@ -447,9 +452,11 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             ["requestTimeoutSeconds"] = 30,
             ["maximumRetryAttempts"] = 3,
             ["webhookMethod"] = "POST",
-            ["webhookUrl"] = WebhookUrl,
+            ["webhookUrl"] = string.Empty,
+            ["webhookPath"] = WebhookPath,
             ["browserCallbackMethod"] = "GET",
-            ["browserCallbackUrl"] = BrowserCallbackUrl
+            ["browserCallbackUrl"] = string.Empty,
+            ["browserCallbackPath"] = BrowserCallbackPath
         };
 
     private PaymentProviderState LoadProviderState(string providerCode)
@@ -553,17 +560,22 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
                 configuration[item.Key] = item.Value;
             }
 
+            var migrationRequired =
+                (protectedSecrets.ContainsKey("apiKey") || configuration.ContainsKey("iframeId")) &&
+                (!protectedSecrets.ContainsKey("secretKey") ||
+                 string.IsNullOrWhiteSpace(ReadString(configuration, "publicKey", string.Empty)));
+            configuration["migrationRequired"] = migrationRequired;
             configuration = ApplySecretStatus(configuration, protectedSecrets);
 
             var providerConfiguration = new PaymentProviderConfiguration(
                 normalizedProviderCode,
                 string.IsNullOrWhiteSpace(stored.DisplayName) ? registration.DisplayName : stored.DisplayName,
                 string.IsNullOrWhiteSpace(stored.Description) ? registration.Description : stored.Description,
-                stored.Enabled,
+                stored.Enabled && !migrationRequired,
                 string.IsNullOrWhiteSpace(stored.Environment) ? "Sandbox" : stored.Environment,
                 registration.Capabilities,
                 configuration,
-                stored.Status ?? "PendingConfiguration",
+                migrationRequired ? "MigrationRequired" : stored.Status ?? "PendingConfiguration",
                 MergeMetadata(registration.Metadata, ToObjectDictionary(stored.Metadata)));
 
             return new PaymentProviderState(providerConfiguration, protectedSecrets);
@@ -753,9 +765,9 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         configuration["environment"] = environment;
         configuration["sandbox"] = string.Equals(environment, "Sandbox", StringComparison.OrdinalIgnoreCase);
         configuration["webhookMethod"] = "POST";
-        configuration["webhookUrl"] = WebhookUrl;
+        configuration["webhookPath"] = WebhookPath;
         configuration["browserCallbackMethod"] = "GET";
-        configuration["browserCallbackUrl"] = BrowserCallbackUrl;
+        configuration["browserCallbackPath"] = BrowserCallbackPath;
 
         return configuration;
     }
@@ -768,7 +780,9 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         var environment = ReadString(configuration, "environment", string.Empty);
         var currency = ReadString(configuration, "currency", string.Empty);
         var integrationId = ReadString(configuration, "integrationId", string.Empty);
-        var iframeId = ReadString(configuration, "iframeId", string.Empty);
+        var publicKey = ReadString(configuration, "publicKey", string.Empty);
+        var webhookUrl = ReadString(configuration, "webhookUrl", string.Empty);
+        var browserCallbackUrl = ReadString(configuration, "browserCallbackUrl", string.Empty);
         var displayName = ReadString(configuration, "displayName", string.Empty);
         var description = ReadString(configuration, "description", string.Empty);
         var enabled = ReadBool(configuration, "enabled", false);
@@ -794,9 +808,9 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             errors.Add("Invalid Currency.");
         }
 
-        if (enabled && !protectedSecrets.ContainsKey("apiKey"))
+        if (enabled && !protectedSecrets.ContainsKey("secretKey"))
         {
-            errors.Add("Missing API Key.");
+            errors.Add("Missing Secret Key.");
         }
 
         if (enabled && !protectedSecrets.ContainsKey("hmacSecret"))
@@ -809,9 +823,19 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             errors.Add("Invalid Integration ID.");
         }
 
-        if (enabled && !IsPositiveInteger(iframeId))
+        if (enabled && !IsPaymobKey(publicKey, "egy_pk_", environment))
         {
-            errors.Add("Invalid iFrame ID.");
+            errors.Add("Invalid Public Key for the selected environment.");
+        }
+
+        if (enabled && !HasAbsoluteHttpsUrl(webhookUrl))
+        {
+            errors.Add("Webhook URL must be an absolute HTTPS URL.");
+        }
+
+        if (enabled && !HasAbsoluteHttpsUrl(browserCallbackUrl))
+        {
+            errors.Add("Browser Callback URL must be an absolute HTTPS URL.");
         }
 
         AddNonNegativeIntegerValidation(configuration, "timeoutSeconds", "Negative Timeout.", errors);
@@ -827,6 +851,39 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
                 string.Join(" ", errors));
         }
     }
+
+    private static bool IsPaymobKey(string value, string prefix, string environment)
+    {
+        var marker = string.Equals(environment, "Sandbox", StringComparison.Ordinal) ? "test" : "live";
+        return value.StartsWith($"{prefix}{marker}_", StringComparison.Ordinal);
+    }
+
+    private static void ValidatePaymobSecretReplacements(
+        IReadOnlyDictionary<string, object?> configuration,
+        IReadOnlyDictionary<string, string> secretReplacements)
+    {
+        if (!secretReplacements.TryGetValue("secretKey", out var secretKey))
+        {
+            return;
+        }
+
+        var environment = ReadString(configuration, "environment", string.Empty);
+        if (!IsPaymobKey(secretKey, "egy_sk_", environment))
+        {
+            throw new PaymentProviderAdministrationException(
+                StatusCodes.Status400BadRequest,
+                "PAYMOB_CONFIGURATION_VALIDATION_FAILED",
+                "Invalid Secret Key for the selected environment.");
+        }
+    }
+
+    private static bool HasRequiredPaymobCheckoutSecrets(IReadOnlyDictionary<string, string> protectedSecrets) =>
+        protectedSecrets.ContainsKey("secretKey") &&
+        protectedSecrets.ContainsKey("hmacSecret");
+
+    private static bool HasAbsoluteHttpsUrl(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     private string ProtectSecret(string secret)
     {
@@ -902,7 +959,12 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
 
         foreach (var key in secretReplacementKeys)
         {
-            changedFields.Add(key == "apiKey" ? "credentials.apiCredential" : "credentials.signatureCredential");
+            changedFields.Add(key switch
+            {
+                "apiKey" => "credentials.accountApiKey",
+                "secretKey" => "credentials.apiCredential",
+                _ => "credentials.signatureCredential"
+            });
         }
 
         return changedFields.ToList();
@@ -921,12 +983,14 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         {
             ["apiKeyConfigured"] = protectedSecrets.ContainsKey("apiKey"),
             ["apiKeyMask"] = SecretMask,
+            ["secretKeyConfigured"] = protectedSecrets.ContainsKey("secretKey"),
+            ["secretKeyMask"] = SecretMask,
             ["hmacSecretConfigured"] = protectedSecrets.ContainsKey("hmacSecret"),
             ["hmacSecretMask"] = SecretMask,
             ["webhookMethod"] = "POST",
-            ["webhookUrl"] = WebhookUrl,
             ["browserCallbackMethod"] = "GET",
-            ["browserCallbackUrl"] = BrowserCallbackUrl
+            ["webhookPath"] = WebhookPath,
+            ["browserCallbackPath"] = BrowserCallbackPath
         };
 
         return publicConfiguration;

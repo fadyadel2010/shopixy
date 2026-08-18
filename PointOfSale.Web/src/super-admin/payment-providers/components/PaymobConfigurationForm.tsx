@@ -2,7 +2,7 @@ import { useEffect, useMemo, type ReactNode } from 'react'
 import { AlertTriangle, CheckCircle2, EyeOff, KeyRound, Link2, SlidersHorizontal, ToggleLeft } from 'lucide-react'
 import type { PaymentProviderConfiguration } from '../paymentProviderTypes'
 
-type SecretReplacementKey = 'apiKey' | 'hmacSecret'
+type SecretReplacementKey = 'apiKey' | 'secretKey' | 'hmacSecret'
 
 type SecretReplacementDirtyState = Record<SecretReplacementKey, boolean>
 
@@ -45,7 +45,10 @@ function boolValue(provider: PaymentProviderConfiguration, key: string, fallback
     return fallback
 }
 
-function hasConfiguredCredential(provider: PaymentProviderConfiguration, key: 'apiKeyConfigured' | 'hmacSecretConfigured') {
+function hasConfiguredCredential(
+    provider: PaymentProviderConfiguration,
+    key: 'apiKeyConfigured' | 'secretKeyConfigured' | 'hmacSecretConfigured',
+) {
     return boolValue(provider, key)
 }
 
@@ -57,7 +60,7 @@ function validatePaymobDraft(
     const environment = textValue(provider, 'environment', provider.environment)
     const currency = textValue(provider, 'currency')
     const integrationId = textValue(provider, 'integrationId')
-    const iframeId = textValue(provider, 'iframeId')
+    const publicKey = textValue(provider, 'publicKey')
 
     if (!textValue(provider, 'displayName', provider.displayName).trim()) {
         errors.push('Display Name is required.')
@@ -79,12 +82,13 @@ function validatePaymobDraft(
         errors.push('Invalid Integration ID.')
     }
 
-    if (!/^[1-9]\d*$/.test(iframeId)) {
-        errors.push('Invalid iFrame ID.')
+    const keyEnvironment = environment === 'Sandbox' ? 'test' : 'live'
+    if (!publicKey.startsWith(`egy_pk_${keyEnvironment}_`)) {
+        errors.push('Invalid Public Key for the selected environment.')
     }
 
-    if (!hasConfiguredCredential(provider, 'apiKeyConfigured') && !secretReplacementDirty.apiKey) {
-        errors.push('Missing API Key.')
+    if (!hasConfiguredCredential(provider, 'secretKeyConfigured') && !secretReplacementDirty.secretKey) {
+        errors.push('Missing Secret Key.')
     }
 
     if (!hasConfiguredCredential(provider, 'hmacSecretConfigured') && !secretReplacementDirty.hmacSecret) {
@@ -139,8 +143,9 @@ export function PaymobConfigurationForm({
         onChange(nextProvider)
     }
 
-    const apiKeyConfigured = hasConfiguredCredential(provider, 'apiKeyConfigured')
+    const secretKeyConfigured = hasConfiguredCredential(provider, 'secretKeyConfigured')
     const hmacSecretConfigured = hasConfiguredCredential(provider, 'hmacSecretConfigured')
+    const apiKeyConfigured = hasConfiguredCredential(provider, 'apiKeyConfigured')
 
     return (
         <div className="space-y-4">
@@ -194,7 +199,13 @@ export function PaymobConfigurationForm({
                     <SecretReplacementField
                         label="API Key"
                         configured={apiKeyConfigured}
+                        helpText="Account-level Paymob API credential for auth-token based dashboard reconciliation."
                         onChange={(value) => onSecretReplacementChange('apiKey', value)}
+                    />
+                    <SecretReplacementField
+                        label="Secret Key"
+                        configured={secretKeyConfigured}
+                        onChange={(value) => onSecretReplacementChange('secretKey', value)}
                     />
                     <SecretReplacementField
                         label="HMAC Secret"
@@ -212,9 +223,9 @@ export function PaymobConfigurationForm({
                         onChange={(value) => updateConfiguration('integrationId', value)}
                     />
                     <TextField
-                        label="iFrame ID"
-                        value={textValue(provider, 'iframeId')}
-                        onChange={(value) => updateConfiguration('iframeId', value)}
+                        label="Public Key"
+                        value={textValue(provider, 'publicKey')}
+                        onChange={(value) => updateConfiguration('publicKey', value)}
                     />
                     <TextField
                         label="Merchant Identifier"
@@ -247,9 +258,11 @@ export function PaymobConfigurationForm({
             <FormSection icon={<CheckCircle2 className="h-5 w-5" />} title="Callback Information">
                 <div className="grid gap-4 md:grid-cols-2">
                     <ReadOnlyField label="Webhook Method" value={textValue(provider, 'webhookMethod', 'POST')} />
-                    <ReadOnlyField label="Webhook URL" value={textValue(provider, 'webhookUrl')} />
+                    <TextField label="Webhook URL" value={textValue(provider, 'webhookUrl')} onChange={(value) => updateConfiguration('webhookUrl', value)} />
+                    <ReadOnlyField label="Webhook Path" value={textValue(provider, 'webhookPath')} />
                     <ReadOnlyField label="Browser Callback Method" value={textValue(provider, 'browserCallbackMethod', 'GET')} />
-                    <ReadOnlyField label="Browser Callback URL" value={textValue(provider, 'browserCallbackUrl')} />
+                    <TextField label="Browser Callback URL" value={textValue(provider, 'browserCallbackUrl')} onChange={(value) => updateConfiguration('browserCallbackUrl', value)} />
+                    <ReadOnlyField label="Browser Callback Path" value={textValue(provider, 'browserCallbackPath')} />
                 </div>
             </FormSection>
 
@@ -346,10 +359,12 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 function SecretReplacementField({
     label,
     configured,
+    helpText,
     onChange,
 }: {
     label: string
     configured: boolean
+    helpText?: string
     onChange: (value: string) => void
 }) {
     return (
@@ -374,6 +389,7 @@ function SecretReplacementField({
                     Replace
                 </button>
             </div>
+            {helpText ? <p className="text-xs leading-5 text-slate-500">{helpText}</p> : null}
         </label>
     )
 }

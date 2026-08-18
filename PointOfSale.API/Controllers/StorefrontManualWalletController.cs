@@ -27,6 +27,7 @@ public class StorefrontManualWalletController : ControllerBase
     private readonly IFileValidationService _fileValidationService;
     private readonly ICheckoutSessionService _checkoutSessionService;
     private readonly R2Options _r2Options;
+    private readonly ManualPaymentOptions _manualPaymentOptions;
     private readonly ILogger<StorefrontManualWalletController> _logger;
 
     public StorefrontManualWalletController(
@@ -37,6 +38,7 @@ public class StorefrontManualWalletController : ControllerBase
         IFileValidationService fileValidationService,
         ICheckoutSessionService checkoutSessionService,
         IOptions<R2Options> r2Options,
+        IOptions<ManualPaymentOptions> manualPaymentOptions,
         ILogger<StorefrontManualWalletController> logger)
     {
         _tenantContext = tenantContext;
@@ -46,6 +48,7 @@ public class StorefrontManualWalletController : ControllerBase
         _fileValidationService = fileValidationService;
         _checkoutSessionService = checkoutSessionService;
         _r2Options = r2Options.Value;
+        _manualPaymentOptions = manualPaymentOptions.Value;
         _logger = logger;
     }
 
@@ -59,9 +62,10 @@ public class StorefrontManualWalletController : ControllerBase
         var tenantId = _tenantContext.RequiredTenantId;
         var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
+        ManualPaymentTenantConfiguration tenantConfiguration;
         try
         {
-            await _manualPaymentCapabilityAdmissionAuthority.AdmitAsync(
+            tenantConfiguration = await _manualPaymentCapabilityAdmissionAuthority.AdmitAsync(
                 tenantId,
                 ManualPaymentOperationalCapability.ReferencePaymentInitialization,
                 requestedChannel: null,
@@ -89,12 +93,29 @@ public class StorefrontManualWalletController : ControllerBase
                  traceId));
         }
 
+        var configuredProofTypes = ResolveConfiguredProofFileTypes();
+        var walletTypes = tenantConfiguration.SupportedChannels
+            .Where(channel => channel.Enabled)
+            .Select(MapStorefrontWalletType)
+            .Where(walletType => walletType != null)
+            .Cast<ManualWalletTypeResponse>()
+            .ToArray();
+
+        if (walletTypes.Length == 0)
+        {
+            return NotFound(new ApiErrorResponse(
+                "MANUAL_WALLET_CHANNEL_UNAVAILABLE",
+                "Payment method unavailable",
+                traceId));
+        }
+
         return Ok(new ManualWalletConfigResponse
         {
             WalletNumber = walletNumber,
-            AllowedMimeTypes = FileValidationService.GetAllowedMimeTypes(FileValidationProfiles.ManualWallet),
-            AllowedExtensions = FileValidationService.GetAllowedExtensions(FileValidationProfiles.ManualWallet),
-            MaxFileBytes = FileValidationProfiles.MaxManualWalletProofBytes
+            WalletTypes = walletTypes,
+            AllowedMimeTypes = FileValidationService.GetAllowedMimeTypes(configuredProofTypes),
+            AllowedExtensions = FileValidationService.GetAllowedExtensions(configuredProofTypes),
+            MaxFileBytes = _manualPaymentOptions.Proof.MaximumUploadBytes
         });
     }
 
@@ -161,11 +182,11 @@ public class StorefrontManualWalletController : ControllerBase
                 traceId));
         }
 
-        if (request.File.Length > FileValidationProfiles.MaxManualWalletProofBytes)
+        if (request.File.Length > _manualPaymentOptions.Proof.MaximumUploadBytes)
         {
             return BadRequest(new ApiErrorResponse(
                 "MANUAL_WALLET_PROOF_TOO_LARGE",
-                $"Proof files must be {FileValidationProfiles.MaxManualWalletProofBytes / (1024 * 1024)} MB or smaller.",
+                $"Proof files must be {_manualPaymentOptions.Proof.MaximumUploadBytes / (1024 * 1024)} MB or smaller.",
                 traceId));
         }
 
@@ -176,7 +197,7 @@ public class StorefrontManualWalletController : ControllerBase
                 stream, 
                 request.File.FileName, 
                 request.File.ContentType,
-                FileValidationProfiles.ManualWallet,
+                ResolveConfiguredProofFileTypes(),
                 cancellationToken);
         }
 
@@ -437,9 +458,18 @@ public class StorefrontManualWalletController : ControllerBase
     public sealed class ManualWalletConfigResponse
     {
         public string WalletNumber { get; set; } = string.Empty;
+        public IReadOnlyCollection<ManualWalletTypeResponse> WalletTypes { get; set; } = Array.Empty<ManualWalletTypeResponse>();
         public IReadOnlyCollection<string> AllowedMimeTypes { get; set; } = Array.Empty<string>();
         public IReadOnlyCollection<string> AllowedExtensions { get; set; } = Array.Empty<string>();
-        public int MaxFileBytes { get; set; }
+        public long MaxFileBytes { get; set; }
+    }
+
+    public sealed class ManualWalletTypeResponse
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string? NameAr { get; set; }
+        public string? Icon { get; set; }
     }
 
     public sealed class ManualWalletUploadProofResponse
@@ -468,4 +498,34 @@ public class StorefrontManualWalletController : ControllerBase
             StatusCode = statusCode
         };
     }
+
+    private IReadOnlyCollection<AllowedFileType> ResolveConfiguredProofFileTypes()
+    {
+        var configuredTypes = FileValidationService.GetAllowedFileTypesForMimeTypes(
+            _manualPaymentOptions.Proof.AcceptedContentTypes);
+
+        return configuredTypes.Count > 0
+            ? configuredTypes
+            : FileValidationProfiles.ManualWallet;
+    }
+
+    private static ManualWalletTypeResponse? MapStorefrontWalletType(
+        ManualPaymentChannelConfiguration channel) => channel.Channel switch
+        {
+            ManualPaymentChannel.VodafoneCash => new ManualWalletTypeResponse
+            {
+                Code = "VODAFONECASH",
+                Name = channel.DisplayName,
+                NameAr = channel.DisplayName,
+                Icon = "VF"
+            },
+            ManualPaymentChannel.Instapay => new ManualWalletTypeResponse
+            {
+                Code = "INSTAPAY",
+                Name = channel.DisplayName,
+                NameAr = channel.DisplayName,
+                Icon = "IP"
+            },
+            _ => null
+        };
 }

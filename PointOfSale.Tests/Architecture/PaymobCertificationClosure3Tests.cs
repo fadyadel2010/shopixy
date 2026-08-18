@@ -28,7 +28,8 @@ public sealed class PaymobCertificationClosure3Tests
 
         Assert.Equal(tenantId, credentials.TenantId);
         Assert.Equal(method.Id, credentials.TenantPaymentMethodId);
-        Assert.Equal(ApiKey, credentials.ApiKey);
+        Assert.Equal(PublicKey, credentials.PublicKey);
+        Assert.Equal(SecretKey, credentials.SecretKey);
         Assert.Equal(IntegrationId, credentials.IntegrationId);
         Assert.Equal(HmacSecret, credentials.HmacSecret);
     }
@@ -98,10 +99,10 @@ public sealed class PaymobCertificationClosure3Tests
 
     [Theory]
     [InlineData("", IntegrationId, HmacSecret)]
-    [InlineData(ApiKey, "", HmacSecret)]
-    [InlineData(ApiKey, IntegrationId, "")]
+    [InlineData(SecretKey, "", HmacSecret)]
+    [InlineData(SecretKey, IntegrationId, "")]
     public async Task TenantAuthority_MustRejectMissingRequiredCredentials(
-        string apiKey,
+        string secretKey,
         string integrationId,
         string hmacSecret)
     {
@@ -111,7 +112,7 @@ public sealed class PaymobCertificationClosure3Tests
         dbContext.TenantPaymentMethods.Add(CreatePaymobMethod(
             tenantId,
             dataProtectionProvider,
-            apiKey: apiKey,
+            secretKey: secretKey,
             integrationId: integrationId,
             hmacSecret: hmacSecret));
         await dbContext.SaveChangesAsync();
@@ -196,12 +197,14 @@ public sealed class PaymobCertificationClosure3Tests
         return new PaymobOptions
         {
             Enabled = true,
-            ApiKey = ApiKey,
-            IntegrationId = IntegrationId,
-            IframeId = IframeId,
-            HmacSecret = HmacSecret,
             Environment = PaymobEnvironment.Sandbox,
             SandboxMode = true,
+            Callback = new PaymobCallbackConfiguration
+            {
+                Configured = true,
+                CallbackUrl = new Uri("https://store.example.test/api/paymob/callback"),
+                WebhookUrl = new Uri("https://store.example.test/api/paymob/webhook")
+            },
             FeatureFlags = new PaymobFeatureFlags
             {
                 Enabled = true,
@@ -226,16 +229,16 @@ public sealed class PaymobCertificationClosure3Tests
         bool isEnabled = true,
         bool isDeleted = false,
         bool isSandbox = true,
-        string apiKey = ApiKey,
+        string secretKey = SecretKey,
         string integrationId = IntegrationId,
         string hmacSecret = HmacSecret)
     {
         var protector = dataProtectionProvider.CreateProtector("PaymentMethodSecrets");
         var config = JsonSerializer.Serialize(new Dictionary<string, string>
         {
-            ["apiKey"] = apiKey,
+            ["publicKey"] = PublicKey,
+            ["secretKey"] = secretKey,
             ["integrationId"] = integrationId,
-            ["iframeId"] = IframeId,
             ["hmacSecret"] = hmacSecret
         });
 
@@ -289,8 +292,8 @@ public sealed class PaymobCertificationClosure3Tests
         return new ApplicationDbContext(options);
     }
 
-    private const string ApiKey = "paymob-api-key-12345";
+    private const string PublicKey = "egy_pk_test_closure3";
+    private const string SecretKey = "egy_sk_test_closure3";
     private const string IntegrationId = "123456";
-    private const string IframeId = "654321";
     private const string HmacSecret = "paymob-hmac-secret-12345";
 }

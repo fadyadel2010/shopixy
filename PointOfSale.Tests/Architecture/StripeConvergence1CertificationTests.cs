@@ -50,7 +50,9 @@ public sealed class StripeConvergence1CertificationTests
         var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             Normalize("PointOfSale.API/Services/Payments/Stripe/StripePaymentIntentAdapter.cs"),
+            Normalize("PointOfSale.API/Services/Payments/Stripe/StripeAdapter.cs"),
             Normalize("PointOfSale.API/Services/Payments/Stripe/StripeAdvancedOperationsAdapter.cs"),
+            Normalize("PointOfSale.API/Services/Payments/Stripe/StripeCommerceHubRefundGateway.cs"),
             Normalize("PointOfSale.API/Services/Payments/Stripe/StripeWebhookEvidenceAdapter.cs"),
             Normalize("PointOfSale.API/Services/Payments/Stripe/StripePaymentService.cs"),
             Normalize("PointOfSale.API/Services/Payments/Stripe/StripeFoundationServiceCollectionExtensions.cs"),

@@ -301,7 +301,7 @@ public sealed class StorefrontUnresolvedPaymentReconciliationJob
         {
             return await _dbContext.PaymentIntents
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""PaymentIntents""
                     WHERE ""Id"" = {paymentIntentId}
                       AND ""TenantId"" = {tenantId}
@@ -346,7 +346,7 @@ public sealed class StorefrontUnresolvedPaymentReconciliationJob
         {
             return await _dbContext.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT xmin, *
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""TenantId"" = {tenantId}

@@ -20,15 +20,22 @@ public sealed class PaymentRemediation001CanonicalRuntimeConvergenceTests
     ];
 
     [Fact]
-    public void PaymentControllers_MustDelegateOnlyToCommerceHubPaymentOrchestration()
+    public void StorefrontPaymentControllers_MustDelegateToTenantScopedProviderServices()
     {
         foreach (var path in PaymentControllerPaths)
         {
             var source = CertificationSource.ReadRepoFile(path);
 
-            Assert.Contains("ICommerceHubPaymentOrchestrationService", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("IPaymobPaymentService", source, StringComparison.Ordinal);
-            Assert.DoesNotContain("IStripePaymentService", source, StringComparison.Ordinal);
+            if (path.Contains("Stripe", StringComparison.Ordinal))
+            {
+                Assert.Contains("IStripePaymentService", source, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Contains("IPaymobPaymentService", source, StringComparison.Ordinal);
+            }
+
+            Assert.DoesNotContain("ICommerceHubPaymentOrchestrationService", source, StringComparison.Ordinal);
             Assert.DoesNotContain("IPaymobRuntimeApplicationService", source, StringComparison.Ordinal);
             Assert.DoesNotContain("IStripeRuntimeApplicationService", source, StringComparison.Ordinal);
             Assert.DoesNotContain("EventUtility.ConstructEvent", source, StringComparison.Ordinal);
@@ -38,7 +45,7 @@ public sealed class PaymentRemediation001CanonicalRuntimeConvergenceTests
     }
 
     [Fact]
-    public void PaymentControllerConstructors_MustNotAcceptProviderRuntimeServices()
+    public void StorefrontPaymentControllerConstructors_MustAcceptOnlyTheirTenantScopedProviderService()
     {
         var controllerTypes = new[]
         {
@@ -56,9 +63,17 @@ public sealed class PaymentRemediation001CanonicalRuntimeConvergenceTests
                 .Select(parameter => parameter.ParameterType)
                 .ToArray();
 
-            Assert.Contains(typeof(ICommerceHubPaymentOrchestrationService), parameterTypes);
-            Assert.DoesNotContain(typeof(IStripePaymentService), parameterTypes);
-            Assert.DoesNotContain(typeof(IPaymobPaymentService), parameterTypes);
+            Assert.DoesNotContain(typeof(ICommerceHubPaymentOrchestrationService), parameterTypes);
+            if (controllerType.Name.Contains("Stripe", StringComparison.Ordinal))
+            {
+                Assert.Contains(typeof(IStripePaymentService), parameterTypes);
+                Assert.DoesNotContain(typeof(IPaymobPaymentService), parameterTypes);
+            }
+            else
+            {
+                Assert.Contains(typeof(IPaymobPaymentService), parameterTypes);
+                Assert.DoesNotContain(typeof(IStripePaymentService), parameterTypes);
+            }
         }
     }
 
@@ -128,7 +143,8 @@ public sealed class PaymentRemediation001CanonicalRuntimeConvergenceTests
         Assert.Contains("IPaymentRuntime", commerceHubOrchestration, StringComparison.Ordinal);
         Assert.Contains("IEnumerable<IPaymentProviderAdapter> providerAdapters", commerceHubRuntime, StringComparison.Ordinal);
 
-        Assert.Contains("IPaymentRuntime", checkoutRecovery, StringComparison.Ordinal);
+        Assert.Contains("IPaymentGateway", checkoutRecovery, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceHubPaymentInitiateRequestDto", checkoutRecovery, StringComparison.Ordinal);
         Assert.DoesNotContain("IPaymobPaymentService", checkoutRecovery, StringComparison.Ordinal);
         Assert.DoesNotContain("IStripePaymentService", checkoutRecovery, StringComparison.Ordinal);
     }

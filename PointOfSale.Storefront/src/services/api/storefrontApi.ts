@@ -1,5 +1,6 @@
 import { httpClient } from './httpClient';
 import { ENDPOINTS } from './endpoints';
+import { normalizeCartResponse } from './cartResponse';
 import type {
     StoreConfig,
     ProductReadDto,
@@ -205,7 +206,7 @@ export const fetchCategories = async (): Promise<CategoryTreeDto[]> => {
  */
 export const fetchCart = async (): Promise<CartDto> => {
     const response = await httpClient.get<CartDto>(ENDPOINTS.CART);
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -233,7 +234,7 @@ export const recoverCart = async (token: string): Promise<RecoveredCartResponse>
  */
 export const addCartItem = async (request: AddCartItemRequest): Promise<CartDto> => {
     const response = await httpClient.post<CartDto>(ENDPOINTS.CART_ITEMS, request);
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -247,7 +248,7 @@ export const updateCartItem = async (
         ENDPOINTS.CART_ITEM(productId),
         request
     );
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -255,7 +256,7 @@ export const updateCartItem = async (
  */
 export const removeCartItem = async (productId: string): Promise<CartDto> => {
     const response = await httpClient.delete<CartDto>(ENDPOINTS.CART_ITEM(productId));
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 // ============================================================
@@ -279,7 +280,7 @@ export const updateCartItemByVariant = async (
         ENDPOINTS.CART_ITEM_BY_VARIANT(variantId),
         request
     );
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -291,7 +292,7 @@ export const updateCartItemByVariant = async (
  */
 export const removeCartItemByVariant = async (variantId: string): Promise<CartDto> => {
     const response = await httpClient.delete<CartDto>(ENDPOINTS.CART_ITEM_BY_VARIANT(variantId));
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -319,7 +320,7 @@ export const mergeCart = async (): Promise<CartDto> => {
     // - X-Session-Id (from sessionManager)
     // - X-Customer-Id (from requestContext, set in authStore.setAuthenticated)
     const response = await httpClient.post<CartDto>(ENDPOINTS.CART_MERGE, null);
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 // ============================================================
@@ -343,7 +344,7 @@ export const applyCoupon = async (code?: string | null, smartOfferRedeemToken?: 
         smartOfferRedeemToken: smartOfferRedeemToken?.trim() || null,
     };
     const response = await httpClient.post<CartDto>(ENDPOINTS.CART_APPLY_COUPON, request);
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 /**
@@ -352,7 +353,7 @@ export const applyCoupon = async (code?: string | null, smartOfferRedeemToken?: 
  */
 export const removeCoupon = async (): Promise<CartDto> => {
     const response = await httpClient.post<CartDto>(ENDPOINTS.CART_REMOVE_COUPON, {});
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 // ============================================================
@@ -376,7 +377,7 @@ export const applyOrderDraft = async (draft: OrderDraft): Promise<CartDto> => {
     };
 
     const response = await httpClient.post<CartDto>(ENDPOINTS.CART_APPLY_DRAFT, request);
-    return response.data;
+    return normalizeCartResponse(response.data);
 };
 
 // ============================================================
