@@ -76,6 +76,7 @@ public sealed class HostResolutionMiddleware
         "/uploads",
         "/api/affiliate/auth",
         "/api/public/affiliate",
+"/api/public/feeds",
         "/api/affiliate",
         "/api/test-auth"
     };

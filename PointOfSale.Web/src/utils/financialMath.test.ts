@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
     assertTwoDecimalCurrency,
+    divide,
     normalizeCurrencyCode,
     parseStrictAmountInput,
     roundCurrency,
@@ -51,5 +52,21 @@ describe('parseStrictAmountInput', () => {
     it('accepts zero only when explicitly allowed', () => {
         expect(parseStrictAmountInput('0', { allowZero: true })).toMatchObject({ isValid: true, value: 0 })
         expect(parseStrictAmountInput('0', { allowZero: false })).toMatchObject({ isValid: false, reason: 'zero' })
+    })
+})
+
+describe('divide', () => {
+    it('divides two valid numbers', () => {
+        expect(divide(10, 4)).toBe(2.5)
+        expect(divide('9', '3')).toBe(3)
+    })
+
+    it('returns 0 when the divisor is zero', () => {
+        expect(divide(10, 0)).toBe(0)
+    })
+
+    it('returns 0 when the divisor is invalid', () => {
+        expect(divide(10, 'abc')).toBe(0)
+        expect(divide(10, null)).toBe(0)
     })
 })

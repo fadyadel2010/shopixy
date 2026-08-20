@@ -20,7 +20,11 @@ public sealed class RequestContextLoggingMiddleware
         var correlationId = RequestContextMetadata.GetCorrelationId(context);
         var tenantId = RequestContextMetadata.GetTenantId(context) ?? "unresolved";
         var userId = RequestContextMetadata.GetUserId(context) ?? "anonymous";
-        var operation = $"{context.Request.Method} {context.Request.Path.Value ?? "/"}";
+        // FEED-1B security fix: public feed URLs embed the raw token as the
+        // final path segment; it must never reach logs, scopes, or activity
+        // tags. All other paths are returned unchanged by the redactor.
+        var requestPath = PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "/");
+        var operation = $"{context.Request.Method} {requestPath}";
         var startedAt = Stopwatch.GetTimestamp();
 
         Activity.Current?.SetTag("correlation.id", correlationId);
@@ -33,7 +37,7 @@ public sealed class RequestContextLoggingMiddleware
             ["CorrelationId"] = correlationId,
             ["TenantId"] = tenantId,
             ["UserId"] = userId,
-            ["RequestPath"] = context.Request.Path.Value ?? string.Empty,
+            ["RequestPath"] = requestPath,
             ["RequestMethod"] = context.Request.Method,
         });
 

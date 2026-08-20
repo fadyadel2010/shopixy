@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import api from '../services/api'
 import ProductStockModal from '../components/ProductStockModal'
 import BarcodeDisplay from '../components/BarcodeDisplay'
@@ -9,34 +9,113 @@ import { useToast } from '../components/Toast'
 import { useNavigate } from 'react-router-dom'
 import { useRTL } from '../hooks/useRTL'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
+import { normalizePublishStatus } from '../utils/productStatus'
+import { useReactToPrint } from 'react-to-print'
+import ProductExportMenu from '../components/ProductExportMenu'
+import ProductExportPrintArea from '../components/ProductExportPrintArea'
+import ProductFeedDialog from '../components/ProductFeedDialog'
+import { formatDateTime } from '../utils/dateFormat'
+import {
+    EXPORT_SCOPE_CURRENT_VIEW,
+    EXPORT_SCOPE_SELECTED,
+    buildProductExportFilename,
+    buildProductExportRows,
+    getProductsForExport,
+} from '../utils/productExport'
+import { exportProductsToExcel } from '../utils/productExcelExport'
 
 // Storefront domain for deep links - Phase 7.10
 const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
 
+// Client-side sort comparators. The listing backend hard-codes OrderBy(Name) and
+// does not expose a sort parameter, so global sorting is not possible. These
+// comparators operate on the currently fetched page only, which is documented
+// to the user via the sort summary below the table.
+const SORT_COMPARATORS = {
+    name: (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true, sensitivity: 'base' }),
+    price: (a, b) => (a.salePrice ?? 0) - (b.salePrice ?? 0),
+    stock: (a, b) => (a.totalStock - b.totalStock),
+    status: (a, b) => Number(a.isActive) - Number(b.isActive),
+}
+
+// Stock state thresholds use the existing product data:
+//  - TrackStock false => "untracked" (no stock state indicator)
+//  - hasVariants => null (no parent-level badge; the authoritative low-stock
+//    rule is per-variant on the backend, so a parent-level badge would be
+//    misleading — the cell shows "Managed by variants" instead)
+//  - totalStock === 0 => out of stock
+//  - totalStock <= LowStockThreshold (when >0) or totalStock <= MinimumStockLevel => low stock
+const computeStockState = (product, totalStock) => {
+    if (!product.trackStock) {
+        return 'untracked'
+    }
+    if (product.hasVariants) {
+        return null
+    }
+    if (totalStock <= 0) {
+        return 'outOfStock'
+    }
+    const threshold = product.lowStockThreshold > 0
+        ? product.lowStockThreshold
+        : product.minimumStockLevel
+    if (totalStock <= threshold) {
+        return 'lowStock'
+    }
+    return 'inStock'
+}
+
 export default function Products() {
     const { t } = useTranslation()
-    const { isRTL, dir } = useRTL()
-    const { formatCurrency } = useSettings()
+    const { isRTL, dir, locale } = useRTL()
+    const { settings, formatCurrency } = useSettings()
     const { showSuccess, showError } = useToast()
     const navigate = useNavigate()
-    const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
-    const actionAlignClass = isRTL ? 'text-left' : 'text-right'
-    const stockIconSpacingClass = isRTL ? 'mr-1' : 'ml-1'
+
     const [products, setProducts] = useState([])
     const [categories, setCategories] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
+
+    // Search (committed vs. draft)
     const [search, setSearch] = useState('')
     const [committedSearch, setCommittedSearch] = useState('')
+
+    // Filters
     const [categoryFilter, setCategoryFilter] = useState('')
     const [statusFilter, setStatusFilter] = useState('')
+    const [typeFilter, setTypeFilter] = useState('')
+    const [publicationFilter, setPublicationFilter] = useState('')
+    const [stockFilter, setStockFilter] = useState('')
+    const [featuredFilter, setFeaturedFilter] = useState(false)
+    const [searchableFilter, setSearchableFilter] = useState(false)
+    const [backorderFilter, setBackorderFilter] = useState(false)
+
+    // Sorting (client-side on current page)
+    const [sortField, setSortField] = useState('name')
+    const [sortDirection, setSortDirection] = useState('asc')
+
     const [page, setPage] = useState(1)
     const pageSize = 50
     const [totalCount, setTotalCount] = useState(0)
     const [totalPages, setTotalPages] = useState(0)
+
     const [stockModal, setStockModal] = useState(null)
     const [barcodeModal, setBarcodeModal] = useState(null)
-    const [deleteModal, setDeleteModal] = useState(null) // { id, name }
+    const [deleteModal, setDeleteModal] = useState(null)
+    const [productFeedOpen, setProductFeedOpen] = useState(false)
+
+    // ---- Bulk selection (UI-only) ----
+    // selectedProductIds tracks the stable authoritative product.id (Guid) of
+    // each selected row. Selection is scoped to the currently loaded page/result
+    // set only — never cross-page. No business logic is mutated by selection;
+    // it is pure UI state consumed solely by the bulk-action toolbar.
+    const [selectedProductIds, setSelectedProductIds] = useState([])
+    const selectAllCheckboxRef = useRef(null)
+
+    const clearSelection = useCallback(() => {
+        setSelectedProductIds([])
+    }, [])
+
     const categoriesRequestIdRef = useRef(0)
     const productsRequestIdRef = useRef(0)
     const hasStaleProductRows = loading && products.length > 0
@@ -71,6 +150,9 @@ export default function Products() {
 
         try {
             setLoading(true)
+            // A new request means a new dataset may arrive; clear any stale
+            // page-scoped selection so it cannot attach to different rows.
+            clearSelection()
             const params = {}
             if (committedSearch) params.search = committedSearch
             if (categoryFilter) params.categoryId = categoryFilter
@@ -85,22 +167,22 @@ export default function Products() {
             }
 
             const newTotalPages = Number(response.headers['x-total-pages'] ?? 0)
-            
+
             // Clamp current page if it exceeds the new total pages BEFORE committing data
             if (page > newTotalPages && newTotalPages > 0) {
                 setTotalPages(newTotalPages)
                 setPage(newTotalPages)
                 // Increment requestId so finally block won't clear loading - re-fetch will handle it
-                productsRequestIdRef.current++
+                productsRequestIdRef.current += 1
                 return
             } else if (newTotalPages === 0 && page !== 1) {
                 setTotalPages(newTotalPages)
                 setPage(1)
                 // Increment requestId so finally block won't clear loading - re-fetch will handle it
-                productsRequestIdRef.current++
+                productsRequestIdRef.current += 1
                 return
             }
-            
+
             // Only commit data if we're on a valid page
             setProducts(response.data)
             setTotalCount(Number(response.headers['x-total-count'] ?? response.data.length ?? 0))
@@ -126,28 +208,96 @@ export default function Products() {
         void fetchProducts()
     }, [fetchProducts])
 
+    // ---- Derived data: client-side enrichment, filtering + sorting on the fetched page ----
+    // The listing endpoint supports search/category/status/pagination only. Type,
+    // publication, stock-state and toggle filters are applied client-side on the
+    // current page using fields already present in the response DTO. This is
+    // clearly documented to the user via filter labels and the result summary.
+    const enrichedProducts = useMemo(() => {
+        return products.map((product) => {
+            const totalStock = product.warehouseStocks?.reduce((sum, ws) => sum + Number(ws.quantity || 0), 0) || 0
+            return {
+                ...product,
+                totalStock,
+                stockState: computeStockState(product, totalStock),
+                // Normalize once so both string ("Published") and numeric (1)
+                // representations from the API are handled consistently.
+                normalizedPublishStatus: normalizePublishStatus(product.publishStatus),
+            }
+        })
+    }, [products])
+
+    const filteredProducts = useMemo(() => {
+        return enrichedProducts.filter((product) => {
+            // Product Type
+            if (typeFilter === 'simple' && product.hasVariants) return false
+            if (typeFilter === 'variant' && !product.hasVariants) return false
+            // Publication (normalized: Draft=0, Published=1, Archived=2)
+            if (publicationFilter === 'published' && product.normalizedPublishStatus !== 1) return false
+            if (publicationFilter === 'draft' && product.normalizedPublishStatus !== 0) return false
+            if (publicationFilter === 'archived' && product.normalizedPublishStatus !== 2) return false
+            // Stock state
+            if (stockFilter === 'inStock' && product.stockState !== 'inStock') return false
+            if (stockFilter === 'lowStock' && product.stockState !== 'lowStock') return false
+            if (stockFilter === 'outOfStock' && product.stockState !== 'outOfStock') return false
+            // Toggle filters (only applied when explicitly enabled)
+            if (featuredFilter && !product.isFeatured) return false
+            if (searchableFilter && !product.isSearchable) return false
+            if (backorderFilter && !product.allowBackorder) return false
+            return true
+        })
+    }, [
+        enrichedProducts,
+        typeFilter,
+        publicationFilter,
+        stockFilter,
+        featuredFilter,
+        searchableFilter,
+        backorderFilter,
+    ])
+
+    const sortedProducts = useMemo(() => {
+        const comparator = SORT_COMPARATORS[sortField]
+        if (!comparator) return filteredProducts
+        const sorted = [...filteredProducts].sort(comparator)
+        return sortDirection === 'desc' ? sorted.reverse() : sorted
+    }, [filteredProducts, sortField, sortDirection])
+
+    // ---- Applied filter tracking ----
+    const hasActiveFilters = !!(
+        categoryFilter
+        || statusFilter
+        || typeFilter
+        || publicationFilter
+        || stockFilter
+        || featuredFilter
+        || searchableFilter
+        || backorderFilter
+    )
+
+    const activeFilterCount = [
+        categoryFilter, statusFilter, typeFilter, publicationFilter, stockFilter,
+    ].filter(Boolean).length + [
+        featuredFilter, searchableFilter, backorderFilter
+    ].filter(Boolean).length
+
+    // ---- Event handlers ----
     const handleSearch = (e) => {
         e.preventDefault()
-
-        if (search === committedSearch) {
-            void fetchProducts()
-            return
-        }
-
         setPage(1)
         setCommittedSearch(search)
+        clearSelection()
     }
 
-    const handleCategoryFilterChange = (e) => {
+    // Clear the search draft AND the committed search driving the API query,
+    // then return to page 1. committedSearch/page are fetchProducts deps, so
+    // the fetch effect re-runs exactly once — no duplicate requests. Non-search
+    // filters are intentionally preserved (use Clear Filters to reset those).
+    const handleClearSearch = () => {
+        setSearch('')
+        setCommittedSearch('')
         setPage(1)
-        setCommittedSearch(search)
-        setCategoryFilter(e.target.value)
-    }
-
-    const handleStatusFilterChange = (e) => {
-        setPage(1)
-        setCommittedSearch(search)
-        setStatusFilter(e.target.value)
+        clearSelection()
     }
 
     const handleAdd = () => {
@@ -188,41 +338,399 @@ export default function Products() {
         setBarcodeModal(barcode)
     }
 
-    const getTotalStock = (product) => {
-        return product.warehouseStocks?.reduce((sum, ws) => sum + ws.quantity, 0) || 0
+    const handleClearFilters = () => {
+        const hasCommitted = committedSearch !== ''
+        setSearch('')
+        setCommittedSearch('')
+        setCategoryFilter('')
+        setStatusFilter('')
+        setTypeFilter('')
+        setPublicationFilter('')
+        setStockFilter('')
+        setFeaturedFilter(false)
+        setSearchableFilter(false)
+        setBackorderFilter(false)
+        setPage(1)
+        clearSelection()
+        if (hasCommitted) {
+            void fetchProducts()
+        }
     }
 
-    const isLowStock = (product) => {
-        const totalStock = getTotalStock(product)
-        return totalStock <= product.minimumStockLevel
+    const handleSort = (field) => {
+        if (sortField === field) {
+            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+        } else {
+            setSortField(field)
+            setSortDirection('asc')
+        }
+        // Sorting only reorders the already-loaded dataset; selection stays
+        // attached to the same rows, so it is intentionally not cleared.
+    }
+
+    // ---- Phase 3: Export (Excel + PDF) ----
+    // Exports never re-filter, re-sort or re-fetch: they consume
+    // `sortedProducts` (the exact current view) intersected with the Phase 2
+    // selection state, so the file always matches what the user sees.
+    const [exporting, setExporting] = useState(null)
+    const [pdfExportScope, setPdfExportScope] = useState(null)
+    const printAreaRef = useRef(null)
+
+    const exportAvailable = !loading && !hasStaleProductRows && sortedProducts.length > 0
+
+    // Human-readable summary of the currently active filters, used only as
+    // PDF report metadata (never as a second filtering pipeline).
+    const activeFilterSummary = useMemo(() => {
+        const parts = []
+        if (committedSearch) parts.push(`${t('products.search')}: "${committedSearch}"`)
+        if (categoryFilter) {
+            const category = categories.find((cat) => cat.id === categoryFilter)
+            if (category) parts.push(`${t('products.category')}: ${category.name}`)
+        }
+        if (statusFilter) {
+            parts.push(`${t('products.status')}: ${statusFilter === 'active' ? t('products.active') : t('products.inactive')}`)
+        }
+        if (typeFilter) {
+            parts.push(`${t('products.type')}: ${typeFilter === 'simple' ? t('products.simpleProductType') : t('products.variantProductType')}`)
+        }
+        if (publicationFilter) {
+            const publicationLabels = {
+                published: t('products.published'),
+                draft: t('products.draft'),
+                archived: t('products.archived'),
+            }
+            parts.push(`${t('products.publication')}: ${publicationLabels[publicationFilter] || publicationFilter}`)
+        }
+        if (stockFilter) {
+            const stockLabels = {
+                inStock: t('products.inStock'),
+                lowStock: t('products.lowStock'),
+                outOfStock: t('products.outOfStock'),
+            }
+            parts.push(`${t('products.stock')}: ${stockLabels[stockFilter] || stockFilter}`)
+        }
+        if (featuredFilter) parts.push(t('products.featured'))
+        if (searchableFilter) parts.push(t('products.searchable'))
+        if (backorderFilter) parts.push(t('products.backorderAllowed'))
+        return parts
+    }, [
+        committedSearch, categoryFilter, categories, statusFilter, typeFilter,
+        publicationFilter, stockFilter, featuredFilter, searchableFilter, backorderFilter, t,
+    ])
+
+    const pdfProducts = useMemo(
+        () => getProductsForExport({
+            scope: pdfExportScope || EXPORT_SCOPE_CURRENT_VIEW,
+            sortedProducts,
+            selectedProductIds,
+        }),
+        [pdfExportScope, sortedProducts, selectedProductIds]
+    )
+
+    const pdfRows = useMemo(
+        () => buildProductExportRows(pdfProducts, { t, formatCurrency }),
+        [pdfProducts, t, formatCurrency]
+    )
+
+    const handleExportExcel = useCallback(async (scope) => {
+        const products = getProductsForExport({ scope, sortedProducts, selectedProductIds })
+        if (products.length === 0) return
+
+        setExporting('excel')
+        try {
+            await exportProductsToExcel(products, {
+                scope,
+                t,
+                formatCurrency,
+                storeName: settings.companyName,
+            })
+            showSuccess(t('products.exportSuccess'))
+        } catch (err) {
+            console.error('Product Excel export failed', err)
+            showError(t('products.exportFailed'))
+        } finally {
+            setExporting(null)
+        }
+    }, [sortedProducts, selectedProductIds, t, formatCurrency, settings.companyName, showSuccess, showError])
+
+    // PDF export uses the established react-to-print report pattern (same as
+    // BarcodePrinting): the browser print pipeline renders Arabic shaping +
+    // RTL correctly, which the bundled jsPDF cannot do without embedded
+    // Arabic fonts. The installed react-to-print v3 API requires `contentRef`
+    // (the legacy v2 `content` callback is no longer read).
+    const printProductsReport = useReactToPrint({
+        contentRef: printAreaRef,
+        documentTitle: buildProductExportFilename({
+            format: 'pdf',
+            scope: pdfExportScope || EXPORT_SCOPE_CURRENT_VIEW,
+        }).replace(/\.pdf$/i, ''),
+        onPrintError: (errorLocation, error) => {
+            console.error('Product PDF export failed', errorLocation, error)
+            showError(t('products.exportFailed'))
+        },
+    })
+
+    const handleExportPdf = useCallback((scope) => {
+        const products = getProductsForExport({ scope, sortedProducts, selectedProductIds })
+        if (products.length === 0) return
+        setExporting('pdf')
+        setPdfExportScope(scope)
+    }, [sortedProducts, selectedProductIds])
+
+    // Open the print dialog once the print area has committed the dataset of
+    // the requested scope (the effect runs after the re-render commit).
+    useEffect(() => {
+        if (!pdfExportScope) return
+
+        printProductsReport()
+        setPdfExportScope(null)
+        setExporting(null)
+    }, [pdfExportScope, printProductsReport])
+
+    const handleExport = useCallback((format, scope) => {
+        if (exporting) return
+        if (format === 'excel') {
+            void handleExportExcel(scope)
+        } else {
+            handleExportPdf(scope)
+        }
+    }, [exporting, handleExportExcel, handleExportPdf])
+
+    const pdfHeaders = [
+        t('products.product'),
+        t('products.sku'),
+        t('products.type'),
+        t('products.category'),
+        t('products.price'),
+        t('products.stock'),
+        t('products.status'),
+        t('products.publication'),
+    ]
+
+    const startLabel = totalCount > 0 ? (page - 1) * pageSize + 1 : 0
+    const endLabel = totalCount > 0 ? Math.min(page * pageSize, totalCount) : 0
+
+    const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
+    const actionAlignClass = isRTL ? 'text-left' : 'text-right'
+
+    const selectableIds = useMemo(
+        () => sortedProducts.map((p) => p.id),
+        [sortedProducts]
+    )
+    const selectedSet = useMemo(
+        () => new Set(selectedProductIds),
+        [selectedProductIds]
+    )
+
+    const isAllSelected = selectableIds.length > 0 && selectableIds.every((id) => selectedSet.has(id))
+    const isSomeSelected = selectedProductIds.length > 0 && !isAllSelected
+    const isHeaderChecked = isAllSelected
+    const isHeaderIndeterminate = isSomeSelected && !isAllSelected
+
+    const handleSelectOne = useCallback((productId) => {
+        setSelectedProductIds((prev) => {
+            const set = new Set(prev)
+            if (set.has(productId)) {
+                set.delete(productId)
+            } else {
+                set.add(productId)
+            }
+            return Array.from(set)
+        })
+    }, [])
+
+    const handleSelectAll = useCallback(() => {
+        if (isAllSelected) {
+            setSelectedProductIds([])
+        } else {
+            setSelectedProductIds([...selectableIds])
+        }
+    }, [isAllSelected, selectableIds])
+
+    // Sync the native indeterminate property on the header checkbox. Native
+    // <input type="checkbox"> has no JSX attribute for indeterminate, so we set
+    // it via a ref after every render that changes the selection state.
+    useEffect(() => {
+        if (selectAllCheckboxRef.current) {
+            selectAllCheckboxRef.current.indeterminate = isHeaderIndeterminate
+        }
+    }, [isHeaderIndeterminate])
+
+    // Render a sortable column header with an ARIA-friendly sort indicator.
+    // Sorting is client-side on the current page; this is surfaced to the user
+    // via the sort summary below the table.
+    const SortableHeader = ({ field, label }) => {
+        const isActive = sortField === field
+        const isAsc = isActive && sortDirection === 'asc'
+        const isDesc = isActive && sortDirection === 'desc'
+        const indicator = isAsc ? ' ▲' : isDesc ? ' ▼' : ''
+        return (
+            <th
+                className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}
+                aria-sort={isAsc ? 'ascending' : isDesc ? 'descending' : 'none'}
+            >
+                <button
+                    type="button"
+                    onClick={() => handleSort(field)}
+                    className="inline-flex items-center gap-1 text-gray-500 hover:text-gray-700 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                    aria-label={t('products.sortBy', { field: label }) || `Sort by ${label}`}
+                >
+                    <span>{label}</span>
+                    <span aria-hidden="true">{indicator}</span>
+                </button>
+            </th>
+        )
+    }
+
+    // Publication badge config: matches the canonical enum (Draft=0, Published=1, Archived=2)
+    const getPublicationBadge = (normalizedStatus) => {
+        if (normalizedStatus === 1) {
+            return { labelKey: 'products.published', className: 'bg-indigo-100 text-indigo-800' }
+        }
+        if (normalizedStatus === 2) {
+            return { labelKey: 'products.archived', className: 'bg-gray-100 text-gray-700' }
+        }
+        return { labelKey: 'products.draft', className: 'bg-amber-100 text-amber-700' }
+    }
+
+    // Stock cell content: show numeric qty when tracked; meaningful label for
+    // variant-managed or untracked products (never a misleading pseudo-value).
+    // Tracked rows open the existing ProductStockModal drill-down (restored
+    // baseline behavior). The modal reads GET /products/{id}/stock, which
+    // aggregates the product's variant stocks per warehouse — accurate for
+    // both simple and variant-managed products. Product-level stock
+    // adjustments inside the modal are rejected by the backend for variant
+    // products with an explicit message, so nothing is faked here.
+    const renderStockCell = (product) => {
+        if (!product.trackStock) {
+            return <span className="text-sm text-gray-400">—</span>
+        }
+        const content = product.hasVariants
+            ? <span className="text-sm text-gray-500">{t('products.managedByVariants')}</span>
+            : <span className="text-sm font-medium text-gray-900">{product.totalStock}</span>
+        return (
+            <button
+                type="button"
+                disabled={hasStaleProductRows}
+                onClick={(e) => {
+                    e.stopPropagation()
+                    handleShowStock(product)
+                }}
+                className="inline-flex items-center rounded hover:opacity-80 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                title={t('products.viewStock')}
+            >
+                {content}
+            </button>
+        )
+    }
+
+    // Stock state badge (shown alongside the quantity in the Stock column)
+    const getStockStateBadge = (stockState) => {
+        switch (stockState) {
+            case 'outOfStock':
+                return { labelKey: 'products.outOfStock', className: 'bg-red-100 text-red-800' }
+            case 'lowStock':
+                return { labelKey: 'products.lowStock', className: 'bg-amber-100 text-amber-800' }
+            case 'inStock':
+                return { labelKey: 'products.inStock', className: 'bg-emerald-100 text-emerald-800' }
+            default:
+                return null
+        }
     }
 
     return (
         <div dir={dir}>
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-900">{t('products.title')}</h2>
-                <button onClick={handleAdd} className="btn-primary">+ {t('products.addProduct')}</button>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setProductFeedOpen(true)}
+                        className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    >
+                        {t('productFeed.title')}
+                    </button>
+                    <ProductExportMenu
+                        onExport={handleExport}
+                        selectedCount={selectedProductIds.length}
+                        available={exportAvailable}
+                        exporting={exporting}
+                    />
+                    <button onClick={handleAdd} className="btn-primary">+ {t('products.addProduct')}</button>
+                </div>
+            </div>
+
+            <ProductFeedDialog
+                open={productFeedOpen}
+                onOpenChange={setProductFeedOpen}
+            />
+
+            {/* Search section - single prominent search input + search button */}
+            <form onSubmit={handleSearch} className="relative mb-4">
+                <div className="relative">
+                    <div className="absolute inset-y-0 start-0 flex items-center ps-3 pointer-events-none">
+                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                d="M21 21l-4.35-4.35m0 0A7.5 7.5 0 1110.5 3a7.5 7.5 0 017.5 7.5z" />
+                        </svg>
+                    </div>
+                    <input
+                        type="text"
+                        placeholder={t('products.searchPlaceholder')}
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        className="input ps-10"
+                        aria-label={t('products.searchPlaceholder')}
+                    />
+                    {search && (
+                        <button
+                            type="button"
+                            onClick={handleClearSearch}
+                            className="absolute inset-y-0 end-0 flex items-center pe-2 text-gray-400 hover:text-gray-600"
+                            aria-label={t('common.clear')}
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                    d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                        </button>
+                    )}
+                </div>
+                <button type="submit" className="btn-primary ms-2">
+                    {t('common.search')}
+                </button>
+            </form>
+
+            {/* Results summary */}
+            <div className="mb-4 text-sm text-gray-600">
+                {loading ? t('common.loading') : `${t('products.showingOf', { start: startLabel, end: endLabel, total: totalCount })}`}
             </div>
 
             {/* Filters */}
             <div className="card mb-6">
-                <form onSubmit={handleSearch} className="space-y-4">
-                    <div className="flex gap-4">
-                        <input
-                            type="text"
-                            placeholder={t('products.searchPlaceholder')}
-                            value={search}
-                            onChange={(e) => setSearch(e.target.value)}
-                            className="input flex-1"
-                        />
-                        <button type="submit" className="btn-primary">{t('common.search')}</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
+                {/* Filter header */}
+                <div className="flex items-center justify-between border-b border-gray-100 px-6 py-3">
+                    <h3 className="text-sm font-semibold text-gray-900">{t('products.filters')}</h3>
+                    {hasActiveFilters && (
+                        <span className="text-xs text-gray-500">
+                            {t('products.appliedFiltersCount', { count: activeFilterCount })}
+                        </span>
+                    )}
+                </div>
+
+                <form onSubmit={handleSearch} className="p-6 space-y-4">
+                    {/* Row 1 — Primary filters: Category, Status, Product Type, Publication */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                         <div>
                             <label className="label">{t('products.category')}</label>
                             <select
                                 value={categoryFilter}
-                                onChange={handleCategoryFilterChange}
+                                onChange={(e) => {
+                                    setPage(1)
+                                    setCommittedSearch(search)
+                                    setCategoryFilter(e.target.value)
+                                    clearSelection()
+                                }}
                                 className="input"
                             >
                                 <option value="">{t('products.allCategories')}</option>
@@ -237,7 +745,12 @@ export default function Products() {
                             <label className="label">{t('products.status')}</label>
                             <select
                                 value={statusFilter}
-                                onChange={handleStatusFilterChange}
+                                onChange={(e) => {
+                                    setPage(1)
+                                    setCommittedSearch(search)
+                                    setStatusFilter(e.target.value)
+                                    clearSelection()
+                                }}
                                 className="input"
                             >
                                 <option value="">{t('products.allStatus')}</option>
@@ -245,6 +758,125 @@ export default function Products() {
                                 <option value="inactive">{t('products.inactive')}</option>
                             </select>
                         </div>
+                        <div>
+                            <label className="label">{t('products.type')}</label>
+                            <select
+                                value={typeFilter}
+                                onChange={(e) => {
+                                    setPage(1)
+                                    setTypeFilter(e.target.value)
+                                    clearSelection()
+                                }}
+                                className="input"
+                            >
+                                <option value="">{t('products.allProductTypes')}</option>
+                                <option value="simple">{t('products.simpleProductType')}</option>
+                                <option value="variant">{t('products.variantProductType')}</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className="label">{t('products.publication')}</label>
+                            <select
+                                value={publicationFilter}
+                                onChange={(e) => {
+                                    setPage(1)
+                                    setPublicationFilter(e.target.value)
+                                    clearSelection()
+                                }}
+                                className="input"
+                            >
+                                <option value="">{t('products.allPublication')}</option>
+                                <option value="published">{t('products.published')}</option>
+                                <option value="draft">{t('products.draft')}</option>
+                                <option value="archived">{t('products.archived')}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Row 2 — Inventory / attribute filters: Stock, Featured, Searchable, Backorder */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-end">
+                        <div>
+                            <label className="label">{t('products.stock')}</label>
+                            <select
+                                value={stockFilter}
+                                onChange={(e) => {
+                                    setPage(1)
+                                    setStockFilter(e.target.value)
+                                    clearSelection()
+                                }}
+                                className="input"
+                            >
+                                <option value="">{t('products.allStockStates')}</option>
+                                <option value="inStock">{t('products.inStock')}</option>
+                                <option value="lowStock">{t('products.lowStock')}</option>
+                                <option value="outOfStock">{t('products.outOfStock')}</option>
+                            </select>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="featuredFilter"
+                                    checked={featuredFilter}
+                                    onChange={(e) => {
+                                        setPage(1)
+                                        setFeaturedFilter(e.target.checked)
+                                        clearSelection()
+                                    }}
+                                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                />
+                                <label htmlFor="featuredFilter" className="text-sm text-gray-700">
+                                    {t('products.featured')}
+                                </label>
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="searchableFilter"
+                                    checked={searchableFilter}
+                                    onChange={(e) => {
+                                        setPage(1)
+                                        setSearchableFilter(e.target.checked)
+                                        clearSelection()
+                                    }}
+                                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                />
+                                <label htmlFor="searchableFilter" className="text-sm text-gray-700">
+                                    {t('products.searchable')}
+                                </label>
+                            </div>
+                        </div>
+                        <div className="flex items-end gap-2">
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    id="backorderFilter"
+                                    checked={backorderFilter}
+                                    onChange={(e) => {
+                                        setPage(1)
+                                        setBackorderFilter(e.target.checked)
+                                        clearSelection()
+                                    }}
+                                    className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                />
+                                <label htmlFor="backorderFilter" className="text-sm text-gray-700">
+                                    {t('products.backorderAllowed')}
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Filter footer: Clear Filters (left) — no duplicate Search button */}
+                    <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                        <button
+                            type="button"
+                            onClick={handleClearFilters}
+                            className="text-sm text-primary-600 hover:text-primary-700 font-medium"
+                        >
+                            {t('products.clearFilters')}
+                        </button>
                     </div>
                 </form>
             </div>
@@ -252,6 +884,76 @@ export default function Products() {
             {error && (
                 <div className="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
                     {error}
+                    <button
+                        type="button"
+                        onClick={() => void fetchProducts()}
+                        className="ml-3 text-sm font-medium underline"
+                    >
+                        {t('common.retry')}
+                    </button>
+                </div>
+            )}
+
+            {/* Bulk selection toolbar (UI-only — no mutations performed) */}
+            {selectedProductIds.length > 0 && (
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5">
+                    <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-gray-900">
+                            {t('products.productsSelected', { count: selectedProductIds.length })}
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            disabled
+                            title={t('products.bulkActionUnavailable')}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                        >
+                            {t('products.bulkActionActivate')}
+                        </button>
+                        <button
+                            type="button"
+                            disabled
+                            title={t('products.bulkActionUnavailable')}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                        >
+                            {t('products.bulkActionDeactivate')}
+                        </button>
+                        <button
+                            type="button"
+                            disabled
+                            title={t('products.bulkActionUnavailable')}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                        >
+                            {t('products.bulkActionPublish')}
+                        </button>
+                        <button
+                            type="button"
+                            disabled
+                            title={t('products.bulkActionUnavailable')}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                        >
+                            {t('products.bulkActionUnpublish')}
+                        </button>
+                        <button
+                            type="button"
+                            disabled
+                            title={t('products.bulkActionUnavailable')}
+                            className="px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                        >
+                            {t('products.bulkActionDelete')}
+                        </button>
+                        <span className="text-xs text-gray-500">
+                            {t('products.bulkActionsComingSoon')}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={clearSelection}
+                            className="px-3 py-1.5 text-sm font-medium text-primary-600 hover:text-primary-700 rounded-lg focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                        >
+                            {t('products.clearSelection')}
+                        </button>
+                    </div>
                 </div>
             )}
 
@@ -262,176 +964,334 @@ export default function Products() {
                     </div>
                 ) : null}
                 {loading && products.length === 0 ? (
-                    <p className="text-center py-8 text-gray-500">{t('products.loading')}</p>
-                ) : products.length === 0 ? (
-                    <p className="text-center py-8 text-gray-500">{t('products.noProducts')}</p>
+                    <div className="p-4 space-y-3">
+                        {Array.from({ length: 8 }).map((_, i) => (
+                            <div key={i} className="h-5 bg-gray-200 rounded animate-pulse"></div>
+                        ))}
+                    </div>
+                ) : sortedProducts.length === 0 ? (
+                    <div className="text-center py-12">
+                        <svg className="w-12 h-12 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor"
+                            viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V7" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                                d="M8 5a4 4 0 018 0v4H8V5z" />
+                        </svg>
+                        <p className="text-gray-500 mb-2">
+                            {hasActiveFilters || committedSearch
+                                ? t('products.noMatchingProducts')
+                                : t('products.noProducts')}
+                        </p>
+                        {(hasActiveFilters || committedSearch) && (
+                            <button
+                                type="button"
+                                onClick={handleClearFilters}
+                                className="btn-primary"
+                            >
+                                {t('products.clearFilters')}
+                            </button>
+                        )}
+                    </div>
                 ) : (
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
-                                        {t('products.productName')}
+                                    {/* Select-all column (first column) */}
+                                    <th
+                                        className="px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider"
+                                        aria-label={t('products.selectAllVisible')}
+                                    >
+                                        <div className="flex items-center justify-center">
+                                            <input
+                                                type="checkbox"
+                                                ref={selectAllCheckboxRef}
+                                                checked={isHeaderChecked}
+                                                disabled={selectableIds.length === 0}
+                                                onChange={(e) => {
+                                                    e.stopPropagation()
+                                                    handleSelectAll()
+                                                }}
+                                                aria-label={t('products.selectAllVisible')}
+                                                aria-describedby="products-select-all-desc"
+                                                className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                            />
+                                            <span id="products-select-all-desc" className="sr-only">
+                                                {t('products.selectAllVisible')}
+                                            </span>
+                                        </div>
                                     </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
-                                        {t('products.barcode')}
+                                    <SortableHeader field="name" label={t('products.productName')} />
+                                    <th
+                                        className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}
+                                    >
+                                        {t('products.type')}
                                     </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
+                                    <th
+                                        className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}
+                                    >
                                         {t('products.category')}
                                     </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
-                                        {t('products.price')}
+                                    <SortableHeader field="price" label={t('products.price')} />
+                                    <SortableHeader field="stock" label={t('products.stock')} />
+                                    <SortableHeader field="status" label={t('products.status')} />
+                                    <th
+                                        className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}
+                                    >
+                                        {t('products.publication')}
                                     </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
-                                        {t('products.stock')}
-                                    </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${tableTextAlignClass}`}>
-                                        {t('products.status')}
-                                    </th>
-                                    <th className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${actionAlignClass}`}>
+                                    <th
+                                        className={`px-6 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider ${actionAlignClass}`}
+                                    >
                                         {t('products.actions')}
                                     </th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {products.map((product) => (
-                                    <tr
-                                        key={product.id}
-                                        aria-disabled={hasStaleProductRows}
-                                        className={hasStaleProductRows ? 'pointer-events-none opacity-60' : 'cursor-pointer hover:bg-gray-50'}
-                                        onClick={hasStaleProductRows ? undefined : () => handleEdit(product.id)}
-                                    >
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <div className="flex items-center gap-3">
-                                                {product.images && (
-                                                    <img
-                                                        src={product.images.split(',')[0]}
-                                                        alt={product.name}
-                                                        className="w-10 h-10 object-cover rounded"
-                                                        onError={(e) => e.target.style.display = 'none'}
+                                {sortedProducts.map((product) => {
+                                    const pubBadge = getPublicationBadge(product.normalizedPublishStatus)
+                                    const stockBadge = getStockStateBadge(product.stockState)
+                                    return (
+                                        <tr
+                                            key={product.id}
+                                            aria-disabled={hasStaleProductRows}
+                                            className={
+                                                hasStaleProductRows
+                                                    ? 'pointer-events-none opacity-60'
+                                                    : selectedSet.has(product.id)
+                                                        ? 'cursor-pointer hover:bg-gray-50 bg-primary-50'
+                                                        : 'cursor-pointer hover:bg-gray-50'
+                                            }
+                                            onClick={hasStaleProductRows ? undefined : () => handleEdit(product.id)}
+                                        >
+                                            {/* Selection checkbox (first column). The wrapper isolates checkbox
+                                                interaction from the row click: clicking a checkbox or its label
+                                                must select the row, never navigate to the editor. */}
+                                            <td className="px-3 py-4 whitespace-nowrap">
+                                                <div
+                                                    className="flex items-center justify-center"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedSet.has(product.id)}
+                                                        disabled={hasStaleProductRows}
+                                                        onChange={(e) => {
+                                                            e.stopPropagation()
+                                                            handleSelectOne(product.id)
+                                                        }}
+                                                        aria-label={t('products.selectProduct', { name: product.name || '' })}
+                                                        className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                                     />
-                                                )}
-                                                <div>
-                                                    <div className="text-sm font-medium text-gray-900">{product.name}</div>
-                                                    <div className="text-sm text-gray-500">{product.sku}</div>
                                                 </div>
-                                            </div>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            {product.barcode ? (
-                                                <button
-                                                    type="button"
-                                                    disabled={hasStaleProductRows}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        handleShowBarcode(product.barcode)
-                                                    }}
-                                                    className="text-sm text-primary-600 hover:text-primary-900 disabled:cursor-not-allowed disabled:text-primary-300 font-mono"
-                                                    title={t('products.viewBarcode')}
+                                            </td>
+                                            {/* Product (primary identity column) */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center gap-3">
+                                                    {product.images ? (
+                                                        <img
+                                                            src={product.images.split(',')[0]}
+                                                            alt={product.name}
+                                                            className="w-10 h-10 object-cover rounded"
+                                                            onError={(e) => e.target.style.display = 'none'}
+                                                        />
+                                                    ) : (
+                                                        <div className="w-10 h-10 flex items-center justify-center rounded bg-gray-100 text-gray-400">
+                                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                                                                    d="M4 16l4.586-4.586A2 2 0 0112 12h4a2 2 0 012 2v4a2 2 0 01-2 2H4a2 2 0 01-2-2v-2a2 2 0 012-2z" />
+                                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1}
+                                                                    d="M4 6h16M4 10h16" />
+                                                            </svg>
+                                                        </div>
+                                                    )}
+                                                    <div>
+                                                        <div
+                                                            className="text-sm font-medium text-gray-900"
+                                                            title={product.name}
+                                                        >
+                                                            {product.name || '—'}
+                                                        </div>
+                                                        {product.sku && (
+                                                            <div className="text-xs text-gray-500" title={product.sku}>
+                                                                {t('products.sku')}: {product.sku}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </td>
+
+                                            {/* Type badge */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span
+                                                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                        product.hasVariants
+                                                            ? 'bg-purple-100 text-purple-800'
+                                                            : 'bg-blue-100 text-blue-800'
+                                                    }`}
+                                                    title={product.hasVariants
+                                                        ? t('products.variantProductType')
+                                                        : t('products.simpleProductType')}
                                                 >
-                                                    {product.barcode}
-                                                </button>
-                                            ) : (
-                                                <span className="text-sm text-gray-400">-</span>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {product.category?.name || '-'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                            {formatCurrency(product.salePrice)}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <button
-                                                type="button"
-                                                disabled={hasStaleProductRows}
-                                                onClick={(e) => {
-                                                    e.stopPropagation()
-                                                    handleShowStock(product)
-                                                }}
-                                                className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full cursor-pointer hover:opacity-80 ${isLowStock(product)
-                                                    ? 'bg-red-100 text-red-800'
-                                                    : 'bg-green-100 text-green-800'
-                                                    } disabled:cursor-not-allowed disabled:opacity-60`}
-                                                title={t('products.viewStock')}
-                                            >
-                                                {getTotalStock(product)}
-                                                {isLowStock(product) && (
-                                                    <svg className={`w-3 h-3 inline ${stockIconSpacingClass}`} fill="currentColor" viewBox="0 0 20 20">
-                                                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                                                    </svg>
-                                                )}
-                                            </button>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${product.isActive
-                                                ? 'bg-green-100 text-green-800'
-                                                : 'bg-gray-100 text-gray-800'
-                                                }`}>
-                                                {product.isActive ? t('products.active') : t('products.inactive')}
-                                            </span>
-                                        </td>
-                                        <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
-                                            <div className={`flex items-center gap-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
-                                                <button
-                                                    type="button"
-                                                    disabled={hasStaleProductRows}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        handleEdit(product.id)
-                                                    }}
-                                                    className="text-primary-600 hover:text-primary-900 disabled:cursor-not-allowed disabled:text-primary-300"
+                                                    {product.hasVariants
+                                                        ? t('products.variantProductType')
+                                                        : t('products.simpleProductType')}
+                                                </span>
+                                            </td>
+
+                                            {/* Category */}
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"
+                                                title={product.categoryName || product.category?.name}>
+                                                {product.categoryName || product.category?.name || '—'}
+                                            </td>
+
+                                            {/* Price */}
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                {formatCurrency(product.salePrice)}
+                                            </td>
+
+                                            {/* Stock (qty + state badge) */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center gap-2">
+                                                    {renderStockCell(product)}
+                                                    {stockBadge && (
+                                                        <span
+                                                            className={`px-1.5 inline-flex text-xs leading-5 font-semibold rounded-full ${stockBadge.className}`}
+                                                            title={t(stockBadge.labelKey)}
+                                                        >
+                                                            {t(stockBadge.labelKey)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </td>
+
+                                            {/* Status */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span
+                                                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                        product.isActive
+                                                            ? 'bg-green-100 text-green-800'
+                                                            : 'bg-gray-100 text-gray-800'
+                                                    }`}
+                                                    title={product.isActive ? t('products.active') : t('products.inactive')}
                                                 >
-                                                    {t('common.edit')}
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    disabled={hasStaleProductRows}
-                                                    onClick={(e) => {
-                                                        e.stopPropagation()
-                                                        handleDelete(product)
-                                                    }}
-                                                    className="text-red-600 hover:text-red-900 disabled:cursor-not-allowed disabled:text-red-300"
+                                                    {product.isActive ? t('products.active') : t('products.inactive')}
+                                                </span>
+                                            </td>
+
+                                            {/* Publication */}
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span
+                                                    className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${pubBadge.className}`}
+                                                    title={t(pubBadge.labelKey)}
                                                 >
-                                                    {t('common.delete')}
-                                                </button>
-                                                {product.isOnlineVisible && product.slug && (
-                                                    <a
-                                                        href={`http://${STOREFRONT_DOMAIN}/product/${product.slug}`}
-                                                        target="_blank"
-                                                        rel="noopener noreferrer"
-                                                        aria-disabled={hasStaleProductRows}
-                                                        onClick={(e) => e.stopPropagation()}
-                                                        tabIndex={hasStaleProductRows ? -1 : undefined}
-                                                        className={`text-blue-600 hover:text-blue-900 flex items-center gap-1 ${hasStaleProductRows ? 'pointer-events-none text-blue-300' : ''}`}
-                                                        title={t('products.viewOnStorefront')}
+                                                    {t(pubBadge.labelKey)}
+                                                </span>
+                                            </td>
+
+                                            {/* Actions */}
+                                            <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
+                                                <div className={`flex items-center gap-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
+                                                    <button
+                                                        type="button"
+                                                        disabled={hasStaleProductRows}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleEdit(product.id)
+                                                        }}
+                                                        className="text-primary-600 hover:text-primary-900 disabled:cursor-not-allowed disabled:text-primary-300"
+                                                        title={t('common.edit')}
+                                                    >
+                                                        {t('common.edit')}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        disabled={hasStaleProductRows}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleDelete(product)
+                                                        }}
+                                                        className="text-red-600 hover:text-red-900 disabled:cursor-not-allowed disabled:text-red-300"
+                                                        title={t('common.delete')}
+                                                    >
+                                                        {t('common.delete')}
+                                                    </button>
+                                                    {product.isOnlineVisible && product.slug && (
+                                                        <a
+                                                            href={`http://${STOREFRONT_DOMAIN}/product/${product.slug}`}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            aria-disabled={hasStaleProductRows}
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            tabIndex={hasStaleProductRows ? -1 : undefined}
+                                                            className={`text-blue-600 hover:text-blue-900 flex items-center gap-1 ${
+                                                                hasStaleProductRows ? 'pointer-events-none text-blue-300' : ''
+                                                            }`}
+                                                            title={t('products.viewOnStorefront')}
+                                                        >
+                                                            <svg
+                                                                className="w-4 h-4"
+                                                                fill="none"
+                                                                stroke="currentColor"
+                                                                viewBox="0 0 24 24"
+                                                            >
+                                                                <path
+                                                                    strokeLinecap="round"
+                                                                    strokeLinejoin="round"
+                                                                    strokeWidth={2}
+                                                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                                                />
+                                                            </svg>
+                                                        </a>
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        disabled={hasStaleProductRows}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            handleShowBarcode(product.barcode)
+                                                        }}
+                                                        className="text-gray-400 hover:text-gray-600 disabled:cursor-not-allowed disabled:text-gray-300"
+                                                        title={t('products.viewBarcode')}
+                                                        aria-label={t('products.viewBarcode')}
                                                     >
                                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                                                                d="M12 9.5V5a3 3 0 10-6 0v4.5a3 3 0 006 0zM6 9.5V5a3 3 0 016 0v4.5a3 3 0 01-6 0z" />
                                                         </svg>
-                                                    </a>
-                                                )}
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
                             </tbody>
                         </table>
                     </div>
                 )}
             </div>
 
-            {!loading && totalPages > 1 ? (
-                <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4">
+            {/* Result summary + Sorting indicator + Pagination */}
+            <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4">
+                <div className="flex items-center gap-4">
                     <div className="text-sm text-gray-600">
-                        {totalCount > 0
-                            ? `${(page - 1) * pageSize + 1}-${Math.min(page * pageSize, totalCount)} / ${totalCount}`
-                            : '0 / 0'}
+                        {loading ? t('common.loading') : `${t('products.showingOf', { start: startLabel, end: endLabel, total: totalCount })}`}
                     </div>
+                    {sortField && (
+                        <span className="text-xs text-gray-500">
+                            {t('products.sort')}: {t(`products.sortBy${sortField.charAt(0).toUpperCase() + sortField.slice(1)}`)} · {t(`products.sort${sortDirection === 'asc' ? 'Ascending' : 'Descending'}`)}
+                        </span>
+                    )}
+                </div>
+                {!loading && totalPages > 1 && (
                     <div className="flex gap-2">
                         <button
                             type="button"
-                            onClick={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
+                            onClick={() => {
+                                setPage((currentPage) => Math.max(1, currentPage - 1))
+                                clearSelection()
+                            }}
                             disabled={page === 1}
                             className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                         >
@@ -439,15 +1299,18 @@ export default function Products() {
                         </button>
                         <button
                             type="button"
-                            onClick={() => setPage((currentPage) => Math.min(totalPages, currentPage + 1))}
+                            onClick={() => {
+                                setPage((currentPage) => Math.min(totalPages, currentPage + 1))
+                                clearSelection()
+                            }}
                             disabled={page >= totalPages}
                             className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
                         >
                             {t('common.next')}
                         </button>
                     </div>
-                </div>
-            ) : null}
+                )}
+            </div>
 
             {/* Stock Modal */}
             {stockModal && (
@@ -477,6 +1340,33 @@ export default function Products() {
                     onDeleteSuccess={handleDeleteSuccess}
                     onDeactivateSuccess={handleDeactivateSuccess}
                 />
+            )}
+
+            {/* Phase 3: print-only Products Report (hidden on screen).
+                Mounted on demand when a PDF export is requested: the print
+                effect runs after this commit, so the ref is attached before
+                react-to-print reads it. Keeping it unmounted otherwise avoids
+                duplicating the visible rows in the live DOM. react-to-print
+                clones this node into a print iframe, so the hidden ancestor
+                never affects the printed output. */}
+            {pdfExportScope && (
+                <div className="hidden">
+                    <ProductExportPrintArea
+                        ref={printAreaRef}
+                        rows={pdfRows}
+                        headers={pdfHeaders}
+                        title={t('products.exportReportTitle')}
+                        storeName={settings.companyName}
+                        scopeLabel={`${t('products.exportScope')}: ${pdfExportScope === EXPORT_SCOPE_SELECTED ? t('products.exportSelected') : t('products.exportCurrentView')}`}
+                        exportedAt={`${t('products.exportedAt')}: ${formatDateTime(new Date(), locale)}`}
+                        countLabel={t('products.exportProductsCount', { count: pdfRows.length })}
+                        filtersSummary={activeFilterSummary.length > 0
+                            ? `${t('products.exportActiveFilters')}: ${activeFilterSummary.join(' · ')}`
+                            : ''}
+                        isRTL={isRTL}
+                        dir={dir}
+                    />
+                </div>
             )}
         </div>
     )

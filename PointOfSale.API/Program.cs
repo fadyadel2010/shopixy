@@ -12,9 +12,11 @@ using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging.Console;
 using PointOfSale.API.Consumers;
 using PointOfSale.API.Infrastructure.Mvc;
 using PointOfSale.API.Filters;
+using PointOfSale.API.Instrumentation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -22,6 +24,7 @@ using Microsoft.OpenApi.Models;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.RateLimiting;
 using PointOfSale.API.Models;
+using PointOfSale.API.Middleware;
 using PointOfSale.API.Security;
 using PointOfSale.API.SuperAdmin.Infrastructure;
 using PointOfSale.API.SuperAdmin.Models;
@@ -88,14 +91,23 @@ PointOfSale.API.Configuration.SensitiveConfigurationValidator.ValidateOrThrow(bu
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
-builder.Logging.AddJsonConsole(options =>
+// FEED-1B security fix: the ASP.NET Core host pushes a per-request logging
+// scope carrying the raw request path before any app middleware runs, and the
+// public Meta feed URL embeds the raw feed token (Feed-1A contract). The
+// redacting formatter keeps the exact JSON console shape but never lets the
+// feed token reach the console; non-feed routes log unchanged.
+builder.Logging.AddConsoleFormatter<FeedTokenRedactingJsonConsoleFormatter, JsonConsoleFormatterOptions>();
+builder.Services.Configure<JsonConsoleFormatterOptions>(options =>
 {
     options.IncludeScopes = true;
     options.UseUtcTimestamp = true;
     options.TimestampFormat = "yyyy-MM-ddTHH:mm:ss.fffZ";
 });
-builder.Logging.AddDebug();
-builder.Logging.AddEventSourceLogger();
+builder.Logging.AddConsole(options =>
+{
+    options.FormatterName = FeedTokenRedactingJsonConsoleFormatter.FormatterName;
+    options.IncludeScopes = true;
+});
 
 // Configure forwarded headers for proper client IP resolution behind proxies/load balancers
 // DOMAIN-2A: X-Forwarded-Host added per DOMAIN-1.6 Section 3.1 and DOMAIN-1 Architecture Law #11.
@@ -353,6 +365,38 @@ builder.Services.AddScoped<Microsoft.AspNetCore.Identity.IPasswordHasher<PointOf
 builder.Services.AddMemoryCache();
 // AF-16D: Storefront URL resolver — single source of truth for promotion link URLs
 builder.Services.AddSingleton<PointOfSale.API.Services.StorefrontUrlResolver>();
+
+// FEED-1A: Meta product feed — token lifecycle, set-based projection, RSS serializer
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.IProductFeedTokenService, PointOfSale.API.Services.Feeds.ProductFeedTokenService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.MetaProductFeedService>();
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.IMetaProductFeedService>(
+    sp => sp.GetRequiredService<PointOfSale.API.Services.Feeds.MetaProductFeedService>());
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.IMetaFeedXmlSerializer, PointOfSale.API.Services.Feeds.MetaFeedXmlSerializer>();
+
+// FEED-2: Google product feed — a second public channel adapter over the SAME
+// certified engine. The shared set-based projection is served by the same
+// scoped MetaProductFeedService instance (no second projection pipeline);
+// only the Google RSS serializer and channel-scoped service are new.
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.IFeedProductProjection>(
+    sp => sp.GetRequiredService<PointOfSale.API.Services.Feeds.MetaProductFeedService>());
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.IGoogleFeedXmlSerializer, PointOfSale.API.Services.Feeds.GoogleFeedXmlSerializer>();
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.IGoogleProductFeedService, PointOfSale.API.Services.Feeds.GoogleProductFeedService>();
+
+// FEED-3: TikTok channel adapter over the same certified engine.
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.ITikTokFeedXmlSerializer, PointOfSale.API.Services.Feeds.TikTokFeedXmlSerializer>();
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.ITikTokProductFeedService, PointOfSale.API.Services.Feeds.TikTokProductFeedService>();
+
+// FEED-4: Snapchat channel adapter over the same certified engine.
+// Same token lifecycle, shared IFeedProductProjection, shared cache, rate
+// limiting, telemetry, and response safeguards — only the XML vocab differs.
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.ISnapchatFeedXmlSerializer, PointOfSale.API.Services.Feeds.SnapchatFeedXmlSerializer>();
+builder.Services.AddScoped<PointOfSale.API.Services.Feeds.ISnapchatProductFeedService, PointOfSale.API.Services.Feeds.SnapchatProductFeedService>();
+
+// FEED-1B: hardening — rendered-XML Redis cache (failure-isolated), response
+// safeguards (item cap + size backstop), and feed telemetry meter.
+builder.Services.AddSingleton<PointOfSale.API.Instrumentation.MetaFeedTelemetry>();
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.IMetaFeedCache, PointOfSale.API.Services.Feeds.MetaFeedCache>();
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.MetaFeedSafeguards>(_ => PointOfSale.API.Services.Feeds.MetaFeedSafeguards.Default);
 
 // DOMAIN-2A: Host Resolution Middleware foundation services.
 // IHostNormalizer — pure-syntactic host normalization (lowercase, port strip,
@@ -2264,6 +2308,7 @@ builder.Services.AddOpenTelemetry()
             .AddMeter(PointOfSale.Infrastructure.Accounting.AccountingMetrics.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Analytics.Delivery.ProviderDeliveryMetrics.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Redis.Services.RedisPerformanceTelemetry.MeterName)
+            .AddMeter(PointOfSale.API.Instrumentation.MetaFeedTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Elasticsearch.Services.SearchTelemetry.MeterName)
             .AddMeter(PointOfSale.API.Services.Checkout.CheckoutLockTelemetry.MeterName)
             .AddMeter(PointOfSale.API.Instrumentation.CommissionServiceTelemetry.MeterName)
@@ -2491,7 +2536,7 @@ builder.Services.AddAuthentication(options =>
                     authorityResult.Reason,
                     authorityResult.UserId,
                     authorityResult.TenantId,
-                    context.HttpContext.Request.Path.Value ?? "unknown");
+                    PublicFeedPathRedactor.Redact(context.HttpContext.Request.Path.Value ?? "unknown"));
                 context.Fail("POS session is no longer current");
             }
         }
@@ -2542,7 +2587,7 @@ builder.Services.AddAuthentication(options =>
                 logger.LogWarning(
                     "SuperAdmin token rejected during validation | RequestId: {RequestId} | Path: {Path} | Method: {Method} | Role: {Role} | AuthType: {AuthType}",
                     context.HttpContext.TraceIdentifier,
-                    context.HttpContext.Request.Path.Value ?? "unknown",
+                    PublicFeedPathRedactor.Redact(context.HttpContext.Request.Path.Value ?? "unknown"),
                     context.HttpContext.Request.Method,
                     context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.Role)?.Value
                         ?? context.Principal?.FindFirst("role")?.Value
@@ -2560,7 +2605,7 @@ builder.Services.AddAuthentication(options =>
                 context.Exception,
                 "SuperAdmin authentication failed | RequestId: {RequestId} | Path: {Path} | Method: {Method}",
                 context.HttpContext.TraceIdentifier,
-                context.HttpContext.Request.Path.Value ?? "unknown",
+                PublicFeedPathRedactor.Redact(context.HttpContext.Request.Path.Value ?? "unknown"),
                 context.HttpContext.Request.Method);
             return Task.CompletedTask;
         }
@@ -2625,7 +2670,7 @@ builder.Services.AddAuthentication(options =>
             logger.LogError(
                 "StorefrontJwt Authentication Failed: {Message} | Path: {Path}",
                 context.Exception.Message,
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             return Task.CompletedTask;
         },
         OnTokenValidated = context =>
@@ -2634,7 +2679,7 @@ builder.Services.AddAuthentication(options =>
             logger.LogInformation(
                 "StorefrontJwt Token Validated. Issuer: {Issuer} | Path: {Path}",
                 context.Principal?.FindFirst("iss")?.Value,
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             return Task.CompletedTask;
         },
         OnChallenge = context => 
@@ -2749,7 +2794,7 @@ builder.Services.AddAuthentication(options =>
             logger.LogWarning(
                 "CustomerJwt Authentication Failed: {Message} | Path: {Path}",
                 context.Exception.Message,
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             return Task.CompletedTask;
         }
     };
@@ -2889,7 +2934,8 @@ builder.Services.AddAuthentication(options =>
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogWarning(
                 "AffiliateJwt authentication failed: {Error} | Path: {Path}",
-                context.Exception.Message, context.Request.Path);
+                context.Exception.Message,
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             return Task.CompletedTask;
         },
         OnChallenge = context =>
@@ -2897,7 +2943,8 @@ builder.Services.AddAuthentication(options =>
             var logger = context.HttpContext.RequestServices.GetRequiredService<ILogger<Program>>();
             logger.LogWarning(
                 "AffiliateJwt OnChallenge. Error: {Error}, Path: {Path}",
-                context.Error, context.Request.Path);
+                context.Error,
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             return Task.CompletedTask;
         }
     };
@@ -3166,6 +3213,14 @@ builder.Services.AddRateLimiter(options =>
 
         return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(120, segmentsPerWindow: 4));
     });
+
+    // FEED-1B: dedicated policy for the anonymous public Meta feed endpoint.
+    // Partitioned by feed token + caller IP (tenant is not trustworthy before
+    // the hashed-token lookup). Fixed window, 30 req/min, no queue — abusive
+    // bursts get the standard 429; all other endpoints stay unaffected.
+    options.AddPolicy(
+        PointOfSale.API.Infrastructure.RateLimiting.PublicFeedRateLimitPolicy.PolicyName,
+        PointOfSale.API.Infrastructure.RateLimiting.PublicFeedRateLimitPolicy.GetPartition);
 
     // Checkout OTP is externally reachable and high-abuse, so partition by the
     // resolved tenant plus caller/session identity.

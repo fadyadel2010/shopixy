@@ -1,0 +1,10 @@
+{
+  "version": "delegate-fleet.v1",
+  "lanes": {
+    "laguna": {
+      "implementer": "kilo",
+      "model": "kilo/poolside/laguna-s-2.1:free",
+      "timeout": "30m"
+    }
+  }
+}

@@ -86,6 +86,16 @@ public static class RateLimitRejectionHandlers
         {
             telemetry.RecordSmartOfferAbuseBlocked("rate_limit", path);
         }
+
+        // FEED-1B: public feed rejections are accounted on the feed meter
+        // (resolved optionally — telemetry must never break the rejection path).
+        // FEED-2: the channel dimension comes from the public feed route.
+        if (path.StartsWith("/api/public/feeds", StringComparison.OrdinalIgnoreCase))
+        {
+            httpContext.RequestServices
+                .GetService<PointOfSale.API.Instrumentation.MetaFeedTelemetry>()?
+                .RecordRateLimited(PointOfSale.API.Infrastructure.RateLimiting.PublicFeedRateLimitPolicy.ExtractChannel(path));
+        }
     }
 }
 

@@ -109,6 +109,7 @@ appsettings.*.local.json
 secrets.json
 credentials.yaml
 credentials.json
+token_check.json
 *.pfx
 *.p12
 # Root machine-specific config artifact (appsettings.af22.json) — not a shared config

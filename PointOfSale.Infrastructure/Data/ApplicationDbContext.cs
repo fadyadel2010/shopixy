@@ -478,6 +478,9 @@ public class ApplicationDbContext : DbContext
     public DbSet<AffiliatePasswordResetToken> AffiliatePasswordResetTokens => Set<AffiliatePasswordResetToken>();
     public DbSet<AffiliateRefreshTokenReplayEntry> AffiliateRefreshTokenReplayEntries => Set<AffiliateRefreshTokenReplayEntry>();
 
+    // FEED-1A: Product feed tokens — hashed opaque tokens for public feed URLs
+    public DbSet<ProductFeedToken> ProductFeedTokens => Set<ProductFeedToken>();
+
     // AF-15: Promotion Links — standard tenant + soft-delete
     public DbSet<AffiliatePromotionLink> AffiliatePromotionLinks => Set<AffiliatePromotionLink>();
 

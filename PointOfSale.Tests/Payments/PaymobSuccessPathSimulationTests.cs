@@ -795,7 +795,7 @@ public sealed class PaymobSuccessPathSimulationTests
             .SingleAsync(message =>
                 message.BusinessEntityId == fixture.OrderId &&
                 message.EventType == "UnresolvedOnlinePayment");
-        Assert.Contains("880000026", suspenseOutbox.Payload);
+        Assert.Contains("880000026", suspenseOutbox.PayloadJson);
     }
 
     [Fact]

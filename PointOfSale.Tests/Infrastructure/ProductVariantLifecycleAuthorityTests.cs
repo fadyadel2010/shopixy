@@ -272,6 +272,69 @@ public class ProductVariantLifecycleAuthorityTests
         Assert.Equal(20m, variantResult.Price);
     }
 
+    [Theory]
+    [InlineData(false, 0, false, true)]
+    [InlineData(false, 5, false, true)]
+    [InlineData(true, 0, false, false)]
+    [InlineData(true, 5, false, true)]
+    [InlineData(true, 0, true, true)]
+    [InlineData(true, 5, true, true)]
+    public void Evaluate_SimpleProductPurchasability_MatchesCheckoutStockPolicy(
+        bool trackStock,
+        int stockQuantity,
+        bool allowBackorder,
+        bool expectedCanPurchase)
+    {
+        var product = BuildStorefrontProduct(
+            hasVariants: false,
+            trackStock,
+            allowBackorder,
+            stockQuantity);
+
+        var result = ProductStorefrontVisibilityAuthority.Evaluate(product);
+
+        Assert.Equal(expectedCanPurchase, result.CanPurchase);
+        Assert.Equal(expectedCanPurchase, result.InStock);
+    }
+
+    [Theory]
+    [InlineData(false, 0, false, true)]
+    [InlineData(false, 5, false, true)]
+    [InlineData(true, 0, false, false)]
+    [InlineData(true, 5, false, true)]
+    [InlineData(true, 0, true, true)]
+    [InlineData(true, 5, true, true)]
+    public void EvaluateVariant_Purchasability_MatchesCheckoutStockPolicy(
+        bool trackStock,
+        decimal totalStock,
+        bool allowBackorder,
+        bool expectedCanPurchase)
+    {
+        var variant = new ProductVariantDocument
+        {
+            VariantId = Guid.NewGuid(),
+            IsActive = true,
+            IsDefault = true,
+            Price = 30m,
+            OnlinePrice = 20m,
+            TotalStock = totalStock
+        };
+        var product = BuildStorefrontProduct(
+            hasVariants: true,
+            trackStock,
+            allowBackorder,
+            stockQuantity: decimal.ToInt32(totalStock),
+            variants: [variant]);
+
+        var productResult = ProductStorefrontVisibilityAuthority.Evaluate(product);
+        var variantResult = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
+
+        Assert.True(productResult.RequiresVariantSelection);
+        Assert.Equal(expectedCanPurchase, productResult.InStock);
+        Assert.Equal(expectedCanPurchase, variantResult.CanPurchase);
+        Assert.Equal(expectedCanPurchase, variantResult.InStock);
+    }
+
     [Fact]
     public async Task CommerceHubOverlay_ReturnsMissing_WhenReplayTargetsSupersededListingVariant()
     {
@@ -524,4 +587,29 @@ public class ProductVariantLifecycleAuthorityTests
 
         return new ApplicationDbContext(options);
     }
+
+    private static ProductDocument BuildStorefrontProduct(
+        bool hasVariants,
+        bool trackStock,
+        bool allowBackorder,
+        int stockQuantity,
+        List<ProductVariantDocument>? variants = null) =>
+        new()
+        {
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = hasVariants,
+            TrackStock = trackStock,
+            AllowBackorder = allowBackorder,
+            StockQuantity = stockQuantity,
+            DefaultUnit = new ProductUnitDocument
+            {
+                UnitId = Guid.NewGuid(),
+                Name = "Piece",
+                SalePrice = 25m,
+                ConversionFactor = 1m,
+                IsBaseUnit = true
+            },
+            Variants = variants ?? []
+        };
 }

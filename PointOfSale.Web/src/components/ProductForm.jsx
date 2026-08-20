@@ -13,6 +13,7 @@ import { getProductTemplateOptions } from '@/storefront/products/ProductTemplate
 import { useAuthStore } from '../store/authStore'
 import { useToast } from '../components/Toast'
 import { normalizeProductAuthoringVariants } from '../utils/productAuthoringVariants'
+import { normalizePublishStatus } from '../utils/productStatus'
 
 const WorkspaceSection = forwardRef(function WorkspaceSection({ eyebrow, title, description, children, className = '', id, tabIndex }, ref) {
     return (
@@ -42,29 +43,6 @@ function EmbeddedSection({ title, description, children }) {
             {children}
         </div>
     )
-}
-
-function normalizePublishStatus(value) {
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        return value
-    }
-
-    const normalizedValue = typeof value === 'string' ? value.trim().toLowerCase() : ''
-
-    if (normalizedValue === 'draft') {
-        return 0
-    }
-
-    if (normalizedValue === 'published') {
-        return 1
-    }
-
-    if (normalizedValue === 'archived') {
-        return 2
-    }
-
-    const parsedValue = Number.parseInt(value, 10)
-    return Number.isFinite(parsedValue) ? parsedValue : 1
 }
 
 function isBlankValue(value) {

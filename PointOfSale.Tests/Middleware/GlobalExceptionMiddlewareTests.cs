@@ -5,9 +5,11 @@ using Amazon.S3;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Middleware;
+using PointOfSale.API.Services.Feeds;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.MultiTenancy;
 
@@ -137,5 +139,80 @@ public class GlobalExceptionMiddlewareTests
         var details = document.RootElement.GetProperty("details");
         Assert.Equal("completed", details.GetProperty("currentState").GetString());
         Assert.Equal("capture_payment", details.GetProperty("operation").GetString());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_FeedRouteException_LogsRedactedPathWithoutRawToken()
+    {
+        var tenantContext = new TenantContext();
+        tenantContext.SetTenantId(Guid.Parse("44444444-4444-4444-4444-444444444444"));
+
+        var services = new ServiceCollection()
+            .AddSingleton<ITenantContext>(tenantContext)
+            .BuildServiceProvider();
+
+        var rawToken = ProductFeedTokenService.GenerateRawToken();
+
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = services,
+            TraceIdentifier = "corr-feed-exception-1"
+        };
+        httpContext.Request.Path = $"/api/public/feeds/meta/{rawToken}";
+        httpContext.Request.Method = HttpMethods.Get;
+        httpContext.Response.Body = new MemoryStream();
+
+        var logger = new CapturingLogger();
+        var middleware = new GlobalExceptionMiddleware(
+            _ => throw new InvalidOperationException("simulated feed failure"),
+            logger);
+
+        await middleware.InvokeAsync(httpContext);
+
+        Assert.Equal(StatusCodes.Status500InternalServerError, httpContext.Response.StatusCode);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("/api/public/feeds/meta/<REDACTED>", entry.State["Path"]);
+        Assert.DoesNotContain(rawToken, entry.Message, StringComparison.Ordinal);
+        Assert.All(
+            entry.State.Values,
+            value => Assert.DoesNotContain(rawToken, value?.ToString(), StringComparison.Ordinal));
+    }
+
+    private sealed record CapturedLogEntry(
+        LogLevel LogLevel,
+        string Message,
+        IReadOnlyDictionary<string, object?> State);
+
+    private sealed class CapturingLogger : ILogger<GlobalExceptionMiddleware>
+    {
+        public List<CapturedLogEntry> Entries { get; } = new();
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var structuredState = state is IEnumerable<KeyValuePair<string, object?>> pairs
+                ? pairs.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+
+            Entries.Add(new CapturedLogEntry(logLevel, formatter(state, exception), structuredState));
+        }
+    }
+
+    private sealed class NullScope : IDisposable
+    {
+        public static readonly NullScope Instance = new();
+
+        public void Dispose()
+        {
+        }
     }
 }

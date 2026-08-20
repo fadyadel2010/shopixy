@@ -49,7 +49,9 @@ public class CorrelationIdMiddleware
         {
             ["CorrelationId"] = correlationId,
             ["TraceId"] = correlationId,
-            ["RequestPath"] = context.Request.Path.Value ?? string.Empty,
+            // FEED-1B security fix: the public feed URL embeds the raw token;
+            // it must never reach logging scopes. Other paths stay unchanged.
+            ["RequestPath"] = PublicFeedPathRedactor.Redact(context.Request.Path.Value) ?? string.Empty,
         });
 
         await _next(context);

@@ -52,6 +52,12 @@ public class RedisSettings
     public int MarketplaceReadCacheTtlMinutes { get; set; } = 5;
 
     /// <summary>
+    /// TTL for the rendered public Meta product feed cache in minutes.
+    /// Feed-1B keeps this short (5–10) so TTL-based freshness bounds staleness.
+    /// </summary>
+    public int MetaFeedCacheTtlMinutes { get; set; } = 5;
+
+    /// <summary>
     /// Default TTL for marketplace translation cache entries in hours.
     /// </summary>
     public int MarketplaceTranslationCacheTtlHours { get; set; } = 24;

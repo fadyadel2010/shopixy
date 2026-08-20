@@ -43,7 +43,7 @@ public sealed class GlobalExceptionMiddleware
             _logger.LogInformation(
                 "Request aborted by client | TraceId: {TraceId} | Path: {Path} | Method: {Method}",
                 Activity.Current?.Id ?? context.TraceIdentifier,
-                context.Request.Path.Value ?? "unknown",
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"),
                 context.Request.Method);
         }
         catch (Exception exception)
@@ -60,7 +60,7 @@ public sealed class GlobalExceptionMiddleware
                 exception,
                 "Response already started before exception middleware could handle the error | TraceId: {TraceId} | Path: {Path}",
                 Activity.Current?.Id ?? context.TraceIdentifier,
-                context.Request.Path.Value ?? "unknown");
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
             ExceptionDispatchInfo.Capture(exception).Throw();
         }
 
@@ -112,7 +112,7 @@ public sealed class GlobalExceptionMiddleware
             correlationId,
             tenantId,
             userId,
-            context.Request.Path.Value ?? "unknown",
+            PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"),
             context.Request.Method,
             statusCode);
 

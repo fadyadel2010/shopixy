@@ -2054,7 +2054,7 @@ public class CartService : ICartService
                         var availableStock = variantPurchasability.StockQuantity;
                         item.AvailableStock = availableStock;
 
-                        if (availableStock <= 0)
+                        if (product.TrackStock && !product.AllowBackorder && availableStock <= 0)
                         {
                             _logger.LogWarning(
                                 "Variant no longer has authoritative stock - removing from cart | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
@@ -2066,7 +2066,7 @@ public class CartService : ICartService
                             continue;
                         }
 
-                        if (item.Quantity > availableStock)
+                        if (product.TrackStock && !product.AllowBackorder && item.Quantity > availableStock)
                         {
                             _logger.LogInformation(
                                 "Cart item quantity reduced to authoritative SQL stock | TenantId: {TenantId} | CartId: {CartId} | VariantId: {VariantId} | RequestedQuantity: {RequestedQuantity} | AvailableStock: {AvailableStock} | CorrelationId: {CorrelationId}",

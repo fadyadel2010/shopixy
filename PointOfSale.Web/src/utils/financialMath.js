@@ -186,6 +186,15 @@ export const clampAmount = (value, min, max) => (
     Math.min(toSafeNumber(max), Math.max(toSafeNumber(min), toSafeNumber(value)))
 )
 
+export const divide = (a, b) => {
+    const dividend = toSafeNumber(a)
+    const divisor = toSafeNumber(b)
+    if (divisor === 0) {
+        return 0
+    }
+    return dividend / divisor
+}
+
 export const sumCurrency = (values) => (
     fromCurrencyMinorUnits(
         (Array.isArray(values) ? values : []).reduce(

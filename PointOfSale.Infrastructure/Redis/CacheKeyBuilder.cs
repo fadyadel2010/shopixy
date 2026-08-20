@@ -337,6 +337,62 @@ public static class CacheKeyBuilder
         return Versioned($"{instanceName}:marketplace:product:{productId:N}:{normalizedField}:{normalizedLanguage}");
     }
 
+    // =============================================================================
+    // PUBLIC PRODUCT FEED CACHE KEYS (Feed-1B)
+    // Rendered Meta feed XML cached per tenant + feed token identity.
+    // Keys never contain the raw token, product ids, or user ids — tenant id
+    // plus token ROW id are sufficient and keep entries tenant-isolated.
+    // TTL: Redis.MetaFeedCacheTtlMinutes (5–10 minutes).
+    // =============================================================================
+
+    /// <summary>
+    /// Builds a cache key for the rendered Meta product feed of one token.
+    /// Pattern: {instance}:tenant:{tenantId}:feed:meta:{tokenId}
+    /// </summary>
+    public static string MetaFeedKey(string instanceName, Guid tenantId, Guid tokenId)
+    {
+        return FeedKey(instanceName, tenantId, tokenId, "meta");
+    }
+
+    /// <summary>
+    /// FEED-2: Builds a cache key for the rendered Google product feed of one
+    /// token. Pattern: {instance}:tenant:{tenantId}:feed:google:{tokenId}
+    /// </summary>
+    public static string GoogleFeedKey(string instanceName, Guid tenantId, Guid tokenId)
+    {
+        return FeedKey(instanceName, tenantId, tokenId, "google");
+    }
+
+    /// <summary>
+    /// FEED-4: Builds a cache key for the rendered Snapchat product feed of one
+    /// token. Pattern: {instance}:tenant:{tenantId}:feed:snapchat:{tokenId}
+    /// </summary>
+    public static string SnapchatFeedKey(string instanceName, Guid tenantId, Guid tokenId)
+    {
+        return FeedKey(instanceName, tenantId, tokenId, "snapchat");
+    }
+
+    /// <summary>
+    /// FEED-2: Channel-scoped rendered product feed key. The channel segment
+    /// guarantees Meta and Google entries can never collide; keys never
+    /// contain raw tokens. For channel "meta" this yields exactly the
+    /// certified Feed-1B key.
+    /// Pattern: {instance}:tenant:{tenantId}:feed:{channel}:{tokenId}
+    /// </summary>
+    public static string FeedKey(string instanceName, Guid tenantId, Guid tokenId, string channel)
+    {
+        return Versioned($"{instanceName}:tenant:{tenantId:N}:feed:{channel}:{tokenId:N}");
+    }
+
+    /// <summary>
+    /// Builds a pattern for all Meta feed cache keys of a tenant (bulk invalidation).
+    /// Pattern: {instance}:tenant:{tenantId}:feed:meta:*
+    /// </summary>
+    public static string MetaFeedPatternKey(string instanceName, Guid tenantId)
+    {
+        return $"{instanceName}:tenant:{tenantId:N}:feed:meta:*";
+    }
+
     public static string CacheRefreshLockKey(string instanceName, string cacheKeyHash)
     {
         return $"{instanceName}:lock:cache-refresh:{cacheKeyHash}";

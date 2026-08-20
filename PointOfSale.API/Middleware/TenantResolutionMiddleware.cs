@@ -62,6 +62,7 @@ public class TenantResolutionMiddleware
         "/uploads",
         "/api/affiliate/auth",
         "/api/public/affiliate",
+"/api/public/feeds",
         "/api/affiliate",
         // Test harness entry-point: stripped from Production by TestingOnlyControllerFeatureProvider.
         // Must bypass tenant resolution because it has no token yet — it IS the token issuer.

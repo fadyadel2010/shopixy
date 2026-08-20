@@ -17,7 +17,7 @@ public static class ProductStorefrontVisibilityAuthority
             var stockQuantity = Math.Max(
                 0,
                 decimal.ToInt32(decimal.Truncate(activePricedVariants.Sum(variant => variant.TotalStock))));
-            var inStock = activePricedVariants.Any(variant => variant.TotalStock > 0);
+            var inStock = activePricedVariants.Any(variant => IsVariantOrderableByStockPolicy(product, variant));
 
             return new StorefrontPurchasabilityResult(
                 IsAvailable: product.IsActive && product.IsOnlineVisible && selectedVariant != null,
@@ -55,7 +55,7 @@ public static class ProductStorefrontVisibilityAuthority
                           product.HasVariants &&
                           variant.IsActive &&
                           price > 0m;
-        var inStock = stockQuantity > 0;
+        var inStock = IsVariantOrderableByStockPolicy(product, variant);
 
         return new StorefrontPurchasabilityResult(
             IsAvailable: isAvailable,
@@ -87,6 +87,9 @@ public static class ProductStorefrontVisibilityAuthority
     private static IEnumerable<ProductVariantDocument> ResolvePricedActiveVariants(ProductDocument product) =>
         (product.Variants ?? new List<ProductVariantDocument>())
         .Where(variant => variant.IsActive && variant.EffectivePrice > 0m);
+
+    private static bool IsVariantOrderableByStockPolicy(ProductDocument product, ProductVariantDocument variant) =>
+        !product.TrackStock || product.AllowBackorder || variant.TotalStock > 0m;
 
     private static string? ResolveSimpleProductUnavailableReason(
         ProductDocument product,

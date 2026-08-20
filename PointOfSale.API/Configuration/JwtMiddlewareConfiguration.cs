@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using PointOfSale.API.Middleware;
 using PointOfSale.API.Models;
 using System.Text;
 
@@ -102,7 +103,7 @@ public static class JwtMiddlewareConfiguration
                     logger.LogWarning(
                         "JWT authentication failed: {Error} | Path: {Path} | IP: {IP}",
                         context.Exception.Message,
-                        context.Request.Path,
+                        PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"),
                         context.HttpContext.Connection.RemoteIpAddress
                     );
 
@@ -148,7 +149,7 @@ public static class JwtMiddlewareConfiguration
 
                         logger.LogWarning(
                             "SignalR connection attempt without auth cookie | Path: {Path} | IP: {IP}",
-                            path,
+                            PublicFeedPathRedactor.Redact(path.Value ?? "unknown"),
                             context.HttpContext.Connection.RemoteIpAddress
                         );
                     }

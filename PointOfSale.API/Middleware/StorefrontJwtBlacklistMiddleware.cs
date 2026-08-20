@@ -89,7 +89,7 @@ public class StorefrontJwtBlacklistMiddleware
         {
             _logger.LogWarning(
                 "[JwtBlacklistMiddleware] INVALID_STOREFRONT_TOKEN_CLAIMS | Path: {Path}",
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
             await RejectTokenAsync(
                 context,
@@ -106,7 +106,7 @@ public class StorefrontJwtBlacklistMiddleware
                     "[JwtBlacklistMiddleware] JWT_BLACKLIST_HIT | TenantId: {TenantId} | Jti: {Jti} | Path: {Path}",
                     tenantId,
                     jti,
-                    context.Request.Path);
+                    PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
                 await RejectTokenAsync(
                     context,
@@ -132,7 +132,7 @@ public class StorefrontJwtBlacklistMiddleware
                     "[JwtBlacklistMiddleware] STOREFRONT_CUSTOMER_DEACTIVATED | TenantId: {TenantId} | CustomerId: {CustomerId} | Path: {Path}",
                     tenantId,
                     customerId,
-                    context.Request.Path);
+                    PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
                 await RejectTokenAsync(
                     context,
@@ -156,7 +156,7 @@ public class StorefrontJwtBlacklistMiddleware
                             customerId,
                             tokenIssuedAt.Value,
                             customerIsActive.TokensValidAfterUtc.Value,
-                            context.Request.Path);
+                            PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
                         await RejectTokenAsync(
                             context,
@@ -173,7 +173,7 @@ public class StorefrontJwtBlacklistMiddleware
                         "[JwtBlacklistMiddleware] TOKEN_MISSING_IAT_WITH_CUTOFF | TenantId: {TenantId} | CustomerId: {CustomerId} | Path: {Path} | IatClaim: {IatClaim}",
                         tenantId,
                         customerId,
-                        context.Request.Path,
+                        PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"),
                         authenticateResult.Principal.FindFirst(JwtRegisteredClaimNames.Iat)?.Value ?? "(null)");
 
                     await RejectTokenAsync(
@@ -193,7 +193,7 @@ public class StorefrontJwtBlacklistMiddleware
                 "[JwtBlacklistMiddleware] Revocation check unavailable, rejecting request | TenantId: {TenantId} | CustomerId: {CustomerId} | Path: {Path}",
                 tenantId,
                 customerId,
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
             await RejectTokenAsync(
                 context,
@@ -207,7 +207,7 @@ public class StorefrontJwtBlacklistMiddleware
                 "[JwtBlacklistMiddleware] Storefront token validation failed closed | TenantId: {TenantId} | CustomerId: {CustomerId} | Path: {Path}",
                 tenantId,
                 customerId,
-                context.Request.Path);
+                PublicFeedPathRedactor.Redact(context.Request.Path.Value ?? "unknown"));
 
             await RejectTokenAsync(
                 context,

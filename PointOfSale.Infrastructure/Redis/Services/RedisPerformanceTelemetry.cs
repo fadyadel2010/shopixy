@@ -76,6 +76,8 @@ public sealed class RedisPerformanceTelemetry
             return "footer";
         if (normalized.Contains("translation", StringComparison.Ordinal))
             return "translation";
+        if (normalized.Contains("feed", StringComparison.Ordinal))
+            return "feed";
         if (normalized.Contains("product", StringComparison.Ordinal))
             return "product";
         if (normalized.Contains("category", StringComparison.Ordinal))
