@@ -23,19 +23,44 @@ const ConfirmDialogContext = createContext(defaultConfirmDialog)
 export function ConfirmDialogProvider({ children, value }) {
     const [dialog, setDialog] = useState(null)
     const [promptValue, setPromptValue] = useState('')
-    const resolverRef = useRef(null)
+    // While an awaited confirmed action (see confirmAction below) is running,
+    // the dialog stays mounted in a pending state: both buttons are disabled,
+    // Escape/cancel are suppressed, and the destructive action shows loading.
+    const [actionPending, setActionPending] = useState(false)
+    const pendingSettleRef = useRef(null)
+    // Synchronous duplicate-submission guard keyed by the exact dialog object:
+    // a second confirm click in the same tick can never re-run the action,
+    // independent of any visual disabled state.
+    const runningActionDialogRef = useRef(null)
 
-    const resolveDialog = useCallback((result) => {
-        const resolver = resolverRef.current
-        resolverRef.current = null
+    // A settlement may close only the dialog instance that created it. This
+    // prevents a late async action from resolving a newer replacement dialog.
+    const settleCurrent = useCallback((settle, expectedDialog = null) => {
+        const pending = pendingSettleRef.current
+        if (expectedDialog && pending?.dialog !== expectedDialog) {
+            return false
+        }
+        pendingSettleRef.current = null
         setDialog(null)
         setPromptValue('')
-        resolver?.(result)
+        setActionPending(false)
+        runningActionDialogRef.current = null
+        if (pending) {
+            settle(pending)
+        }
+        return true
     }, [])
 
-    const openDialog = useCallback((nextDialog, initialPromptValue = '') => new Promise((resolve) => {
-        resolverRef.current?.(nextDialog.type === 'prompt' ? null : false)
-        resolverRef.current = resolve
+    const resolveDialog = useCallback((result, expectedDialog = null) => {
+        settleCurrent((pending) => pending.resolve(result), expectedDialog)
+    }, [settleCurrent])
+
+    const openDialog = useCallback((nextDialog, initialPromptValue = '') => new Promise((resolve, reject) => {
+        const previous = pendingSettleRef.current
+        previous?.resolve(previous.dialog?.type === 'prompt' ? null : false)
+        pendingSettleRef.current = { resolve, reject, dialog: nextDialog }
+        runningActionDialogRef.current = null
+        setActionPending(false)
         setPromptValue(initialPromptValue)
         setDialog(nextDialog)
     }), [])
@@ -48,7 +73,21 @@ export function ConfirmDialogProvider({ children, value }) {
         openDialog({ type: 'prompt', options }, options.defaultValue ?? '')
     ), [openDialog])
 
-    const confirmAction = useCallback(async ({ onConfirm, ...options } = {}) => {
+    // Legacy behavior (default): close the dialog as soon as the user decides,
+    // then run onConfirm and propagate its result. Existing consumers keep
+    // working unchanged.
+    //
+    // Opt-in `awaitAction`: keep the dialog open while onConfirm runs. The
+    // modal renders a real pending state (disabled buttons, suppressed
+    // Escape/cancel, loading label) until the action settles; the promise
+    // resolves with the action result or rejects with its error. A
+    // synchronous per-dialog guard makes double submissions impossible even
+    // for clicks landing in the same tick.
+    const confirmAction = useCallback(async ({ onConfirm, awaitAction, ...options } = {}) => {
+        if (awaitAction) {
+            return openDialog({ type: 'action', options: { ...options, onConfirm } })
+        }
+
         const confirmed = await confirm(options)
         if (!confirmed) {
             return false
@@ -59,29 +98,86 @@ export function ConfirmDialogProvider({ children, value }) {
         }
 
         return true
-    }, [confirm])
+    }, [confirm, openDialog])
 
     const contextValue = useMemo(() => (
         value || { confirm, prompt, confirmAction }
     ), [confirm, confirmAction, prompt, value])
 
+    const runConfirmedAction = useCallback(() => {
+        if (!dialog || dialog.type !== 'action') {
+            return
+        }
+        if (runningActionDialogRef.current === dialog) {
+            return
+        }
+        runningActionDialogRef.current = dialog
+        setActionPending(true)
+
+        // The action starts synchronously within the confirm click (matching
+        // the legacy confirmAction contract), while settlement keeps the
+        // dialog pending until the returned promise resolves or rejects.
+        const { onConfirm } = dialog.options
+        let actionResult
+        try {
+            actionResult = typeof onConfirm === 'function' ? onConfirm() : undefined
+        } catch (error) {
+            if (runningActionDialogRef.current === dialog) {
+                runningActionDialogRef.current = null
+            }
+            settleCurrent((pending) => {
+                if (typeof pending.reject === 'function') {
+                    pending.reject(error)
+                    return
+                }
+                pending.resolve(false)
+            }, dialog)
+            return
+        }
+
+        Promise.resolve(actionResult)
+            .then((result) => {
+                if (runningActionDialogRef.current === dialog) {
+                    runningActionDialogRef.current = null
+                }
+                resolveDialog(result === undefined ? true : result, dialog)
+            })
+            .catch((error) => {
+                if (runningActionDialogRef.current === dialog) {
+                    runningActionDialogRef.current = null
+                }
+                settleCurrent((pending) => {
+                    if (typeof pending.reject === 'function') {
+                        pending.reject(error)
+                        return
+                    }
+                    pending.resolve(false)
+                }, dialog)
+            })
+    }, [dialog, resolveDialog, settleCurrent])
+
     const handleConfirm = useCallback(() => {
         if (dialog?.type === 'prompt') {
             const normalizedResponse = dialog.options.trim ? promptValue.trim() : promptValue
             if (dialog.options.minLength && normalizedResponse.length < dialog.options.minLength) {
-                resolveDialog(null)
+                resolveDialog(null, dialog)
                 return
             }
 
-            resolveDialog(normalizedResponse)
+            resolveDialog(normalizedResponse, dialog)
             return
         }
 
-        resolveDialog(true)
-    }, [dialog, promptValue, resolveDialog])
+        if (dialog?.type === 'action') {
+            runConfirmedAction()
+            return
+        }
+
+        resolveDialog(true, dialog)
+    }, [dialog, promptValue, resolveDialog, runConfirmedAction])
 
     const handleCancel = useCallback(() => {
-        resolveDialog(dialog?.type === 'prompt' ? null : false)
+        resolveDialog(dialog?.type === 'prompt' ? null : false, dialog)
     }, [dialog, resolveDialog])
 
     const dialogOptions = dialog?.options || {}
@@ -102,6 +198,7 @@ export function ConfirmDialogProvider({ children, value }) {
                         && dialogOptions.minLength
                         && (dialogOptions.trim ? promptValue.trim() : promptValue).length < dialogOptions.minLength
                     }
+                    loading={dialog.type === 'action' && actionPending}
                     onConfirm={handleConfirm}
                     onCancel={handleCancel}
                 >

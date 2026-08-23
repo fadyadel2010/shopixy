@@ -266,7 +266,9 @@ api.interceptors.request.use(
         const idempotencyKey = config.idempotencyKey || config.headers?.['Idempotency-Key'] || config.headers?.['X-Request-Id']
         if (idempotencyKey) {
             config.headers['Idempotency-Key'] = idempotencyKey
-            config.headers['X-Request-Id'] = idempotencyKey
+            if (!config.suppressIdempotencyRequestIdMirroring) {
+                config.headers['X-Request-Id'] = idempotencyKey
+            }
         }
 
         config.headers['Accept-Language'] = resolveRequestLanguage()
@@ -315,7 +317,10 @@ api.interceptors.response.use(
                 return api(originalRequest)
             } catch (refreshError) {
                 if (import.meta.env.DEV) {
-                    console.error('Token refresh failed:', refreshError)
+                    // Axios errors can retain request headers and transport
+                    // diagnostics. Keep development logging useful without
+                    // exposing authorization metadata or raw backend detail.
+                    console.error('Token refresh failed')
                 }
                 await forceLogoutOnce()
                 return Promise.reject(refreshError)

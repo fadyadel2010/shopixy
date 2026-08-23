@@ -43,6 +43,7 @@ public sealed class GoogleProductFeedService : IGoogleProductFeedService
     private readonly IFeedProductProjection _projection;
     private readonly IGoogleFeedXmlSerializer _xmlSerializer;
     private readonly StorefrontUrlResolver _urlResolver;
+    private readonly IFeedStorefrontReadinessService _readiness;
     private readonly ILogger<GoogleProductFeedService> _logger;
     private readonly IMetaFeedCache _feedCache;
     private readonly MetaFeedTelemetry _telemetry;
@@ -56,12 +57,14 @@ public sealed class GoogleProductFeedService : IGoogleProductFeedService
         ILogger<GoogleProductFeedService> logger,
         IMetaFeedCache feedCache,
         MetaFeedTelemetry telemetry,
-        MetaFeedSafeguards? safeguards = null)
+        MetaFeedSafeguards? safeguards = null,
+        IFeedStorefrontReadinessService? readiness = null)
     {
         _dbContext = dbContext;
         _projection = projection;
         _xmlSerializer = xmlSerializer;
         _urlResolver = urlResolver;
+        _readiness = readiness ?? StrictFeedStorefrontReadinessService.Instance;
         _logger = logger;
         _feedCache = feedCache;
         _telemetry = telemetry;
@@ -180,7 +183,7 @@ public sealed class GoogleProductFeedService : IGoogleProductFeedService
         try
         {
             baseUrl = _urlResolver.Resolve(tenant);
-            if (!FeedPublicUrlReadiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
+            if (!_readiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
             {
                 _telemetry.RecordGenerationFailure(reasonCode, Channel);
                 _telemetry.RecordRequest(MetaFeedTelemetry.ResultError, Channel);

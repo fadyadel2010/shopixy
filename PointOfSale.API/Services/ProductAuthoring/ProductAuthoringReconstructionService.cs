@@ -33,9 +33,12 @@ public sealed class ProductAuthoringReconstructionService : IProductAuthoringRec
 
         var tenantId = _tenantContext.RequiredTenantId;
         var productId = command.Identity.ProductId.Value;
-        var productExists = await _context.Products
-            .AsNoTracking()
-            .AnyAsync(product => product.TenantId == tenantId && product.Id == productId, cancellationToken);
+        var productExists = (MetadataFlag(command, "preloadedProduct") &&
+            _context.Products.Local.Any(product =>
+                product.TenantId == tenantId && product.Id == productId)) ||
+            await _context.Products
+                .AsNoTracking()
+                .AnyAsync(product => product.TenantId == tenantId && product.Id == productId, cancellationToken);
 
         if (!productExists)
         {

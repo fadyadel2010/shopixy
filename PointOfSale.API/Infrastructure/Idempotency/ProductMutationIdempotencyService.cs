@@ -11,10 +11,14 @@ public sealed class ProductMutationIdempotencyService : IProductMutationIdempote
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ApplicationDbContext _context;
+    private readonly TimeProvider _timeProvider;
 
-    public ProductMutationIdempotencyService(ApplicationDbContext context)
+    public ProductMutationIdempotencyService(
+        ApplicationDbContext context,
+        TimeProvider? timeProvider = null)
     {
         _context = context;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<ProductMutationIdempotencyClaim> TryClaimAsync(
@@ -22,7 +26,7 @@ public sealed class ProductMutationIdempotencyService : IProductMutationIdempote
         CancellationToken cancellationToken = default)
     {
         var claimId = Guid.NewGuid();
-        var nowUtc = DateTime.UtcNow;
+        var nowUtc = NormalizeTimestamp(_timeProvider.GetUtcNow().UtcDateTime);
         int rowsInserted;
 
         if (IsPostgresProvider())
@@ -73,6 +77,8 @@ public sealed class ProductMutationIdempotencyService : IProductMutationIdempote
                     record.Key == request.Key &&
                     record.Operation == request.Operation,
                     cancellationToken);
+
+            claimedRecord.ClaimLeaseUpdatedAtUtc = claimedRecord.UpdatedAt;
 
             return new ProductMutationIdempotencyClaim(claimedRecord, null);
         }
@@ -159,6 +165,226 @@ public sealed class ProductMutationIdempotencyService : IProductMutationIdempote
             ? scopedKey
             : $"{scope}:sha256:{HashToHex(scopedKey)}";
     }
+
+    public async Task<ProductMutationIdempotencyRecoveryResult> TryRecoverAbandonedClaimAsync(
+        ProductMutationIdempotencyRequest request,
+        TimeSpan leaseDuration,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        var staleCutoffUtc = NormalizeTimestamp(nowUtc - leaseDuration);
+
+        var takenOver = await _context.ProductRequestIdempotencyRecords
+            .Where(record =>
+                record.TenantId == request.TenantId &&
+                record.Key == request.Key &&
+                record.Operation == request.Operation &&
+                record.RequestFingerprint == request.RequestFingerprint &&
+                record.ResponseStatusCode == null &&
+                (record.UpdatedAt ?? record.CreatedAt) <= staleCutoffUtc)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(record => record.UpdatedAt, NormalizeTimestamp(nowUtc)),
+                cancellationToken);
+
+        if (takenOver != 1)
+        {
+            return new ProductMutationIdempotencyRecoveryResult(
+                ProductMutationIdempotencyRecoveryKind.NotRecoverable,
+                null);
+        }
+
+        var recovered = await ReadClaimRecordAsync(
+            request.TenantId,
+            request.Key,
+            request.Operation,
+            cancellationToken);
+
+        if (recovered is null)
+        {
+            return new ProductMutationIdempotencyRecoveryResult(
+                ProductMutationIdempotencyRecoveryKind.NotRecoverable,
+                recovered);
+        }
+
+        recovered.ClaimLeaseUpdatedAtUtc = recovered.UpdatedAt;
+        return new ProductMutationIdempotencyRecoveryResult(
+            ProductMutationIdempotencyRecoveryKind.Recovered,
+            recovered);
+    }
+
+    public async Task<bool> TryRenewClaimLeaseAsync(
+        ProductRequestIdempotency record,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        var expectedLeaseUpdatedAtUtc = record.ClaimLeaseUpdatedAtUtc ?? record.UpdatedAt;
+        if (record.Id == Guid.Empty || !expectedLeaseUpdatedAtUtc.HasValue)
+        {
+            return false;
+        }
+
+        var renewedAtUtc = NormalizeTimestamp(nowUtc);
+        var renewed = await _context.ProductRequestIdempotencyRecords
+            .Where(existing =>
+                existing.Id == record.Id &&
+                existing.TenantId == record.TenantId &&
+                existing.ResponseStatusCode == null &&
+                existing.UpdatedAt == expectedLeaseUpdatedAtUtc &&
+                existing.UpdatedAt <= renewedAtUtc)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(existing => existing.UpdatedAt, renewedAtUtc),
+                cancellationToken);
+
+        if (renewed == 1)
+        {
+            record.UpdatedAt = renewedAtUtc;
+            record.ClaimLeaseUpdatedAtUtc = renewedAtUtc;
+            return true;
+        }
+
+        return false;
+    }
+
+    public async Task<bool> TryWriteIncompleteClaimStateAsync(
+        ProductRequestIdempotency record,
+        string responseJson,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(responseJson);
+
+        var expectedLeaseUpdatedAtUtc = record.ClaimLeaseUpdatedAtUtc ?? record.UpdatedAt;
+        if (record.Id == Guid.Empty || !expectedLeaseUpdatedAtUtc.HasValue)
+        {
+            return false;
+        }
+
+        // Preserve the current lease/fencing token. The owner may annotate an
+        // incomplete claim only while it still owns that exact token; a stale
+        // worker cannot mark or overwrite a claim after takeover.
+        var updated = await _context.ProductRequestIdempotencyRecords
+            .Where(existing =>
+                existing.Id == record.Id &&
+                existing.TenantId == record.TenantId &&
+                existing.ResponseStatusCode == null &&
+                existing.UpdatedAt == expectedLeaseUpdatedAtUtc)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(existing => existing.ResponseJson, responseJson),
+                cancellationToken);
+
+        if (updated == 1)
+        {
+            record.ResponseJson = responseJson;
+            return true;
+        }
+
+        return false;
+    }
+
+    public async Task<ProductMutationIdempotencyCompletionResult> TryCompleteDurablyAsync(
+        ProductRequestIdempotency record,
+        int statusCode,
+        object? responsePayload,
+        DateTime? completedAtUtc = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (record.Id == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "The idempotency record must be a persisted row with a non-empty identifier.",
+                nameof(record));
+        }
+
+        var responseJson = responsePayload is null
+            ? null
+            : JsonSerializer.Serialize(responsePayload, JsonOptions);
+        var completionTimestamp = NormalizeTimestamp(
+            completedAtUtc ?? _timeProvider.GetUtcNow().UtcDateTime);
+        var expectedLeaseUpdatedAtUtc = record.ClaimLeaseUpdatedAtUtc ?? record.UpdatedAt;
+
+        if (!expectedLeaseUpdatedAtUtc.HasValue)
+        {
+            return new ProductMutationIdempotencyCompletionResult(
+                ProductMutationIdempotencyCompletionKind.LostOwnership,
+                await ReadClaimByIdAsync(record.Id, record.TenantId, cancellationToken));
+        }
+
+        var updated = await _context.ProductRequestIdempotencyRecords
+            .Where(existing =>
+                existing.Id == record.Id &&
+                existing.TenantId == record.TenantId &&
+                existing.ResponseStatusCode == null &&
+                existing.UpdatedAt == expectedLeaseUpdatedAtUtc)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(existing => existing.ResponseStatusCode, statusCode)
+                .SetProperty(existing => existing.ResponseJson, responseJson)
+                .SetProperty(existing => existing.CompletedAtUtc, completionTimestamp)
+                .SetProperty(existing => existing.UpdatedAt, completionTimestamp),
+                cancellationToken);
+
+        var fresh = await ReadClaimByIdAsync(record.Id, record.TenantId, cancellationToken);
+
+        if (updated == 1 && fresh is not null)
+        {
+            ApplyCompletion(record, statusCode, responseJson, completionTimestamp);
+            return new ProductMutationIdempotencyCompletionResult(
+                ProductMutationIdempotencyCompletionKind.PersistedNow,
+                fresh);
+        }
+
+        return fresh is not null && fresh.ResponseStatusCode.HasValue
+            ? new ProductMutationIdempotencyCompletionResult(
+                ProductMutationIdempotencyCompletionKind.AlreadyPersisted,
+                fresh)
+            : new ProductMutationIdempotencyCompletionResult(
+                ProductMutationIdempotencyCompletionKind.LostOwnership,
+                fresh);
+    }
+
+    private Task<ProductRequestIdempotency?> ReadClaimRecordAsync(
+        Guid tenantId,
+        string key,
+        string operation,
+        CancellationToken cancellationToken) =>
+        _context.ProductRequestIdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(record =>
+                record.TenantId == tenantId &&
+                record.Key == key &&
+                record.Operation == operation,
+                cancellationToken);
+
+    private async Task<ProductRequestIdempotency?> ReadClaimByIdAsync(
+        Guid id,
+        Guid tenantId,
+        CancellationToken cancellationToken) =>
+        await _context.ProductRequestIdempotencyRecords
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                record => record.Id == id && record.TenantId == tenantId,
+                cancellationToken);
+
+    private static void ApplyCompletion(
+        ProductRequestIdempotency record,
+        int statusCode,
+        string? responseJson,
+        DateTime completionTimestamp)
+    {
+        record.ResponseStatusCode = statusCode;
+        record.ResponseJson = responseJson;
+        record.CompletedAtUtc = completionTimestamp;
+        record.UpdatedAt = completionTimestamp;
+        record.ClaimLeaseUpdatedAtUtc = completionTimestamp;
+    }
+
+    private static DateTime NormalizeTimestamp(DateTime value) =>
+        new(
+            value.Year,
+            value.Month,
+            value.Day,
+            value.Hour,
+            value.Minute,
+            value.Second,
+            DateTimeKind.Utc);
 
     private bool IsPostgresProvider() =>
         _context.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true;

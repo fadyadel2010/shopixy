@@ -22,6 +22,29 @@ public interface IProductMutationIdempotencyService
         Guid? productVariantId = null);
 
     string ScopeKey(string scope, string idempotencyKey);
+
+    Task<ProductMutationIdempotencyRecoveryResult> TryRecoverAbandonedClaimAsync(
+        ProductMutationIdempotencyRequest request,
+        TimeSpan leaseDuration,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> TryRenewClaimLeaseAsync(
+        ProductRequestIdempotency record,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default);
+
+    Task<bool> TryWriteIncompleteClaimStateAsync(
+        ProductRequestIdempotency record,
+        string responseJson,
+        CancellationToken cancellationToken = default);
+
+    Task<ProductMutationIdempotencyCompletionResult> TryCompleteDurablyAsync(
+        ProductRequestIdempotency record,
+        int statusCode,
+        object? responsePayload,
+        DateTime? completedAtUtc = null,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record ProductMutationIdempotencyRequest(
@@ -46,3 +69,24 @@ public enum ProductMutationIdempotencyReplayKind
     Conflict,
     InProgress
 }
+
+public enum ProductMutationIdempotencyRecoveryKind
+{
+    Recovered,
+    NotRecoverable
+}
+
+public sealed record ProductMutationIdempotencyRecoveryResult(
+    ProductMutationIdempotencyRecoveryKind Kind,
+    ProductRequestIdempotency? Record);
+
+public enum ProductMutationIdempotencyCompletionKind
+{
+    PersistedNow,
+    AlreadyPersisted,
+    LostOwnership
+}
+
+public sealed record ProductMutationIdempotencyCompletionResult(
+    ProductMutationIdempotencyCompletionKind Kind,
+    ProductRequestIdempotency? Record);

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Services;
@@ -11,11 +12,16 @@ namespace PointOfSale.API.Services;
 public class ValidationService : IValidationService
 {
     private readonly ApplicationDbContext _context;
+    private readonly ITenantContext _tenantContext;
     private readonly ILogger<ValidationService> _logger;
 
-    public ValidationService(ApplicationDbContext context, ILogger<ValidationService> logger)
+    public ValidationService(
+        ApplicationDbContext context,
+        ITenantContext tenantContext,
+        ILogger<ValidationService> logger)
     {
         _context = context;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -25,11 +31,23 @@ public class ValidationService : IValidationService
     /// Validates if a product can be deleted
     /// Products cannot be deleted if they have stock or have been used in any invoice
     /// </summary>
-    public async Task<ValidationResult> CanDeleteProductAsync(Guid productId)
+    public async Task<ValidationResult> CanDeleteProductAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default)
     {
+        var tenantId = _tenantContext.RequiredTenantId;
+
         // Check if product has any stock in any warehouse
         var hasStock = await _context.ProductVariantStocks
-            .AnyAsync(stock => stock.Variant.ProductId == productId && stock.Quantity != 0);
+            .AnyAsync(
+                stock =>
+                    stock.TenantId == tenantId &&
+                    !stock.IsDeleted &&
+                    stock.Variant.TenantId == tenantId &&
+                    !stock.Variant.IsDeleted &&
+                    stock.Variant.ProductId == productId &&
+                    stock.Quantity != 0,
+                cancellationToken);
 
         if (hasStock)
         {
@@ -41,7 +59,13 @@ public class ValidationService : IValidationService
 
         // Check if product is used in any purchase invoice
         var usedInPurchase = await _context.PurchaseInvoiceItems
-            .AnyAsync(pii => pii.ProductId == productId);
+            .AnyAsync(
+                pii =>
+                    pii.ProductId == productId &&
+                    !pii.IsDeleted &&
+                    pii.PurchaseInvoice.TenantId == tenantId &&
+                    !pii.PurchaseInvoice.IsDeleted,
+                cancellationToken);
 
         if (usedInPurchase)
         {
@@ -53,7 +77,13 @@ public class ValidationService : IValidationService
 
         // Check if product is used in any sales invoice
         var usedInSales = await _context.SalesInvoiceItems
-            .AnyAsync(sii => sii.ProductId == productId);
+            .AnyAsync(
+                sii =>
+                    sii.ProductId == productId &&
+                    !sii.IsDeleted &&
+                    sii.SalesInvoice.TenantId == tenantId &&
+                    !sii.SalesInvoice.IsDeleted,
+                cancellationToken);
 
         if (usedInSales)
         {
@@ -65,7 +95,13 @@ public class ValidationService : IValidationService
 
         // Check if product is used in any returns
         var usedInReturns = await _context.ReturnItems
-            .AnyAsync(ri => ri.ProductId == productId);
+            .AnyAsync(
+                ri =>
+                    ri.ProductId == productId &&
+                    !ri.IsDeleted &&
+                    ri.Return.TenantId == tenantId &&
+                    !ri.Return.IsDeleted,
+                cancellationToken);
 
         if (usedInReturns)
         {
@@ -77,7 +113,13 @@ public class ValidationService : IValidationService
 
         // Check if product is used in stock transfers
         var usedInTransfers = await _context.StockTransferItems
-            .AnyAsync(sti => sti.ProductId == productId);
+            .AnyAsync(
+                sti =>
+                    sti.ProductId == productId &&
+                    !sti.IsDeleted &&
+                    sti.StockTransfer.TenantId == tenantId &&
+                    !sti.StockTransfer.IsDeleted,
+                cancellationToken);
 
         if (usedInTransfers)
         {
@@ -89,7 +131,12 @@ public class ValidationService : IValidationService
 
         // Check if product has stock movements
         var hasMovements = await _context.StockMovements
-            .AnyAsync(sm => sm.ProductId == productId);
+            .AnyAsync(
+                sm =>
+                    sm.ProductId == productId &&
+                    sm.TenantId == tenantId &&
+                    !sm.IsDeleted,
+                cancellationToken);
 
         if (hasMovements)
         {

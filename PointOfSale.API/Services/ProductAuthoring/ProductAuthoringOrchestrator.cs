@@ -78,6 +78,23 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return idempotencyAdmission;
         }
 
+        if (cancellationToken.IsCancellationRequested &&
+            command.Identity.ProductId is { } productId &&
+            productId != Guid.Empty)
+        {
+            var completedResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
+                command,
+                _tenantContext!.RequiredTenantId,
+                productId,
+                CancellationToken.None);
+            if (completedResult is not null)
+            {
+                return completedResult;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
         command = await _reconstructionService.ReconstructForAdmissionAsync(command, cancellationToken);
 
         var admission = await AdmitAsync(command, cancellationToken);
@@ -246,7 +263,11 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         CancellationToken cancellationToken)
     {
         var tenantId = _tenantContext!.RequiredTenantId;
-        var product = await LoadTrackedProductAsync(command.Identity.ProductId, tenantId, cancellationToken);
+        var product = await LoadTrackedProductAsync(
+            command.Identity.ProductId,
+            tenantId,
+            MetadataFlag(command, "preloadedProduct"),
+            cancellationToken);
         var lifecycleDecision = await _policy.EvaluateLifecycleAsync(
             command,
             new ProductAuthoringLifecycleFacts(ProductExists: product is not null),
@@ -377,7 +398,27 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         CancellationToken cancellationToken)
     {
         var tenantId = _tenantContext!.RequiredTenantId;
-        var product = await LoadTrackedProductAsync(command.Identity.ProductId, tenantId, cancellationToken);
+        var productId = command.Identity.ProductId;
+        if (productId.HasValue && productId.Value != Guid.Empty)
+        {
+            // Remove makes the product invisible to global filters. Resolve its
+            // committed idempotency record first so ambiguous retries stay exact.
+            var existingIdempotencyResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
+                command,
+                tenantId,
+                productId.Value,
+                cancellationToken);
+            if (existingIdempotencyResult is not null)
+            {
+                return existingIdempotencyResult;
+            }
+        }
+
+        var product = await LoadTrackedProductAsync(
+            productId,
+            tenantId,
+            MetadataFlag(command, "preloadedProduct"),
+            cancellationToken);
         var lifecycleDecision = await _policy.EvaluateLifecycleAsync(
             command,
             new ProductAuthoringLifecycleFacts(ProductExists: product is not null),
@@ -388,17 +429,6 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         }
 
         product = product!;
-
-        var existingIdempotencyResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
-            command,
-            tenantId,
-            product.Id,
-            cancellationToken);
-        if (existingIdempotencyResult is not null)
-        {
-            return existingIdempotencyResult;
-        }
-
         LogRuntimeRowVersionTraceBeforeIsStale(command, product);
         if (IsStale(command, product))
         {
@@ -558,11 +588,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         new
         {
             command.Metadata.CorrelationId,
-            command.Metadata.IdempotencyKey,
             command.Metadata.ExpectedVersion,
             command.Operation,
             ProductId = product.Id,
-            product.TenantId,
             product.Name,
             product.SKU,
             product.Barcode,
@@ -595,12 +623,10 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         Product product)
     {
         _logger.LogInformation(
-            "PROJECTION_EVENT_TRACE | Stage=StageAuthoritativeOutboxAsync | EventType={EventType} | ProductId={ProductId} | TenantId={TenantId} | EventId={EventId} | IdempotencyKey={IdempotencyKey} | ProjectionMutationVersion={ProjectionMutationVersion} | CorrelationId={CorrelationId} | Timestamp={Timestamp:O}",
+            "PROJECTION_EVENT_TRACE | Stage=StageAuthoritativeOutboxAsync | EventType={EventType} | ProductId={ProductId} | EventId={EventId} | ProjectionMutationVersion={ProjectionMutationVersion} | CorrelationId={CorrelationId} | Timestamp={Timestamp:O}",
             @event.EventType,
             product.Id,
-            @event.TenantId,
             @event.EventId,
-            @event.IdempotencyKey,
             product.ProjectionMutationVersion,
             @event.CorrelationId,
             DateTime.UtcNow);
@@ -1028,14 +1054,20 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         product.Description = command.Content.Description;
         product.DescriptionAr = command.Content.DescriptionAr;
         product.CategoryId = command.Identity.CategoryId;
-        product.PurchasePrice = 0m;
-        product.SalePrice = 0m;
-        product.OnlinePrice = null;
+        if (!MetadataFlag(command, "preservePricingCompatibilityMirrors"))
+        {
+            product.PurchasePrice = 0m;
+            product.SalePrice = 0m;
+            product.OnlinePrice = null;
+        }
         product.PriceIncludesTax = command.Pricing.PriceIncludesTax;
         product.TaxRate = command.Pricing.TaxRate;
         product.Unit = command.Inventory.Unit;
         product.MinimumStockLevel = command.Inventory.MinimumStockLevel;
-        product.Images = null;
+        if (!MetadataFlag(command, "preserveImages"))
+        {
+            product.Images = null;
+        }
         product.IsActive = command.Publication.IsActive;
         product.TrackStock = command.Inventory.HasVariants ? false : command.Inventory.TrackStock;
         product.HasVariants = command.Inventory.HasVariants;
@@ -1071,6 +1103,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
     private async Task<Product?> LoadTrackedProductAsync(
         Guid? productId,
         Guid tenantId,
+        bool usePreloadedProduct,
         CancellationToken cancellationToken)
     {
         if (!productId.HasValue || productId.Value == Guid.Empty)
@@ -1078,7 +1111,12 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return null;
         }
 
-        return await _context!.Products
+        var trackedProduct = usePreloadedProduct
+            ? _context!.Products.Local.FirstOrDefault(product =>
+                product.TenantId == tenantId && product.Id == productId.Value)
+            : null;
+
+        return trackedProduct ?? await _context.Products
             .FirstOrDefaultAsync(product => product.TenantId == tenantId && product.Id == productId.Value, cancellationToken);
     }
 
@@ -1196,7 +1234,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             .Select(entry => entry.Entity)
             .ToList();
 
-        if (trackedUnits.Count == 0)
+        if (trackedUnits.Count == 0 || trackedUnits.Any(productUnit => productUnit.Unit is null))
         {
             trackedUnits = await _context.ProductUnits
                 .Include(productUnit => productUnit.Unit)
@@ -1811,6 +1849,20 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 IdempotencyKey = null
             }
         };
+
+        if (MetadataFlag(command, "stableOmittedCollectionsFingerprint"))
+        {
+            fingerprintCommand = fingerprintCommand with
+            {
+                Units = MetadataFlag(command, "productUnitsSubmitted")
+                    ? command.Units
+                    : new ProductAuthoringUnits(null, null, Array.Empty<ProductAuthoringUnit>()),
+                Variants = MetadataFlag(command, "variantsSubmitted")
+                    ? command.Variants
+                    : Array.Empty<ProductAuthoringVariant>()
+            };
+        }
+
         return HashToHex(JsonSerializer.Serialize(fingerprintCommand, JsonOptions));
     }
 

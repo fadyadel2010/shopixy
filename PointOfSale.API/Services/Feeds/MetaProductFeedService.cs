@@ -87,6 +87,7 @@ public sealed partial class MetaProductFeedService : IMetaProductFeedService, IF
     private readonly ApplicationDbContext _dbContext;
     private readonly IMetaFeedXmlSerializer _xmlSerializer;
     private readonly StorefrontUrlResolver _urlResolver;
+    private readonly IFeedStorefrontReadinessService _readiness;
     private readonly ILogger<MetaProductFeedService> _logger;
     private readonly IMetaFeedCache _feedCache;
     private readonly MetaFeedTelemetry _telemetry;
@@ -99,11 +100,13 @@ public sealed partial class MetaProductFeedService : IMetaProductFeedService, IF
         ILogger<MetaProductFeedService> logger,
         IMetaFeedCache feedCache,
         MetaFeedTelemetry telemetry,
-        MetaFeedSafeguards? safeguards = null)
+        MetaFeedSafeguards? safeguards = null,
+        IFeedStorefrontReadinessService? readiness = null)
     {
         _dbContext = dbContext;
         _xmlSerializer = xmlSerializer;
         _urlResolver = urlResolver;
+        _readiness = readiness ?? StrictFeedStorefrontReadinessService.Instance;
         _logger = logger;
         _feedCache = feedCache;
         _telemetry = telemetry;
@@ -226,7 +229,7 @@ public sealed partial class MetaProductFeedService : IMetaProductFeedService, IF
         try
         {
             baseUrl = _urlResolver.Resolve(tenant);
-            if (!FeedPublicUrlReadiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
+            if (!_readiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
             {
                 _telemetry.RecordGenerationFailure(reasonCode);
                 _telemetry.RecordRequest(MetaFeedTelemetry.ResultError);
@@ -1205,7 +1208,7 @@ public sealed partial class MetaProductFeedService : IMetaProductFeedService, IF
         // Item validation (Feed-0): required = title, product URL, primary image,
         // positive price, availability, condition, feed id. Failure excludes the
         // item only — the feed continues.
-        var productUrlReady = FeedPublicUrlReadiness.IsPublicProductUrl(
+        var productUrlReady = _readiness.IsPublicProductUrl(
             productUrl,
             feedStorefrontBaseUrl,
             productSlug,

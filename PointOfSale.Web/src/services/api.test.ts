@@ -50,4 +50,22 @@ describe('admin api client timeout hardening', () => {
             },
         })).toBe('Insufficient stock')
     })
+
+    it('can keep an idempotency key out of the request correlation header', () => {
+        const requestHandlers = (api.interceptors.request as unknown as {
+            handlers: Array<{ fulfilled: (config: Record<string, unknown>) => Record<string, unknown> }>
+        }).handlers
+        const applyRequestInterceptor = requestHandlers.at(-1)?.fulfilled
+
+        expect(applyRequestInterceptor).toBeTypeOf('function')
+
+        const config = applyRequestInterceptor?.({
+            method: 'post',
+            headers: { 'Idempotency-Key': 'sensitive-bulk-key' },
+            suppressIdempotencyRequestIdMirroring: true,
+        }) as { headers: Record<string, string> }
+
+        expect(config.headers['Idempotency-Key']).toBe('sensitive-bulk-key')
+        expect(config.headers['X-Request-Id']).toBeUndefined()
+    })
 })

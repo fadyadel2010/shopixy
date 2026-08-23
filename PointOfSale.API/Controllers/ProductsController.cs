@@ -16,6 +16,8 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.ProductAuthoring;
 using PointOfSale.Core.Application.ProductAuthoring;
+using PointOfSale.Core.DTOs.Bulk;
+using PointOfSale.Core.Interfaces.Bulk;
 using PointOfSale.Core.Pagination;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
@@ -49,6 +51,7 @@ public class ProductsController : ControllerBase
     private readonly IProductAuthoringCommandMapper _productAuthoringCommandMapper;
     private readonly IProductAuthoringReconstructionService _productAuthoringReconstructionService;
     private readonly IProductMutationIdempotencyService _productMutationIdempotency;
+    private readonly IBulkProductLifecycleService _bulkProductLifecycleService;
 
     public ProductsController(
         ApplicationDbContext context,
@@ -63,7 +66,8 @@ public class ProductsController : ControllerBase
         IProductAuthoringOrchestrator productAuthoringOrchestrator,
         IProductAuthoringCommandMapper productAuthoringCommandMapper,
         IProductAuthoringReconstructionService productAuthoringReconstructionService,
-        IProductMutationIdempotencyService productMutationIdempotency)
+        IProductMutationIdempotencyService productMutationIdempotency,
+        IBulkProductLifecycleService bulkProductLifecycleService)
     {
         _context = context;
         _tenantContext = tenantContext;
@@ -78,6 +82,7 @@ public class ProductsController : ControllerBase
         _productAuthoringCommandMapper = productAuthoringCommandMapper;
         _productAuthoringReconstructionService = productAuthoringReconstructionService;
         _productMutationIdempotency = productMutationIdempotency;
+        _bulkProductLifecycleService = bulkProductLifecycleService;
     }
 
     /// <summary>
@@ -411,7 +416,7 @@ public class ProductsController : ControllerBase
         }
 
         // Validate if product can be deleted
-        var validationResult = await _validationService.CanDeleteProductAsync(id);
+        var validationResult = await _validationService.CanDeleteProductAsync(id, cancellationToken);
         if (!validationResult.IsValid)
         {
             return BadRequest(new {
@@ -482,6 +487,141 @@ public class ProductsController : ControllerBase
             messageAr = "تم تعطيل المنتج."
         });
     }
+
+    /// <summary>
+    /// Bulk activate products. Products that are already active are reported
+    /// as Unchanged with an ALREADY_ACTIVE code. No mutation is performed for
+    /// already-active products.
+    /// </summary>
+    [HttpPost("bulk/activate")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    public async Task<ActionResult<BulkOperationResult>> ActivateProducts(
+        [FromBody] BulkProductRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+
+        var outcome = await _bulkProductLifecycleService.ExecuteLifecycleAsync(
+            BulkOperationType.Activate,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return ToBulkLifecycleActionResult(outcome);
+    }
+
+    /// <summary>
+    /// Bulk deactivate products. Products that are already inactive are reported
+    /// as Unchanged with an ALREADY_INACTIVE code. No mutation is performed for
+    /// already-inactive products.
+    /// </summary>
+    [HttpPost("bulk/deactivate")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    public async Task<ActionResult<BulkOperationResult>> DeactivateProducts(
+        [FromBody] BulkProductRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+
+        var outcome = await _bulkProductLifecycleService.ExecuteLifecycleAsync(
+            BulkOperationType.Deactivate,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return ToBulkLifecycleActionResult(outcome);
+    }
+
+    /// <summary>
+    /// Bulk publish products. Products that are already published and visible are
+    /// reported as Unchanged with an ALREADY_PUBLISHED code; inactive products fail
+    /// with PRODUCT_INACTIVE and are never activated by this endpoint.
+    /// </summary>
+    [HttpPost("bulk/publish")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    public async Task<ActionResult<BulkOperationResult>> PublishProducts(
+        [FromBody] BulkProductRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+
+        var outcome = await _bulkProductLifecycleService.ExecuteLifecycleAsync(
+            BulkOperationType.Publish,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return ToBulkLifecycleActionResult(outcome);
+    }
+
+    /// <summary>
+    /// Bulk unpublish products. Products that are already hidden drafts or hidden
+    /// published products are reported as Unchanged with an ALREADY_UNPUBLISHED
+    /// code. Active state is never modified by this endpoint.
+    /// </summary>
+    [HttpPost("bulk/unpublish")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    public async Task<ActionResult<BulkOperationResult>> UnpublishProducts(
+        [FromBody] BulkProductRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+
+        var outcome = await _bulkProductLifecycleService.ExecuteLifecycleAsync(
+            BulkOperationType.Unpublish,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return ToBulkLifecycleActionResult(outcome);
+    }
+
+    /// <summary>
+    /// Bulk delete products (soft delete through the product authoring Remove
+    /// authority). Products with blocking dependencies (stock, invoices, returns,
+    /// transfers, movements) are reported per item as DEPENDENCY_BLOCKED and are
+    /// never authored; remaining eligible items are still processed.
+    /// </summary>
+    [HttpPost("bulk/delete")]
+    [Authorize(Roles = "Owner,Admin")]
+    public async Task<ActionResult<BulkOperationResult>> DeleteProducts(
+        [FromBody] BulkProductRequest? request,
+        CancellationToken cancellationToken = default)
+    {
+        var idempotencyKey = Request.Headers[IdempotencyKeyHeader].FirstOrDefault()?.Trim();
+
+        var outcome = await _bulkProductLifecycleService.ExecuteLifecycleAsync(
+            BulkOperationType.Delete,
+            request,
+            idempotencyKey,
+            cancellationToken);
+
+        return ToBulkLifecycleActionResult(outcome);
+    }
+
+    private ActionResult ToBulkLifecycleActionResult(BulkLifecycleOutcome outcome) =>
+        outcome.Kind switch
+        {
+            BulkLifecycleOutcomeKind.Success => Ok(outcome.OperationResult),
+            BulkLifecycleOutcomeKind.RequestValidationFailed => BadRequest(new
+            {
+                message = "Bulk request validation failed.",
+                errors = outcome.ValidationErrors
+            }),
+            BulkLifecycleOutcomeKind.IdempotencyConflict => Conflict(new
+            {
+                message = outcome.Message
+            }),
+            BulkLifecycleOutcomeKind.IdempotencyInProgress => Conflict(new
+            {
+                message = outcome.Message
+            }),
+            BulkLifecycleOutcomeKind.Failed => StatusCode(
+                StatusCodes.Status500InternalServerError,
+                new { message = outcome.Message }),
+            _ => StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = "Unexpected bulk lifecycle outcome." })
+        };
 
     /// <summary>
     /// Check if a product can be deleted - use this before showing delete button

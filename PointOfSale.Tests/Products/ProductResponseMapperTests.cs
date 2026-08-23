@@ -15,6 +15,7 @@ using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Bulk;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.ProductAuthoring;
 using PointOfSale.Infrastructure.Data;
@@ -191,6 +192,7 @@ public sealed class ProductResponseMapperTests
             Mock.Of<IProductAuthoringOrchestrator>(),
             Mock.Of<IProductAuthoringCommandMapper>(),
             Mock.Of<IProductAuthoringReconstructionService>(),
-            Mock.Of<IProductMutationIdempotencyService>());
+            Mock.Of<IProductMutationIdempotencyService>(),
+            Mock.Of<IBulkProductLifecycleService>());
     }
 }

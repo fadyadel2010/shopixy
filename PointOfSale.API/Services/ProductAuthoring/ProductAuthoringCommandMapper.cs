@@ -12,6 +12,10 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
 {
     private const string IdempotencyKeyHeader = "Idempotency-Key";
     private const string RequestIdHeader = "X-Request-Id";
+    private static readonly JsonSerializerOptions PersistedJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
 
     private readonly ITenantContext _tenantContext;
     private readonly IHttpContextAccessor _httpContextAccessor;
@@ -529,9 +533,10 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
     private static List<ProductFaqRequestItem> NormalizeFaqs(IEnumerable<ProductFaqRequestItem>? items)
     {
         return items?
+            .Where(item => item is not null)
             .Select(item => new ProductFaqRequestItem(
-                item.Question.Trim(),
-                item.Answer.Trim()))
+                item.Question?.Trim() ?? string.Empty,
+                item.Answer?.Trim() ?? string.Empty))
             .Where(item => !string.IsNullOrWhiteSpace(item.Question) || !string.IsNullOrWhiteSpace(item.Answer))
             .ToList()
             ?? new List<ProductFaqRequestItem>();
@@ -563,7 +568,9 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
 
         try
         {
-            return NormalizeFaqs(JsonSerializer.Deserialize<List<ProductFaqRequestItem>>(json));
+            return NormalizeFaqs(JsonSerializer.Deserialize<List<ProductFaqRequestItem>>(
+                json,
+                PersistedJsonOptions));
         }
         catch (JsonException)
         {

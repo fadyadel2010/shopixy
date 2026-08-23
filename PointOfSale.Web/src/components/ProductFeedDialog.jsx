@@ -45,7 +45,12 @@ function getSafeErrorKey(error) {
     return 'productFeed.errors.generic'
 }
 
-export default function ProductFeedDialog({ open, onOpenChange }) {
+export default function ProductFeedDialog({
+    open,
+    onOpenChange,
+    sessionFeedUrls = {},
+    onSessionFeedUrlChange = () => {},
+}) {
     const { t } = useTranslation()
     const { dir } = useRTL()
     const { confirm } = useConfirmDialog()
@@ -66,6 +71,8 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
 
     const selectedConfig = PRODUCT_FEED_CHANNELS.find((channel) => channel.id === selectedChannel) || PRODUCT_FEED_CHANNELS[0]
     const selectedState = channelStates[selectedChannel] || { status: 'notConfigured', token: null }
+    const selectedSessionFeedUrl = sessionFeedUrls[selectedChannel]
+    const showingOneTimeResult = oneTimeResult?.channel === selectedChannel
     const busy = Boolean(operation)
 
     const clearSecret = useCallback(() => {
@@ -158,6 +165,8 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
             return
         }
 
+        onSessionFeedUrlChange(channel, feedUrl)
+
         setOneTimeResult({
             action,
             channel,
@@ -222,6 +231,7 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
             showSuccess(t('productFeed.feedRotated'))
         } catch (error) {
             if (isNotFound(error)) {
+                onSessionFeedUrlChange(selectedChannel, null)
                 await refreshAfterMissingToken()
             } else {
                 showError(t(getSafeErrorKey(error)))
@@ -250,10 +260,12 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
 
         try {
             await adminProductFeedApi.revokeToken(selectedChannel, getTokenId(selectedState.token))
+            onSessionFeedUrlChange(selectedChannel, null)
             await loadTokens()
             showSuccess(t('productFeed.feedRevoked'))
         } catch (error) {
             if (isNotFound(error)) {
+                onSessionFeedUrlChange(selectedChannel, null)
                 await refreshAfterMissingToken()
             } else {
                 showError(t(getSafeErrorKey(error)))
@@ -263,15 +275,36 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
         }
     }
 
-    const handleCopyOneTimeUrl = async () => {
-        if (!oneTimeResult?.feedUrl) return
+    const copyFeedUrl = async (feedUrl) => {
+        if (!feedUrl) return
 
         try {
-            await navigator.clipboard.writeText(oneTimeResult.feedUrl)
+            await navigator.clipboard.writeText(feedUrl)
             showSuccess(t('productFeed.copied'))
         } catch {
             showError(t('productFeed.copyFailed'))
         }
+    }
+
+    const handleCopyOneTimeUrl = async () => {
+        await copyFeedUrl(oneTimeResult?.feedUrl)
+    }
+
+    const handleCopySessionUrl = async () => {
+        await copyFeedUrl(sessionFeedUrls[selectedChannel])
+    }
+
+    const openFeedUrl = (feedUrl) => {
+        if (!feedUrl) return
+        window.open(feedUrl, '_blank', 'noopener,noreferrer')
+    }
+
+    const handleOpenOneTimeUrl = () => {
+        openFeedUrl(oneTimeResult?.feedUrl)
+    }
+
+    const handleOpenSessionUrl = () => {
+        openFeedUrl(sessionFeedUrls[selectedChannel])
     }
 
     const statusLabelKey = {
@@ -385,7 +418,7 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
                                         </span>
                                     </div>
 
-                                    {oneTimeResult?.channel === selectedChannel ? (
+                                    {showingOneTimeResult ? (
                                         <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
                                             <div className="flex items-start gap-3">
                                                 <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
@@ -411,6 +444,15 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
                                                         </button>
                                                         <button
                                                             type="button"
+                                                            onClick={handleOpenOneTimeUrl}
+                                                            className="inline-flex items-center gap-2 rounded-lg border border-amber-300 px-4 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                            aria-label={t('productFeed.openFeedAria', { channel: selectedConfig.name })}
+                                                        >
+                                                            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                                                            {t('productFeed.openFeed')}
+                                                        </button>
+                                                        <button
+                                                            type="button"
                                                             onClick={clearSecret}
                                                             className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
                                                         >
@@ -432,7 +474,34 @@ export default function ProductFeedDialog({ open, onOpenChange }) {
                                                         {t('productFeed.maskedUrl', { channel: selectedChannel })}
                                                     </code>
                                                 </div>
-                                                <p className="mt-2 text-xs text-gray-500">{t('productFeed.maskedUrlHelp')}</p>
+                                                {selectedSessionFeedUrl && !showingOneTimeResult ? (
+                                                    <div className="mt-3 flex flex-wrap gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleCopySessionUrl}
+                                                            disabled={busy}
+                                                            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                                            aria-label={t('productFeed.copyUrl')}
+                                                        >
+                                                            <Copy className="h-4 w-4" aria-hidden="true" />
+                                                            {t('productFeed.copyUrl')}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={handleOpenSessionUrl}
+                                                            disabled={busy}
+                                                            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                                                            aria-label={t('productFeed.openFeedAria', { channel: selectedConfig.name })}
+                                                        >
+                                                            <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                                                            {t('productFeed.openFeed')}
+                                                        </button>
+                                                    </div>
+                                                ) : showingOneTimeResult ? (
+                                                    <p className="mt-2 text-xs text-gray-500">{t('productFeed.maskedUrlHelp')}</p>
+                                                ) : (
+                                                    <p className="mt-2 text-xs text-gray-500">{t('productFeed.sessionUrlUnavailable')}</p>
+                                                )}
                                             </div>
 
                                             <div className="flex flex-wrap gap-2">

@@ -398,6 +398,12 @@ builder.Services.AddSingleton<PointOfSale.API.Instrumentation.MetaFeedTelemetry>
 builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.IMetaFeedCache, PointOfSale.API.Services.Feeds.MetaFeedCache>();
 builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.MetaFeedSafeguards>(_ => PointOfSale.API.Services.Feeds.MetaFeedSafeguards.Default);
 
+// FEED-5: environment-aware feed storefront readiness. Applies the Production-safe
+// strict checks first, then a Development-only exception for the configured
+// Storefront:UrlTemplate (e.g. http://{slug}.localhost:5174). Registered as a
+// singleton because IWebHostEnvironment and IConfiguration are singleton-scoped.
+builder.Services.AddSingleton<PointOfSale.API.Services.Feeds.IFeedStorefrontReadinessService, PointOfSale.API.Services.Feeds.FeedStorefrontReadinessService>();
+
 // DOMAIN-2A: Host Resolution Middleware foundation services.
 // IHostNormalizer — pure-syntactic host normalization (lowercase, port strip,
 // trailing dot removal, IPv6 bracket handling). No DNS, no database.

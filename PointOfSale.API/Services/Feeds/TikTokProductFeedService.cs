@@ -44,6 +44,7 @@ public sealed class TikTokProductFeedService : ITikTokProductFeedService
     private readonly IFeedProductProjection _projection;
     private readonly ITikTokFeedXmlSerializer _xmlSerializer;
     private readonly StorefrontUrlResolver _urlResolver;
+    private readonly IFeedStorefrontReadinessService _readiness;
     private readonly ILogger<TikTokProductFeedService> _logger;
     private readonly IMetaFeedCache _feedCache;
     private readonly MetaFeedTelemetry _telemetry;
@@ -57,12 +58,14 @@ public sealed class TikTokProductFeedService : ITikTokProductFeedService
         ILogger<TikTokProductFeedService> logger,
         IMetaFeedCache feedCache,
         MetaFeedTelemetry telemetry,
-        MetaFeedSafeguards? safeguards = null)
+        MetaFeedSafeguards? safeguards = null,
+        IFeedStorefrontReadinessService? readiness = null)
     {
         _dbContext = dbContext;
         _projection = projection;
         _xmlSerializer = xmlSerializer;
         _urlResolver = urlResolver;
+        _readiness = readiness ?? StrictFeedStorefrontReadinessService.Instance;
         _logger = logger;
         _feedCache = feedCache;
         _telemetry = telemetry;
@@ -180,7 +183,7 @@ public sealed class TikTokProductFeedService : ITikTokProductFeedService
         try
         {
             baseUrl = _urlResolver.Resolve(tenant);
-            if (!FeedPublicUrlReadiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
+            if (!_readiness.IsPublicStorefrontBaseUrl(baseUrl, out var reasonCode))
             {
                 _telemetry.RecordGenerationFailure(reasonCode, Channel);
                 _telemetry.RecordRequest(MetaFeedTelemetry.ResultError, Channel);

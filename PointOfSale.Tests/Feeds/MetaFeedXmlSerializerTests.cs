@@ -201,6 +201,9 @@ public sealed class MetaFeedXmlSerializerTests
         var doc = XDocument.Parse(xml);
         var channel = doc.Root!.Element("channel");
         Assert.NotNull(channel);
+        Assert.Equal("Empty Store", (string?)channel!.Element("title"));
+        Assert.Equal("https://store.example.com", (string?)channel.Element("link"));
+        Assert.Equal("Products feed for Empty Store", (string?)channel.Element("description"));
         Assert.Empty(channel!.Elements("item"));
     }
 

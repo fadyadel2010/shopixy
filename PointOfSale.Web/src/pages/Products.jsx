@@ -8,12 +8,15 @@ import { useSettings } from '../contexts/SettingsContext'
 import { useToast } from '../components/Toast'
 import { useNavigate } from 'react-router-dom'
 import { useRTL } from '../hooks/useRTL'
+import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
+import { useBulkProductMutation } from '../hooks/useBulkProductMutation'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 import { normalizePublishStatus } from '../utils/productStatus'
 import { useReactToPrint } from 'react-to-print'
 import ProductExportMenu from '../components/ProductExportMenu'
 import ProductExportPrintArea from '../components/ProductExportPrintArea'
 import ProductFeedDialog from '../components/ProductFeedDialog'
+import BulkMutationResult from '../components/bulk/BulkMutationResult'
 import { formatDateTime } from '../utils/dateFormat'
 import {
     EXPORT_SCOPE_CURRENT_VIEW,
@@ -37,6 +40,16 @@ const SORT_COMPARATORS = {
     stock: (a, b) => (a.totalStock - b.totalStock),
     status: (a, b) => Number(a.isActive) - Number(b.isActive),
 }
+
+// Sort summary labels reuse the certified column-header keys. Dynamic
+// per-field locale keys (products.sortName, …) do not exist in either locale
+// and would leak raw keys into the UI.
+const SORT_FIELD_LABEL_KEYS = Object.freeze({
+    name: 'products.productName',
+    price: 'products.price',
+    stock: 'products.stock',
+    status: 'products.status',
+})
 
 // Stock state thresholds use the existing product data:
 //  - TrackStock false => "untracked" (no stock state indicator)
@@ -69,6 +82,7 @@ export default function Products() {
     const { isRTL, dir, locale } = useRTL()
     const { settings, formatCurrency } = useSettings()
     const { showSuccess, showError } = useToast()
+    const { confirm, confirmAction } = useConfirmDialog()
     const navigate = useNavigate()
 
     const [products, setProducts] = useState([])
@@ -103,6 +117,22 @@ export default function Products() {
     const [barcodeModal, setBarcodeModal] = useState(null)
     const [deleteModal, setDeleteModal] = useState(null)
     const [productFeedOpen, setProductFeedOpen] = useState(false)
+    const [sessionFeedUrls, setSessionFeedUrls] = useState({})
+
+    const handleSessionFeedUrlChange = useCallback((channel, feedUrl) => {
+        setSessionFeedUrls((current) => {
+            if (!feedUrl) {
+                const next = { ...current }
+                delete next[channel]
+                return next
+            }
+
+            return {
+                ...current,
+                [channel]: feedUrl,
+            }
+        })
+    }, [])
 
     // ---- Bulk selection (UI-only) ----
     // selectedProductIds tracks the stable authoritative product.id (Guid) of
@@ -138,9 +168,9 @@ export default function Products() {
             }
 
             setCategories(response.data)
-        } catch (err) {
+        } catch {
             if (requestId === categoriesRequestIdRef.current) {
-                console.error('Failed to load categories', err)
+                console.error('Failed to load categories')
             }
         }
     }, [])
@@ -163,7 +193,7 @@ export default function Products() {
             const response = await api.get('/products', { params })
 
             if (requestId !== productsRequestIdRef.current) {
-                return
+                return true
             }
 
             const newTotalPages = Number(response.headers['x-total-pages'] ?? 0)
@@ -174,13 +204,15 @@ export default function Products() {
                 setPage(newTotalPages)
                 // Increment requestId so finally block won't clear loading - re-fetch will handle it
                 productsRequestIdRef.current += 1
-                return
+                // Refresh is delegated to the follow-up fetch this triggers.
+                return true
             } else if (newTotalPages === 0 && page !== 1) {
                 setTotalPages(newTotalPages)
                 setPage(1)
                 // Increment requestId so finally block won't clear loading - re-fetch will handle it
                 productsRequestIdRef.current += 1
-                return
+                // Refresh is delegated to the follow-up fetch this triggers.
+                return true
             }
 
             // Only commit data if we're on a valid page
@@ -188,17 +220,154 @@ export default function Products() {
             setTotalCount(Number(response.headers['x-total-count'] ?? response.data.length ?? 0))
             setTotalPages(newTotalPages)
             setError('')
-        } catch (err) {
+            return true
+        } catch {
             if (requestId === productsRequestIdRef.current) {
                 setError(t('products.failedToLoad'))
-                console.error(err)
+                console.error('Failed to load products')
+                return false
             }
+            // A newer canonical request superseded this one. Its outcome owns
+            // the table state, so this stale failure is not a refresh failure.
+            return true
         } finally {
             if (requestId === productsRequestIdRef.current) {
                 setLoading(false)
             }
         }
     }, [committedSearch, categoryFilter, statusFilter, page, pageSize, t])
+
+    // ---- Phase 6G.2/6G.3/6G.4/6G.5: bulk mutation orchestration ownership ----
+    // The page owns the bulk lifecycle: snapshots resolve synchronously against
+    // these authoritative loaded rows and the current page-owned selection,
+    // while terminal outcomes reuse the canonical fetchProducts above (which
+    // clears page-scoped selection at request start). Activate, Deactivate,
+    // Publish, Unpublish and Delete are wired to visible toolbar controls;
+    // Publish/Unpublish/Delete require an explicit localized confirmation.
+    const {
+        action: bulkAction,
+        selectedItems: bulkSelectedItems,
+        result: bulkResult,
+        error: bulkError,
+        refreshError: bulkRefreshError,
+        isBulkMutating,
+        startBulkMutation,
+        resetBulkMutation,
+    } = useBulkProductMutation({
+        products,
+        selectedProductIds,
+        refreshProducts: fetchProducts,
+    })
+
+    // Display names must be captured at operation start: the canonical refetch
+    // clears the selection, but per-item result details still have to resolve
+    // to real product names afterwards. The snapshot is keyed by productId so
+    // it stays valid independently of the selection lifecycle.
+    const [bulkProductNames, setBulkProductNames] = useState({})
+
+    const beginBulkAction = useCallback((actionKind) => {
+        if (isBulkMutating || selectedProductIds.length === 0) {
+            return false
+        }
+        setBulkProductNames(Object.fromEntries(products.map((row) => [row.id, row.name])))
+        return startBulkMutation(actionKind)
+    }, [isBulkMutating, selectedProductIds.length, products, startBulkMutation])
+
+    const handleBulkActivate = useCallback(() => beginBulkAction('activate'), [beginBulkAction])
+    const handleBulkDeactivate = useCallback(() => beginBulkAction('deactivate'), [beginBulkAction])
+
+    // Publish/Unpublish require an explicit localized confirmation before the
+    // single allowed startBulkMutation call. A synchronous ref guard prevents
+    // rapid duplicate clicks from opening a second dialog; cancel resolves
+    // with false and makes zero mutation calls.
+    const awaitingBulkConfirmationRef = useRef(false)
+
+    const requestConfirmedBulkAction = useCallback(async (actionKind) => {
+        if (isBulkMutating || selectedProductIds.length === 0) {
+            return
+        }
+        if (awaitingBulkConfirmationRef.current) {
+            return
+        }
+        awaitingBulkConfirmationRef.current = true
+        try {
+            const count = selectedProductIds.length
+            const confirmOptions = actionKind === 'publish'
+                ? {
+                    title: t('products.bulkPublishConfirmTitle', { count }),
+                    description: t('products.bulkPublishConfirmDescription', { count }),
+                    confirmLabel: t('products.bulkActionPublish'),
+                    cancelLabel: t('products.cancel'),
+                }
+                : {
+                    title: t('products.bulkUnpublishConfirmTitle', { count }),
+                    description: t('products.bulkUnpublishConfirmDescription', { count }),
+                    confirmLabel: t('products.bulkActionUnpublish'),
+                    cancelLabel: t('products.cancel'),
+                }
+            const confirmed = await confirm(confirmOptions)
+            if (!confirmed) {
+                return
+            }
+            beginBulkAction(actionKind)
+        } finally {
+            awaitingBulkConfirmationRef.current = false
+        }
+    }, [confirm, isBulkMutating, selectedProductIds.length, beginBulkAction, t])
+
+    const handleBulkPublish = useCallback(() => {
+        void requestConfirmedBulkAction('publish')
+    }, [requestConfirmedBulkAction])
+
+    const handleBulkUnpublish = useCallback(() => {
+        void requestConfirmedBulkAction('unpublish')
+    }, [requestConfirmedBulkAction])
+
+    // ---- Phase 6G.5: bulk Delete ----
+    // Delete is destructive, so it must never be one-click. The existing
+    // confirmAction concept runs the dialog in awaited-action mode: the
+    // dialog stays open with a real pending state while the confirmed
+    // mutation starts, and cancel/Escape/close dispatches zero mutations.
+    // A synchronous ref guard prevents rapid duplicate clicks from opening a
+    // second dialog; once confirmed, beginBulkAction snapshots names and
+    // delegates to startBulkMutation('delete') exactly once.
+    const awaitingBulkDeleteConfirmationRef = useRef(false)
+
+    const handleBulkDelete = useCallback(() => {
+        if (isBulkMutating || selectedProductIds.length === 0) {
+            return
+        }
+        if (awaitingBulkDeleteConfirmationRef.current) {
+            return
+        }
+        awaitingBulkDeleteConfirmationRef.current = true
+        const count = selectedProductIds.length
+
+        void (async () => {
+            try {
+                await confirmAction({
+                    title: t('products.bulkDeleteConfirmTitle', { count }),
+                    description: t('products.bulkDeleteConfirmDescription', { count }),
+                    confirmLabel: t('products.bulkActionDelete'),
+                    cancelLabel: t('products.cancel'),
+                    variant: 'danger',
+                    awaitAction: true,
+                    onConfirm: () => beginBulkAction('delete'),
+                })
+            } finally {
+                awaitingBulkDeleteConfirmationRef.current = false
+            }
+        })()
+    }, [confirmAction, isBulkMutating, selectedProductIds.length, beginBulkAction, t])
+
+    const handleDismissBulkResult = useCallback(() => {
+        resetBulkMutation()
+    }, [resetBulkMutation])
+
+    const resolveBulkProductName = useCallback((productId) => {
+        const name = productId ? bulkProductNames[productId] : null
+        return typeof name === 'string' && name.trim().length > 0 ? name : t('products.bulkUnknownProduct')
+    }, [bulkProductNames, t])
 
     useEffect(() => {
         void fetchCategories()
@@ -445,8 +614,8 @@ export default function Products() {
                 storeName: settings.companyName,
             })
             showSuccess(t('products.exportSuccess'))
-        } catch (err) {
-            console.error('Product Excel export failed', err)
+        } catch {
+            console.error('Product Excel export failed')
             showError(t('products.exportFailed'))
         } finally {
             setExporting(null)
@@ -465,7 +634,7 @@ export default function Products() {
             scope: pdfExportScope || EXPORT_SCOPE_CURRENT_VIEW,
         }).replace(/\.pdf$/i, ''),
         onPrintError: (errorLocation, error) => {
-            console.error('Product PDF export failed', errorLocation, error)
+            console.error(`Product PDF export failed (${errorLocation})`)
             showError(t('products.exportFailed'))
         },
     })
@@ -640,9 +809,9 @@ export default function Products() {
 
     return (
         <div dir={dir}>
-            <div className="flex justify-between items-center mb-6">
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-2xl font-bold text-gray-900">{t('products.title')}</h2>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                         type="button"
                         onClick={() => setProductFeedOpen(true)}
@@ -663,6 +832,8 @@ export default function Products() {
             <ProductFeedDialog
                 open={productFeedOpen}
                 onOpenChange={setProductFeedOpen}
+                sessionFeedUrls={sessionFeedUrls}
+                onSessionFeedUrlChange={handleSessionFeedUrlChange}
             />
 
             {/* Search section - single prominent search input + search button */}
@@ -887,75 +1058,100 @@ export default function Products() {
                     <button
                         type="button"
                         onClick={() => void fetchProducts()}
-                        className="ml-3 text-sm font-medium underline"
+                        className="ms-3 text-sm font-medium underline"
                     >
                         {t('common.retry')}
                     </button>
                 </div>
             )}
 
-            {/* Bulk selection toolbar (UI-only — no mutations performed) */}
-            {selectedProductIds.length > 0 && (
-                <div className="mb-4 flex items-center justify-between rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5">
+            {/* Bulk selection toolbar. Activate/Deactivate are live in 6G.3;
+                Publish/Unpublish are live in 6G.4 behind an explicit
+                confirmation dialog; Delete is live in 6G.5 behind a
+                destructive awaited-action confirmation that can never start
+                the mutation without an explicit confirmation click. */}
+            <div
+                className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5"
+                aria-busy={isBulkMutating || undefined}
+            >
                     <div className="flex items-center gap-3">
                         <span className="text-sm font-medium text-gray-900">
                             {t('products.productsSelected', { count: selectedProductIds.length })}
                         </span>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div
+                        className="flex flex-wrap items-center gap-2"
+                        role="group"
+                        aria-label={t('products.bulkActionsLabel')}
+                    >
                         <button
                             type="button"
-                            disabled
-                            title={t('products.bulkActionUnavailable')}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            onClick={handleBulkActivate}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.bulkActionActivate')}
                         </button>
                         <button
                             type="button"
-                            disabled
-                            title={t('products.bulkActionUnavailable')}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            onClick={handleBulkDeactivate}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.bulkActionDeactivate')}
                         </button>
                         <button
                             type="button"
-                            disabled
-                            title={t('products.bulkActionUnavailable')}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            onClick={handleBulkPublish}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.bulkActionPublish')}
                         </button>
                         <button
                             type="button"
-                            disabled
-                            title={t('products.bulkActionUnavailable')}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-600 bg-white border border-gray-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            onClick={handleBulkUnpublish}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.bulkActionUnpublish')}
                         </button>
                         <button
                             type="button"
-                            disabled
-                            title={t('products.bulkActionUnavailable')}
-                            className="px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg cursor-not-allowed disabled:opacity-60"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            onClick={handleBulkDelete}
+                            className="px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg hover:bg-red-50 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.bulkActionDelete')}
                         </button>
-                        <span className="text-xs text-gray-500">
-                            {t('products.bulkActionsComingSoon')}
-                        </span>
                         <button
                             type="button"
                             onClick={clearSelection}
-                            className="px-3 py-1.5 text-sm font-medium text-primary-600 hover:text-primary-700 rounded-lg focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                            disabled={selectedProductIds.length === 0 || isBulkMutating}
+                            className="px-3 py-1.5 text-sm font-medium text-primary-600 hover:text-primary-700 rounded-lg focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                             {t('products.clearSelection')}
                         </button>
                     </div>
-                </div>
-            )}
+            </div>
+
+            {/* Phase 6G.6: one shared, strictly passive result panel owns the
+                processing announcement and terminal presentation for all five
+                bulk actions (Activate/Deactivate/Publish/Unpublish/Delete).
+                The page keeps lifecycle ownership: it passes the normalized
+                hook state plus the stable pre-mutation name snapshot and a
+                passive dismiss callback; refresh problems stay a separate
+                notice that never relabels the mutation itself as failed. */}
+            <BulkMutationResult
+                action={bulkAction}
+                isMutating={isBulkMutating}
+                processingCount={bulkSelectedItems.length}
+                result={bulkResult}
+                error={bulkError}
+                refreshError={bulkRefreshError}
+                resolveProductName={resolveBulkProductName}
+                onDismiss={handleDismissBulkResult}
+            />
 
             <div className="card">
                 {hasStaleProductRows ? (
@@ -1087,7 +1283,7 @@ export default function Products() {
                                                 </div>
                                             </td>
                                             {/* Product (primary identity column) */}
-                                            <td className="px-6 py-4 whitespace-nowrap">
+                                            <td className="max-w-xs px-6 py-4 align-top">
                                                 <div className="flex items-center gap-3">
                                                     {product.images ? (
                                                         <img
@@ -1106,9 +1302,9 @@ export default function Products() {
                                                             </svg>
                                                         </div>
                                                     )}
-                                                    <div>
+                                                    <div className="min-w-0">
                                                         <div
-                                                            className="text-sm font-medium text-gray-900"
+                                                            className="break-words text-sm font-medium text-gray-900"
                                                             title={product.name}
                                                         >
                                                             {product.name || '—'}
@@ -1273,19 +1469,19 @@ export default function Products() {
             </div>
 
             {/* Result summary + Sorting indicator + Pagination */}
-            <div className="mt-4 flex items-center justify-between border-t border-gray-200 pt-4">
-                <div className="flex items-center gap-4">
-                    <div className="text-sm text-gray-600">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+                    <div className="break-words text-sm text-gray-600">
                         {loading ? t('common.loading') : `${t('products.showingOf', { start: startLabel, end: endLabel, total: totalCount })}`}
                     </div>
                     {sortField && (
-                        <span className="text-xs text-gray-500">
-                            {t('products.sort')}: {t(`products.sortBy${sortField.charAt(0).toUpperCase() + sortField.slice(1)}`)} · {t(`products.sort${sortDirection === 'asc' ? 'Ascending' : 'Descending'}`)}
+                        <span className="break-words text-xs text-gray-500">
+                            {t('products.sort')}: {t(SORT_FIELD_LABEL_KEYS[sortField] ?? 'products.sort')} · {t(`products.sort${sortDirection === 'asc' ? 'Ascending' : 'Descending'}`)}
                         </span>
                     )}
                 </div>
                 {!loading && totalPages > 1 && (
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                         <button
                             type="button"
                             onClick={() => {

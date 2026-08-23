@@ -264,6 +264,30 @@ public sealed class ProductAuthoringCommandMapperCharacterizationTests
     }
 
     [Fact]
+    public void LifecycleProduct_WithPostgresJsonbLowercaseFaqKeys_ReconstructsPersistedFaqs()
+    {
+        var tenantId = Guid.NewGuid();
+        var mapper = CreateMapper(tenantId, "trace-jsonb-faq", idempotencyKey: "idem-jsonb-faq");
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Lifecycle product with persisted FAQs",
+            CategoryId = Guid.NewGuid(),
+            Unit = "Piece",
+            WeightUnit = "kg",
+            DimensionUnit = "cm",
+            FaqJson = "[{\"answer\":\" Persisted answer \",\"question\":\" Persisted question \"}]"
+        };
+
+        var command = mapper.FromLifecycleProduct(ProductAuthoringOperation.Update, product);
+
+        var faq = Assert.Single(command.Content.Faqs);
+        Assert.Equal("Persisted question", faq.Question);
+        Assert.Equal("Persisted answer", faq.Answer);
+    }
+
+    [Fact]
     public void ProductUnitsUpdate_MapsProductSnapshotAndSubmittedUnitsOnly()
     {
         var tenantId = Guid.NewGuid();

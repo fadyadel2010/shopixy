@@ -1,6 +1,11 @@
 {
   "version": "delegate-fleet.v1",
   "lanes": {
+    "ox": {
+      "implementer": "kilo",
+      "model": "kilo/stealth/ox-alpha",
+      "timeout": "30m"
+    },
     "laguna": {
       "implementer": "kilo",
       "model": "kilo/poolside/laguna-s-2.1:free",

@@ -8,7 +8,9 @@ namespace PointOfSale.API.Services;
 public interface IValidationService
 {
     // Product Validations
-    Task<ValidationResult> CanDeleteProductAsync(Guid productId);
+    Task<ValidationResult> CanDeleteProductAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default);
     Task<ValidationResult> CanModifyProductUnitConversionAsync(Guid productId, Guid unitId, decimal newConversionFactor);
     
     // Customer Validations
