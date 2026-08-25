@@ -54,6 +54,10 @@ export default function ProductWorkspacePage() {
     }, [])
 
     const handleBack = useCallback(async () => {
+        if (workspaceMeta.loading) {
+            return
+        }
+
         if (productFormRef.current?.confirmDiscardPendingChanges) {
             const canLeave = await productFormRef.current.confirmDiscardPendingChanges()
             if (!canLeave) {
@@ -62,7 +66,7 @@ export default function ProductWorkspacePage() {
         }
 
         navigate('/products')
-    }, [navigate])
+    }, [navigate, workspaceMeta.loading])
 
     const handleSave = useCallback((savedProduct) => {
         if (isCreateMode && savedProduct?.id) {
@@ -86,7 +90,7 @@ export default function ProductWorkspacePage() {
         || (isCreateMode ? (t('products.addProduct') || 'Add Product') : (t('products.editProduct') || 'Edit Product'))
 
     const previewHref = workspaceMeta.isOnlineVisible && workspaceMeta.slug
-        ? `http://${STOREFRONT_DOMAIN}/products/${workspaceMeta.slug}`
+        ? `http://${STOREFRONT_DOMAIN}/products/${encodeURIComponent(workspaceMeta.slug)}`
         : null
 
     const topBar = (
@@ -96,7 +100,8 @@ export default function ProductWorkspacePage() {
                     <button
                         type="button"
                         onClick={handleBack}
-                        className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900"
+                        disabled={workspaceMeta.loading}
+                        className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 transition hover:border-gray-300 hover:bg-gray-50 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -120,7 +125,8 @@ export default function ProductWorkspacePage() {
                 <button
                     type="button"
                     onClick={() => setIsAiModalOpen(true)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 transition hover:border-amber-300 hover:bg-amber-100"
+                    disabled={workspaceMeta.loading}
+                    className="inline-flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-900 transition hover:border-amber-300 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     ✨ Create Product with AI
                 </button>
@@ -144,7 +150,7 @@ export default function ProductWorkspacePage() {
                     type="submit"
                     form={PRODUCT_WORKSPACE_FORM_ID}
                     disabled={workspaceMeta.loading}
-                    className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700"
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

@@ -309,7 +309,13 @@ public sealed class DiscountReadModelRepairService : IDiscountReadModelRepairSer
 
                 if (searchProduct == null)
                 {
-                    await _productSearchIndexService.DeleteProductAsync(tenantId, product.ProductId, cancellationToken);
+                    await ProductSearchTombstoneWriter.WriteAsync(
+                        _productSearchIndexService,
+                        _dbContext,
+                        tenantId,
+                        product.ProductId,
+                        eventId: null,
+                        cancellationToken);
                     continue;
                 }
 

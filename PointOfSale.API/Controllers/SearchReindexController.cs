@@ -158,7 +158,13 @@ public class SearchReindexController : ControllerBase
                             productId,
                             tenantId);
 
-                        if (!await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken))
+                        if (!await ProductSearchTombstoneWriter.WriteAsync(
+                                _indexService,
+                                _dbContext,
+                                tenantId,
+                                productId,
+                                eventId: null,
+                                cancellationToken))
                         {
                             errorCount++;
                         }
@@ -166,9 +172,15 @@ public class SearchReindexController : ControllerBase
                         continue;
                     }
 
-                    if (!sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
+                    if (!sqlProjection.IsActive || !sqlProjection.IsOnlineVisible || !sqlProjection.IsSearchable)
                     {
-                        if (!await _indexService.DeleteProductAsync(tenantId, sqlProjection.ProductId, cancellationToken))
+                        if (!await ProductSearchTombstoneWriter.WriteAsync(
+                                _indexService,
+                                _dbContext,
+                                tenantId,
+                                sqlProjection.ProductId,
+                                eventId: null,
+                                cancellationToken))
                         {
                             errorCount++;
                         }

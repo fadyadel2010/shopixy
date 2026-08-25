@@ -93,7 +93,7 @@ public sealed class BulkProductLifecycleAuthoringIntegrationTests
     }
 
     [Fact]
-    public async Task Deactivate_RealAuthoringPath_ArchivesVariantsAndReplayDoesNotDuplicateSideEffects()
+    public async Task Deactivate_RealAuthoringPath_PreservesVariantLifecycleAndReplayDoesNotDuplicateSideEffects()
     {
         await using var harness = BulkFoundationTestHarness.Create(seedProducts: false);
         var seeded = await SeedAsync(
@@ -102,6 +102,10 @@ public sealed class BulkProductLifecycleAuthoringIntegrationTests
             PublishStatus.Published,
             isOnlineVisible: true,
             variantsActive: true);
+        var initialVariants = await harness.Context.ProductVariants
+            .AsNoTracking()
+            .Where(variant => variant.ProductId == seeded.ProductId)
+            .ToDictionaryAsync(variant => variant.Id, variant => (variant.RowVersion, variant.UpdatedAt));
         var service = CreateService(harness);
         var request = Request(seeded.ProductId, seeded.RowVersion);
 
@@ -127,7 +131,12 @@ public sealed class BulkProductLifecycleAuthoringIntegrationTests
         Assert.False(product.IsOnlineVisible);
         Assert.All(
             await harness.Context.ProductVariants.AsNoTracking().Where(v => v.ProductId == product.Id).ToListAsync(),
-            variant => Assert.False(variant.IsActive));
+            variant =>
+            {
+                Assert.True(variant.IsActive);
+                Assert.Equal(initialVariants[variant.Id].RowVersion, variant.RowVersion);
+                Assert.Equal(initialVariants[variant.Id].UpdatedAt, variant.UpdatedAt);
+            });
 
         Assert.Equal("Archive", Assert.Single(await harness.Context.AuditLogs.AsNoTracking().ToListAsync()).ActionType);
         Assert.Equal(outboxCount, await harness.Context.OutboxMessages.CountAsync());

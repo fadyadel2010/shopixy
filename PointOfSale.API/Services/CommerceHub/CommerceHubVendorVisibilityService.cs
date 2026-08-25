@@ -7,6 +7,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Marketplace;
 
 namespace PointOfSale.API.Services.CommerceHub;
 
@@ -44,17 +45,20 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
     private readonly ApplicationDbContext _dbContext;
     private readonly IEventPublisher _eventPublisher;
     private readonly ICommerceHubAutoHealingQueue _autoHealingQueue;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<CommerceHubVendorVisibilityService> _logger;
 
     public CommerceHubVendorVisibilityService(
         ApplicationDbContext dbContext,
         IEventPublisher eventPublisher,
         ICommerceHubAutoHealingQueue autoHealingQueue,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<CommerceHubVendorVisibilityService> logger)
     {
         _dbContext = dbContext;
         _eventPublisher = eventPublisher;
         _autoHealingQueue = autoHealingQueue;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -126,6 +130,7 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
             listings.Select(listing => listing.VariantId),
             includeInactive: true,
             cancellationToken);
+        var products = await LoadProductsAsync(vendorId, listings, cancellationToken);
 
         var changedCount = 0;
         foreach (var listing in listings)
@@ -148,6 +153,11 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
                     CommerceHubPriceOverride = listing.CommerceHubPrice,
                     Price = ResolveEffectivePrice(listing, variants)
                 },
+                cancellationToken);
+            await StageMarketplaceProductReadModelRebuildAsync(
+                listing,
+                products,
+                "CommerceHubListingGovernanceHidden",
                 cancellationToken);
         }
 
@@ -229,20 +239,20 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
             .Distinct()
             .ToList();
 
-        var visibleProductIds = await _dbContext.Products
+        var visibleProducts = await _dbContext.Products
             .IgnoreQueryFilters()
-            .AsNoTracking()
             .Where(product =>
                 product.TenantId == vendorId &&
                 productIds.Contains(product.Id) &&
                 !product.IsDeleted &&
                 product.IsActive &&
                 product.IsOnlineVisible &&
+                product.IsSearchable &&
                 product.PublishStatus == PublishStatus.Published)
-            .Select(product => product.Id)
             .ToListAsync(cancellationToken);
 
-        var visibleProductIdSet = visibleProductIds.ToHashSet();
+        var visibleProductIdSet = visibleProducts.Select(product => product.Id).ToHashSet();
+        var visibleProductsById = visibleProducts.ToDictionary(product => product.Id);
         var liveCategoryIds = await CommerceHubCategoryLineageAuthority.LoadLiveIdsAsync(
             _dbContext,
             listings.Select(listing => listing.CommerceHubCategoryId),
@@ -287,6 +297,11 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
                     Price = PublishToCommerceHubHandler.ResolveEffectivePrice(variant, listing.CommerceHubPrice),
                     AttributesJson = listing.AttributesJson
                 },
+                cancellationToken);
+            await StageMarketplaceProductReadModelRebuildAsync(
+                listing,
+                visibleProductsById,
+                "CommerceHubListingGovernanceRestored",
                 cancellationToken);
         }
 
@@ -354,6 +369,40 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
 
         var variants = await query.ToListAsync(cancellationToken);
         return variants.ToDictionary(variant => variant.Id);
+    }
+
+    private async Task<Dictionary<Guid, Product>> LoadProductsAsync(
+        Guid vendorId,
+        IEnumerable<CommerceHubListing> listings,
+        CancellationToken cancellationToken)
+    {
+        var productIds = listings.Select(listing => listing.ProductId).Distinct().ToList();
+        return await _dbContext.Products
+            .IgnoreQueryFilters()
+            .Where(product => product.TenantId == vendorId && productIds.Contains(product.Id))
+            .ToDictionaryAsync(product => product.Id, cancellationToken);
+    }
+
+    private Task StageMarketplaceProductReadModelRebuildAsync(
+        CommerceHubListing listing,
+        IReadOnlyDictionary<Guid, Product> products,
+        string changedField,
+        CancellationToken cancellationToken)
+    {
+        if (!products.TryGetValue(listing.ProductId, out var product))
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}.");
+        }
+
+        return PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
+            _dbContext,
+            _marketplaceEventOutbox,
+            product,
+            listing,
+            correlationId: null,
+            changedField,
+            cancellationToken);
     }
 
     private static decimal ResolveEffectivePrice(

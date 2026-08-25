@@ -13,7 +13,7 @@ public sealed class StorefrontRecoveryRebuildCertificationTests
         Assert.Contains("IProductSqlAuthorityProjectionWriter", adminSync, StringComparison.Ordinal);
         Assert.Contains("ApplySqlProductRebuildAuthorityAsync", adminSync, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", searchReindex, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", searchReindex, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", searchReindex, StringComparison.Ordinal);
         Assert.Contains("ProductSearchDocumentMapper.MapFromProductDocument", searchReindex, StringComparison.Ordinal);
         Assert.Contains("SqlAuthorityOverlayKind.StorefrontCms", adminSearch, StringComparison.Ordinal);
         Assert.Contains("DeleteStaleCmsPagesAsync", adminSearch, StringComparison.Ordinal);
@@ -64,7 +64,7 @@ public sealed class StorefrontRecoveryRebuildCertificationTests
 
         Assert.Contains("SqlTruthRebuildGuard.RequireSqlAuthority", discountRepair, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discountRepair, StringComparison.Ordinal);
-        Assert.Contains("_productSearchIndexService.DeleteProductAsync", discountRepair, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", discountRepair, StringComparison.Ordinal);
         Assert.Contains("DeleteManyAsync(staleFilter", discountRepair, StringComparison.Ordinal);
 
         Assert.Contains("SqlTruthRebuildGuard.RequireSqlAuthority", adminDataSync, StringComparison.Ordinal);

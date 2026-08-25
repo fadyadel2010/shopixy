@@ -714,7 +714,7 @@ public sealed class EventOutboxConsistencyArchitectureTests
         Assert.Contains("ProductVariantDeletionTombstoneDocument", variantDocument, StringComparison.Ordinal);
         Assert.Contains("BuildNoNewerVariantDeleteTombstoneFilter", variantConsumer, StringComparison.Ordinal);
         Assert.Contains("ProductVariantDeletedEvent stale delete ignored", variantConsumer, StringComparison.Ordinal);
-        Assert.Contains("ProductVariantCreatedEvent duplicate ignored", variantConsumer, StringComparison.Ordinal);
+        Assert.Contains("ProductVariantCreatedEvent duplicate or active replay collapsed before side effects", variantConsumer, StringComparison.Ordinal);
         Assert.Contains("UpdateOptions { ArrayFilters = arrayFilters }", variantConsumer, StringComparison.Ordinal);
     }
 
@@ -884,7 +884,7 @@ public sealed class EventOutboxConsistencyArchitectureTests
         Assert.Contains("LastMediaEventVersion", document, StringComparison.Ordinal);
 
         Assert.Contains("TouchProductForMediaProjection(product, changedAtUtc)", service, StringComparison.Ordinal);
-        Assert.Contains("ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion + 1)", service, StringComparison.Ordinal);
+        Assert.Contains("MarketplaceProductProjectionVersion.AdvanceAsync", service, StringComparison.Ordinal);
         Assert.Contains("await PublishMediaChangedEventAsync(product", service, StringComparison.Ordinal);
         Assert.Matches(
             @"PublishMediaChangedEventAsync[\s\S]+SaveChangesAsync",

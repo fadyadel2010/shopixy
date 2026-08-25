@@ -100,6 +100,83 @@ public sealed class ProductAuthoringPolicyCharacterizationTests
         Assert.Equal(ProductAuthoringStatus.NotFound, missingLifecycleDecision.Status);
     }
 
+    [Fact]
+    public async Task ProductAuthoringValidator_RejectsInvalidLifecycleAndDbBoundValuesBeforePersistence()
+    {
+        var baseline = Command(PublishStatus.Draft, hasVariants: false, isOnlineVisible: false);
+        var invalid = baseline with
+        {
+            Content = baseline.Content with { Name = new string('x', 301) },
+            Pricing = baseline.Pricing with { TaxRate = -1m },
+            Publication = baseline.Publication with { PublishStatus = (PublishStatus)999 },
+            Metadata = baseline.Metadata with { ProductTemplate = new string('t', 101) }
+        };
+
+        var errors = await new ProductAuthoringValidator().ValidateAsync(invalid);
+
+        Assert.Contains(errors, error => error.Code == "PRODUCT_NAME_TOO_LONG");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_TAX_RATE_INVALID");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_PUBLISH_STATUS_INVALID");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_TEMPLATE_TOO_LONG");
+    }
+
+    [Fact]
+    public async Task VariantPublicationReadiness_RequiresOneActiveVariantWithPositivePosOrOnlinePrice()
+    {
+        var policy = new ProductAuthoringPolicy(new ProductAuthoringValidator());
+        var cases = new[]
+        {
+            (Name: "active POS-priced variant", Variants: new[] { Variant(price: 15m, onlinePrice: null) }, Ready: true),
+            (Name: "active online-priced variant", Variants: new[] { Variant(price: 0m, onlinePrice: 14m) }, Ready: true),
+            (Name: "inactive priced variant", Variants: new[] { Variant(price: 15m, onlinePrice: 14m, isActive: false) }, Ready: false),
+            (Name: "active zero-price variant", Variants: new[] { Variant(price: 0m, onlinePrice: 0m) }, Ready: false),
+            (Name: "no variants", Variants: Array.Empty<ProductAuthoringVariant>(), Ready: false)
+        };
+
+        foreach (var item in cases)
+        {
+            var decision = await policy.EvaluateAdmissionAsync(
+                Command(PublishStatus.Published, hasVariants: true, isOnlineVisible: true, variants: item.Variants),
+                new ProductAuthoringAdmissionFacts(CategoryIsLive: true));
+
+            Assert.Equal(item.Ready ? ProductAuthoringStatus.Accepted : ProductAuthoringStatus.NotReadyForPublication, decision.Status);
+            Assert.Equal(
+                item.Ready,
+                decision.Errors.All(error => error.Code != "PRODUCT_ACTIVE_PRICED_VARIANT_REQUIRED"));
+        }
+    }
+
+    [Fact]
+    public async Task ProductAuthoringValidator_RejectsNegativeVariantMoneyAndWeightButPreservesNullAndZero()
+    {
+        var baseline = Command(
+            PublishStatus.Draft,
+            hasVariants: true,
+            isOnlineVisible: false,
+            variants: [Variant(price: 0m, onlinePrice: null)]);
+        var baselineErrors = await new ProductAuthoringValidator().ValidateAsync(baseline);
+        Assert.DoesNotContain(baselineErrors, error => error.Field.StartsWith("variants", StringComparison.Ordinal));
+
+        var invalid = baseline with
+        {
+            Variants =
+            [
+                Variant(price: -1m, onlinePrice: -2m) with
+                {
+                    CostPrice = -3m,
+                    Weight = -0.1m
+                }
+            ]
+        };
+
+        var errors = await new ProductAuthoringValidator().ValidateAsync(invalid);
+
+        Assert.Contains(errors, error => error.Code == "PRODUCT_VARIANT_PRICE_INVALID");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_VARIANT_ONLINE_PRICE_INVALID");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_VARIANT_COST_PRICE_INVALID");
+        Assert.Contains(errors, error => error.Code == "PRODUCT_VARIANT_WEIGHT_INVALID");
+    }
+
     private static async Task<ProductAuthoringPolicyDecision> LegacyEvaluateAdmissionAsync(
         ProductAuthoringCommand command,
         bool categoryIsLive)
@@ -263,8 +340,12 @@ public sealed class ProductAuthoringPolicyCharacterizationTests
     private static ProductAuthoringUnit Unit(Guid? unitId = null, decimal sellingPrice = 12m) =>
         new(null, unitId ?? UnitId, 1m, 5m, sellingPrice, null, IsDefault: true, IsBaseUnit: true);
 
-    private static ProductAuthoringVariant Variant(string sku = "SKU-V", decimal price = 12m, decimal? onlinePrice = 11m) =>
-        new(Guid.NewGuid(), sku, null, price, onlinePrice, 5m, IsActive: true, IsDefault: true, new Dictionary<string, string>());
+    private static ProductAuthoringVariant Variant(
+        string sku = "SKU-V",
+        decimal price = 12m,
+        decimal? onlinePrice = 11m,
+        bool isActive = true) =>
+        new(Guid.NewGuid(), sku, null, price, onlinePrice, 5m, IsActive: isActive, IsDefault: true, new Dictionary<string, string>());
 
     private sealed record PolicyCase(
         string Name,

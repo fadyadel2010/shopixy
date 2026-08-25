@@ -240,10 +240,49 @@ internal static class ProductVariantStockMutationSupport
             changes,
             cancellationToken);
 
+        var productIds = committedEvents
+            .Select(stockEvent => stockEvent.ProductId)
+            .Distinct()
+            .ToList();
+        var products = await context.Products
+            .IgnoreQueryFilters()
+            .Where(product => product.TenantId == tenantId && productIds.Contains(product.Id))
+            .ToDictionaryAsync(product => product.Id, cancellationToken);
+
         foreach (var stockEvent in committedEvents)
         {
             var payload = JsonSerializer.Serialize(stockEvent, typeof(ProductVariantStockChangedEvent));
             context.StockSyncOutboxMessages.Add(StockSyncOutboxMessage.Create(stockEvent, payload));
+        }
+
+        foreach (var productEvents in committedEvents.GroupBy(stockEvent => stockEvent.ProductId))
+        {
+            if (!products.TryGetValue(productEvents.Key, out var product))
+            {
+                throw new InvalidOperationException(
+                    $"Product {productEvents.Key} metadata was not found for marketplace stock projection.");
+            }
+
+            var latestStockEvent = productEvents.MaxBy(stockEvent => stockEvent.StockUpdatedAtUtc)!;
+            var marketplaceEventVersion = await MarketplaceProductProjectionVersion.AdvanceAsync(
+                context,
+                product,
+                cancellationToken);
+            var marketplaceEvent = new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
+            {
+                OccurredAtUtc = latestStockEvent.StockUpdatedAtUtc,
+                CorrelationId = latestStockEvent.CorrelationId ?? latestStockEvent.EventId.ToString("D"),
+                EntityId = product.Id,
+                AggregateRootId = product.Id,
+                TenantId = tenantId,
+                Version = marketplaceEventVersion,
+                ChangedFields = ["Stock"]
+            };
+            var marketplacePayload = JsonSerializer.Serialize(
+                marketplaceEvent,
+                typeof(PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent));
+            context.MarketplaceEventOutboxMessages.Add(
+                MarketplaceEventOutboxMessage.Create(marketplaceEvent, marketplacePayload));
         }
 
         await context.SaveChangesAsync(cancellationToken);

@@ -56,7 +56,7 @@ public sealed class ProductionSecurityHardeningTests
     private static readonly HashSet<string> ApprovedAnonymousActions = new(StringComparer.Ordinal)
     {
         "SuperAdminAuthController.Login", "SuperAdminAuthController.Refresh", "AdminAbandonedCartRecoveryController.LogRecoveryResult",
-        "AffiliatePortalController.DiscoverCategories", "AffiliatePortalController.DiscoverProducts", "AffiliatePortalController.GetProductDetail",
+        "AffiliatePortalController.DiscoverCategories",
         "AuthController.Register", "AuthController.Login", "AuthController.RefreshToken", "AuthController.VerifyEmail",
         "CommerceHubOrdersController.GetOrder", "CustomersAuthController.Register", "CustomersAuthController.Login",
         "CustomersAuthController.Logout", "CustomersAuthController.ForgotPassword", "CustomersAuthController.ResetPassword",
@@ -129,6 +129,19 @@ public sealed class ProductionSecurityHardeningTests
         AssertNoAllowAnonymous(typeof(WarehousesController).GetMethod(nameof(WarehousesController.GetWarehouses)));
         AssertNoAllowAnonymous(typeof(CustomersAuthController).GetMethod(nameof(CustomersAuthController.Me)));
         AssertNoAllowAnonymous(typeof(SuperAdminAuthController).GetMethod(nameof(SuperAdminAuthController.Logout)));
+    }
+
+    [Theory]
+    [InlineData(nameof(AffiliatePortalController.DiscoverProducts))]
+    [InlineData(nameof(AffiliatePortalController.GetProductDetail))]
+    public void AffiliateCommissionActions_MustInheritAffiliateOnly_WithoutAnonymousOverride(string actionName)
+    {
+        var action = typeof(AffiliatePortalController).GetMethod(actionName);
+
+        AssertNoAllowAnonymous(action);
+        Assert.Contains(
+            typeof(AffiliatePortalController).GetCustomAttributes<AuthorizeAttribute>(inherit: true),
+            attribute => attribute.Policy == "AffiliateOnly");
     }
 
     [Fact]

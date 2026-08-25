@@ -69,8 +69,12 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(DependencyTimeout);
 
-            // Count products in PostgreSQL (any tenant - just checking sync)
-            var pgProductCount = await _dbContext.Products.CountAsync(timeoutCts.Token);
+            // This is a global readiness check, so it must not inherit the
+            // request-scoped tenant query filter. Deleted SQL rows are excluded
+            // because the storefront projection removes them from this collection.
+            var pgProductCount = await _dbContext.Products
+                .IgnoreQueryFilters()
+                .CountAsync(product => !product.IsDeleted, timeoutCts.Token);
             
             // Count products in MongoDB
             var mongoProducts = _mongoDatabase.GetCollection<ProductDocument>("products");
@@ -79,12 +83,18 @@ public class ProjectionDriftHealthCheck : IHealthCheck
                 cancellationToken: timeoutCts.Token);
 
             var drift = Math.Abs(pgProductCount - mongoProductCount);
+            var driftDirection = mongoProductCount > pgProductCount
+                ? "MongoDBAhead"
+                : pgProductCount > mongoProductCount
+                    ? "PostgreSQLAhead"
+                    : "Even";
 
             var data = new Dictionary<string, object>
             {
                 ["PostgreSQLCount"] = pgProductCount,
                 ["MongoDBCount"] = mongoProductCount,
-                ["Drift"] = drift
+                ["Drift"] = drift,
+                ["Direction"] = driftDirection
             };
 
             if (drift >= UnhealthyThreshold)
@@ -101,7 +111,7 @@ public class ProjectionDriftHealthCheck : IHealthCheck
                     pgProductCount, mongoProductCount, drift);
                 
                 return HealthCheckResult.Unhealthy(
-                    $"Projection drift exceeds threshold: {drift} documents behind",
+                    $"Projection drift exceeds threshold: {drift} documents ({driftDirection})",
                     data: data);
             }
 

@@ -68,7 +68,7 @@ public class GlobalReliabilityInfrastructureExtractionTests
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", storefrontReindex, StringComparison.Ordinal);
         Assert.Contains("new ProductDocument", storefrontReindex, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", storefrontReindex, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", storefrontReindex, StringComparison.Ordinal);
         Assert.Contains("!sqlProjection.IsActive || !sqlProjection.IsOnlineVisible", storefrontReindex, StringComparison.Ordinal);
 
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", commerceHubReindex, StringComparison.Ordinal);
@@ -126,6 +126,7 @@ public class GlobalReliabilityInfrastructureExtractionTests
         var updatedSearch = File.ReadAllText(InfrastructurePath("Consumers", "ProductUpdatedSearchIndexConsumer.cs"));
         var deletedSearch = File.ReadAllText(InfrastructurePath("Consumers", "ProductDeletedSearchIndexConsumer.cs"));
         var cache = File.ReadAllText(InfrastructurePath("Consumers", "ProductCacheInvalidationConsumer.cs"));
+        var productProjectionWriter = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "ProductSqlAuthorityProjectionWriter.cs"));
 
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", media, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", stock, StringComparison.Ordinal);
@@ -144,13 +145,14 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", deletedSearch, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", deletedSearch, StringComparison.Ordinal);
         Assert.Contains("_indexService.IndexProductAsync", deletedSearch, StringComparison.Ordinal);
-        Assert.Contains("_indexService.DeleteProductAsync", deletedSearch, StringComparison.Ordinal);
-        Assert.Contains("ProductCreatedConsumerName", cache, StringComparison.Ordinal);
-        Assert.Contains("ProductUpdatedConsumerName", cache, StringComparison.Ordinal);
-        Assert.Contains("ProductDeletedConsumerName", cache, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", deletedSearch, StringComparison.Ordinal);
+        Assert.Contains("IStorefrontProductCacheInvalidator", productProjectionWriter, StringComparison.Ordinal);
+        Assert.Contains("InvalidateProjectedProductCacheAsync", productProjectionWriter, StringComparison.Ordinal);
+        Assert.True(
+            productProjectionWriter.IndexOf("await _mutationBoundary.ApplyAsync", StringComparison.Ordinal) <
+            productProjectionWriter.IndexOf("await InvalidateProjectedProductCacheAsync", StringComparison.Ordinal));
         Assert.Contains("ProductStockConsumerName", cache, StringComparison.Ordinal);
         Assert.Contains("ProductPriceConsumerName", cache, StringComparison.Ordinal);
-        Assert.Contains("ProductPublicationConsumerName", cache, StringComparison.Ordinal);
         Assert.Contains("ResolveCurrentSqlProductSlugAsync", cache, StringComparison.Ordinal);
         Assert.Contains("ProjectionConsumerEventFence.TryAcquireAsync", cache, StringComparison.Ordinal);
         Assert.Contains("fence.CompleteAsync", cache, StringComparison.Ordinal);
@@ -210,7 +212,7 @@ public class GlobalReliabilityInfrastructureExtractionTests
         var repository = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "ProductReadRepository.cs"));
         var mongoRegistrations = File.ReadAllText(InfrastructurePath("MongoDB", "MongoDbServiceCollectionExtensions.cs"));
         var program = File.ReadAllText(ApiPath("Program.cs"));
-        var productsController = File.ReadAllText(ApiPath("Controllers", "ProductsController.cs"));
+        var productAuthoringOrchestrator = File.ReadAllText(ApiPath("Services", "ProductAuthoring", "ProductAuthoringOrchestrator.cs"));
         var productSearchOverlay = File.ReadAllText(InfrastructurePath("Elasticsearch", "Services", "ProductSearchSqlAuthorityOverlay.cs"));
         var commerceHub = File.ReadAllText(InfrastructurePath("Consumers", "CommerceHubProjectionConsumer.cs"));
         var commerceHubSearchOverlay = File.ReadAllText(InfrastructurePath("Elasticsearch", "Services", "CommerceHubSearchSqlAuthorityOverlay.cs"));
@@ -250,8 +252,8 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("IProductSqlAuthorityProjectionWriter", lifecycle, StringComparison.Ordinal);
         Assert.Contains("_projectionWriter.ApplyAsync", lifecycle, StringComparison.Ordinal);
         Assert.Contains("x.AddConsumer<ProductVisibilityLifecycleProjectionConsumer>();", program, StringComparison.Ordinal);
-        Assert.Contains("new ProductPublishStatusChangedEvent", productsController, StringComparison.Ordinal);
-        Assert.Contains("PublishStatus = product.PublishStatus.ToString()", productsController, StringComparison.Ordinal);
+        Assert.Contains("new ProductPublishStatusChangedEvent", productAuthoringOrchestrator, StringComparison.Ordinal);
+        Assert.Contains("PublishStatus = product.PublishStatus.ToString()", productAuthoringOrchestrator, StringComparison.Ordinal);
         Assert.Contains("PublishStatus.Published", productSearchOverlay, StringComparison.Ordinal);
 
         Assert.Contains("Task<bool> TombstoneIfFreshAsync", repository, StringComparison.Ordinal);
@@ -321,7 +323,8 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(doc)", storefrontProductsController, StringComparison.Ordinal);
         Assert.Contains("ProductStorefrontVisibilityAuthority.Evaluate(product)", cartService, StringComparison.Ordinal);
         Assert.Contains("ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant)", cartService, StringComparison.Ordinal);
-        Assert.Contains("?? product.StorefrontEffectivePrice", commerceHubQueryService, StringComparison.Ordinal);
+        Assert.Contains("Price = listing.Price", commerceHubQueryService, StringComparison.Ordinal);
+        Assert.DoesNotContain("product.StorefrontEffectivePrice", commerceHubQueryService, StringComparison.Ordinal);
 
         Assert.DoesNotContain("product.OnlinePrice.GetValueOrDefault() > 0", storefrontHomeService, StringComparison.Ordinal);
         Assert.DoesNotContain(": product.SalePrice", storefrontHomeService, StringComparison.Ordinal);
@@ -398,8 +401,9 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("Field(p => p.MaxVariantPrice)", publicController, StringComparison.Ordinal);
         Assert.Contains("Field(p => p.MinVariantPrice)", publicController, StringComparison.Ordinal);
 
-        Assert.Contains("Filter.Gt(d => d.BasePrice, 0m)", affiliatePortal, StringComparison.Ordinal);
-        Assert.Contains("Filter.Eq(d => d.IsOutOfStock, false)", affiliatePortal, StringComparison.Ordinal);
+        Assert.Contains("document.BasePrice > 0m", affiliatePortal, StringComparison.Ordinal);
+        Assert.Contains("!document.IsOutOfStock", affiliatePortal, StringComparison.Ordinal);
+        Assert.Contains("LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync", affiliatePortal, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -504,9 +508,18 @@ public class GlobalReliabilityInfrastructureExtractionTests
         var adminDataSync = File.ReadAllText(ApiPath("Controllers", "AdminDataSyncController.cs"));
         var adminSearchSync = File.ReadAllText(ApiPath("Controllers", "AdminSearchSyncController.cs"));
         var productsController = File.ReadAllText(ApiPath("Controllers", "ProductsController.cs"));
+        var productAuthoringOrchestrator = File.ReadAllText(ApiPath("Services", "ProductAuthoring", "ProductAuthoringOrchestrator.cs"));
         var categoryLineageAuthority = File.ReadAllText(ApiPath("Services", "Catalog", "CategoryLineageAuthority.cs"));
         var categoryRepository = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "CategoryReadRepository.cs"));
         var affiliateCategoryConsumer = File.ReadAllText(InfrastructurePath("Consumers", "Affiliate", "AffiliateCategoryUpdatedConsumer.cs"));
+        var affiliatePortal = File.ReadAllText(ApiPath("Controllers", "AffiliatePortalController.cs"));
+        var publicAffiliateProducts = File.ReadAllText(ApiPath("Controllers", "PublicAffiliateProductsController.cs"));
+        var storefrontLandingPage = File.ReadAllText(ApiPath("Controllers", "StorefrontLandingPageController.cs"));
+        var cartService = File.ReadAllText(ApiPath("Services", "Cart", "CartService.cs"));
+        var checkoutService = File.ReadAllText(ApiPath("Services", "Checkout", "CheckoutService.cs"));
+        var referralMiddleware = File.ReadAllText(ApiPath("Middleware", "AffiliateReferralMiddleware.cs"));
+        var affiliateDiscovery = File.ReadAllText(InfrastructurePath("Elasticsearch", "Services", "AffiliateProductDiscoveryService.cs"));
+        var productSearchOverlay = File.ReadAllText(InfrastructurePath("Elasticsearch", "Services", "ProductSearchSqlAuthorityOverlay.cs"));
         var affiliateReindexScript = File.ReadAllText(InfrastructurePath("Scripts", "AF16E_ReindexAffiliateProductsWithStorefrontUrl.cs"));
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productUpdatedSearch, StringComparison.Ordinal);
@@ -554,11 +567,11 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("CategoryLineageAuthority.LoadTenantSnapshotAsync", adminSearchSync, StringComparison.Ordinal);
         Assert.Contains("!lineageSnapshot.IsLiveInLineage(row.CategoryId)", adminSearchSync, StringComparison.Ordinal);
         Assert.Contains("SqlTruthRebuildGuard.RequireSqlAuthority", adminSearchSync, StringComparison.Ordinal);
-        Assert.Contains("await _searchIndexService.DeleteProductAsync", adminSearchSync, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", adminSearchSync, StringComparison.Ordinal);
         Assert.Contains("await _searchIndexService.DeleteCategoryAsync", adminSearchSync, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildProductSyncQuery(", adminSearchSync, StringComparison.Ordinal);
 
-        Assert.Contains("CategoryLineageAuthority.RequireLiveCategoryAsync", productsController, StringComparison.Ordinal);
+        Assert.Contains("CategoryLineageAuthority.RequireLiveCategoryAsync", productAuthoringOrchestrator, StringComparison.Ordinal);
         Assert.Contains("CategoryId must reference a live category with a valid SQL parent lineage.", productsController, StringComparison.Ordinal);
 
         Assert.Contains("ParentCategoryId", categoryLineageAuthority, StringComparison.Ordinal);
@@ -574,7 +587,20 @@ public class GlobalReliabilityInfrastructureExtractionTests
         Assert.Contains("ApplyCurrentCategoryAuthorityAsync", affiliateCategoryConsumer, StringComparison.Ordinal);
         Assert.Contains("IgnoreQueryFilters()", affiliateCategoryConsumer, StringComparison.Ordinal);
         Assert.Contains("NullifyCategoryProjectionAsync", affiliateCategoryConsumer, StringComparison.Ordinal);
+        Assert.Contains("c.ParentId == categoryId", affiliateCategoryConsumer, StringComparison.Ordinal);
+        Assert.Contains("AffiliateCategoryName, childCategory.Name", affiliateCategoryConsumer, StringComparison.Ordinal);
+        Assert.Contains("AffiliateParentCategoryName, category.Name", affiliateCategoryConsumer, StringComparison.Ordinal);
         Assert.DoesNotContain(".Set(d => d.AffiliateCategoryName, evt.NewName)", affiliateCategoryConsumer, StringComparison.Ordinal);
+        Assert.Contains("ResolveLiveAffiliateCategoryProductKeysAsync", affiliatePortal, StringComparison.Ordinal);
+        Assert.Contains("candidate.AffiliateParentCategorySlug = parentCategorySlug", affiliatePortal, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", publicAffiliateProducts, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", storefrontLandingPage, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", cartService, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", referralMiddleware, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", affiliateDiscovery, StringComparison.Ordinal);
+        Assert.Contains("parent.Level == 1", productSearchOverlay, StringComparison.Ordinal);
+        Assert.DoesNotContain("Filter.In(d => d.AffiliateParentCategorySlug", affiliatePortal, StringComparison.Ordinal);
 
         Assert.Contains("PublicAffiliateProducts.UpdateOneAsync", affiliateReindexScript, StringComparison.Ordinal);
         Assert.Contains("AffiliateProductIntelligence.UpdateOneAsync", affiliateReindexScript, StringComparison.Ordinal);

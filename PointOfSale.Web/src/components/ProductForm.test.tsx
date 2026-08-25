@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { forwardRef, useImperativeHandle } from 'react'
+import { createRef, forwardRef, useImperativeHandle } from 'react'
 import type React from 'react'
 import ProductForm from './ProductForm'
 
@@ -12,6 +12,7 @@ const variantsPrepareDraftMock = vi.hoisted(() => vi.fn())
 const variantsGetLastErrorMock = vi.hoisted(() => vi.fn())
 const showSuccessMock = vi.hoisted(() => vi.fn())
 const showErrorMock = vi.hoisted(() => vi.fn())
+const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 const productAffiliateSettingsCardMock = vi.hoisted(() => vi.fn(() => <div>Affiliate Marketing Card</div>))
 const useAuthStoreMock = vi.hoisted(() => vi.fn((selector: (state: unknown) => unknown) => selector({
     user: { role: 'Admin' },
@@ -23,6 +24,7 @@ vi.mock('../services/api', () => ({
         post: apiPostMock,
         put: apiPutMock,
     },
+    getSafeApiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }))
 
 vi.mock('../store/authStore', () => ({
@@ -50,7 +52,7 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('../common/confirm/ConfirmDialogProvider', () => ({
-    useConfirmDialog: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
+    useConfirmDialog: () => ({ confirm: confirmMock }),
 }))
 
 vi.mock('../contexts/SettingsContext', () => ({
@@ -203,6 +205,8 @@ describe('product affiliate entry presentation', () => {
         variantsGetLastErrorMock.mockReturnValue('')
         showSuccessMock.mockClear()
         showErrorMock.mockClear()
+        confirmMock.mockReset()
+        confirmMock.mockResolvedValue(true)
         productAffiliateSettingsCardMock.mockClear()
         useAuthStoreMock.mockImplementation((selector: (state: unknown) => unknown) => selector({
             user: { role: 'Admin' },
@@ -638,7 +642,7 @@ describe('product affiliate entry presentation', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
 
-        expect(await screen.findByText('Product has been changed by another transaction.')).toBeInTheDocument()
+        expect(await screen.findByText('This product changed while you were editing it. Refresh the product before retrying.')).toBeInTheDocument()
     })
 
     it('surfaces post-matrix variant validation at the parent form and prevents the parent update', async () => {
@@ -780,5 +784,240 @@ describe('product affiliate entry presentation', () => {
                 hasVariants: true,
             }))
         })
+    })
+
+    it('locks duplicate submits synchronously and sends one semantic update', async () => {
+        let resolveUpdate: ((value: unknown) => void) | undefined
+        apiPutMock.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveUpdate = resolve
+        }))
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: 'One update only' },
+        })
+
+        const updateButton = screen.getByRole('button', { name: 'products.update' })
+        fireEvent.click(updateButton)
+        fireEvent.click(updateButton)
+
+        await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+        resolveUpdate?.({ data: { id: 'product-1', rowVersion: '8' } })
+        await waitFor(() => expect(showSuccessMock).toHaveBeenCalled())
+    })
+
+    it('treats core product edits as unsaved changes and uses the existing discard confirmation', async () => {
+        const ref = createRef<{ hasPendingChanges: () => boolean; confirmDiscardPendingChanges: () => Promise<boolean> }>()
+        render(<ProductForm ref={ref} productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        const nameInput = await screen.findByLabelText('products.productName *')
+        await waitFor(() => expect((nameInput as HTMLInputElement).value).toBe('Test Product'))
+        expect(ref.current?.hasPendingChanges()).toBe(false)
+
+        fireEvent.change(nameInput, { target: { value: 'Unsaved product name' } })
+        expect(ref.current?.hasPendingChanges()).toBe(true)
+        await expect(ref.current?.confirmDiscardPendingChanges()).resolves.toBe(true)
+        expect(confirmMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('reinitializes all identity and draft state when the route changes products or returns to create', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url.endsWith('/variants')) return Promise.resolve({ data: [] })
+            if (url === '/products/product-1' || url === '/products/product-2') {
+                const suffix = url.endsWith('product-1') ? 'A' : 'B'
+                return Promise.resolve({
+                    data: {
+                        name: `Product ${suffix}`,
+                        categoryId: 'category-1',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: true,
+                        isActive: true,
+                        hasVariants: false,
+                        rowVersion: suffix === 'A' ? '7' : '11',
+                        variants: [],
+                        units: [],
+                    },
+                })
+            }
+            return Promise.resolve({ data: {} })
+        })
+
+        const onSave = vi.fn()
+        const { rerender } = render(<ProductForm productId="product-1" mode="modal" onSave={onSave} />)
+        expect(await screen.findByDisplayValue('Product A')).toBeInTheDocument()
+
+        rerender(<ProductForm productId="product-2" mode="modal" onSave={onSave} />)
+        expect(await screen.findByDisplayValue('Product B')).toBeInTheDocument()
+        expect(screen.queryByDisplayValue('Product A')).not.toBeInTheDocument()
+
+        rerender(<ProductForm mode="modal" onSave={onSave} />)
+        await waitFor(() => expect(screen.getByLabelText('products.productName *')).toHaveValue(''))
+        expect(screen.queryByDisplayValue('Product B')).not.toBeInTheDocument()
+    })
+
+    it('ignores a completed save response after the form route changes products', async () => {
+        let resolveProductOneUpdate: ((value: unknown) => void) | undefined
+        apiPutMock.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveProductOneUpdate = resolve
+        }))
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url.endsWith('/variants')) return Promise.resolve({ data: [] })
+            if (url === '/products/product-1' || url === '/products/product-2') {
+                const isProductOne = url.endsWith('product-1')
+                return Promise.resolve({
+                    data: {
+                        name: isProductOne ? 'Product A' : 'Product B',
+                        categoryId: 'category-1',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: true,
+                        isActive: true,
+                        hasVariants: false,
+                        rowVersion: isProductOne ? '7' : '11',
+                        variants: [],
+                        units: [],
+                    },
+                })
+            }
+            return Promise.resolve({ data: {} })
+        })
+
+        const onSave = vi.fn()
+        const { rerender } = render(<ProductForm productId="product-1" mode="modal" onSave={onSave} />)
+        const nameInput = await screen.findByDisplayValue('Product A')
+        fireEvent.change(nameInput, { target: { value: 'Product A updated' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+        await waitFor(() => expect(apiPutMock).toHaveBeenCalledTimes(1))
+
+        rerender(<ProductForm productId="product-2" mode="modal" onSave={onSave} />)
+        expect(await screen.findByDisplayValue('Product B')).toBeInTheDocument()
+
+        resolveProductOneUpdate?.({ data: { id: 'product-1', rowVersion: '8' } })
+
+        await waitFor(() => expect(screen.getByDisplayValue('Product B')).toBeInTheDocument())
+        expect(onSave).not.toHaveBeenCalled()
+        expect(showSuccessMock).not.toHaveBeenCalled()
+        expect(screen.queryByDisplayValue('Product A updated')).not.toBeInTheDocument()
+    })
+
+    it('preserves product template and AI metadata independently of online visibility', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url === '/products/product-1/variants') return Promise.resolve({ data: [] })
+            if (url === '/products/product-1') {
+                return Promise.resolve({
+                    data: {
+                        name: 'AI Product',
+                        categoryId: 'category-1',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: true,
+                        isActive: true,
+                        hasVariants: false,
+                        publishStatus: 0,
+                        isOnlineVisible: true,
+                        productTemplate: 'editorial',
+                        aiGenerated: true,
+                        aiMetadata: { source: 'admin_ai_product_generator', score: 9 },
+                        rowVersion: '7',
+                        variants: [],
+                        units: [],
+                    },
+                })
+            }
+            return Promise.resolve({ data: {} })
+        })
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+        await screen.findByDisplayValue('AI Product')
+        fireEvent.click(screen.getByLabelText('products.isOnlineVisible'))
+        fireEvent.change(screen.getByLabelText('products.productName *'), { target: { value: 'AI Product Updated' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith(
+            '/products/product-1',
+            expect.objectContaining({
+                isOnlineVisible: false,
+                productTemplate: 'editorial',
+                aiMetadata: { source: 'admin_ai_product_generator', score: 9 },
+            }),
+            expect.anything(),
+        ))
+    })
+
+    it('rehydrates and submits Arabic product content through the authoritative DTO fields', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [{ id: 'category-1', name: 'Apparel' }] })
+            if (url === '/units') return Promise.resolve({ data: [{ id: 'unit-piece', name: 'Piece', symbol: 'pc' }] })
+            if (url === '/admin/store-config') return Promise.resolve({ data: {} })
+            if (url === '/products/product-1/variants') return Promise.resolve({ data: [] })
+            if (url === '/products/product-1') {
+                return Promise.resolve({
+                    data: {
+                        name: 'English name',
+                        nameAr: 'اسم عربي',
+                        categoryId: 'category-1',
+                        description: 'English description',
+                        descriptionAr: 'وصف عربي',
+                        taxRate: 10,
+                        priceIncludesTax: false,
+                        trackStock: true,
+                        isActive: true,
+                        hasVariants: false,
+                        rowVersion: '7',
+                        variants: [],
+                        units: [],
+                    },
+                })
+            }
+            return Promise.resolve({ data: {} })
+        })
+
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        const arabicName = await screen.findByLabelText('products.productNameAr')
+        expect(arabicName).toHaveValue('اسم عربي')
+        expect(screen.getByLabelText('products.descriptionAr')).toHaveValue('وصف عربي')
+        fireEvent.change(arabicName, { target: { value: 'اسم عربي محدث' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => expect(apiPutMock).toHaveBeenCalledWith(
+            '/products/product-1',
+            expect.objectContaining({
+                nameAr: 'اسم عربي محدث',
+                descriptionAr: 'وصف عربي',
+            }),
+            expect.anything(),
+        ))
+    })
+
+    it('never renders raw backend diagnostics for authoring failures', async () => {
+        apiPutMock.mockRejectedValueOnce({
+            response: {
+                status: 500,
+                data: { message: 'SqlException SELECT * FROM Products tenant=secret' },
+            },
+        })
+        render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        const nameInput = await screen.findByLabelText('products.productName *')
+        await waitFor(() => expect(nameInput).toHaveValue('Test Product'))
+        fireEvent.change(nameInput, { target: { value: 'Safe failure' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('products.failedToSave')
+        await waitFor(() => expect(alert).toHaveFocus())
+        expect(document.body.textContent).not.toMatch(/SqlException|SELECT \*|tenant=secret/)
     })
 })

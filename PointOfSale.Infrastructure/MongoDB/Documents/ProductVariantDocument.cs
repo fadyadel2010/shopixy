@@ -199,6 +199,13 @@ public class ProductVariantDocument
     public DateTime? LastEventOccurredAtUtc { get; set; }
 
     /// <summary>
+    /// Event id of the newest variant lifecycle mutation applied to this document.
+    /// </summary>
+    [BsonRepresentation(BsonType.String)]
+    [BsonIgnoreIfNull]
+    public Guid? LastEventId { get; set; }
+
+    /// <summary>
     /// Source event version used as a deterministic tie-breaker for equal timestamps.
     /// S40: Removed [BsonIgnoreIfDefault] to ensure version is always persisted (matching PromotionDocument/CouponDocument).
     /// </summary>

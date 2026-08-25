@@ -95,10 +95,19 @@ public class ProductsController : ControllerBase
         [FromQuery] Guid? categoryId,
         [FromQuery] bool? isActive,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
+        [FromQuery] int pageSize = 50,
+        [FromQuery] bool? hasVariants = null,
+        [FromQuery] PublishStatus? publishStatus = null,
+        [FromQuery] string? stockState = null,
+        [FromQuery] bool? isFeatured = null,
+        [FromQuery] bool? isSearchable = null,
+        [FromQuery] bool? allowBackorder = null,
+        [FromQuery] string? sortBy = null,
+        [FromQuery] string? sortDirection = null)
     {
         page = PaginationGuard.NormalizePage(page);
         pageSize = PaginationGuard.NormalizePageSize(pageSize);
+        search = search?.Trim();
 
         var filteredQuery = _context.Products
             .AsNoTracking()
@@ -122,9 +131,162 @@ public class ProductsController : ControllerBase
             filteredQuery = filteredQuery.Where(p => p.IsActive == isActive.Value);
         }
 
+        if (hasVariants.HasValue)
+        {
+            filteredQuery = filteredQuery.Where(p => p.HasVariants == hasVariants.Value);
+        }
+
+        if (publishStatus.HasValue)
+        {
+            filteredQuery = filteredQuery.Where(p => p.PublishStatus == publishStatus.Value);
+        }
+
+        if (isFeatured.HasValue)
+        {
+            filteredQuery = filteredQuery.Where(p => p.IsFeatured == isFeatured.Value);
+        }
+
+        if (isSearchable.HasValue)
+        {
+            filteredQuery = filteredQuery.Where(p => p.IsSearchable == isSearchable.Value);
+        }
+
+        if (allowBackorder.HasValue)
+        {
+            filteredQuery = filteredQuery.Where(p => p.AllowBackorder == allowBackorder.Value);
+        }
+
+        // Stock-state filtering deliberately mirrors the Products table's
+        // existing simple-product presentation. Untracked and variant-managed
+        // products have no parent-level stock state and therefore do not match
+        // any of the three stock-state filters.
+        var normalizedStockState = stockState?.Trim().ToLowerInvariant();
+        if (normalizedStockState is "instock" or "lowstock" or "outofstock")
+        {
+            filteredQuery = filteredQuery.Where(product => product.TrackStock && !product.HasVariants);
+
+            if (normalizedStockState == "outofstock")
+            {
+                filteredQuery = filteredQuery.Where(product =>
+                    (product.Variants
+                        .Where(variant =>
+                            !variant.IsDeleted &&
+                            variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                            variant.SemanticSupersededAtUtc == null &&
+                            variant.SemanticReplacementVariantId == null)
+                        .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                        .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                            ? stock.Quantity - stock.ReservedQuantity
+                            : 0m)) ?? 0m) <= 0m);
+            }
+            else if (normalizedStockState == "lowstock")
+            {
+                filteredQuery = filteredQuery.Where(product =>
+                    (product.Variants
+                        .Where(variant =>
+                            !variant.IsDeleted &&
+                            variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                            variant.SemanticSupersededAtUtc == null &&
+                            variant.SemanticReplacementVariantId == null)
+                        .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                        .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                            ? stock.Quantity - stock.ReservedQuantity
+                            : 0m)) ?? 0m) > 0m &&
+                    (product.Variants
+                        .Where(variant =>
+                            !variant.IsDeleted &&
+                            variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                            variant.SemanticSupersededAtUtc == null &&
+                            variant.SemanticReplacementVariantId == null)
+                        .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                        .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                            ? stock.Quantity - stock.ReservedQuantity
+                            : 0m)) ?? 0m) <=
+                    (product.LowStockThreshold > 0
+                        ? product.LowStockThreshold
+                        : product.MinimumStockLevel));
+            }
+            else
+            {
+                filteredQuery = filteredQuery.Where(product =>
+                    (product.Variants
+                        .Where(variant =>
+                            !variant.IsDeleted &&
+                            variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                            variant.SemanticSupersededAtUtc == null &&
+                            variant.SemanticReplacementVariantId == null)
+                        .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                        .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                            ? stock.Quantity - stock.ReservedQuantity
+                            : 0m)) ?? 0m) >
+                    (product.LowStockThreshold > 0
+                        ? product.LowStockThreshold
+                        : product.MinimumStockLevel));
+            }
+        }
+
         var totalCount = await filteredQuery.CountAsync();
 
-        var products = await filteredQuery
+        var normalizedSortBy = sortBy?.Trim().ToLowerInvariant();
+        var descending = string.Equals(sortDirection?.Trim(), "desc", StringComparison.OrdinalIgnoreCase);
+
+        IOrderedQueryable<Product> orderedQuery = normalizedSortBy switch
+        {
+            "price" when descending => filteredQuery
+                .OrderByDescending(product => product.HasVariants
+                    ? 0m
+                    : product.ProductUnits
+                        .Where(unit => !unit.IsDeleted && unit.IsDefault)
+                        .Select(unit => unit.SellingPrice)
+                        .FirstOrDefault())
+                .ThenBy(product => product.Id),
+            "price" => filteredQuery
+                .OrderBy(product => product.HasVariants
+                    ? 0m
+                    : product.ProductUnits
+                        .Where(unit => !unit.IsDeleted && unit.IsDefault)
+                        .Select(unit => unit.SellingPrice)
+                        .FirstOrDefault())
+                .ThenBy(product => product.Id),
+            "stock" when descending => filteredQuery
+                .OrderByDescending(product => product.Variants
+                    .Where(variant =>
+                        !variant.IsDeleted &&
+                        variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                        variant.SemanticSupersededAtUtc == null &&
+                        variant.SemanticReplacementVariantId == null)
+                    .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                    .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                        ? stock.Quantity - stock.ReservedQuantity
+                        : 0m)) ?? 0m)
+                .ThenBy(product => product.Id),
+            "stock" => filteredQuery
+                .OrderBy(product => product.Variants
+                    .Where(variant =>
+                        !variant.IsDeleted &&
+                        variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                        variant.SemanticSupersededAtUtc == null &&
+                        variant.SemanticReplacementVariantId == null)
+                    .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
+                    .Sum(stock => (decimal?)(stock.Quantity > stock.ReservedQuantity
+                        ? stock.Quantity - stock.ReservedQuantity
+                        : 0m)) ?? 0m)
+                .ThenBy(product => product.Id),
+            "status" when descending => filteredQuery
+                .OrderByDescending(product => product.IsActive)
+                .ThenBy(product => product.Id),
+            "status" => filteredQuery
+                .OrderBy(product => product.IsActive)
+                .ThenBy(product => product.Id),
+            _ when descending => filteredQuery
+                .OrderByDescending(product => product.Name)
+                .ThenBy(product => product.Id),
+            _ => filteredQuery
+                .OrderBy(product => product.Name)
+                .ThenBy(product => product.Id)
+        };
+
+        var products = await orderedQuery
             .AsSplitQuery()
             .Include(p => p.Category)
             .Include(p => p.ProductUnits)
@@ -134,8 +296,6 @@ public class ProductsController : ControllerBase
             .Include(p => p.Variants)
                 .ThenInclude(v => v.Stocks)
                     .ThenInclude(stock => stock.Warehouse)
-            .OrderBy(p => p.Name)
-            .ThenBy(p => p.Id)
             .Skip(PaginationGuard.GetSkip(page, pageSize))
             .Take(pageSize)
             .ToListAsync();
@@ -1125,15 +1285,18 @@ public class ProductsController : ControllerBase
             return NotFound();
         }
 
-        if (result.Status == ProductAuthoringStatus.ConcurrencyConflict)
+        if (result.Status is ProductAuthoringStatus.ConcurrencyConflict or ProductAuthoringStatus.Conflict)
         {
             return Conflict(new
             {
-                message = "Product authoring concurrency conflict.",
+                message = result.Status == ProductAuthoringStatus.ConcurrencyConflict
+                    ? "Product authoring concurrency conflict."
+                    : "Product authoring identity conflict.",
                 status = result.Status.ToString(),
                 errors = result.ValidationErrors,
                 productId = result.ProductId,
-                mutationVersion = result.MutationVersion
+                mutationVersion = result.MutationVersion,
+                correlationId = result.CorrelationId
             });
         }
 

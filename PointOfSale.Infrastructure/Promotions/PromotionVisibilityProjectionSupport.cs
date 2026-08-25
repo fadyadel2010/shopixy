@@ -28,7 +28,6 @@ public static class PromotionVisibilityProjectionSupport
     public static bool IsEligibleProductPromotion(Promotion promotion, DateTime nowUtc)
     {
         if (promotion.Scope != PromotionScope.Product ||
-            !promotion.AppliesToId.HasValue ||
             !promotion.IsActive ||
             promotion.IsDeleted ||
             promotion.StartDate > nowUtc ||

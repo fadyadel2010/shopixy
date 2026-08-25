@@ -8,10 +8,12 @@ public sealed class CommerceHubBulkPublicationCurrencyTests
         var controller = ReadRepoFile("PointOfSale.API/Controllers/AdminCommerceHubController.cs");
 
         Assert.Contains("foreach (var listingId in listingIds)", controller, StringComparison.Ordinal);
-        Assert.Contains("\"publish\" => ApplySafeBulkPublish(listing, variant, normalizedProductCurrency),", controller, StringComparison.Ordinal);
+        Assert.Contains("\"publish\" => ApplySafeBulkPublish(listing, variant, normalizedProductCurrency, liveCurrentCategoryIds),", controller, StringComparison.Ordinal);
         Assert.Contains("\"remove_override\" => ApplySafeBulkRemoveOverride(", controller, StringComparison.Ordinal);
+        Assert.Contains("normalizedProductCurrency,\n                        liveCurrentCategoryIds),", controller.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("\"update_category\" => ApplySafeBulkCategoryUpdate(listing, variant, request.CategoryId!.Value, normalizedProductCurrency),", controller, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPublicationCurrencyPolicy.EnsureEgpPricedProduct(productCurrency);", controller, StringComparison.Ordinal);
+        Assert.Contains("EnsureLiveCurrentCategoryForBulk(listing, liveCurrentCategoryIds);", controller, StringComparison.Ordinal);
         Assert.Contains("catch (Exception ex) when (ex is CommerceHubValidationException or InvalidOperationException or ArgumentException)", controller, StringComparison.Ordinal);
         Assert.Contains("Success = false", controller, StringComparison.Ordinal);
         Assert.Contains("Message = ex.Message", controller, StringComparison.Ordinal);

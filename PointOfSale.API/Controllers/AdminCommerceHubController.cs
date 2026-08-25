@@ -13,6 +13,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Pagination;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -35,6 +36,7 @@ public class AdminCommerceHubController : ControllerBase
     private readonly ICommerceHubSearchIndexService _searchIndexService;
     private readonly ICommerceHubReindexService _reindexService;
     private readonly IUserGovernanceService _userGovernanceService;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<AdminCommerceHubController> _logger;
 
     public AdminCommerceHubController(
@@ -47,6 +49,7 @@ public class AdminCommerceHubController : ControllerBase
         ICommerceHubSearchIndexService searchIndexService,
         ICommerceHubReindexService reindexService,
         IUserGovernanceService userGovernanceService,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<AdminCommerceHubController> logger)
     {
         _tenantContext = tenantContext;
@@ -58,6 +61,7 @@ public class AdminCommerceHubController : ControllerBase
         _searchIndexService = searchIndexService;
         _reindexService = reindexService;
         _userGovernanceService = userGovernanceService;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -379,6 +383,7 @@ public class AdminCommerceHubController : ControllerBase
 
         var listings = await _dbContext.CommerceHubListings
             .IgnoreQueryFilters()
+            .AsNoTracking()
             .Where(listing => listing.TenantId == tenantId &&
                               !listing.IsDeleted &&
                               listingIds.Contains(listing.Id))
@@ -386,11 +391,11 @@ public class AdminCommerceHubController : ControllerBase
 
         var variants = await _dbContext.ProductVariants
             .IgnoreQueryFilters()
+            .AsNoTracking()
             .Include(variant => variant.Product)
             .Where(variant => variant.TenantId == tenantId &&
                               listings.Select(listing => listing.VariantId).Contains(variant.Id))
             .ToDictionaryAsync(variant => variant.Id, cancellationToken);
-
         if (operation != "unpublish")
         {
             try
@@ -440,8 +445,30 @@ public class AdminCommerceHubController : ControllerBase
                 continue;
             }
 
+            var product = await _dbContext.Products
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(item =>
+                    item.TenantId == tenantId &&
+                    item.Id == listing.ProductId,
+                    cancellationToken);
+            if (product == null)
+            {
+                response.Outcomes.Add(new CommerceHubBulkListingOperationOutcomeDto
+                {
+                    ListingId = listing.Id,
+                    Success = false,
+                    Status = "failed",
+                    Message = $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}."
+                });
+                continue;
+            }
+
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
             try
             {
+                _dbContext.Attach(listing);
+                _dbContext.Attach(product);
                 var variant = variants.GetValueOrDefault(listing.VariantId);
                 var changed = operation switch
                 {
@@ -469,7 +496,18 @@ public class AdminCommerceHubController : ControllerBase
                         HttpContext.TraceIdentifier,
                         $"merchant_bulk_{operation}",
                         new { request.CategoryId, listing.CommerceHubCategoryId, listing.AttributesJson, listing.CommerceHubPrice });
+                    await PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
+                        _dbContext,
+                        _marketplaceEventOutbox,
+                        product,
+                        listing,
+                        RequestContextMetadata.GetCorrelationId(HttpContext),
+                        $"CommerceHubListingBulk:{operation}",
+                        cancellationToken);
                 }
+
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
 
                 response.Outcomes.Add(new CommerceHubBulkListingOperationOutcomeDto
                 {
@@ -481,6 +519,7 @@ public class AdminCommerceHubController : ControllerBase
             }
             catch (Exception ex) when (ex is CommerceHubValidationException or InvalidOperationException or ArgumentException)
             {
+                await transaction.RollbackAsync(cancellationToken);
                 response.Outcomes.Add(new CommerceHubBulkListingOperationOutcomeDto
                 {
                     ListingId = listing.Id,
@@ -489,9 +528,12 @@ public class AdminCommerceHubController : ControllerBase
                     Message = ex.Message
                 });
             }
+            finally
+            {
+                _dbContext.ChangeTracker.Clear();
+            }
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
         response.Succeeded = response.Outcomes.Count(item => item.Success);
         response.Failed = response.Outcomes.Count(item => !item.Success);
 

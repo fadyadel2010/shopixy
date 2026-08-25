@@ -206,6 +206,31 @@ public class AffiliateCategoryUpdatedConsumer :
 
         var result = await collection.UpdateManyAsync(filter, update, cancellationToken: cancellationToken);
 
+        if (category.Level == 1)
+        {
+            var childCategories = await _dbContext.AffiliateCategories
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(c => c.ParentId == categoryId && !c.IsDeleted && c.IsActive)
+                .Select(c => new { c.Id, c.Name, c.Slug })
+                .ToListAsync(cancellationToken);
+
+            foreach (var childCategory in childCategories)
+            {
+                var childFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(
+                    d => d.AffiliateCategoryId,
+                    childCategory.Id);
+                var childUpdate = Builders<AffiliateProductIntelligenceDocument>.Update
+                    .Set(d => d.AffiliateCategoryName, childCategory.Name)
+                    .Set(d => d.AffiliateCategorySlug, childCategory.Slug)
+                    .Set(d => d.AffiliateParentCategoryName, category.Name)
+                    .Set(d => d.AffiliateParentCategorySlug, category.Slug)
+                    .Set(d => d.LastUpdatedUtc, DateTime.UtcNow);
+
+                await collection.UpdateManyAsync(childFilter, childUpdate, cancellationToken: cancellationToken);
+            }
+        }
+
         _logger.LogInformation(
             "[AF-30A:{EventType}] Applied current SQL affiliate category authority to {MatchedCount} product projections (modified: {ModifiedCount}) for category {CategoryId}",
             eventType,
@@ -221,9 +246,20 @@ public class AffiliateCategoryUpdatedConsumer :
         CancellationToken cancellationToken)
     {
         var collection = _mongoDatabase.GetCollection<AffiliateProductIntelligenceDocument>("affiliate_product_intelligence");
-        var filter = Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(
+        var affectedCategoryIds = await _dbContext.AffiliateCategories
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(c => c.Id == categoryId || c.ParentId == categoryId)
+            .Select(c => (Guid?)c.Id)
+            .ToListAsync(cancellationToken);
+        if (!affectedCategoryIds.Contains(categoryId))
+        {
+            affectedCategoryIds.Add(categoryId);
+        }
+
+        var filter = Builders<AffiliateProductIntelligenceDocument>.Filter.In(
             d => d.AffiliateCategoryId,
-            categoryId);
+            affectedCategoryIds);
 
         var update = Builders<AffiliateProductIntelligenceDocument>.Update
             .Set(d => d.AffiliateCategoryName, (string?)null)

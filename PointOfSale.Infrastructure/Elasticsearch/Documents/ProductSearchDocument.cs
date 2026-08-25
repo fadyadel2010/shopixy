@@ -77,6 +77,26 @@ public class ProductSearchDocument : IReadModelEvolutionDocument
     public Guid ProductId { get; set; }
 
     /// <summary>
+    /// Canonical, product-wide generation from PostgreSQL.
+    /// Elasticsearch external versioning uses this value to atomically reject stale writes.
+    /// </summary>
+    [Number(NumberType.Long)]
+    public long ProductGeneration { get; set; }
+
+    /// <summary>
+    /// Durable visibility-removal marker. Tombstones remain indexed so stale events cannot
+    /// recreate a product after deletion, archival, or unpublication.
+    /// </summary>
+    [Boolean]
+    public bool IsTombstone { get; set; }
+
+    /// <summary>
+    /// Distinguishes canonical product deletion from other visibility tombstones.
+    /// </summary>
+    [Boolean]
+    public bool IsDeleted { get; set; }
+
+    /// <summary>
     /// Entity type for unified search.
     /// </summary>
     [Keyword]

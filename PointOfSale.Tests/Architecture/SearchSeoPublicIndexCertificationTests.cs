@@ -25,9 +25,10 @@ public sealed class SearchSeoPublicIndexCertificationTests
         var queryService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs");
         var reindexService = ReadRepoFile("PointOfSale.Infrastructure/Jobs/CommerceHubReindexService.cs");
 
-        Assert.Contains("RecomposeVisibleListingItemsAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("Total = visibleItems.Count", queryService, StringComparison.Ordinal);
-        Assert.Contains("TotalCount = visibleItems.Count", queryService, StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("Total = result.TotalCount", queryService, StringComparison.Ordinal);
+        Assert.Contains("TotalCount = result.TotalCount", queryService, StringComparison.Ordinal);
+        Assert.Contains("TotalCount = totalCount", queryService, StringComparison.Ordinal);
         Assert.Contains("MapSqlVisibleFacetsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("Aggregations = new Dictionary<string, CommerceHubAggregationDto>", queryService, StringComparison.Ordinal);
         Assert.Contains("FilterLiveSuggestionTermsAsync", queryService, StringComparison.Ordinal);
@@ -47,7 +48,12 @@ public sealed class SearchSeoPublicIndexCertificationTests
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", controller, StringComparison.Ordinal);
         Assert.Contains("AffiliateProductPolicies", controller, StringComparison.Ordinal);
         Assert.Contains("product.TryResolveAffiliatePublicPricing(out var pricing)", controller, StringComparison.Ordinal);
-        Assert.Contains("TotalCount = visibleDocs.Count", controller, StringComparison.Ordinal);
+        Assert.Contains("LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("var totalCount = filteredDocs.Count", controller, StringComparison.Ordinal);
+        Assert.Contains("OrderAffiliateDocuments(filteredDocs, sort)", controller, StringComparison.Ordinal);
+        Assert.Contains(".Skip(PaginationGuard.GetSkip(page, pageSize))", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("var candidateCount = await _mongoDbContext.AffiliateProductIntelligence", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("TotalCount = (int)Math.Min(candidateCount, int.MaxValue)", controller, StringComparison.Ordinal);
         Assert.Contains("doc = doc == null ? null : await RecomposeAffiliateIntelligenceDocumentBySqlAuthorityAsync", controller, StringComparison.Ordinal);
     }
 

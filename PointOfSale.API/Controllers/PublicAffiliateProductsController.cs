@@ -319,7 +319,17 @@ public class PublicAffiliateProductsController : ControllerBase
                 item.Policy.IsEnabled &&
                 !item.Policy.IsDeleted &&
                 item.Category.IsActive &&
-                !item.Category.IsDeleted,
+                !item.Category.IsDeleted &&
+                ((item.Category.Level == 1 && item.Category.ParentId == null) ||
+                 (item.Category.Level == 2 &&
+                  item.Category.ParentId != null &&
+                  _dbContext.AffiliateCategories
+                      .IgnoreQueryFilters()
+                      .Any(parent =>
+                          parent.Id == item.Category.ParentId.Value &&
+                          parent.Level == 1 &&
+                          parent.IsActive &&
+                          !parent.IsDeleted))),
                 cancellationToken);
 
         if (!policyExists)
@@ -337,9 +347,8 @@ public class PublicAffiliateProductsController : ControllerBase
             candidate.TenantId,
             cancellationToken);
 
-        if (product is not { IsActive: true, IsOnlineVisible: true } ||
+        if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
             !product.TryResolveAffiliatePublicPricing(out var pricing) ||
-            pricing.TotalAvailableStock <= 0 ||
             !pricing.InStock)
         {
             return null;

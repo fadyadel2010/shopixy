@@ -272,11 +272,11 @@ public static class ReadModelEvolutionRegistry
     public const string StorefrontPromotion = "storefront.promotion";
     public const string CommerceHubProduct = "commercehub.product";
 
-    public const int StorefrontProductMongoSchemaVersion = 2;
-    public const int StorefrontProductMongoProjectionVersion = 2;
-    public const int StorefrontProductSearchSchemaVersion = 2;
-    public const int StorefrontProductSearchProjectionVersion = 2;
-    public const int StorefrontProductSearchIndexVersion = 2;
+    public const int StorefrontProductMongoSchemaVersion = 3;
+    public const int StorefrontProductMongoProjectionVersion = 3;
+    public const int StorefrontProductSearchSchemaVersion = 3;
+    public const int StorefrontProductSearchProjectionVersion = 3;
+    public const int StorefrontProductSearchIndexVersion = 3;
 
     public const int StorefrontCategoryMongoSchemaVersion = 1;
     public const int StorefrontCategoryMongoProjectionVersion = 1;

@@ -31,6 +31,9 @@ public static class ProductSearchDocumentMapper
         {
             TenantId = product.TenantId,
             ProductId = product.ProductId,
+            ProductGeneration = product.ProductGeneration,
+            IsTombstone = false,
+            IsDeleted = false,
             ReadModelSchemaVersion = ProductSearchDocument.CurrentReadModelSchemaVersion,
             ProjectionVersion = ProductSearchDocument.CurrentProjectionVersion,
             ProjectionConvergedAtUtc = product.ProjectionConvergedAtUtc,

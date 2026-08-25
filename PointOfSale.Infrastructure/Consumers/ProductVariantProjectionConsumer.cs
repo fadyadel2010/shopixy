@@ -192,27 +192,42 @@ public class ProductVariantProjectionConsumer :
                             Builders<ProductDocument>.Filter.Eq(p => p.ProductId, @event.ProductId)))
                     .FirstOrDefaultAsync(context.CancellationToken);
 
-                if (existingProduct?.Variants.Any(variant => variant.VariantId == @event.VariantId) == true)
+                var existingVariant = existingProduct?.Variants
+                    .FirstOrDefault(variant => variant.VariantId == @event.VariantId);
+                if (existingVariant != null)
                 {
-                    _logger.LogInformation(
-                        "ProductVariantCreatedEvent duplicate ignored | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
-                        @event.ProductId,
-                        @event.VariantId,
-                        @event.TenantId);
-                    if (fence != null && _dbContext != null)
+                    if (existingVariant.LastEventId == @event.EventId ||
+                        existingProduct!.LastEventId == @event.EventId)
                     {
-                        await fence.CompleteAsync(
-                            @event,
-                            VariantCreatedConsumerName,
-                            typeof(ProductVariantCreatedEvent).FullName ?? nameof(ProductVariantCreatedEvent),
+                        _logger.LogInformation(
+                            "ProductVariantCreatedEvent retry resuming downstream side effects without overwriting MongoDB | EventId: {EventId} | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                            @event.EventId,
+                            @event.ProductId,
                             @event.VariantId,
-                            context.CancellationToken);
+                            @event.TenantId);
                     }
+                    else
+                    {
+                        _logger.LogInformation(
+                            "ProductVariantCreatedEvent stale or different create ignored | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId} | EventId: {EventId}",
+                            @event.ProductId,
+                            @event.VariantId,
+                            @event.TenantId,
+                            @event.EventId);
+                        if (fence != null && _dbContext != null)
+                        {
+                            await fence.CompleteAsync(
+                                @event,
+                                VariantCreatedConsumerName,
+                                typeof(ProductVariantCreatedEvent).FullName ?? nameof(ProductVariantCreatedEvent),
+                                @event.VariantId,
+                                context.CancellationToken);
+                        }
 
-                    return;
+                        return;
+                    }
                 }
-
-                if (existingProduct?.DeletedVariantTombstones.Any(tombstone =>
+                else if (existingProduct?.DeletedVariantTombstones.Any(tombstone =>
                         tombstone.VariantId == @event.VariantId &&
                         IsDeleteTombstoneNewerThanOrEqualToEvent(
                             tombstone,
@@ -238,7 +253,7 @@ public class ProductVariantProjectionConsumer :
                     return;
                 }
 
-                if (_productProjectionWriter == null)
+                else if (_productProjectionWriter == null)
                 {
                     _logger.LogWarning(
                         "ProductVariantCreatedEvent: Product not found in MongoDB, will retry | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
@@ -248,9 +263,12 @@ public class ProductVariantProjectionConsumer :
                         $"Product {@event.ProductId} not found in MongoDB. ProductCreatedEvent may not have been processed yet. Retrying...");
                 }
 
-                _logger.LogWarning(
-                    "ProductVariantCreatedEvent: Product missing from MongoDB; recomposing parent projection from SQL authority | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
-                    @event.ProductId, @event.VariantId, @event.TenantId);
+                else
+                {
+                    _logger.LogWarning(
+                        "ProductVariantCreatedEvent: Product missing from MongoDB; recomposing parent projection from SQL authority | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                        @event.ProductId, @event.VariantId, @event.TenantId);
+                }
             }
 
             // Invalidate cache
@@ -387,6 +405,7 @@ public class ProductVariantProjectionConsumer :
                     @event.EventVersion),
                 Builders<ProductDocument>.Filter.ElemMatch(p => p.Variants, 
                     v => v.VariantId == @event.VariantId &&
+                         v.LastEventId != @event.EventId &&
                          (v.LastEventVersion < @event.EventVersion ||
                           (v.LastEventVersion == @event.EventVersion &&
                            (!v.LastEventOccurredAtUtc.HasValue ||
@@ -441,6 +460,7 @@ public class ProductVariantProjectionConsumer :
 
             // Add sync timestamp
             updates.Add(updateBuilder.Set("Variants.$.LastEventOccurredAtUtc", @event.OccurredAtUtc));
+            updates.Add(updateBuilder.Set("Variants.$.LastEventId", @event.EventId));
             updates.Add(updateBuilder.Set("Variants.$.LastEventVersion", @event.EventVersion));
             updates.Add(updateBuilder.Set(p => p.SyncedAtUtc, DateTime.UtcNow));
 
@@ -466,10 +486,29 @@ public class ProductVariantProjectionConsumer :
 
                 var combinedUpdate = updateBuilder.Combine(updates);
                 var result = await _collection.UpdateOneAsync(updateFilter, combinedUpdate, cancellationToken: context.CancellationToken);
+                var mongoUpdateApplied = result.ModifiedCount > 0;
 
-                if (result.ModifiedCount == 0)
+                if (!mongoUpdateApplied)
                 {
-                    if (await IsProjectionMissingForCurrentSqlVariantAsync(
+                    var existingProduct = await _collection.Find(
+                            Builders<ProductDocument>.Filter.And(
+                                Builders<ProductDocument>.Filter.Eq(item => item.TenantId, @event.TenantId.Value),
+                                Builders<ProductDocument>.Filter.Eq(item => item.ProductId, @event.ProductId)))
+                        .FirstOrDefaultAsync(context.CancellationToken);
+                    var existingVariant = existingProduct?.Variants
+                        .FirstOrDefault(variant => variant.VariantId == @event.VariantId);
+
+                    if (existingVariant?.LastEventId == @event.EventId ||
+                        existingProduct?.LastEventId == @event.EventId)
+                    {
+                        _logger.LogInformation(
+                            "ProductVariantUpdatedEvent retry resuming downstream side effects without overwriting MongoDB | EventId: {EventId} | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                            @event.EventId,
+                            @event.ProductId,
+                            @event.VariantId,
+                            @event.TenantId);
+                    }
+                    else if (await IsProjectionMissingForCurrentSqlVariantAsync(
                             @event.TenantId.Value,
                             @event.ProductId,
                             @event.VariantId,
@@ -489,15 +528,12 @@ public class ProductVariantProjectionConsumer :
                             @event.TenantId,
                             @event.EventId);
 
-                        await InvalidateProductCacheAsync(@event.TenantId.Value, @event.ProductId, correlationId);
-                        await RecomposeParentProductProjectionAsync(
-                            @event.TenantId.Value,
-                            @event.ProductId,
-                            @event.EventId,
-                            @event.OccurredAtUtc,
-                            @event.EventVersion,
-                            context.CancellationToken);
-
+                    }
+                    else
+                    {
+                        _logger.LogWarning(
+                            "ProductVariantUpdatedEvent: Variant not found or stale update ignored | VariantId: {VariantId} | ProductId: {ProductId} | TenantId: {TenantId} | EventId: {EventId}",
+                            @event.VariantId, @event.ProductId, @event.TenantId, @event.EventId);
                         if (fence != null && _dbContext != null)
                         {
                             await fence.CompleteAsync(
@@ -510,24 +546,9 @@ public class ProductVariantProjectionConsumer :
 
                         return;
                     }
-
-                    _logger.LogWarning(
-                        "ProductVariantUpdatedEvent: Variant not found or stale update ignored | VariantId: {VariantId} | ProductId: {ProductId} | TenantId: {TenantId} | EventId: {EventId}",
-                        @event.VariantId, @event.ProductId, @event.TenantId, @event.EventId);
-                    if (fence != null && _dbContext != null)
-                    {
-                        await fence.CompleteAsync(
-                            @event,
-                            VariantUpdatedConsumerName,
-                            typeof(ProductVariantUpdatedEvent).FullName ?? nameof(ProductVariantUpdatedEvent),
-                            @event.VariantId,
-                            context.CancellationToken);
-                    }
-
-                    return;
                 }
 
-                if (@event.IsDefault == true)
+                if (mongoUpdateApplied && @event.IsDefault == true)
                 {
                     // S40: Clear IsDefault on other variants atomically after successful promotion
                     // Only clear variants that are older than this event (haven't been updated by newer events)
@@ -951,6 +972,10 @@ public class ProductVariantProjectionConsumer :
                     @event.EventVersion),
                 // Duplicate guard: LastEventId must not match this event
                 Builders<ProductDocument>.Filter.Ne(p => p.LastEventId, @event.EventId),
+                Builders<ProductDocument>.Filter.Not(
+                    Builders<ProductDocument>.Filter.ElemMatch(p => p.Variants,
+                        v => v.VariantId == @event.VariantId &&
+                             v.LastStockEventId == @event.EventId)),
                 BuildFreshVariantStockEventFilter(@event.VariantId, stockUpdatedAtUtc, @event.EventVersion)
             );
 
@@ -978,12 +1003,15 @@ public class ProductVariantProjectionConsumer :
                 // Either duplicate or stale - determine which for logging
                 var existingVariant = product.Variants.FirstOrDefault(v => v.VariantId == @event.VariantId);
                 
-                if (product.LastEventId == @event.EventId)
+                if (existingVariant?.LastStockEventId == @event.EventId ||
+                    product.LastEventId == @event.EventId)
                 {
-                    _logger.LogDebug(
-                        "ProductVariantStockChangedEvent duplicate ignored (atomic guard) | EventId: {EventId} | VariantId: {VariantId}",
+                    _logger.LogInformation(
+                        "ProductVariantStockChangedEvent retry resuming downstream side effects without overwriting MongoDB | EventId: {EventId} | VariantId: {VariantId} | ProductId: {ProductId} | TenantId: {TenantId}",
                         @event.EventId,
-                        @event.VariantId);
+                        @event.VariantId,
+                        @event.ProductId,
+                        @event.TenantId);
                 }
                 else if (IsStaleStockProjection(
                              existingVariant?.LastStockUpdatedAtUtc ?? existingVariant?.StockUpdatedAtUtc,
@@ -1001,6 +1029,18 @@ public class ProductVariantProjectionConsumer :
                         stockUpdatedAtUtc,
                         @event.EventVersion,
                         @event.EventId);
+
+                    if (fence != null)
+                    {
+                        await fence.CompleteAsync(
+                            @event,
+                            VariantStockConsumerName,
+                            eventType,
+                            @event.VariantId,
+                            context.CancellationToken);
+                    }
+
+                    return;
                 }
                 else
                 {
@@ -1009,19 +1049,19 @@ public class ProductVariantProjectionConsumer :
                         @event.VariantId,
                         @event.ProductId,
                         @event.EventId);
-                }
 
-                if (fence != null)
-                {
-                    await fence.CompleteAsync(
-                        @event,
-                        VariantStockConsumerName,
-                        eventType,
-                        @event.VariantId,
-                        context.CancellationToken);
-                }
+                    if (fence != null)
+                    {
+                        await fence.CompleteAsync(
+                            @event,
+                            VariantStockConsumerName,
+                            eventType,
+                            @event.VariantId,
+                            context.CancellationToken);
+                    }
 
-                return;
+                    return;
+                }
             }
 
             // Invalidate cache
@@ -1284,8 +1324,22 @@ public class ProductVariantProjectionConsumer :
 
             var variantToDelete = product.Variants?.FirstOrDefault(v => v.VariantId == @event.VariantId);
             var wasDefault = variantToDelete?.IsDefault ?? false;
+            var matchingDeleteTombstone = product.DeletedVariantTombstones.FirstOrDefault(tombstone =>
+                tombstone.VariantId == @event.VariantId &&
+                tombstone.LastEventId == @event.EventId);
+            var mongoDeleteAlreadyApplied = variantToDelete == null &&
+                (matchingDeleteTombstone != null || product.LastEventId == @event.EventId);
 
-            if (variantToDelete != null && IsVariantMetadataNewerThanEvent(
+            if (mongoDeleteAlreadyApplied)
+            {
+                _logger.LogInformation(
+                    "ProductVariantDeletedEvent retry resuming downstream side effects without overwriting MongoDB | EventId: {EventId} | ProductId: {ProductId} | VariantId: {VariantId} | TenantId: {TenantId}",
+                    @event.EventId,
+                    @event.ProductId,
+                    @event.VariantId,
+                    @event.TenantId);
+            }
+            else if (variantToDelete != null && IsVariantMetadataNewerThanEvent(
                     variantToDelete,
                     @event.OccurredAtUtc,
                     @event.EventVersion))
@@ -1309,78 +1363,81 @@ public class ProductVariantProjectionConsumer :
                 return;
             }
 
-            var tombstone = new ProductVariantDeletionTombstoneDocument
+            if (!mongoDeleteAlreadyApplied)
             {
-                VariantId = @event.VariantId,
-                LastEventId = @event.EventId,
-                LastEventOccurredAtUtc = @event.OccurredAtUtc,
-                LastEventVersion = @event.EventVersion
-            };
-
-            var deleteUpdate = BuildVariantDeleteProjectionUpdate(tombstone, DateTime.UtcNow);
-
-            var deleteFilter = Builders<ProductDocument>.Filter.And(
-                findFilter,
-                BuildNoNewerVariantDeleteTombstoneFilter(
-                    @event.VariantId,
-                    @event.OccurredAtUtc,
-                    @event.EventVersion));
-
-            if (variantToDelete != null)
-            {
-                deleteFilter = Builders<ProductDocument>.Filter.And(
-                    deleteFilter,
-                    Builders<ProductDocument>.Filter.ElemMatch(p => p.Variants,
-                        v => v.VariantId == @event.VariantId &&
-                             (v.LastEventVersion < @event.EventVersion ||
-                              (v.LastEventOccurredAtUtc == @event.OccurredAtUtc &&
-                               v.LastEventVersion <= @event.EventVersion) ||
-                              (v.LastEventVersion == @event.EventVersion &&
-                               (!v.LastEventOccurredAtUtc.HasValue ||
-                                v.LastEventOccurredAtUtc < @event.OccurredAtUtc)))));
-            }
-
-            var result = await _collection.UpdateOneAsync(deleteFilter, deleteUpdate, cancellationToken: context.CancellationToken);
-
-            if (result.ModifiedCount == 0)
-            {
-                _logger.LogWarning(
-                    "ProductVariantDeletedEvent: stale or duplicate delete ignored | VariantId: {VariantId} | ProductId: {ProductId} | TenantId: {TenantId}",
-                    @event.VariantId, @event.ProductId, @event.TenantId);
-                if (fence != null)
+                var tombstone = new ProductVariantDeletionTombstoneDocument
                 {
-                    await fence.CompleteAsync(
-                        @event,
-                        VariantDeletedConsumerName,
-                        eventType,
+                    VariantId = @event.VariantId,
+                    LastEventId = @event.EventId,
+                    LastEventOccurredAtUtc = @event.OccurredAtUtc,
+                    LastEventVersion = @event.EventVersion
+                };
+
+                var deleteUpdate = BuildVariantDeleteProjectionUpdate(tombstone, DateTime.UtcNow);
+
+                var deleteFilter = Builders<ProductDocument>.Filter.And(
+                    findFilter,
+                    BuildNoNewerVariantDeleteTombstoneFilter(
                         @event.VariantId,
-                        context.CancellationToken);
+                        @event.OccurredAtUtc,
+                        @event.EventVersion));
+
+                if (variantToDelete != null)
+                {
+                    deleteFilter = Builders<ProductDocument>.Filter.And(
+                        deleteFilter,
+                        Builders<ProductDocument>.Filter.ElemMatch(p => p.Variants,
+                            v => v.VariantId == @event.VariantId &&
+                                 (v.LastEventVersion < @event.EventVersion ||
+                                  (v.LastEventOccurredAtUtc == @event.OccurredAtUtc &&
+                                   v.LastEventVersion <= @event.EventVersion) ||
+                                  (v.LastEventVersion == @event.EventVersion &&
+                                   (!v.LastEventOccurredAtUtc.HasValue ||
+                                    v.LastEventOccurredAtUtc < @event.OccurredAtUtc)))));
                 }
 
-                return;
-            }
+                var result = await _collection.UpdateOneAsync(deleteFilter, deleteUpdate, cancellationToken: context.CancellationToken);
 
-            // Trim tombstones to prevent unbounded growth
-            await TrimDeletedVariantTombstonesAsync(@event.TenantId.Value, @event.ProductId, context.CancellationToken);
+                if (result.ModifiedCount == 0)
+                {
+                    _logger.LogWarning(
+                        "ProductVariantDeletedEvent: stale or different delete ignored | VariantId: {VariantId} | ProductId: {ProductId} | TenantId: {TenantId}",
+                        @event.VariantId, @event.ProductId, @event.TenantId);
+                    if (fence != null)
+                    {
+                        await fence.CompleteAsync(
+                            @event,
+                            VariantDeletedConsumerName,
+                            eventType,
+                            @event.VariantId,
+                            context.CancellationToken);
+                    }
 
-            // If deleted variant was default, set first remaining variant as default
-            if (wasDefault)
-            {
-                var setDefaultFilter = Builders<ProductDocument>.Filter.And(
-                    Builders<ProductDocument>.Filter.Eq(p => p.TenantId, @event.TenantId.Value),
-                    Builders<ProductDocument>.Filter.Eq(p => p.ProductId, @event.ProductId),
-                    Builders<ProductDocument>.Filter.SizeGt(p => p.Variants, 0)
-                );
+                    return;
+                }
 
-                // Set the first variant (index 0) as default
-                var setDefaultUpdate = Builders<ProductDocument>.Update
-                    .Set("Variants.0.IsDefault", true);
+                // Trim tombstones to prevent unbounded growth
+                await TrimDeletedVariantTombstonesAsync(@event.TenantId.Value, @event.ProductId, context.CancellationToken);
 
-                await _collection.UpdateOneAsync(setDefaultFilter, setDefaultUpdate, cancellationToken: context.CancellationToken);
+                // If deleted variant was default, set first remaining variant as default
+                if (wasDefault)
+                {
+                    var setDefaultFilter = Builders<ProductDocument>.Filter.And(
+                        Builders<ProductDocument>.Filter.Eq(p => p.TenantId, @event.TenantId.Value),
+                        Builders<ProductDocument>.Filter.Eq(p => p.ProductId, @event.ProductId),
+                        Builders<ProductDocument>.Filter.SizeGt(p => p.Variants, 0)
+                    );
 
-                _logger.LogInformation(
-                    "ProductVariantDeletedEvent: Set first remaining variant as default | ProductId: {ProductId} | TenantId: {TenantId}",
-                    @event.ProductId, @event.TenantId);
+                    // Set the first variant (index 0) as default
+                    var setDefaultUpdate = Builders<ProductDocument>.Update
+                        .Set("Variants.0.IsDefault", true);
+
+                    await _collection.UpdateOneAsync(setDefaultFilter, setDefaultUpdate, cancellationToken: context.CancellationToken);
+
+                    _logger.LogInformation(
+                        "ProductVariantDeletedEvent: Set first remaining variant as default | ProductId: {ProductId} | TenantId: {TenantId}",
+                        @event.ProductId, @event.TenantId);
+                }
             }
 
             // Invalidate cache
@@ -1456,6 +1513,7 @@ public class ProductVariantProjectionConsumer :
             LastStockUpdatedAtUtc = null,
             LastStockEventVersion = 0,
             LastEventOccurredAtUtc = @event.OccurredAtUtc,
+            LastEventId = @event.EventId,
             LastEventVersion = @event.EventVersion,
             Attributes = @event.Attributes
                 .OrderBy(a => a.SortOrder)
@@ -1744,7 +1802,13 @@ public class ProductVariantProjectionConsumer :
                         "SQL product/variant authority unavailable or not searchable for ES HasVariants sync; deleting search document fail-closed | ProductId: {ProductId} | TenantId: {TenantId}",
                         productId,
                         tenantId);
-                    var deleted = await _searchIndexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                    var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                        _searchIndexService,
+                        _dbContext,
+                        tenantId,
+                        productId,
+                        eventId: null,
+                        cancellationToken);
                     if (!deleted)
                     {
                         throw new InvalidOperationException(

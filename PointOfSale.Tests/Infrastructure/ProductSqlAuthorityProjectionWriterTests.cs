@@ -1,11 +1,13 @@
 using Microsoft.EntityFrameworkCore;
 using Moq;
+using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Tests.Infrastructure;
 
@@ -34,14 +36,28 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
         dbContext.Products.Add(product);
         dbContext.Units.AddRange(piece, carton);
         dbContext.ProductUnits.AddRange(
-            CreateProductUnit(productId, pieceUnitId, piece, salePrice: 25m, conversionFactor: 1m, isDefault: true, isBaseUnit: true),
+            CreateProductUnit(productId, pieceUnitId, piece, salePrice: 25m, conversionFactor: 1m, isDefault: true, isBaseUnit: true, purchasePrice: 42m),
             CreateProductUnit(productId, cartonUnitId, carton, salePrice: 280m, conversionFactor: 12m, isDefault: false, isBaseUnit: false));
         await dbContext.SaveChangesAsync();
 
         ProductDocument? capturedProjection = null;
         var repository = CreateRepositoryMock(captured => capturedProjection = captured);
         var mutationBoundary = new StorefrontProductProjectionMutationBoundary(repository.Object);
-        var writer = new ProductSqlAuthorityProjectionWriter(dbContext, mutationBoundary);
+        var cacheInvalidator = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Strict);
+        cacheInvalidator
+            .Setup(item => item.InvalidateProductAsync(
+                tenantId,
+                productId,
+                It.IsAny<string?>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .Callback(() => Assert.NotNull(capturedProjection))
+            .Returns(Task.CompletedTask);
+        var writer = new ProductSqlAuthorityProjectionWriter(
+            dbContext,
+            mutationBoundary,
+            cacheInvalidator.Object,
+            NullLogger<ProductSqlAuthorityProjectionWriter>.Instance);
 
         var result = await writer.ApplyAsync(
             new ProductSqlAuthorityProjectionWriteRequest(
@@ -72,6 +88,7 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
         Assert.Equal("How many cups?", capturedProjection.Faqs[0].Question);
         Assert.True(capturedProjection.AiGenerated);
         Assert.Equal("test-suite", capturedProjection.AiMetadata?["generator"]?.AsString);
+        cacheInvalidator.VerifyAll();
     }
 
     [Fact]
@@ -489,7 +506,8 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
         decimal salePrice,
         decimal conversionFactor,
         bool isDefault,
-        bool isBaseUnit)
+        bool isBaseUnit,
+        decimal? purchasePrice = null)
     {
         return new ProductUnit
         {
@@ -497,6 +515,7 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
             ProductId = productId,
             UnitId = unitId,
             Unit = unit,
+            PurchasePrice = purchasePrice,
             SellingPrice = salePrice,
             ConversionFactor = conversionFactor,
             IsDefault = isDefault,

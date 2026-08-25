@@ -11,6 +11,7 @@ using PointOfSale.Core.Application.ProductAuthoring;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
+using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Infrastructure.Data;
@@ -46,6 +47,18 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
         var audit = Assert.Single(await harness.Context.AuditLogs.ToListAsync());
         Assert.Equal("ProductAuthoring", audit.Source);
         Assert.Equal("Create", audit.ActionType);
+
+        var marketplaceEvent = Assert.IsType<PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent>(
+            Assert.Single(harness.MarketplaceEventOutbox.Events));
+        Assert.Equal(command.Metadata.CorrelationId, marketplaceEvent.CorrelationId);
+        Assert.Equal(result.ProductId, marketplaceEvent.EntityId);
+        Assert.Equal(result.ProductId, marketplaceEvent.AggregateRootId);
+        Assert.Equal(harness.TenantContext.TenantId, marketplaceEvent.TenantId);
+        Assert.Equal(ProductEventVersionHelper.ToProductEventVersion(result.MutationVersion!.Value), marketplaceEvent.EventVersion);
+        Assert.Equal("Complete product", marketplaceEvent.Name);
+        Assert.Equal(12m, marketplaceEvent.SalePrice);
+        Assert.Null(marketplaceEvent.OnlinePrice);
+        Assert.True(marketplaceEvent.HasVariants);
     }
 
     [Fact]
@@ -129,6 +142,144 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                 .OrderBy(attribute => attribute.Name)
                 .Select(attribute => (attribute.Name, attribute.Value))
                 .ToArray());
+    }
+
+    [Fact]
+    public async Task CreateVariant_IgnoresClientTemporaryId_AndAssignsServerIdentity()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var clientTemporaryId = Guid.NewGuid();
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "server-owned-variant-id",
+            variants:
+            [
+                new ProductAuthoringVariant(
+                    clientTemporaryId,
+                    "SERVER-ID",
+                    "SERVER-ID-BC",
+                    10m,
+                    null,
+                    0m,
+                    IsActive: true,
+                    IsDefault: true,
+                    new Dictionary<string, string> { ["Color"] = "Blue" })
+            ]));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, result.Status);
+        harness.Context.ChangeTracker.Clear();
+
+        var persisted = await harness.Context.ProductVariants
+            .SingleAsync(variant => variant.ProductId == result.ProductId && !variant.IsDeleted);
+        Assert.NotEqual(clientTemporaryId, persisted.Id);
+        Assert.Equal("SERVER-ID", persisted.SKU);
+    }
+
+    [Fact]
+    public async Task UpdateVariant_StatusAndPrices_RoundTripExactlyThroughAuthoringPersistence()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var createResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "variant-state-price-create",
+            variants:
+            [
+                new ProductAuthoringVariant(
+                    null,
+                    "ROUNDTRIP",
+                    "ROUNDTRIP-BC",
+                    400m,
+                    375m,
+                    350m,
+                    IsActive: true,
+                    IsDefault: true,
+                    new Dictionary<string, string> { ["Color"] = "Black" })
+            ]));
+        Assert.Equal(ProductAuthoringStatus.Accepted, createResult.Status);
+
+        var productId = createResult.ProductId!.Value;
+        var persistedId = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == productId && !variant.IsDeleted)
+            .Select(variant => variant.Id)
+            .SingleAsync();
+        harness.Context.ChangeTracker.Clear();
+
+        var updateCommand = harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: true,
+            idempotencyKey: "variant-state-price-update",
+            productId: productId,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false,
+            variants:
+            [
+                new ProductAuthoringVariant(
+                    persistedId,
+                    "ROUNDTRIP",
+                    "ROUNDTRIP-BC",
+                    500.25m,
+                    425.75m,
+                    350m,
+                    IsActive: false,
+                    IsDefault: true,
+                    new Dictionary<string, string> { ["Color"] = "Black" })
+            ]);
+        var updateResult = await harness.Orchestrator.AuthorAsync(updateCommand);
+        Assert.Equal(ProductAuthoringStatus.Accepted, updateResult.Status);
+        harness.Context.ChangeTracker.Clear();
+
+        var reopened = await harness.Context.ProductVariants
+            .SingleAsync(variant => variant.Id == persistedId && !variant.IsDeleted);
+        Assert.False(reopened.IsActive);
+        Assert.Equal(500.25m, reopened.Price);
+        Assert.Equal(425.75m, reopened.OnlinePrice);
+        Assert.Equal(350m, reopened.CostPrice);
+
+        var expectedEventVersion = ProductEventVersionHelper.ToProductEventVersion(reopened.ProjectionMutationVersion);
+        var costOnlyResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: true,
+            idempotencyKey: "variant-state-cost-only-update",
+            productId: productId,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false,
+            variants:
+            [
+                new ProductAuthoringVariant(
+                    persistedId,
+                    "ROUNDTRIP",
+                    "ROUNDTRIP-BC",
+                    500.25m,
+                    425.75m,
+                    360m,
+                    IsActive: false,
+                    IsDefault: true,
+                    new Dictionary<string, string> { ["Color"] = "Black" })
+            ]));
+        Assert.Equal(ProductAuthoringStatus.Accepted, costOnlyResult.Status);
+        harness.Context.ChangeTracker.Clear();
+
+        var priceOutboxMessage = Assert.Single(await harness.Context.OutboxMessages
+            .Where(message => message.EventType == typeof(VariantPriceUpdatedEvent).FullName)
+            .ToListAsync());
+        var priceUpdatedEvent = JsonSerializer.Deserialize<VariantPriceUpdatedEvent>(priceOutboxMessage.EventPayload)!;
+
+        Assert.Equal(harness.TenantContext.TenantId, priceOutboxMessage.TenantId);
+        Assert.Equal(persistedId, priceOutboxMessage.AggregateId);
+        Assert.Equal(expectedEventVersion, priceOutboxMessage.EventVersion);
+        Assert.Equal(harness.TenantContext.TenantId, priceUpdatedEvent.TenantId);
+        Assert.Equal(productId, priceUpdatedEvent.ProductId);
+        Assert.Equal(persistedId, priceUpdatedEvent.VariantId);
+        Assert.Equal(425.75m, priceUpdatedEvent.NewPrice);
+        Assert.Equal(expectedEventVersion, priceUpdatedEvent.EventVersion);
+        Assert.Equal(updateCommand.Metadata.CorrelationId, priceUpdatedEvent.CorrelationId);
+        Assert.Equal(
+            $"product-authoring:{harness.TenantContext.TenantId!.Value:N}:variant-state-price-update:variant-price-updated:{persistedId:N}:{expectedEventVersion}",
+            priceUpdatedEvent.IdempotencyKey);
     }
 
     [Fact]
@@ -219,6 +370,7 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
             UnitId = unitId;
 
             var eventPublisher = new PersistedOutboxEventPublisher(context);
+            MarketplaceEventOutbox = new RecordingMarketplaceEventOutbox();
             var variantService = new ProductVariantService(
                 context,
                 eventPublisher,
@@ -229,7 +381,7 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                 tenantContext,
                 variantService,
                 eventPublisher,
-                new NoOpMarketplaceEventOutbox(),
+                MarketplaceEventOutbox,
                 NullLogger<ProductAuthoringOrchestrator>.Instance,
                 new HttpContextAccessor(),
                 new ProductMutationIdempotencyService(context),
@@ -241,6 +393,7 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
         public TestTenantContext TenantContext { get; }
         public ProductAuthoringOrchestrator Orchestrator { get; }
         public ThrowingTransactionObserver Observer { get; }
+        public RecordingMarketplaceEventOutbox MarketplaceEventOutbox { get; }
         private Guid CategoryId { get; }
         private Guid UnitId { get; }
 
@@ -550,7 +703,9 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                 EventType = type.FullName ?? type.Name,
                 EventPayload = JsonSerializer.Serialize(@event, type),
                 TenantId = ReadGuid(@event, "TenantId"),
-                AggregateId = ReadGuid(@event, "ProductId") ?? ReadGuid(@event, "VariantId"),
+                AggregateId = @event is IAggregateScopedIntegrationEvent aggregateScopedEvent
+                    ? aggregateScopedEvent.GetAuthoritativeAggregateId()
+                    : ReadGuid(@event, "ProductId") ?? ReadGuid(@event, "VariantId"),
                 EventVersion = ReadInt(@event, "EventVersion"),
                 CreatedAtUtc = DateTime.UtcNow
             });
@@ -563,10 +718,15 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
             value.GetType().GetProperty(propertyName)?.GetValue(value) is int intValue ? intValue : 0;
     }
 
-    private sealed class NoOpMarketplaceEventOutbox : IMarketplaceEventOutboxService
+    private sealed class RecordingMarketplaceEventOutbox : IMarketplaceEventOutboxService
     {
+        public List<PointOfSale.Core.Events.Marketplace.IMarketplaceDomainEvent> Events { get; } = [];
+
         public Task EnqueueAsync<TEvent>(TEvent @event, CancellationToken cancellationToken = default)
-            where TEvent : class, PointOfSale.Core.Events.Marketplace.IMarketplaceDomainEvent =>
-            Task.CompletedTask;
+            where TEvent : class, PointOfSale.Core.Events.Marketplace.IMarketplaceDomainEvent
+        {
+            Events.Add(@event);
+            return Task.CompletedTask;
+        }
     }
 }

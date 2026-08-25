@@ -132,6 +132,7 @@ public sealed class ProductAuthoringCommandMapperCharacterizationTests
         Assert.Equal(123, command.Metadata.ExpectedVersion);
         Assert.Equal("true", command.Metadata.AdditionalMetadata["productUnitsSubmitted"]);
         Assert.Equal("true", command.Metadata.AdditionalMetadata["variantsSubmitted"]);
+        Assert.Equal("false", command.Metadata.AdditionalMetadata["preserveImages"]);
     }
 
     [Fact]
@@ -187,6 +188,7 @@ public sealed class ProductAuthoringCommandMapperCharacterizationTests
         Assert.Equal(456, command.Metadata.ExpectedVersion);
         Assert.Equal("false", command.Metadata.AdditionalMetadata["productUnitsSubmitted"]);
         Assert.Equal("false", command.Metadata.AdditionalMetadata["variantsSubmitted"]);
+        Assert.Equal("true", command.Metadata.AdditionalMetadata["preserveImages"]);
     }
 
     [Fact]
@@ -340,6 +342,39 @@ public sealed class ProductAuthoringCommandMapperCharacterizationTests
         Assert.Equal("false", command.Metadata.AdditionalMetadata["variantsSubmitted"]);
         Assert.Equal("idem-units", command.Metadata.IdempotencyKey);
         Assert.Equal(42, command.Metadata.ExpectedVersion);
+    }
+
+    [Fact]
+    public void ProductUnitsUpdate_MalformedLegacyAiMetadata_NormalizesToNullInsteadOfThrowing()
+    {
+        var tenantId = Guid.NewGuid();
+        var mapper = CreateMapper(
+            tenantId,
+            "trace-malformed-ai-metadata",
+            idempotencyKey: "idem-malformed-ai-metadata",
+            expectedVersion: "3");
+        var unitId = Guid.NewGuid();
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Legacy metadata product",
+            CategoryId = Guid.NewGuid(),
+            Unit = "Piece",
+            WeightUnit = "kg",
+            DimensionUnit = "cm",
+            PublishStatus = PublishStatus.Draft,
+            AiGenerated = true,
+            AiMetadataJson = "{broken"
+        };
+
+        var command = mapper.FromProductUnitsUpdate(product,
+        [
+            new ProductAuthoringUnitRequest(null, unitId, 1m, null, null, null, IsDefault: true, IsBaseUnit: true)
+        ]);
+
+        Assert.True(command.Metadata.AiGenerated);
+        Assert.Null(command.Metadata.AiMetadataJson);
     }
 
     private static ProductAuthoringCommandMapper CreateMapper(

@@ -7,6 +7,7 @@ using PointOfSale.API.CommerceHub.Handlers;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.Governance;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Jobs;
@@ -40,6 +41,7 @@ public sealed class AdminCommerceHubScopeTests
             searchIndexService.Object,
             reindexService.Object,
             Mock.Of<IUserGovernanceService>(),
+            Mock.Of<IMarketplaceEventOutboxService>(),
             NullLogger<AdminCommerceHubController>.Instance)
         {
             ControllerContext = new ControllerContext

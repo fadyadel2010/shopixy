@@ -112,6 +112,18 @@ public class InMemoryEventPublisher : IEventPublisher
 
         ValidateAuthoritativeEventContract(@event.GetType());
 
+        if (@event is IGlobalPlatformIntegrationEvent)
+        {
+            if (@event.TenantId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"Global platform integration event {@event.GetType().Name} must not carry a TenantId.");
+            }
+
+            EnsureAuthoritativeOrderingMetadata(@event);
+            return;
+        }
+
         if (@event.TenantId.HasValue && @event.TenantId.Value != Guid.Empty)
         {
             EnsureAuthoritativeOrderingMetadata(@event);

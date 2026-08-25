@@ -15,15 +15,41 @@ const { writeFileSpy } = vi.hoisted(() => ({ writeFileSpy: vi.fn() }))
 
 interface MockWorkbook {
     SheetNames: string[]
-    Sheets: Record<string, { aoa?: unknown[][] }>
+    Sheets: Record<string, MockWorksheet>
     Props?: Record<string, unknown>
+    Workbook?: { Views?: Array<{ RTL?: boolean }> }
+}
+
+interface MockCell {
+    v: unknown
+    t: string
+    f?: string
+    F?: string
+    z?: string
+}
+
+interface MockWorksheet {
+    aoa?: unknown[][]
+    [address: string]: unknown
 }
 
 vi.mock('xlsx', () => ({
     utils: {
-        aoa_to_sheet: (aoa: unknown[][]) => ({ aoa }),
+        aoa_to_sheet: (aoa: unknown[][]) => {
+            const worksheet: MockWorksheet = { aoa }
+            aoa.forEach((row, r) => row.forEach((value, c) => {
+                worksheet[`R${r}C${c}`] = {
+                    v: value,
+                    t: typeof value === 'number' ? 'n' : 's',
+                    // Deliberately simulate hostile upstream formula metadata;
+                    // production hardening must remove it from every text cell.
+                    ...(typeof value === 'string' && /^[=+\-@]/.test(value) ? { f: value.slice(1) } : {}),
+                } satisfies MockCell
+            }))
+            return worksheet
+        },
         book_new: (): MockWorkbook => ({ SheetNames: [], Sheets: {} }),
-        book_append_sheet: (wb: MockWorkbook, ws: { aoa?: unknown[][] }, name: string) => {
+        book_append_sheet: (wb: MockWorkbook, ws: MockWorksheet, name: string) => {
             wb.SheetNames.push(name)
             wb.Sheets[name] = ws
         },
@@ -207,6 +233,22 @@ describe('buildProductExportRows', () => {
         expect(row.priceDisplay).toBe('—')
     })
 
+    it('preserves zero but rejects malformed price and stock values', () => {
+        const [zeroRow, malformedRow] = buildProductExportRows([
+            makeProduct({ salePrice: 0, totalStock: 0 }),
+            makeProduct({ id: 'p-bad', salePrice: 'not-a-price', totalStock: Number.POSITIVE_INFINITY }),
+        ], { t, formatCurrency })
+
+        expect(zeroRow.priceValue).toBe(0)
+        expect(zeroRow.priceDisplay).toBe('0.00 EGP')
+        expect(zeroRow.stockValue).toBe(0)
+        expect(zeroRow.stockDisplay).toBe(0)
+        expect(malformedRow.priceValue).toBeNull()
+        expect(malformedRow.priceDisplay).toBe('—')
+        expect(malformedRow.stockValue).toBeNull()
+        expect(malformedRow.stockDisplay).toBe('—')
+    })
+
     it('maps Active/Inactive status like the table', () => {
         const [active] = buildProductExportRows([makeProduct({ isActive: true })], { t, formatCurrency })
         const [inactive] = buildProductExportRows([makeProduct({ isActive: false })], { t, formatCurrency })
@@ -261,6 +303,7 @@ describe('exportProductsToExcel', () => {
         expect(workbook.Props?.Title).toBe('Products Report')
         expect(workbook.Props?.Author).toBe('My Store')
         expect(String(workbook.Props?.Subject)).toContain('Current View')
+        expect(writeFileSpy.mock.calls[0][2]).toEqual({ cellStyles: true })
     })
 
     it('uses the selected-scope filename and metadata for Selected exports', async () => {
@@ -275,5 +318,41 @@ describe('exportProductsToExcel', () => {
         expect(filename).toBe('shopixy-products-selected.xlsx')
         expect(String(workbook.Props?.Subject)).toContain('Selected Products')
         expect(workbook.Props?.Author).toBe('Shopixy')
+    })
+
+    it('forces adversarial user text to string cells with no formula metadata', async () => {
+        await exportProductsToExcel([makeProduct({
+            name: '=HYPERLINK("https://example.invalid")',
+            sku: '+SUM(A1:A2)',
+            categoryName: '@malicious-category',
+        })], {
+            scope: EXPORT_SCOPE_CURRENT_VIEW,
+            t,
+            formatCurrency,
+            storeName: 'My Store',
+        })
+
+        const [workbook] = writeFileSpy.mock.calls[0]
+        const sheet = workbook.Sheets.Products as MockWorksheet
+        for (const address of ['R1C0', 'R1C1', 'R1C3']) {
+            const cell = sheet[address] as MockCell
+            expect(cell.t).toBe('s')
+            expect(cell.f).toBeUndefined()
+            expect(cell.F).toBeUndefined()
+        }
+    })
+
+    it('marks Arabic workbooks as right-to-left without changing the filename', async () => {
+        await exportProductsToExcel([makeProduct({ name: 'قهوة عربية' })], {
+            scope: EXPORT_SCOPE_CURRENT_VIEW,
+            t,
+            formatCurrency,
+            storeName: 'متجري',
+            isRTL: true,
+        })
+
+        const [workbook, filename] = writeFileSpy.mock.calls[0]
+        expect(workbook.Workbook?.Views).toEqual([{ RTL: true }])
+        expect(filename).toBe('shopixy-products-current-view.xlsx')
     })
 })

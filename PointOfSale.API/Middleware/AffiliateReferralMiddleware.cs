@@ -577,7 +577,17 @@ public class AffiliateReferralMiddleware
                 item.policy.IsEnabled &&
                 !item.policy.IsDeleted &&
                 item.category.IsActive &&
-                !item.category.IsDeleted,
+                !item.category.IsDeleted &&
+                ((item.category.Level == 1 && item.category.ParentId == null) ||
+                 (item.category.Level == 2 &&
+                  item.category.ParentId != null &&
+                  dbContext.AffiliateCategories
+                      .IgnoreQueryFilters()
+                      .Any(parent =>
+                          parent.Id == item.category.ParentId.Value &&
+                          parent.Level == 1 &&
+                          parent.IsActive &&
+                          !parent.IsDeleted))),
                 ct);
         if (!policyWithActiveCategory)
         {

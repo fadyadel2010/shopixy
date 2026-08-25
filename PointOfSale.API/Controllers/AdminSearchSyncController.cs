@@ -645,7 +645,13 @@ public class AdminSearchSyncController : ControllerBase
         CancellationToken cancellationToken)
     {
         totals.TotalCount++;
-        if (await _searchIndexService.DeleteProductAsync(tenantId, productId, cancellationToken))
+        if (await ProductSearchTombstoneWriter.WriteAsync(
+                _searchIndexService,
+                _sqlContext,
+                tenantId,
+                productId,
+                eventId: null,
+                cancellationToken))
         {
             totals.SuccessCount++;
             totals.DeletedCount++;

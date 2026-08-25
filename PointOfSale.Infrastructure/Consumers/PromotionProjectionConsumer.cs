@@ -269,7 +269,13 @@ public class PromotionProjectionConsumer :
                         return;
                     }
 
-                    foreach (var productId in ResolveAffectedProductIds(@event, existingDocument, sqlPromotion))
+                    foreach (var productId in await ResolveAffectedProductIdsAsync(
+                                 @event.TenantId.Value,
+                                 sqlPromotion,
+                                 existingDocument,
+                                 @event.Scope,
+                                 @event.AppliesToId,
+                                 context.CancellationToken))
                     {
                         await RefreshProductPromotionProjectionAsync(
                             @event.TenantId.Value,
@@ -486,7 +492,13 @@ public class PromotionProjectionConsumer :
                         return;
                     }
 
-                    foreach (var productId in ResolveAffectedProductIds(@event, existingDocument, sqlPromotion))
+                    foreach (var productId in await ResolveAffectedProductIdsAsync(
+                                 @event.TenantId.Value,
+                                 sqlPromotion,
+                                 existingDocument,
+                                 @event.Scope,
+                                 @event.AppliesToId,
+                                 context.CancellationToken))
                     {
                         await RefreshProductPromotionProjectionAsync(
                             @event.TenantId.Value,
@@ -865,7 +877,13 @@ public class PromotionProjectionConsumer :
         PromotionDocument? previousDocument,
         CancellationToken cancellationToken)
     {
-        foreach (var productId in ResolveAffectedProductIds(sqlPromotion, previousDocument))
+        foreach (var productId in await ResolveAffectedProductIdsAsync(
+                     tenantId,
+                     sqlPromotion,
+                     previousDocument,
+                     eventScope: null,
+                     eventAppliesToId: null,
+                     cancellationToken))
         {
             await RefreshProductPromotionProjectionAsync(
                 tenantId,
@@ -886,59 +904,13 @@ public class PromotionProjectionConsumer :
             cancellationToken: cancellationToken);
     }
 
-    private static IReadOnlyList<Guid> ResolveAffectedProductIds(
-        PromotionDeletedEvent @event,
+    private async Task<IReadOnlyList<Guid>> ResolveAffectedProductIdsAsync(
+        Guid tenantId,
+        Promotion? promotion,
         PromotionDocument? existingDocument,
-        Promotion? sqlPromotion)
-    {
-        var productIds = new HashSet<Guid>();
-        if (sqlPromotion is { Scope: PointOfSale.Core.Enums.PromotionScope.Product, AppliesToId: { } sqlProductId })
-        {
-            productIds.Add(sqlProductId);
-        }
-
-        if (existingDocument is { Scope: "product", AppliesToId: { } productId })
-        {
-            productIds.Add(productId);
-        }
-
-        if (string.Equals(@event.Scope, "product", StringComparison.OrdinalIgnoreCase) &&
-            @event.AppliesToId.HasValue)
-        {
-            productIds.Add(@event.AppliesToId.Value);
-        }
-
-        return productIds.ToList();
-    }
-
-    private static IReadOnlyList<Guid> ResolveAffectedProductIds(
-        PromotionExpiredEvent @event,
-        PromotionDocument? existingDocument,
-        Promotion? sqlPromotion)
-    {
-        var productIds = new HashSet<Guid>();
-        if (sqlPromotion is { Scope: PointOfSale.Core.Enums.PromotionScope.Product, AppliesToId: { } sqlProductId })
-        {
-            productIds.Add(sqlProductId);
-        }
-
-        if (existingDocument is { Scope: "product", AppliesToId: { } productId })
-        {
-            productIds.Add(productId);
-        }
-
-        if (string.Equals(@event.Scope, "product", StringComparison.OrdinalIgnoreCase) &&
-            @event.AppliesToId.HasValue)
-        {
-            productIds.Add(@event.AppliesToId.Value);
-        }
-
-        return productIds.ToList();
-    }
-
-    private static IReadOnlyList<Guid> ResolveAffectedProductIds(
-        Promotion promotion,
-        PromotionDocument? existingDocument)
+        string? eventScope,
+        Guid? eventAppliesToId,
+        CancellationToken cancellationToken)
     {
         var productIds = new HashSet<Guid>();
         if (promotion is { Scope: PointOfSale.Core.Enums.PromotionScope.Product, AppliesToId: { } productId })
@@ -949,6 +921,35 @@ public class PromotionProjectionConsumer :
         if (existingDocument is { Scope: "product", AppliesToId: { } previousProductId })
         {
             productIds.Add(previousProductId);
+        }
+
+        if (string.Equals(eventScope, "product", StringComparison.OrdinalIgnoreCase) &&
+            eventAppliesToId.HasValue)
+        {
+            productIds.Add(eventAppliesToId.Value);
+        }
+
+        var affectsEveryProduct =
+            promotion is { Scope: PointOfSale.Core.Enums.PromotionScope.Product, AppliesToId: null } ||
+            existingDocument is { Scope: "product", AppliesToId: null } ||
+            (string.Equals(eventScope, "product", StringComparison.OrdinalIgnoreCase) &&
+             !eventAppliesToId.HasValue);
+
+        if (affectsEveryProduct)
+        {
+            var tenantProductIds = await _dbContext.Products
+                .AsNoTracking()
+                .Where(product =>
+                    product.TenantId == tenantId &&
+                    !product.IsDeleted &&
+                    product.IsActive &&
+                    product.IsOnlineVisible &&
+                    product.IsSearchable &&
+                    product.PublishStatus == PointOfSale.Core.Enums.PublishStatus.Published)
+                .Select(product => product.Id)
+                .ToListAsync(cancellationToken);
+
+            productIds.UnionWith(tenantProductIds);
         }
 
         return productIds.ToList();
@@ -1034,7 +1035,7 @@ public class PromotionProjectionConsumer :
                 promotion.TenantId == tenantId &&
                 !promotion.IsDeleted &&
                 promotion.Scope == PointOfSale.Core.Enums.PromotionScope.Product &&
-                promotion.AppliesToId == productId)
+                (!promotion.AppliesToId.HasValue || promotion.AppliesToId == productId))
             .ToListAsync(cancellationToken);
         var winningPromotion = PromotionVisibilityProjectionSupport.SelectWinningProductPromotion(promotions, nowUtc);
         var filter = Builders<ProductDocument>.Filter.And(
@@ -1245,7 +1246,13 @@ public class PromotionProjectionConsumer :
 
             if (product == null || !product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
-                var deleted = await _searchIndexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _searchIndexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId: null,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new InvalidOperationException(

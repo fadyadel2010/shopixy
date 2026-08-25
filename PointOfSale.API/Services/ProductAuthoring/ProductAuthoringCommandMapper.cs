@@ -252,9 +252,7 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
             DeserializeStringList(product.FeaturesJson),
             DeserializeFaqs(product.FaqJson),
             product.AiGenerated,
-            string.IsNullOrWhiteSpace(product.AiMetadataJson)
-                ? null
-                : JsonSerializer.Deserialize<JsonElement>(product.AiMetadataJson),
+            DeserializeJsonElement(product.AiMetadataJson),
             product.VideoUrl,
             product.ProductTemplate,
             productUnits,
@@ -413,7 +411,8 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
                 new Dictionary<string, string>
                 {
                     ["productUnitsSubmitted"] = productUnits is null ? "false" : "true",
-                    ["variantsSubmitted"] = variants is null ? "false" : "true"
+                    ["variantsSubmitted"] = variants is null ? "false" : "true",
+                    ["preserveImages"] = operation == ProductAuthoringOperation.Update ? "true" : "false"
                 }));
     }
 
@@ -588,5 +587,25 @@ public sealed class ProductAuthoringCommandMapper : IProductAuthoringCommandMapp
         return value.Value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
             ? null
             : value.Value.GetRawText();
+    }
+
+    private static JsonElement? DeserializeJsonElement(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            var value = JsonSerializer.Deserialize<JsonElement>(json);
+            return value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                ? null
+                : value;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

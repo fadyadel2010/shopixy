@@ -45,7 +45,11 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discovery, StringComparison.Ordinal);
         Assert.Contains("AffiliateProductPolicies", discovery, StringComparison.Ordinal);
         Assert.Contains("product.TryResolveAffiliatePublicPricing(out var pricing)", discovery, StringComparison.Ordinal);
-        Assert.Contains("Total = items.Count", discovery, StringComparison.Ordinal);
+        Assert.Contains("ReadAllSearchCandidatesAsync", discovery, StringComparison.Ordinal);
+        Assert.Contains("(categoryId.HasValue && product.CategoryId != categoryId.Value)", discovery, StringComparison.Ordinal);
+        Assert.Contains("var total = deliverableItems.Count;", discovery, StringComparison.Ordinal);
+        Assert.Contains("deliverableItems.Skip((int)skip).Take(query.PageSize)", discovery, StringComparison.Ordinal);
+        Assert.DoesNotContain(".From(skip)", discovery, StringComparison.Ordinal);
         Assert.Contains("RecomposePublicAffiliateProductsFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("RecomposePublicAffiliateProductFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", publicController, StringComparison.Ordinal);
@@ -57,12 +61,13 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
     public void ProductCacheInvalidationRetainsHomepageReplayCollapse()
     {
         var productInvalidation = ReadRepoFile("PointOfSale.Infrastructure/Consumers/ProductCacheInvalidationConsumer.cs");
+        var invalidationOwner = ReadRepoFile("PointOfSale.Infrastructure/Redis/Services/StorefrontProductCacheInvalidator.cs");
         var redisInvalidation = ReadRepoFile("PointOfSale.API/Consumers/RedisInvalidationConsumer.cs");
 
         Assert.Contains("ProjectionConsumerEventFence.TryAcquireAsync", productInvalidation, StringComparison.Ordinal);
         Assert.Contains("invalidateHomepage", productInvalidation, StringComparison.Ordinal);
-        Assert.Contains("CacheKeyBuilder.HomePatternKey", productInvalidation, StringComparison.Ordinal);
-        Assert.Contains("RemoveByPatternAsync", productInvalidation, StringComparison.Ordinal);
+        Assert.Contains("CacheKeyBuilder.HomePatternKey", invalidationOwner, StringComparison.Ordinal);
+        Assert.Contains("RemoveByPatternAsync", invalidationOwner, StringComparison.Ordinal);
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", redisInvalidation, StringComparison.Ordinal);
         Assert.Contains("homepage", redisInvalidation, StringComparison.OrdinalIgnoreCase);
     }

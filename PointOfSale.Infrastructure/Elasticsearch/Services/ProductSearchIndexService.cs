@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Nest;
+using Elasticsearch.Net;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.ReadModels.Evolution;
@@ -20,6 +21,7 @@ namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 public class ProductSearchIndexService : IProductSearchIndexService
 {
     private const string SearchableFieldName = "isSearchable";
+    private const long ExternalProductGenerationOffset = 1L << 62;
 
     private readonly IElasticClient _client;
     private readonly ElasticsearchSettings _settings;
@@ -69,35 +71,23 @@ public class ProductSearchIndexService : IProductSearchIndexService
                 document.LastEventId,
                 DateTime.UtcNow);
 
-            // STALE UPDATE PROTECTION: Check if the existing document is newer
-            // This prevents out-of-order events from overwriting fresher data.
-            var existingDoc = await _client.GetAsync<ProductSearchDocument>(
-                documentId, g => g.Index(_settings.ProductsIndexName), cancellationToken);
-
-            if (existingDoc.Found && existingDoc.Source?.IndexedAtUtc > document.IndexedAtUtc)
-            {
-                sw.Stop();
-                _logger.LogWarning(
-                    "Skipping stale index update | ProductId: {ProductId} | ExistingIndexedAt: {ExistingIndexedAt} | NewIndexedAt: {NewIndexedAt}",
-                    document.ProductId, existingDoc.Source.IndexedAtUtc, document.IndexedAtUtc);
-                _telemetry.RecordIndexOperation("index_skipped_stale", sw.Elapsed.TotalMilliseconds, true);
-                return true; // Not an error — just a stale event
-            }
-
             _logger.LogDebug(
-                "Indexing product document | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId}",
-                document.ProductId, document.TenantId, documentId);
+                "Indexing product document | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId} | ProductGeneration: {ProductGeneration}",
+                document.ProductId, document.TenantId, documentId, document.ProductGeneration);
 
             var response = await _client.IndexAsync(document, i => i
                 .Index(_settings.ProductsIndexName)
-                .Id(documentId),
+                .Id(documentId)
+                .Version(ToElasticsearchVersion(document.ProductGeneration))
+                .VersionType(VersionType.External),
                 cancellationToken);
 
             sw.Stop();
 
-            if (response.IsValid)
+            if (response.IsValid || IsVersionConflict(response))
             {
-                _telemetry.RecordIndexOperation("index", sw.Elapsed.TotalMilliseconds, true);
+                var staleOrDuplicate = !response.IsValid;
+                _telemetry.RecordIndexOperation(staleOrDuplicate ? "index_skipped_stale" : "index", sw.Elapsed.TotalMilliseconds, true);
                 _logger.LogInformation(
                     "PROJECTION_EVENT_TRACE | Stage=Elasticsearch | DocumentId={DocumentId} | IndexName={IndexName} | ProductId={ProductId} | TenantId={TenantId} | IndexAttempt={IndexAttempt} | IndexSucceeded={IndexSucceeded} | DeleteIssued={DeleteIssued} | EventId={EventId} | Result={Result} | Timestamp={Timestamp:O}",
                     documentId,
@@ -108,11 +98,13 @@ public class ProductSearchIndexService : IProductSearchIndexService
                     true,
                     false,
                     document.LastEventId,
-                    response.Result,
+                    staleOrDuplicate ? "VersionConflict" : response.Result,
                     DateTime.UtcNow);
                 _logger.LogInformation(
                     "Successfully indexed product | ProductId: {ProductId} | TenantId: {TenantId} | DocumentId: {DocumentId} | Result: {Result} | LatencyMs: {LatencyMs}",
-                    document.ProductId, document.TenantId, documentId, response.Result, sw.Elapsed.TotalMilliseconds);
+                    document.ProductId, document.TenantId, documentId,
+                    staleOrDuplicate ? "VersionConflict" : response.Result,
+                    sw.Elapsed.TotalMilliseconds);
                 return true;
             }
 
@@ -281,6 +273,9 @@ public class ProductSearchIndexService : IProductSearchIndexService
                         .Number(n => n.Name(nn => nn.ReadModelSchemaVersion).Type(NumberType.Integer))
                         .Number(n => n.Name(nn => nn.ProjectionVersion).Type(NumberType.Integer))
                         .Date(d => d.Name(n => n.ProjectionConvergedAtUtc).Format("strict_date_optional_time||epoch_millis"))
+                        .Number(n => n.Name(nn => nn.ProductGeneration).Type(NumberType.Long))
+                        .Boolean(b => b.Name(n => n.IsTombstone))
+                        .Boolean(b => b.Name(n => n.IsDeleted))
                         .Boolean(b => b.Name(n => n.IsSearchable))),
                     cancellationToken);
 
@@ -852,6 +847,51 @@ public class ProductSearchIndexService : IProductSearchIndexService
         
         return 0;
     }
+
+    /// <inheritdoc />
+    public Task<bool> TombstoneAsync(
+        Guid tenantId,
+        Guid productId,
+        long productGeneration,
+        bool isDeleted,
+        Guid? eventId = null,
+        CancellationToken cancellationToken = default)
+    {
+        var tombstone = new ProductSearchDocument
+        {
+            TenantId = tenantId,
+            ProductId = productId,
+            ProductGeneration = productGeneration,
+            IsTombstone = true,
+            IsDeleted = isDeleted,
+            IsActive = false,
+            IsOnlineVisible = false,
+            IsSearchable = false,
+            Name = string.Empty,
+            LastEventId = eventId,
+            IndexedAtUtc = DateTime.UtcNow
+        };
+
+        return IndexAsync(tombstone, cancellationToken);
+    }
+
+    internal static long ToElasticsearchVersion(long productGeneration)
+    {
+        if (productGeneration < 0 || productGeneration >= ExternalProductGenerationOffset)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(productGeneration),
+                productGeneration,
+                $"Product generation must be between zero and {ExternalProductGenerationOffset - 1}.");
+        }
+
+        // Reserve the upper half of the positive Int64 range for canonical generations.
+        // This safely supersedes legacy documents whose _version came from ES internal versioning.
+        return ExternalProductGenerationOffset + productGeneration;
+    }
+
+    private static bool IsVersionConflict(IndexResponse response) =>
+        response.ApiCall?.HttpStatusCode == 409 || response.ServerError?.Status == 409;
 
     private async Task<ReadModelCompatibilityDecision> ResolveProductSearchCompatibilityAsync(
         CancellationToken cancellationToken)

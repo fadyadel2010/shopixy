@@ -104,7 +104,17 @@ public class AffiliateDiscoveryController : ControllerBase
                     item.Policy.IsEnabled &&
                     !item.Policy.IsDeleted &&
                     item.Category.IsActive &&
-                    !item.Category.IsDeleted)
+                    !item.Category.IsDeleted &&
+                    ((item.Category.Level == 1 && item.Category.ParentId == null) ||
+                     (item.Category.Level == 2 &&
+                      item.Category.ParentId != null &&
+                      _dbContext.AffiliateCategories
+                          .IgnoreQueryFilters()
+                          .Any(parent =>
+                              parent.Id == item.Category.ParentId.Value &&
+                              parent.Level == 1 &&
+                              parent.IsActive &&
+                              !parent.IsDeleted))))
                 .Select(item => new { item.Policy.ProductId, item.Policy.CommissionRate })
                 .ToListAsync(ct)
             : [];

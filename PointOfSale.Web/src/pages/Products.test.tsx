@@ -196,11 +196,12 @@ vi.mock('../components/BarcodeDisplay', () => ({
 }))
 
 vi.mock('../components/ValidationDeleteModal', () => ({
-    default: ({ onDeleteSuccess, onDeactivateSuccess }: {
+    default: ({ expectedVersion, onDeleteSuccess, onDeactivateSuccess }: {
+        expectedVersion: string
         onDeleteSuccess: () => void
         onDeactivateSuccess: () => void
     }) => (
-        <div data-testid="delete-modal">
+        <div data-testid="delete-modal" data-expected-version={expectedVersion}>
             <button type="button" onClick={onDeleteSuccess}>trigger-delete-success</button>
             <button type="button" onClick={onDeactivateSuccess}>trigger-deactivate-success</button>
         </div>
@@ -214,6 +215,7 @@ vi.mock('../components/ValidationDeleteModal', () => ({
 const printMock = vi.hoisted(() => ({
     latestOptions: null as Record<string, unknown> | null,
     printed: [] as Array<{ documentTitle: unknown; content: string }>,
+    autoComplete: true,
 }))
 
 vi.mock('react-to-print', () => ({
@@ -225,6 +227,9 @@ vi.mock('react-to-print', () => ({
                 documentTitle: options.documentTitle,
                 content: contentRef?.current?.textContent ?? '',
             })
+            if (printMock.autoComplete) {
+                queueMicrotask(() => (options.onAfterPrint as (() => void) | undefined)?.())
+            }
         }
     },
 }))
@@ -398,6 +403,7 @@ beforeEach(() => {
     rtlMockState.current = { isRTL: false, dir: 'ltr', locale: 'en-US' }
     printMock.latestOptions = null
     printMock.printed = []
+    printMock.autoComplete = true
     apiPostMock.mockResolvedValue({ data: {} })
     confirmMock.mockResolvedValue(true)
     // Mirrors the provider's legacy confirmAction contract: decide first, run
@@ -454,6 +460,21 @@ describe('Products listing — stock presentation (F-6)', () => {
         expect(within(betaRow).getByText('products.lowStock')).toBeTruthy()
     })
 
+    it('prefers available stock over physical quantity when the response provides both', async () => {
+        await renderLoaded({
+            products: [makeProduct({
+                id: 'reserved-stock',
+                name: 'Reserved Stock',
+                warehouseStocks: [{ quantity: 25, reservedQuantity: 23, availableQuantity: 2 }],
+            })],
+        })
+
+        const row = screen.getByText('Reserved Stock').closest('tr')!
+        expect(within(row).getByText('2')).toBeTruthy()
+        expect(within(row).getByText('products.lowStock')).toBeTruthy()
+        expect(within(row).queryByText('25')).toBeNull()
+    })
+
     it('shows Managed by variants without a parent-level stock badge for variant products', async () => {
         await renderLoaded()
         const gammaRow = screen.getByText('Gamma Blend').closest('tr')!
@@ -488,6 +509,208 @@ describe('Products listing — publication normalization (F-4)', () => {
         const epsilonRow = screen.getByText('Epsilon Odd').closest('tr')!
         expect(within(epsilonRow).getByText('products.draft')).toBeTruthy()
         expect(within(epsilonRow).queryByText('products.published')).toBeNull()
+    })
+})
+
+describe('Products listing — canonical query and race safety (P-1)', () => {
+    it('sends every table filter to the server before pagination', async () => {
+        await renderLoaded()
+
+        await act(async () => {
+            fireEvent.change(document.getElementById('products-category-filter')!, { target: { value: 'c1' } })
+            fireEvent.change(document.getElementById('products-status-filter')!, { target: { value: 'inactive' } })
+            fireEvent.change(document.getElementById('products-type-filter')!, { target: { value: 'variant' } })
+            fireEvent.change(document.getElementById('products-publication-filter')!, { target: { value: 'archived' } })
+            fireEvent.change(document.getElementById('products-stock-filter')!, { target: { value: 'outOfStock' } })
+            fireEvent.click(screen.getByLabelText('products.featured'))
+            fireEvent.click(screen.getByLabelText('products.searchable'))
+            fireEvent.click(screen.getByLabelText('products.backorderAllowed'))
+            await Promise.resolve()
+        })
+
+        await waitFor(() => expect(lastProductsParams()).toMatchObject({
+            categoryId: 'c1',
+            isActive: false,
+            hasVariants: true,
+            publishStatus: 2,
+            stockState: 'outOfStock',
+            isFeatured: true,
+            isSearchable: true,
+            allowBackorder: true,
+            page: 1,
+            pageSize: 50,
+        }))
+    })
+
+    it('trims submitted search terms before issuing the canonical request', async () => {
+        await renderLoaded()
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+
+        fireEvent.change(searchInput, { target: { value: '   Alpha Tea   ' } })
+        fireEvent.submit(searchInput.closest('form')!)
+
+        await waitFor(() => expect(lastProductsParams().search).toBe('Alpha Tea'))
+        expect((searchInput as HTMLInputElement).value).toBe('Alpha Tea')
+    })
+
+    it('allows only the latest overlapping search response to commit', async () => {
+        const requestA = createDeferred<{ data: unknown[]; headers: Record<string, string> }>()
+        const requestB = createDeferred<{ data: unknown[]; headers: Record<string, string> }>()
+
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/categories') return Promise.resolve({ data: [] })
+            if (config?.params?.search === 'A') return requestA.promise
+            if (config?.params?.search === 'B') return requestB.promise
+            return Promise.resolve({
+                data: [makeProduct({ id: 'initial', name: 'Initial Product' })],
+                headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+            })
+        })
+
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Initial Product')).toBeTruthy())
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+
+        fireEvent.change(searchInput, { target: { value: 'A' } })
+        fireEvent.submit(searchInput.closest('form')!)
+        await waitFor(() => expect(productCalls().some((call) => call[1]?.params?.search === 'A')).toBe(true))
+
+        fireEvent.change(searchInput, { target: { value: 'B' } })
+        fireEvent.submit(searchInput.closest('form')!)
+        await waitFor(() => expect(productCalls().some((call) => call[1]?.params?.search === 'B')).toBe(true))
+
+        requestB.resolve({
+            data: [makeProduct({ id: 'result-b', name: 'Newest Result B' })],
+            headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+        })
+        await waitFor(() => expect(screen.getByText('Newest Result B')).toBeTruthy())
+
+        requestA.resolve({
+            data: [makeProduct({ id: 'result-a', name: 'Stale Result A' })],
+            headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+        })
+        await act(async () => { await Promise.resolve() })
+
+        expect(screen.getByText('Newest Result B')).toBeTruthy()
+        expect(screen.queryByText('Stale Result A')).toBeNull()
+    })
+
+    it('locks select-all while stale rows are awaiting replacement', async () => {
+        const refresh = createDeferred<{ data: unknown[]; headers: Record<string, string> }>()
+        mockProductsApi()
+        const originalImplementation = apiGetMock.getMockImplementation()
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/products' && config?.params?.search === 'pending') return refresh.promise
+            return originalImplementation?.(url, config)
+        })
+
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Alpha Tea')).toBeTruthy())
+        selectRowByName('Alpha Tea')
+
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+        fireEvent.change(searchInput, { target: { value: 'pending' } })
+        fireEvent.submit(searchInput.closest('form')!)
+
+        await waitFor(() => expect(headerCheckbox().disabled).toBe(true))
+        expect(rowCheckboxes().every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true)
+
+        refresh.resolve({
+            data: [makeProduct({ id: 'replacement', name: 'Replacement Product' })],
+            headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+        })
+        await waitFor(() => expect(screen.getByText('Replacement Product')).toBeTruthy())
+        expect(headerCheckbox().checked).toBe(false)
+    })
+
+    it('clears all query state with exactly one replacement fetch', async () => {
+        await renderLoaded()
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+        fireEvent.change(searchInput, { target: { value: 'Alpha' } })
+        fireEvent.submit(searchInput.closest('form')!)
+        await waitFor(() => expect(lastProductsParams().search).toBe('Alpha'))
+
+        const callsBeforeClear = productCalls().length
+        fireEvent.click(screen.getByText('products.clearFilters'))
+        await waitFor(() => expect(productCalls().length).toBe(callsBeforeClear + 1))
+        await act(async () => { await Promise.resolve() })
+
+        expect(productCalls()).toHaveLength(callsBeforeClear + 1)
+        expect(lastProductsParams().search).toBeUndefined()
+    })
+
+    it('sorts through the server, clears selection, and preserves keyboard focus', async () => {
+        await renderLoaded()
+        selectRowByName('Alpha Tea')
+        const priceSortButton = () => within(screen.getByText('Price').closest('th')!).getByRole('button')
+        const originalButton = priceSortButton()
+        originalButton.focus()
+
+        fireEvent.click(originalButton)
+
+        await waitFor(() => expect(lastProductsParams()).toMatchObject({ sortBy: 'price', sortDirection: 'asc', page: 1 }))
+        expect(priceSortButton()).toBe(originalButton)
+        expect(document.activeElement).toBe(originalButton)
+        expect(rowCheckboxes().every((checkbox) => !(checkbox as HTMLInputElement).checked)).toBe(true)
+    })
+
+    it('renders a failed initial read as an error, never as an empty catalog', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') return Promise.resolve({ data: [] })
+            return Promise.reject(new Error('sensitive transport detail'))
+        })
+
+        render(<Products />)
+
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('products.failedToLoad'))
+        expect(screen.queryByText('products.noProducts')).toBeNull()
+        expect(document.body.textContent).not.toContain('sensitive transport detail')
+        consoleError.mockRestore()
+    })
+
+    it('surfaces a category-filter read failure and retries only that read', async () => {
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        let categoriesFail = true
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/categories') {
+                return categoriesFail
+                    ? Promise.reject(new Error('category transport detail'))
+                    : Promise.resolve({ data: [{ id: 'c-recovered', name: 'Recovered Category' }] })
+            }
+            return Promise.resolve({
+                data: defaultProducts(),
+                headers: { 'x-total-count': '5', 'x-total-pages': '1' },
+            })
+        })
+
+        render(<Products />)
+        const alert = await screen.findByRole('alert')
+        expect(alert.textContent).toContain('categories.failedToLoad')
+        expect(document.body.textContent).not.toContain('category transport detail')
+        const productCallsBeforeRetry = productCalls().length
+
+        categoriesFail = false
+        fireEvent.click(within(alert).getByText('common.retry'))
+
+        await waitFor(() => expect(screen.getByText('Recovered Category')).toBeTruthy())
+        expect(productCalls()).toHaveLength(productCallsBeforeRetry)
+        expect(screen.queryByRole('alert')).toBeNull()
+        consoleError.mockRestore()
+    })
+
+    it('links row actions to the real encoded storefront product route', async () => {
+        await renderLoaded({
+            products: [makeProduct({
+                id: 'p-link',
+                name: 'Linked Product',
+                isOnlineVisible: true,
+                slug: 'arabic coffee',
+            })],
+        })
+
+        const link = screen.getByRole('link', { name: 'products.viewOnStorefront: Linked Product' })
+        expect(link.getAttribute('href')).toBe('http://localhost:5174/products/arabic%20coffee')
     })
 })
 
@@ -554,6 +777,55 @@ describe('Products listing — bulk selection lifecycle (Phase 2 + F-10)', () =>
         fireEvent.click(screen.getByText('common.next'))
         await waitFor(() => expect(toolbarButton('products.bulkActionActivate').disabled).toBe(true))
         expect(lastProductsParams().page).toBe(2)
+
+        fireEvent.click(screen.getByText('common.previous'))
+        await waitFor(() => expect(lastProductsParams().page).toBe(1))
+    })
+
+    it('keeps row actions isolated from the existing bulk selection', async () => {
+        await renderLoaded()
+        selectRowByName('Alpha Tea')
+        selectRowByName('Beta Coffee')
+
+        const gammaRow = screen.getByText('Gamma Blend').closest('tr')
+        if (!gammaRow) throw new Error('Gamma Blend row not found')
+        fireEvent.click(within(gammaRow).getByRole('button', { name: 'common.delete: Gamma Blend' }))
+
+        expect(await screen.findByTestId('delete-modal')).toBeTruthy()
+        const selectedNames = ['Alpha Tea', 'Beta Coffee']
+        for (const name of selectedNames) {
+            const row = screen.getByText(name).closest('tr')!
+            expect(within(row).getByRole('checkbox')).toBeChecked()
+        }
+        expect(within(gammaRow).getByRole('checkbox')).not.toBeChecked()
+        expect(toolbarButton('products.bulkActionActivate')).not.toBeDisabled()
+    })
+
+    it('clamps an out-of-range page and refetches the valid last page', async () => {
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/categories') return Promise.resolve({ data: [] })
+            if (config?.params?.page === 2) {
+                return Promise.resolve({
+                    data: [],
+                    headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+                })
+            }
+            return Promise.resolve({
+                data: [makeProduct({ id: 'remaining', name: 'Remaining Product' })],
+                headers: {
+                    'x-total-count': config?.params?.page === 1 && productCalls().length > 1 ? '1' : '100',
+                    'x-total-pages': config?.params?.page === 1 && productCalls().length > 1 ? '1' : '2',
+                },
+            })
+        })
+
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Remaining Product')).toBeTruthy())
+        fireEvent.click(screen.getByText('common.next'))
+
+        await waitFor(() => expect(lastProductsParams().page).toBe(1))
+        await waitFor(() => expect(screen.getByText('Remaining Product')).toBeTruthy())
+        expect(screen.queryByText('common.next')).toBeNull()
     })
 })
 
@@ -574,6 +846,7 @@ describe('Products listing — search clear semantics (F-7)', () => {
         fireEvent.click(screen.getByLabelText('common.clear'))
         await waitFor(() => expect((searchInput as HTMLInputElement).value).toBe(''))
         await waitFor(() => expect(lastProductsParams().search).toBeUndefined())
+        expect(document.activeElement).toBe(searchInput)
         expect(lastProductsParams().categoryId).toBe('c1')
         expect(lastProductsParams().page).toBe(1)
     })
@@ -584,7 +857,7 @@ describe('Products listing — delete/deactivate success path (F-1)', () => {
         await renderLoaded()
         const deleteButtons = screen.getAllByText('common.delete')
         fireEvent.click(deleteButtons[0])
-        await waitFor(() => expect(screen.getByTestId('delete-modal')).toBeTruthy())
+        await waitFor(() => expect(screen.getByTestId('delete-modal')).toHaveAttribute('data-expected-version', '7'))
         const callsBefore = productCalls().length
 
         fireEvent.click(screen.getByText('trigger-delete-success'))
@@ -704,6 +977,54 @@ describe('Products listing — PDF export integration (Phase 3 remediation)', ()
         expect(productCalls().length).toBe(callsBefore)
     })
 
+    it('preserves selection through export so the following bulk action uses the current Product rowVersion', async () => {
+        const user = userEvent.setup()
+        bulkActivateMock.mockResolvedValueOnce(bulkAggregate())
+        await renderLoaded({
+            products: [makeProduct({ id: 'p1', name: 'Alpha Tea', rowVersion: 'export-current-11' })],
+        })
+        selectRowByName('Alpha Tea')
+
+        await clickPdfItem(user, 'products.exportSelected')
+        await waitFor(() => expect(printMock.printed).toHaveLength(1))
+        expect(toolbarButton('products.bulkActionActivate')).not.toBeDisabled()
+
+        fireEvent.click(toolbarButton('products.bulkActionActivate'))
+
+        await waitFor(() => expect(bulkActivateMock).toHaveBeenCalledTimes(1))
+        expect(bulkActivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: 'export-current-11' },
+        ])
+        expect(printMock.printed).toHaveLength(1)
+    })
+
+    it('snapshots selected PDF rows so later live selection changes cannot mutate the pending document', async () => {
+        const user = userEvent.setup()
+        printMock.autoComplete = false
+        await renderLoaded()
+        selectRowByName('Alpha Tea')
+        selectRowByName('Beta Coffee')
+
+        await clickPdfItem(user, 'products.exportSelected')
+        await waitFor(() => expect(printMock.printed).toHaveLength(1))
+
+        // The print dialog is asynchronous; the live table can still receive
+        // state updates while it is open. The hidden report must stay frozen.
+        const visibleAlphaName = screen.getAllByText('Alpha Tea')
+            .find((element) => element.classList.contains('break-words'))
+        const visibleAlphaRow = visibleAlphaName?.closest('tr')
+        if (!visibleAlphaRow) throw new Error('visible Alpha Tea row not found')
+        fireEvent.click(within(visibleAlphaRow).getAllByRole('checkbox')[0])
+        const report = document.querySelector('.products-export-report')
+        expect(report?.textContent).toContain('Alpha Tea')
+        expect(report?.textContent).toContain('Beta Coffee')
+        expect(report?.textContent).not.toContain('Gamma Blend')
+
+        await act(async () => {
+            (printMock.latestOptions?.onAfterPrint as (() => void) | undefined)?.()
+        })
+    })
+
     it('keeps PDF selected unavailable when nothing is selected', async () => {
         const user = userEvent.setup()
         await renderLoaded()
@@ -717,6 +1038,73 @@ describe('Products listing — PDF export integration (Phase 3 remediation)', ()
 
         await user.click(selectedItems[1]).catch(() => { /* disabled item may reject */ })
         expect(printMock.printed).toHaveLength(0)
+    })
+
+    it('keeps the export lock until the print workflow completes', async () => {
+        const user = userEvent.setup()
+        printMock.autoComplete = false
+        await renderLoaded()
+
+        await clickPdfItem(user, 'products.exportCurrentView')
+        await waitFor(() => expect(printMock.printed).toHaveLength(1))
+
+        const trigger = screen.getByRole('button', { name: 'products.exportMenuAria' })
+        expect(trigger).toBeDisabled()
+        expect(screen.getByText('products.exporting')).toBeInTheDocument()
+
+        await act(async () => {
+            (printMock.latestOptions?.onAfterPrint as (() => void) | undefined)?.()
+        })
+
+        await waitFor(() => expect(trigger).not.toBeDisabled())
+        expect(printMock.printed).toHaveLength(1)
+    })
+
+    it('unlocks after a PDF error and exposes only the localized message', async () => {
+        const user = userEvent.setup()
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        printMock.autoComplete = false
+        await renderLoaded()
+
+        await clickPdfItem(user, 'products.exportCurrentView')
+        await waitFor(() => expect(printMock.printed).toHaveLength(1))
+
+        await act(async () => {
+            const onPrintError = printMock.latestOptions?.onPrintError as
+                | ((location: string, error: Error) => void)
+                | undefined
+            onPrintError?.('print', new Error('Authorization: Bearer secret-token'))
+        })
+
+        expect(showErrorMock).toHaveBeenCalledWith('products.exportFailed')
+        expect(document.body.textContent).not.toContain('secret-token')
+        await waitFor(() => expect(screen.getByRole('button', { name: 'products.exportMenuAria' })).not.toBeDisabled())
+        consoleError.mockRestore()
+    })
+
+    it('disables export when a replacement query fails and visible rows are stale', async () => {
+        const user = userEvent.setup()
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        await renderLoaded()
+        const originalImplementation = apiGetMock.getMockImplementation()
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/products' && config?.params?.search === 'new-query') {
+                return Promise.reject(new Error('transport detail'))
+            }
+            return originalImplementation?.(url, config)
+        })
+
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+        fireEvent.change(searchInput, { target: { value: 'new-query' } })
+        fireEvent.submit(searchInput.closest('form')!)
+
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('products.failedToLoad'))
+        const trigger = screen.getByRole('button', { name: 'products.exportMenuAria' })
+        expect(trigger).toBeDisabled()
+        expect(trigger).toHaveAttribute('title', 'products.exportNothingToExport')
+        await user.click(trigger)
+        expect(printMock.printed).toHaveLength(0)
+        consoleError.mockRestore()
     })
 })
 
@@ -739,6 +1127,51 @@ describe('Products embedded Product Feed management', () => {
 
         await user.click(screen.getByRole('button', { name: 'common.close' }))
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    })
+
+    it('does not mutate table search, selection, pagination, or product reads when opened and closed', async () => {
+        const user = userEvent.setup()
+        await renderLoaded()
+        const searchInput = screen.getByLabelText('products.searchPlaceholder') as HTMLInputElement
+        fireEvent.change(searchInput, { target: { value: 'unsent table draft' } })
+        selectRowByName('Alpha Tea')
+        const productReadsBefore = productCalls().length
+
+        const productFeedButton = screen.getByRole('button', { name: 'productFeed.title' })
+        await user.click(productFeedButton)
+        await screen.findByRole('dialog')
+        await user.click(screen.getByRole('button', { name: 'common.close' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+        expect(productFeedButton).toHaveFocus()
+        expect(searchInput.value).toBe('unsent table draft')
+        expect(rowCheckboxes().some((checkbox) => checkbox.checked)).toBe(true)
+        expect(lastProductsParams()).toMatchObject({ page: 1, pageSize: 50 })
+        expect(productCalls()).toHaveLength(productReadsBefore)
+    })
+
+    it('keeps Feed state isolated so a post-close bulk action uses the retained selection and rowVersion', async () => {
+        const user = userEvent.setup()
+        bulkActivateMock.mockResolvedValueOnce(bulkAggregate())
+        await renderLoaded({
+            products: [makeProduct({ id: 'p1', name: 'Alpha Tea', rowVersion: 'feed-current-21' })],
+        })
+        selectRowByName('Alpha Tea')
+
+        const productFeedButton = screen.getByRole('button', { name: 'productFeed.title' })
+        await user.click(productFeedButton)
+        await screen.findByRole('dialog')
+        await user.click(screen.getByRole('button', { name: 'common.close' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+        expect(productFeedButton).toHaveFocus()
+        expect(toolbarButton('products.bulkActionActivate')).not.toBeDisabled()
+        fireEvent.click(toolbarButton('products.bulkActionActivate'))
+
+        await waitFor(() => expect(bulkActivateMock).toHaveBeenCalledTimes(1))
+        expect(bulkActivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: 'feed-current-21' },
+        ])
     })
 
     it('retains a created channel URL for Copy and Open after dialog close and reopen', async () => {
@@ -1212,6 +1645,160 @@ describe('Products bulk Activate/Deactivate actions (Phase 6G.3)', () => {
         })
         await waitFor(() => expect(screen.getByText('Products activated')).toBeTruthy())
         expect(bulkActivateMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps the immutable bulk snapshot while Search changes and lets only the terminal latest-query refresh commit', async () => {
+        const mutation = createDeferred<ReturnType<typeof bulkAggregate>>()
+        const staleSearchRead = createDeferred<{ data: unknown[]; headers: Record<string, string> }>()
+        let searchedReads = 0
+
+        bulkActivateMock.mockReturnValueOnce(mutation.promise)
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/categories') return Promise.resolve({ data: [] })
+            if (url === '/products' && config?.params?.search === 'new query') {
+                searchedReads += 1
+                if (searchedReads === 1) return staleSearchRead.promise
+                return Promise.resolve({
+                    data: [makeProduct({ id: 'fresh-result', name: 'Fresh Search Result', rowVersion: '900' })],
+                    headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+                })
+            }
+            return Promise.resolve({
+                data: [makeProduct({ id: 'p1', name: 'Alpha Tea', rowVersion: '101' })],
+                headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+            })
+        })
+
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Alpha Tea')).toBeTruthy())
+        selectRowByName('Alpha Tea')
+        fireEvent.click(toolbarButton('products.bulkActionActivate'))
+
+        expect(bulkActivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: '101' },
+        ])
+
+        const searchInput = screen.getByLabelText('products.searchPlaceholder')
+        fireEvent.change(searchInput, { target: { value: 'new query' } })
+        fireEvent.submit(searchInput.closest('form')!)
+        await waitFor(() => expect(searchedReads).toBe(1))
+
+        await act(async () => {
+            mutation.resolve(bulkAggregate())
+        })
+
+        await waitFor(() => expect(searchedReads).toBe(2))
+        await waitFor(() => expect(screen.getByText('Fresh Search Result')).toBeTruthy())
+
+        await act(async () => {
+            staleSearchRead.resolve({
+                data: [makeProduct({ id: 'stale-result', name: 'Stale Search Result', rowVersion: '800' })],
+                headers: { 'x-total-count': '1', 'x-total-pages': '1' },
+            })
+            await Promise.resolve()
+        })
+
+        expect(screen.getByText('Fresh Search Result')).toBeTruthy()
+        expect(screen.queryByText('Stale Search Result')).toBeNull()
+        expect(lastProductsParams().search).toBe('new query')
+        expect(bulkActivateMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps Filter and Sort changes authoritative without changing a pending bulk payload', async () => {
+        const mutation = createDeferred<ReturnType<typeof bulkAggregate>>()
+        bulkDeactivateMock.mockReturnValueOnce(mutation.promise)
+        await renderLoaded({
+            products: [makeProduct({ id: 'p1', name: 'Alpha Tea', rowVersion: '301' })],
+        })
+
+        selectRowByName('Alpha Tea')
+        fireEvent.click(toolbarButton('products.bulkActionDeactivate'))
+        fireEvent.click(screen.getByLabelText('products.featured'))
+        const priceSort = within(screen.getByText('Price').closest('th')!).getByRole('button')
+        fireEvent.click(priceSort)
+
+        await waitFor(() => expect(lastProductsParams()).toMatchObject({
+            isFeatured: true,
+            sortBy: 'price',
+            sortDirection: 'asc',
+            page: 1,
+        }))
+
+        await act(async () => {
+            mutation.resolve(bulkAggregate())
+        })
+
+        await waitFor(() => expect(screen.getByText('Products deactivated')).toBeTruthy())
+        expect(lastProductsParams()).toMatchObject({
+            isFeatured: true,
+            sortBy: 'price',
+            sortDirection: 'asc',
+            page: 1,
+        })
+        expect(bulkDeactivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: '301' },
+        ])
+        expect(bulkDeactivateMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps a Page 1 bulk target immutable after navigation and refreshes the current Page 2', async () => {
+        const mutation = createDeferred<ReturnType<typeof bulkAggregate>>()
+        bulkActivateMock.mockReturnValueOnce(mutation.promise)
+        apiGetMock.mockImplementation((url: string, config?: { params?: Record<string, unknown> }) => {
+            if (url === '/categories') return Promise.resolve({ data: [] })
+            if (url === '/products') {
+                const requestedPage = Number(config?.params?.page ?? 1)
+                return Promise.resolve({
+                    data: requestedPage === 2
+                        ? [makeProduct({ id: 'p2', name: 'Page Two Product', rowVersion: '202' })]
+                        : [makeProduct({ id: 'p1', name: 'Page One Product', rowVersion: '101' })],
+                    headers: { 'x-total-count': '100', 'x-total-pages': '2' },
+                })
+            }
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Page One Product')).toBeTruthy())
+        selectRowByName('Page One Product')
+        fireEvent.click(toolbarButton('products.bulkActionActivate'))
+        fireEvent.click(screen.getByText('common.next'))
+
+        await waitFor(() => expect(screen.getByText('Page Two Product')).toBeTruthy())
+        await act(async () => {
+            mutation.resolve(bulkAggregate())
+        })
+
+        await waitFor(() => expect(screen.getByText('Products activated')).toBeTruthy())
+        await waitFor(() => expect(lastProductsParams().page).toBe(2))
+        expect(screen.getByText('Page Two Product')).toBeTruthy()
+        expect(bulkActivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: '101' },
+        ])
+        expect(bulkActivateMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('uses the canonical fresh rowVersion after returning from Product authoring or Variant editing', async () => {
+        bulkActivateMock.mockResolvedValueOnce(bulkAggregate())
+        mockProductsApi({
+            products: [makeProduct({ id: 'p1', name: 'Edited Product', rowVersion: 'before-edit' })],
+        })
+        const firstMount = render(<Products />)
+        await waitFor(() => expect(screen.getByText('Edited Product')).toBeTruthy())
+        firstMount.unmount()
+
+        mockProductsApi({
+            products: [makeProduct({ id: 'p1', name: 'Edited Product', rowVersion: 'after-edit' })],
+        })
+        render(<Products />)
+        await waitFor(() => expect(screen.getByText('Edited Product')).toBeTruthy())
+        selectRowByName('Edited Product')
+        fireEvent.click(toolbarButton('products.bulkActionActivate'))
+
+        await waitFor(() => expect(bulkActivateMock).toHaveBeenCalledTimes(1))
+        expect(bulkActivateMock).toHaveBeenCalledWith([
+            { productId: 'p1', expectedVersion: 'after-edit' },
+        ])
     })
 
     it('blocks rapid Deactivate clicks into exactly one request', async () => {

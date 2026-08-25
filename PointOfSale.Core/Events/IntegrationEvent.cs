@@ -32,6 +32,13 @@ public interface INonAuthoritativeIntegrationEvent;
 public interface IAuthoritativeIntegrationEvent;
 
 /// <summary>
+/// Marker for authoritative events whose source aggregate is owned by the platform rather than a tenant.
+/// These events must remain tenantless and retain the same aggregate ordering and transactional outbox
+/// requirements as other authoritative events.
+/// </summary>
+public interface IGlobalPlatformIntegrationEvent : IAuthoritativeIntegrationEvent;
+
+/// <summary>
 /// Implement on authoritative events whose business aggregate is not safely inferred
 /// from generic property-name ordering.
 /// CRITICAL: This interface extends IAuthoritativeIntegrationEvent to enforce that only
@@ -44,7 +51,7 @@ public interface IAggregateScopedIntegrationEvent : IAuthoritativeIntegrationEve
 
 /// <summary>
 /// Base class for all integration events used in event-driven communication.
-/// All events are now tenant-aware to support multi-tenant SaaS architecture.
+/// Events are tenant-aware unless they explicitly implement IGlobalPlatformIntegrationEvent.
 /// </summary>
 public abstract class IntegrationEvent
 {
@@ -110,8 +117,7 @@ public abstract class IntegrationEvent
     public Guid? UserId { get; set; }
     
     /// <summary>
-    /// Tenant ID that owns this event's data.
-    /// CRITICAL: Events must NEVER be tenant-agnostic going forward.
+    /// Tenant ID that owns this event's data. Null is valid only for explicitly marked global platform events.
     /// This enables safe consumption by MongoDB, Redis, Elasticsearch, and other downstream systems.
     /// </summary>
     public Guid? TenantId { get; set; }

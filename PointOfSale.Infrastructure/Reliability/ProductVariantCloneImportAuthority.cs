@@ -175,6 +175,7 @@ public static class ProductVariantCloneImportAuthority
             .IgnoreQueryFilters()
             .AsNoTracking()
             .AnyAsync(productUnit =>
+                productUnit.ProductId != productId &&
                 !productUnit.IsDeleted &&
                 productUnit.Product.TenantId == tenantId &&
                 !productUnit.Product.IsDeleted &&
@@ -202,6 +203,7 @@ public static class ProductVariantCloneImportAuthority
             .AsNoTracking()
             .WhereCurrentSemanticOwner()
             .AnyAsync(variant =>
+                variant.ProductId != productId &&
                 variant.TenantId == tenantId &&
                 !variant.IsDeleted &&
                 variant.Barcode == normalizedBarcode,

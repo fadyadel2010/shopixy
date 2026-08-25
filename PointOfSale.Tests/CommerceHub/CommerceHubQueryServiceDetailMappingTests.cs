@@ -96,6 +96,75 @@ public sealed class CommerceHubQueryServiceDetailMappingTests
         Assert.Null(result.Variants[0].ImageUrl);
     }
 
+    [Fact]
+    public void MapDetail_MustKeepListingPriceAndExcludeVariantsWithoutListingIdentity()
+    {
+        var listing = new CommerceHubProductDocument
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            VariantId = Guid.NewGuid(),
+            ProductName = "Runner Pro",
+            CategoryId = Guid.NewGuid(),
+            Currency = "EGP",
+            Price = 125m,
+            CommerceHubPriceOverride = 125m,
+            OverridePresent = true,
+            IsPublished = true,
+            InStock = true,
+            AvailableStock = 4m
+        };
+        var unrelatedVariantId = Guid.NewGuid();
+        var product = new ProductDocument
+        {
+            TenantId = listing.TenantId,
+            ProductId = listing.ProductId,
+            Name = listing.ProductName,
+            IsActive = true,
+            IsOnlineVisible = true,
+            HasVariants = true,
+            Media = new List<ProductMediaDocument>(),
+            Variants = new List<ProductVariantDocument>
+            {
+                new()
+                {
+                    VariantId = listing.VariantId,
+                    Price = 190m,
+                    OnlinePrice = 175m,
+                    IsActive = true,
+                    TotalStock = 20m
+                },
+                new()
+                {
+                    VariantId = unrelatedVariantId,
+                    Price = 80m,
+                    OnlinePrice = 70m,
+                    IsDefault = true,
+                    IsActive = true,
+                    TotalStock = 30m
+                }
+            }
+        };
+
+        var result = InvokeMapDetail(listing, product);
+
+        Assert.Equal(listing.Id, result.Id);
+        Assert.Equal(listing.VariantId, result.InitialVariantId);
+        Assert.Equal(listing.VariantId, result.DefaultVariantId);
+        Assert.Equal(listing.Price, result.Price);
+        Assert.False(result.HasVariants);
+
+        var variant = Assert.Single(result.Variants);
+        Assert.Equal(listing.VariantId, variant.Id);
+        Assert.Equal(listing.Price, variant.Price);
+        Assert.Equal(listing.Price, variant.OnlinePrice);
+        Assert.Equal(listing.Price, variant.EffectivePrice);
+        Assert.Equal(4, variant.TotalStock);
+        Assert.True(variant.IsDefault);
+        Assert.DoesNotContain(result.Variants, item => item.Id == unrelatedVariantId);
+    }
+
     private static CommerceHubProductDetailDto InvokeMapDetail(
         CommerceHubProductDocument listing,
         ProductDocument? product)

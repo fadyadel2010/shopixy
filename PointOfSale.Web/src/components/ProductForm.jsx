@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
-import api from '../services/api'
+import api, { getSafeApiErrorMessage } from '../services/api'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import ProductMediaManager from '../components/ProductMediaManager'
@@ -174,41 +174,105 @@ function translateWithFallback(t, key, fallback) {
     return value && value !== key ? value : fallback
 }
 
-function extractApiErrorMessage(error, fallback) {
+const SAFE_AUTHORING_ERROR_CODES = new Set([
+    'PRODUCT_ACTIVE_PRICED_VARIANT_REQUIRED',
+    'PRODUCT_BARCODE_OWNERSHIP_CONFLICT',
+    'PRODUCT_BARCODE_TOO_LONG',
+    'PRODUCT_BASE_UNIT_CONVERSION_FACTOR_INVALID',
+    'PRODUCT_BASE_UNIT_DUPLICATE',
+    'PRODUCT_BASE_UNIT_REQUIRED',
+    'PRODUCT_CATEGORY_NOT_LIVE',
+    'PRODUCT_CATEGORY_REQUIRED',
+    'PRODUCT_DEFAULT_UNIT_DUPLICATE',
+    'PRODUCT_DEFAULT_UNIT_PRICE_REQUIRED',
+    'PRODUCT_DEFAULT_UNIT_REQUIRED',
+    'PRODUCT_NAME_REQUIRED',
+    'PRODUCT_NAME_TOO_LONG',
+    'PRODUCT_PUBLISH_STATUS_INVALID',
+    'PRODUCT_SKU_TOO_LONG',
+    'PRODUCT_TAX_RATE_INVALID',
+    'PRODUCT_TEMPLATE_TOO_LONG',
+    'PRODUCT_VARIANT_ATTRIBUTE_NAME_TOO_LONG',
+    'PRODUCT_VARIANT_ATTRIBUTE_VALUE_TOO_LONG',
+    'PRODUCT_VARIANT_BARCODE_TOO_LONG',
+    'PRODUCT_VARIANT_COST_PRICE_INVALID',
+    'PRODUCT_VARIANT_IMAGE_URL_TOO_LONG',
+    'PRODUCT_VARIANT_ONLINE_PRICE_INVALID',
+    'PRODUCT_VARIANT_PRICE_INVALID',
+    'PRODUCT_VARIANT_SKU_TOO_LONG',
+    'PRODUCT_VARIANT_WEIGHT_INVALID',
+    'PRODUCT_UNIT_CONVERSION_FACTORS_INVALID',
+    'PRODUCT_UNIT_CONVERSION_FACTOR_REQUIRED',
+    'PRODUCT_UNIT_DUPLICATE',
+    'PRODUCT_UNIT_NOT_FOUND',
+    'PRODUCT_UNIT_NAME_TOO_LONG',
+    'PRODUCT_UNITS_REQUIRED',
+    'SIMPLE_PRODUCT_VARIANT_STATE_INVALID',
+    'VARIANT_PRODUCT_VARIANT_STATE_REQUIRED'
+])
+
+const UNSAFE_ERROR_MESSAGE_PATTERN = /exception|stack\s*trace|\bat\s+\S+\(|sql|select\s+.+\s+from|system\.|authorization|bearer|tenant/i
+
+function isSafeAuthoringMessage(value) {
+    return typeof value === 'string'
+        && value.trim().length > 0
+        && value.length <= 240
+        && !UNSAFE_ERROR_MESSAGE_PATTERN.test(value)
+}
+
+function extractApiErrorMessage(error, fallback, t) {
+    const status = error?.response?.status
     const data = error?.response?.data
     const nestedData = data?.data
 
-    if (Array.isArray(data?.errors)) {
-        const messages = data.errors
-            .map((item) => item?.message || item?.Message)
-            .filter(Boolean)
-
-        if (messages.length > 0) {
-            return messages.join(' ')
-        }
+    if (status === 409) {
+        return translateWithFallback(
+            t,
+            'products.concurrencyConflict',
+            'This product changed while you were editing it. Refresh the product before retrying.'
+        )
     }
 
-    if (data?.errors && typeof data.errors === 'object') {
+    if (status === 404) {
+        return translateWithFallback(
+            t,
+            'products.noLongerAvailable',
+            'This product is no longer available. Return to Products and refresh the list.'
+        )
+    }
+
+    if (!error?.response) {
+        return translateWithFallback(
+            t,
+            'products.saveOutcomeUncertain',
+            'The save outcome could not be confirmed. Refresh the product before retrying.'
+        )
+    }
+
+    const validationItems = [
+        ...(Array.isArray(data?.errors) ? data.errors : []),
+        ...(Array.isArray(nestedData?.errors) ? nestedData.errors : [])
+    ]
+    const validationMessages = validationItems
+        .filter((item) => SAFE_AUTHORING_ERROR_CODES.has(item?.code || item?.Code))
+        .map((item) => item?.message || item?.Message)
+        .filter(isSafeAuthoringMessage)
+
+    if ((status === 400 || status === 422) && validationMessages.length > 0) {
+        return validationMessages.join(' ')
+    }
+
+    if ((status === 400 || status === 422) && data?.errors && typeof data.errors === 'object' && !Array.isArray(data.errors)) {
         const messages = Object.values(data.errors)
             .flatMap((value) => Array.isArray(value) ? value : [value])
-            .filter(Boolean)
+            .filter(isSafeAuthoringMessage)
 
         if (messages.length > 0) {
             return messages.join(' ')
         }
     }
 
-    if (Array.isArray(nestedData?.errors)) {
-        const messages = nestedData.errors
-            .map((item) => item?.message || item?.Message)
-            .filter(Boolean)
-
-        if (messages.length > 0) {
-            return messages.join(' ')
-        }
-    }
-
-    return nestedData?.message || data?.message || data?.error || fallback
+    return getSafeApiErrorMessage(error, fallback)
 }
 
 function getProductRowVersion(product, fallback = null) {
@@ -265,7 +329,6 @@ function buildProductAuthoringPayloadFromDraft({
     return {
         ...formData,
         taxRate: parseFloat(formData.taxRate) || 0,
-        images: null,
         categoryId: formData.categoryId,
         hasVariants,
         sku: hasVariants ? null : simpleProductData.sku,
@@ -276,7 +339,7 @@ function buildProductAuthoringPayloadFromDraft({
         height: formData.height ? parseFloat(formData.height) : null,
         lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
         publishStatus: isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus),
-        productTemplate: formData.isOnlineVisible ? (formData.productTemplate || 'default') : null,
+        productTemplate: formData.productTemplate || 'default',
         productUnits: hasVariants ? null : buildProductUnitsPayloadFromDrafts(productUnits),
         variants: hasVariants
             ? (productId && !includeVariants ? null : variantSnapshot)
@@ -414,44 +477,8 @@ function buildGeneratedDescription(generatedProduct) {
     return sections.join('\n\n').trim()
 }
 
-const ProductForm = forwardRef(function ProductForm({
-    productId,
-    onClose,
-    onSave,
-    mode = 'modal',
-    formId = 'product-form',
-    hideActions = false,
-    onMetaChange,
-    focusSection
-}, ref) {
-    const { t } = useTranslation()
-    const { confirm } = useConfirmDialog()
-    const { formatCurrency } = useSettings()
-    const { showError, showSuccess } = useToast()
-    const userRole = useAuthStore((state) => state.user?.role)
-    const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
-    const [loading, setLoading] = useState(false)
-    const variantsTabRef = useRef(null)
-    const variantsSectionRef = useRef(null)
-    const formDataRef = useRef(null)
-    const pendingSaveRef = useRef(null)
-    const lastProductSaveErrorRef = useRef('')
-    const productAuthoringBaselineRef = useRef(null)
-    const [categories, setCategories] = useState([])
-    const [units, setUnits] = useState([])
-    const [generatingBarcode, setGeneratingBarcode] = useState(false)
-    const [error, setError] = useState('')
-    const [productTemplateOptions, setProductTemplateOptions] = useState(getProductTemplateOptions())
-    const [hasVariants, setHasVariants] = useState(false)
-    const [defaultVariant, setDefaultVariant] = useState(null)
-    const [productUnits, setProductUnits] = useState([])
-    const [variantAuthoringSummary, setVariantAuthoringSummary] = useState([])
-    const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
-    const [simpleProductData, setSimpleProductData] = useState({
-        sku: '',
-        barcode: ''
-    })
-    const [formData, setFormData] = useState({
+function createInitialProductFormData() {
+    return {
         name: '',
         nameAr: '',
         categoryId: '',
@@ -486,7 +513,49 @@ const ProductForm = forwardRef(function ProductForm({
         faqs: [],
         aiGenerated: false,
         aiMetadata: null
+    }
+}
+
+const ProductForm = forwardRef(function ProductForm({
+    productId,
+    onClose,
+    onSave,
+    mode = 'modal',
+    formId = 'product-form',
+    hideActions = false,
+    onMetaChange,
+    focusSection
+}, ref) {
+    const { t } = useTranslation()
+    const { confirm } = useConfirmDialog()
+    const { formatCurrency } = useSettings()
+    const { showError, showSuccess } = useToast()
+    const userRole = useAuthStore((state) => state.user?.role)
+    const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
+    const [loading, setLoading] = useState(false)
+    const variantsTabRef = useRef(null)
+    const variantsSectionRef = useRef(null)
+    const formDataRef = useRef(null)
+    const pendingSaveRef = useRef(null)
+    const pendingSavePromiseRef = useRef(null)
+    const productIdentityGenerationRef = useRef(0)
+    const lastProductSaveErrorRef = useRef('')
+    const productAuthoringBaselineRef = useRef(null)
+    const [categories, setCategories] = useState([])
+    const [units, setUnits] = useState([])
+    const [generatingBarcode, setGeneratingBarcode] = useState(false)
+    const [error, setError] = useState('')
+    const [productTemplateOptions, setProductTemplateOptions] = useState(getProductTemplateOptions())
+    const [hasVariants, setHasVariants] = useState(false)
+    const [defaultVariant, setDefaultVariant] = useState(null)
+    const [productUnits, setProductUnits] = useState([])
+    const [variantAuthoringSummary, setVariantAuthoringSummary] = useState([])
+    const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
+    const [simpleProductData, setSimpleProductData] = useState({
+        sku: '',
+        barcode: ''
     })
+    const [formData, setFormData] = useState(createInitialProductFormData)
 
     const isWorkspace = mode === 'workspace'
     const isCreateMode = !productId
@@ -497,11 +566,47 @@ const ProductForm = forwardRef(function ProductForm({
     }, [formData])
 
     useEffect(() => {
+        productIdentityGenerationRef.current += 1
+        const identityGeneration = productIdentityGenerationRef.current
+        let isCurrentProduct = true
+        const initialFormData = createInitialProductFormData()
+
+        formDataRef.current = initialFormData
+        setFormData(initialFormData)
+        setHasVariants(false)
+        setDefaultVariant(null)
+        setProductUnits([])
+        setVariantAuthoringSummary([])
+        setAcceptedRowVersion(null)
+        setSimpleProductData({ sku: '', barcode: '' })
+        setError('')
+        pendingSaveRef.current = null
+        pendingSavePromiseRef.current = null
+        productAuthoringBaselineRef.current = productId
+            ? null
+            : createCanonicalProductAuthoringSnapshot(buildProductAuthoringPayloadFromDraft({
+                formData: initialFormData,
+                productId: null,
+                hasVariants: false,
+                simpleProductData: { sku: '', barcode: '' },
+                productUnits: [],
+                variantAuthoringSummary: []
+            }))
+
         fetchCategories()
         fetchUnits()
         fetchProductTemplates()
         if (productId) {
-            fetchProduct()
+            void fetchProduct(productId, () => isCurrentProduct)
+        } else {
+            setLoading(false)
+        }
+
+        return () => {
+            isCurrentProduct = false
+            if (productIdentityGenerationRef.current === identityGeneration) {
+                productIdentityGenerationRef.current += 1
+            }
         }
     }, [productId])
 
@@ -544,8 +649,23 @@ const ProductForm = forwardRef(function ProductForm({
         !!(productId && hasVariants && variantsTabRef.current?.hasPendingChanges?.())
     )
 
+    const hasPendingProductChanges = () => {
+        if (!productAuthoringBaselineRef.current) {
+            return !productId
+        }
+
+        return hasSemanticProductAuthoringChanges(
+            productAuthoringBaselineRef.current,
+            buildProductAuthoringPayload({ includeVariants: false })
+        )
+    }
+
     const requestDiscardPendingChanges = async () => {
-        if (!hasPendingVariantChanges()) {
+        if (pendingSavePromiseRef.current) {
+            return false
+        }
+
+        if (!hasPendingProductChanges() && !hasPendingVariantChanges()) {
             return true
         }
 
@@ -559,7 +679,7 @@ const ProductForm = forwardRef(function ProductForm({
 
     useImperativeHandle(ref, () => ({
         hasPendingChanges() {
-            return hasPendingVariantChanges()
+            return hasPendingProductChanges() || hasPendingVariantChanges()
         },
         async confirmDiscardPendingChanges() {
             return await requestDiscardPendingChanges()
@@ -632,14 +752,14 @@ const ProductForm = forwardRef(function ProductForm({
 
             return counters
         }
-    }), [productId, hasVariants, confirm, showError, showSuccess, t])
+    }), [productId, hasVariants, formData, productUnits, simpleProductData, variantAuthoringSummary, confirm, showError, showSuccess, t])
 
     const fetchCategories = async () => {
         try {
             const response = await api.get('/categories')
             setCategories(response.data)
-        } catch (err) {
-            console.error('Failed to load categories', err)
+        } catch {
+            console.error('Failed to load categories')
         }
     }
 
@@ -647,8 +767,8 @@ const ProductForm = forwardRef(function ProductForm({
         try {
             const response = await api.get('/units')
             setUnits(response.data)
-        } catch (err) {
-            console.error('Failed to load units', err)
+        } catch {
+            console.error('Failed to load units')
         }
     }
 
@@ -656,16 +776,18 @@ const ProductForm = forwardRef(function ProductForm({
         try {
             const response = await api.get('/admin/store-config')
             setProductTemplateOptions(getProductTemplateOptions(response.data?.productTemplates))
-        } catch (err) {
-            console.error('Failed to load product templates', err)
+        } catch {
+            console.error('Failed to load product templates')
             setProductTemplateOptions(getProductTemplateOptions())
         }
     }
 
-    const fetchProduct = async () => {
+    const fetchProduct = async (targetProductId, isCurrentProduct = () => true) => {
         try {
             setLoading(true)
-            const response = await api.get(`/products/${productId}`)
+            const response = await api.get(`/products/${targetProductId}`)
+            if (!isCurrentProduct()) return
+
             const product = response.data
             const variantCount = Array.isArray(product.variants) ? product.variants.length : 0
             const derivedHasVariants = !!product.hasVariants || variantCount > 1
@@ -716,7 +838,9 @@ const ProductForm = forwardRef(function ProductForm({
             setFormData(loadedFormData)
 
             if (!derivedHasVariants) {
-                const defaultVariantLoad = await fetchDefaultVariant()
+                const defaultVariantLoad = await fetchDefaultVariant(targetProductId, isCurrentProduct)
+                if (!isCurrentProduct()) return
+
                 loadedHasVariants = defaultVariantLoad?.hasVariants || false
                 loadedSimpleProductData = defaultVariantLoad?.simpleProductData || loadedSimpleProductData
                 loadedVariants = defaultVariantLoad?.variants || loadedVariants
@@ -724,23 +848,29 @@ const ProductForm = forwardRef(function ProductForm({
 
             productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(buildProductAuthoringPayloadFromDraft({
                 formData: loadedFormData,
-                productId,
+                productId: targetProductId,
                 hasVariants: loadedHasVariants,
                 simpleProductData: loadedSimpleProductData,
                 productUnits: loadedProductUnits,
                 variantAuthoringSummary: loadedVariants,
                 includeVariants: loadedHasVariants
             }))
-        } catch (err) {
-            setError(t('products.failedToLoad'))
+        } catch {
+            if (isCurrentProduct()) {
+                setError(t('products.failedToLoad'))
+            }
         } finally {
-            setLoading(false)
+            if (isCurrentProduct()) {
+                setLoading(false)
+            }
         }
     }
 
-    const fetchDefaultVariant = async () => {
+    const fetchDefaultVariant = async (targetProductId = productId, isCurrentProduct = () => true) => {
         try {
-            const response = await api.get(`/products/${productId}/variants`)
+            const response = await api.get(`/products/${targetProductId}/variants`)
+            if (!isCurrentProduct()) return null
+
             const variants = response.data || []
 
             if (variants.length > 1) {
@@ -777,8 +907,10 @@ const ProductForm = forwardRef(function ProductForm({
                 defaultVariant: null,
                 simpleProductData: { sku: '', barcode: '' }
             }
-        } catch (err) {
-            console.error('Failed to load default variant', err)
+        } catch {
+            if (isCurrentProduct()) {
+                console.error('Failed to load default variant')
+            }
             return {
                 hasVariants: false,
                 variants: [],
@@ -793,7 +925,7 @@ const ProductForm = forwardRef(function ProductForm({
             setGeneratingBarcode(true)
             const response = await api.post(`/products/generate-barcode?type=${type}`)
             setSimpleProductData(prev => ({ ...prev, barcode: response.data.barcode }))
-        } catch (err) {
+        } catch {
             setError(t('products.failedToGenerateBarcode'))
         } finally {
             setGeneratingBarcode(false)
@@ -896,6 +1028,22 @@ const ProductForm = forwardRef(function ProductForm({
         includeVariants
     })
 
+    const hasUnsavedProductChanges = hasPendingProductChanges()
+
+    useEffect(() => {
+        if (!hasUnsavedProductChanges || loading) {
+            return undefined
+        }
+
+        const handleBeforeUnload = (event) => {
+            event.preventDefault()
+            event.returnValue = ''
+        }
+
+        window.addEventListener('beforeunload', handleBeforeUnload)
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+    }, [hasUnsavedProductChanges, loading])
+
     const handleVariantDraftChange = useCallback((draft) => {
         setVariantAuthoringSummary(normalizeProductAuthoringVariants(draft?.authoringVariants))
     }, [])
@@ -954,7 +1102,8 @@ const ProductForm = forwardRef(function ProductForm({
         return null
     }
 
-    const saveProductAuthoring = async ({ variantsOverride = null, includeVariants = false } = {}) => {
+    const performProductAuthoringSave = async ({ variantsOverride = null, includeVariants = false } = {}) => {
+        const saveIdentityGeneration = productIdentityGenerationRef.current
         lastProductSaveErrorRef.current = ''
 
         if (!formData.categoryId) {
@@ -988,17 +1137,6 @@ const ProductForm = forwardRef(function ProductForm({
                 }
             }
 
-            if (import.meta.env.DEV) {
-                console.info('[ProductForm] Submitting product payload', {
-                    productId,
-                    expectedRowVersion: effectiveRowVersion || null,
-                    includesVariantDraft: includeVariants,
-                    isOnlineVisible: formData.isOnlineVisible,
-                    selectedProductTemplate: formData.productTemplate,
-                    payloadProductTemplate: productData.productTemplate
-                })
-            }
-
             const saveFingerprint = JSON.stringify({
                 productId: productId || null,
                 rowVersion: productId ? effectiveRowVersion || null : null,
@@ -1015,45 +1153,57 @@ const ProductForm = forwardRef(function ProductForm({
             if (productId) {
                 const response = await api.put(`/products/${productId}`, productData, requestOptions)
                 savedProduct = response.data || { id: productId }
+                if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
+                    return { __productAuthoringStaleResponse: true }
+                }
                 const returnedRowVersion = getProductRowVersion(savedProduct, acceptedRowVersion)
                 setAcceptedRowVersion(returnedRowVersion)
                 productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(productData, productAuthoringBaselineRef.current)
-                if (import.meta.env.DEV) {
-                    console.info('[ProductForm] Product PUT saved', {
-                        productId,
-                        expectedRowVersion: effectiveRowVersion || null,
-                        returnedRowVersion: returnedRowVersion || null
-                    })
-                }
             } else {
                 const response = await api.post('/products', productData, requestOptions)
                 savedProduct = response.data
+                if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
+                    return { __productAuthoringStaleResponse: true }
+                }
                 const returnedRowVersion = getProductRowVersion(savedProduct)
                 setAcceptedRowVersion(returnedRowVersion)
                 productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(productData)
-                if (import.meta.env.DEV) {
-                    console.info('[ProductForm] Product POST saved', {
-                        productId: savedProduct?.id || null,
-                        returnedRowVersion: returnedRowVersion || null
-                    })
-                }
             }
 
             invalidatePosRuntimeCache({ reason: 'product-updated' })
             showSuccess(t('common.updatedSuccessfully') || 'Saved successfully')
-            onSave({
+            onSave?.({
                 ...savedProduct,
                 hasVariants: savedProduct?.hasVariants ?? hasVariants
             })
             pendingSaveRef.current = null
             return savedProduct
         } catch (err) {
-            const message = extractApiErrorMessage(err, t('products.failedToSave'))
+            if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
+                return { __productAuthoringStaleResponse: true }
+            }
+            const message = extractApiErrorMessage(err, t('products.failedToSave'), t)
             lastProductSaveErrorRef.current = message
             setError(message)
             showError(message)
             return false
         }
+    }
+
+    const saveProductAuthoring = (options = {}) => {
+        if (pendingSavePromiseRef.current) {
+            return pendingSavePromiseRef.current
+        }
+
+        const savePromise = performProductAuthoringSave(options)
+            .finally(() => {
+                if (pendingSavePromiseRef.current === savePromise) {
+                    pendingSavePromiseRef.current = null
+                }
+            })
+
+        pendingSavePromiseRef.current = savePromise
+        return savePromise
     }
 
     const handleSaveVariantDraft = useCallback(async (variantDraft) => {
@@ -1064,6 +1214,10 @@ const ProductForm = forwardRef(function ProductForm({
             includeVariants: true
         })
 
+        if (savedProduct?.__productAuthoringStaleResponse) {
+            return savedProduct
+        }
+
         if (!savedProduct) {
             throw new Error(lastProductSaveErrorRef.current || t('products.failedToSave'))
         }
@@ -1073,6 +1227,7 @@ const ProductForm = forwardRef(function ProductForm({
 
     const handleSubmit = async (e) => {
         e.preventDefault()
+        const submitIdentityGeneration = productIdentityGenerationRef.current
         setLoading(true)
         setError('')
 
@@ -1099,7 +1254,9 @@ const ProductForm = forwardRef(function ProductForm({
                 includeVariants
             })
         } finally {
-            setLoading(false)
+            if (productIdentityGenerationRef.current === submitIdentityGeneration) {
+                setLoading(false)
+            }
         }
     }
 
@@ -1234,19 +1391,35 @@ const ProductForm = forwardRef(function ProductForm({
         >
             <div className="grid gap-4 md:grid-cols-2">
                 <div className="md:col-span-2">
-                    <label className="label">{t('products.productName')} *</label>
+                    <label className="label" htmlFor={`${formId}-name`}>{t('products.productName')} *</label>
                     <input
+                        id={`${formId}-name`}
                         type="text"
                         value={formData.name}
                         onChange={(e) => handleChange('name', e.target.value)}
                         className="input"
                         required
+                        maxLength={300}
                     />
                 </div>
 
                 <div className="md:col-span-2">
-                    <label className="label">{t('products.category')} *</label>
+                    <label className="label" htmlFor={`${formId}-name-ar`}>{t('products.productNameAr')}</label>
+                    <input
+                        id={`${formId}-name-ar`}
+                        type="text"
+                        value={formData.nameAr}
+                        onChange={(e) => handleChange('nameAr', e.target.value)}
+                        className="input text-start"
+                        dir="rtl"
+                        maxLength={300}
+                    />
+                </div>
+
+                <div className="md:col-span-2">
+                    <label className="label" htmlFor={`${formId}-category`}>{t('products.category')} *</label>
                     <select
+                        id={`${formId}-category`}
                         value={formData.categoryId}
                         onChange={(e) => handleChange('categoryId', e.target.value)}
                         className="input"
@@ -1262,8 +1435,9 @@ const ProductForm = forwardRef(function ProductForm({
                 </div>
 
                 <div className="md:col-span-2">
-                    <label className="label">{t('categories.description')}</label>
+                    <label className="label" htmlFor={`${formId}-description`}>{t('categories.description')}</label>
                     <textarea
+                        id={`${formId}-description`}
                         value={formData.description}
                         onChange={(e) => handleChange('description', e.target.value)}
                         className="input"
@@ -1271,11 +1445,26 @@ const ProductForm = forwardRef(function ProductForm({
                     />
                 </div>
 
+                <div className="md:col-span-2">
+                    <label className="label" htmlFor={`${formId}-description-ar`}>{t('products.descriptionAr')}</label>
+                    <textarea
+                        id={`${formId}-description-ar`}
+                        value={formData.descriptionAr}
+                        onChange={(e) => handleChange('descriptionAr', e.target.value)}
+                        className="input text-start"
+                        dir="rtl"
+                        rows="4"
+                    />
+                </div>
+
                 <div>
-                    <label className="label">{t('products.taxRate')}</label>
+                    <label className="label" htmlFor={`${formId}-tax-rate`}>{t('products.taxRate')}</label>
                     <input
+                        id={`${formId}-tax-rate`}
                         type="number"
                         step="0.01"
+                        min="0"
+                        max="100"
                         value={formData.taxRate}
                         onChange={(e) => handleChange('taxRate', e.target.value)}
                         className="input"
@@ -1306,25 +1495,29 @@ const ProductForm = forwardRef(function ProductForm({
         >
             <div className="grid gap-4 md:grid-cols-2">
                 <div>
-                    <label className="label">{t('products.sku') || 'SKU'}</label>
+                    <label className="label" htmlFor={`${formId}-sku`}>{t('products.sku') || 'SKU'}</label>
                     <input
+                        id={`${formId}-sku`}
                         type="text"
                         value={simpleProductData.sku}
                         onChange={(e) => handleSimpleChange('sku', e.target.value)}
                         className="input"
                         placeholder={t('products.autoGenerated')}
+                        maxLength={100}
                     />
                 </div>
 
                 <div>
-                    <label className="label">{t('products.barcode')}</label>
+                    <label className="label" htmlFor={`${formId}-barcode`}>{t('products.barcode')}</label>
                     <div className="flex gap-2">
                         <input
+                            id={`${formId}-barcode`}
                             type="text"
                             value={simpleProductData.barcode}
                             onChange={(e) => handleSimpleChange('barcode', e.target.value)}
                             className="input flex-1"
                             placeholder={t('products.scanOrGenerate')}
+                            maxLength={100}
                         />
                         <button
                             type="button"
@@ -1575,9 +1768,23 @@ const ProductForm = forwardRef(function ProductForm({
                         checked={formData.isActive}
                         onChange={(e) => handleChange('isActive', e.target.checked)}
                         className="rounded"
+                        aria-label={`${translateWithFallback(t, 'products.productStatus', 'Product status')}: ${formData.isActive ? translateWithFallback(t, 'products.active', 'Active') : translateWithFallback(t, 'products.inactive', 'Inactive')}`}
                     />
-                    <span className="text-sm font-medium text-gray-700">{t('products.productActive')}</span>
+                    <span className="text-sm font-medium text-gray-700">
+                        {translateWithFallback(t, 'products.productStatus', 'Product status')}: {formData.isActive
+                            ? translateWithFallback(t, 'products.active', 'Active')
+                            : translateWithFallback(t, 'products.inactive', 'Inactive')}
+                    </span>
                 </label>
+                {hasVariants && (
+                    <p className="mt-3 text-sm text-gray-600" role="note">
+                        {translateWithFallback(
+                            t,
+                            'products.variantLifecycleStatusNote',
+                            'Product and variant statuses are independent. Deactivating or archiving this product deactivates its variants; activating the product later does not reactivate them. Review each variant status before publishing.'
+                        )}
+                    </p>
+                )}
             </EmbeddedSection>
 
             <EmbeddedSection
@@ -1586,8 +1793,9 @@ const ProductForm = forwardRef(function ProductForm({
             >
                 <div className="grid gap-4">
                     <div>
-                        <label className="label">{t('products.publishStatus')}</label>
+                        <label className="label" htmlFor={`${formId}-publish-status`}>{t('products.publishStatus')}</label>
                         <select
+                            id={`${formId}-publish-status`}
                             value={normalizePublishStatus(formData.publishStatus)}
                             onChange={(e) => handleChange('publishStatus', normalizePublishStatus(e.target.value))}
                             className="input"
@@ -1599,9 +1807,11 @@ const ProductForm = forwardRef(function ProductForm({
                     </div>
 
                     <div>
-                        <label className="label">{t('products.lowStockThreshold')}</label>
+                        <label className="label" htmlFor={`${formId}-low-stock-threshold`}>{t('products.lowStockThreshold')}</label>
                         <input
+                            id={`${formId}-low-stock-threshold`}
                             type="number"
+                            min="0"
                             value={formData.lowStockThreshold}
                             onChange={(e) => handleChange('lowStockThreshold', e.target.value)}
                             className="input"
@@ -1927,7 +2137,13 @@ const ProductForm = forwardRef(function ProductForm({
     return (
         <form id={formId} onSubmit={handleSubmit} className="space-y-6">
             {error && (
-                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700">
+                <div
+                    ref={(node) => node?.focus()}
+                    id={`${formId}-error`}
+                    className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-700"
+                    role="alert"
+                    tabIndex={-1}
+                >
                     {error}
                 </div>
             )}

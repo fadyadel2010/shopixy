@@ -3696,6 +3696,7 @@ public class ApplicationDbContext : DbContext
         GuardStorefrontOrderHistoricalSnapshotImmutability();
         GuardOrderCheckoutFieldSnapshotImmutability();
         GuardWarehouseResolutionAuthority();
+        MarkProductsChangedByDependentSearchMutations();
         IncrementMarketplaceProjectionMutationVersions();
         ResetCommerceHubProjectionMarkersForBusinessMutations();
         IncrementRowVersionForNonPostgreSQL();
@@ -6755,6 +6756,184 @@ public class ApplicationDbContext : DbContext
         GuardAppendOnlyEvidence<CommerceHubRecoveryOperationLedgerEntry>();
         GuardAppendOnlyEvidence<CommerceHubCustomerIdentityEvent>();
         GuardAppendOnlyEvidence<DomainAuditEntry>();
+    }
+
+    private void MarkProductsChangedByDependentSearchMutations()
+    {
+        var affectedProducts = new HashSet<(Guid TenantId, Guid ProductId)>();
+        var affectedProductIdsWithoutTenant = new HashSet<Guid>();
+        var affectedVariantIds = new HashSet<Guid>();
+        var tenantWideProductPromotionTenantIds = new HashSet<Guid>();
+
+        foreach (var entry in ChangeTracker.Entries<ProductVariant>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            affectedProducts.Add((entry.Entity.TenantId, entry.Entity.ProductId));
+        }
+
+        foreach (var entry in ChangeTracker.Entries<ProductVariantStock>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            affectedVariantIds.Add(entry.Entity.VariantId);
+        }
+
+        foreach (var entry in ChangeTracker.Entries<ProductVariantAttribute>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            affectedVariantIds.Add(entry.Entity.VariantId);
+        }
+
+        if (affectedVariantIds.Count > 0 && Model.FindEntityType(typeof(ProductVariant)) != null)
+        {
+            foreach (var variant in ProductVariants.Local.Where(variant => affectedVariantIds.Contains(variant.Id)))
+            {
+                affectedProducts.Add((variant.TenantId, variant.ProductId));
+                affectedVariantIds.Remove(variant.Id);
+            }
+
+            foreach (var variant in ProductVariants
+                         .IgnoreQueryFilters()
+                         .Where(variant => affectedVariantIds.Contains(variant.Id))
+                         .Select(variant => new { variant.TenantId, variant.ProductId }))
+            {
+                affectedProducts.Add((variant.TenantId, variant.ProductId));
+            }
+        }
+
+        AddDirectProductDependents(ChangeTracker.Entries<ProductMedia>(), affectedProducts, media => (media.TenantId, media.ProductId));
+        foreach (var entry in ChangeTracker.Entries<ProductUnit>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            if (entry.Entity.Product != null)
+            {
+                affectedProducts.Add((entry.Entity.Product.TenantId, entry.Entity.ProductId));
+            }
+            else
+            {
+                affectedProductIdsWithoutTenant.Add(entry.Entity.ProductId);
+            }
+        }
+
+        AddDirectProductDependents(ChangeTracker.Entries<AffiliateProductPolicy>(), affectedProducts, policy => (policy.TenantId, policy.ProductId));
+
+        foreach (var entry in ChangeTracker.Entries<Promotion>()
+                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            AddPromotionProducts(
+                entry.Entity.TenantId,
+                entry.Entity.Scope,
+                entry.Entity.AppliesToId,
+                affectedProducts,
+                tenantWideProductPromotionTenantIds);
+
+            if (entry.State == EntityState.Modified)
+            {
+                AddPromotionProducts(
+                    entry.Entity.TenantId,
+                    entry.Property(nameof(Promotion.Scope)).OriginalValue is PromotionScope originalScope
+                        ? originalScope
+                        : entry.Entity.Scope,
+                    entry.Property(nameof(Promotion.AppliesToId)).OriginalValue as Guid?,
+                    affectedProducts,
+                    tenantWideProductPromotionTenantIds);
+            }
+        }
+
+        if (affectedProducts.Count == 0 &&
+            affectedProductIdsWithoutTenant.Count == 0 &&
+            tenantWideProductPromotionTenantIds.Count == 0)
+        {
+            return;
+        }
+
+        var productIds = affectedProducts
+            .Select(item => item.ProductId)
+            .Concat(affectedProductIdsWithoutTenant)
+            .Distinct()
+            .ToList();
+        var products = Products.Local
+            .Where(product => productIds.Contains(product.Id))
+            .ToDictionary(product => product.Id);
+
+        if (tenantWideProductPromotionTenantIds.Count > 0)
+        {
+            foreach (var product in Products
+                         .IgnoreQueryFilters()
+                         .Where(product =>
+                             tenantWideProductPromotionTenantIds.Contains(product.TenantId) &&
+                             !product.IsDeleted &&
+                             product.IsActive &&
+                             product.IsOnlineVisible &&
+                             product.IsSearchable))
+            {
+                affectedProducts.Add((product.TenantId, product.Id));
+                products[product.Id] = product;
+            }
+        }
+
+        foreach (var product in Products
+                     .IgnoreQueryFilters()
+                     .Where(product => productIds.Contains(product.Id)))
+        {
+            products[product.Id] = product;
+        }
+
+        foreach (var productId in affectedProductIdsWithoutTenant)
+        {
+            if (products.TryGetValue(productId, out var product))
+            {
+                affectedProducts.Add((product.TenantId, productId));
+            }
+        }
+
+        foreach (var key in affectedProducts)
+        {
+            if (!products.TryGetValue(key.ProductId, out var product) ||
+                product.TenantId != key.TenantId)
+            {
+                continue;
+            }
+
+            var productEntry = Entry(product);
+            if (productEntry.State == EntityState.Unchanged)
+            {
+                product.UpdatedAt = DateTime.UtcNow;
+            }
+        }
+    }
+
+    private static void AddDirectProductDependents<TEntity>(
+        IEnumerable<Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<TEntity>> entries,
+        ISet<(Guid TenantId, Guid ProductId)> affectedProducts,
+        Func<TEntity, (Guid TenantId, Guid ProductId)> keySelector)
+        where TEntity : class
+    {
+        foreach (var entry in entries.Where(entry =>
+                     entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))
+        {
+            affectedProducts.Add(keySelector(entry.Entity));
+        }
+    }
+
+    private static void AddPromotionProducts(
+        Guid tenantId,
+        PromotionScope scope,
+        Guid? appliesToId,
+        ISet<(Guid TenantId, Guid ProductId)> affectedProducts,
+        ISet<Guid> tenantWideProductPromotionTenantIds)
+    {
+        if (scope != PromotionScope.Product)
+        {
+            return;
+        }
+
+        if (appliesToId.HasValue)
+        {
+            affectedProducts.Add((tenantId, appliesToId.Value));
+            return;
+        }
+
+        tenantWideProductPromotionTenantIds.Add(tenantId);
     }
 
     private void GuardTreasuryCashAuthority()

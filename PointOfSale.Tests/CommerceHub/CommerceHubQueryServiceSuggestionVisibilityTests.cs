@@ -244,17 +244,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
         var tenantId = Guid.NewGuid();
         await SeedVisibleListingAsync(dbContext, tenantId, "Runner", "Running");
 
-        CommerceHubSearchRequest? capturedRequest = null;
         var searchReadService = new Mock<ICommerceHubSearchReadService>();
-        searchReadService
-            .Setup(service => service.SearchPublishedProductsAsync(
-                It.IsAny<CommerceHubSearchRequest>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<CommerceHubSearchRequest, CancellationToken>((request, _) => capturedRequest = request)
-            .ReturnsAsync(new CommerceHubSearchReadResult
-            {
-                TotalCount = 1
-            });
 
         var service = CreateService(
             dbContext,
@@ -267,9 +257,47 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             Search = "runner"
         });
 
-        Assert.NotNull(capturedRequest);
-        Assert.Contains(tenantId, capturedRequest!.ExcludedTenantIds);
         Assert.Empty(response.Items);
+        Assert.Equal(0, response.TotalCount);
+        searchReadService.Verify(
+            service => service.SearchPublishedProductsAsync(
+                It.IsAny<CommerceHubSearchRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_PaginatesAfterSqlAdmission_AndKeepsSparseValidListingsReachable()
+    {
+        await using var dbContext = CreateDbContext();
+        var firstEligibleTenant = Guid.NewGuid();
+        var secondEligibleTenant = Guid.NewGuid();
+        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected first", "Running");
+        await SeedVisibleListingAsync(dbContext, firstEligibleTenant, "Eligible one", "Running");
+        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected middle", "Running");
+        await SeedVisibleListingAsync(dbContext, secondEligibleTenant, "Eligible two", "Running");
+        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected last", "Running");
+        AddEligibleVendorProfile(dbContext, firstEligibleTenant);
+        AddEligibleVendorProfile(dbContext, secondEligibleTenant);
+        await dbContext.SaveChangesAsync();
+
+        var searchReadService = new Mock<ICommerceHubSearchReadService>(MockBehavior.Strict);
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            searchReadService: searchReadService.Object,
+            currentTenantId: null);
+
+        var firstPage = await service.GetProductsAsync(new CommerceHubProductsQuery { Page = 1, PageSize = 1 });
+        var secondPage = await service.GetProductsAsync(new CommerceHubProductsQuery { Page = 2, PageSize = 1 });
+
+        Assert.Equal(2, firstPage.TotalCount);
+        Assert.Equal(2, secondPage.TotalCount);
+        Assert.Single(firstPage.Items);
+        Assert.Single(secondPage.Items);
+        Assert.NotEqual(firstPage.Items[0].Id, secondPage.Items[0].Id);
+        Assert.Contains(firstPage.Items[0].TenantId, new[] { firstEligibleTenant, secondEligibleTenant });
+        Assert.Contains(secondPage.Items[0].TenantId, new[] { firstEligibleTenant, secondEligibleTenant });
     }
 
     [Fact]
@@ -464,6 +492,20 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             commerceHubPrice: null);
         listing.CreatedAt = createdAtUtc;
         return listing;
+    }
+
+    private static void AddEligibleVendorProfile(ApplicationDbContext dbContext, Guid tenantId)
+    {
+        dbContext.UserGovernanceProfiles.Add(new UserGovernanceProfile
+        {
+            Id = Guid.NewGuid(),
+            SubjectId = tenantId,
+            Role = UserGovernanceRole.Vendor,
+            Status = UserGovernanceStatus.Active,
+            IsKycVerified = true,
+            IsMarketplaceApproved = true,
+            CreatedAtUtc = DateTime.UtcNow
+        });
     }
 
     private static async Task<Guid> SeedVisibleListingAsync(

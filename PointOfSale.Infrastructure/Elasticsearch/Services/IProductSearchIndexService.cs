@@ -37,6 +37,17 @@ public interface IProductSearchIndexService
     Task<bool> DeleteAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Writes a durable, externally versioned tombstone for a product visibility removal.
+    /// </summary>
+    Task<bool> TombstoneAsync(
+        Guid tenantId,
+        Guid productId,
+        long productGeneration,
+        bool isDeleted,
+        Guid? eventId = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Ensures the products index exists with proper mappings.
     /// Called at application startup.
     /// </summary>

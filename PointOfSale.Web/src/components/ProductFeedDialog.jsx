@@ -35,12 +35,15 @@ function isNotFound(error) {
 }
 
 function getSafeErrorKey(error) {
+    if (error?.response?.status === 400) return 'productFeed.errors.invalidRequest'
     if (error?.response?.status === 401) return 'productFeed.errors.unauthorized'
     if (error?.response?.status === 403) return 'productFeed.errors.forbidden'
     if (error?.response?.status === 404) return 'productFeed.errors.notFound'
+    if (error?.response?.status === 408) return 'productFeed.errors.timeout'
     if (error?.response?.status === 409) return 'productFeed.errors.conflict'
     if (error?.response?.status === 429) return 'productFeed.errors.rateLimited'
     if (error?.response?.status >= 500) return 'productFeed.errors.server'
+    if (error?.code === 'ECONNABORTED' || error?.code === 'ETIMEDOUT') return 'productFeed.errors.timeout'
     if (error?.code === 'ERR_NETWORK') return 'productFeed.errors.network'
     return 'productFeed.errors.generic'
 }
@@ -50,6 +53,7 @@ export default function ProductFeedDialog({
     onOpenChange,
     sessionFeedUrls = {},
     onSessionFeedUrlChange = () => {},
+    restoreFocusRef = null,
 }) {
     const { t } = useTranslation()
     const { dir } = useRTL()
@@ -58,11 +62,14 @@ export default function ProductFeedDialog({
     const [tokensByChannel, setTokensByChannel] = useState(emptyTokenState)
     const [selectedChannel, setSelectedChannel] = useState(PRODUCT_FEED_CHANNELS[0].id)
     const [loading, setLoading] = useState(false)
+    const [loadErrorKey, setLoadErrorKey] = useState(null)
     const [operation, setOperation] = useState(null)
+    const [confirming, setConfirming] = useState(false)
     const [oneTimeResult, setOneTimeResult] = useState(null)
     const requestIdRef = useRef(0)
     const operationLockRef = useRef(false)
     const confirmationLockRef = useRef(false)
+    const channelTabRefs = useRef({})
 
     const channelStates = useMemo(() => PRODUCT_FEED_CHANNELS.reduce((acc, channel) => {
         acc[channel.id] = getChannelState(tokensByChannel[channel.id])
@@ -73,7 +80,7 @@ export default function ProductFeedDialog({
     const selectedState = channelStates[selectedChannel] || { status: 'notConfigured', token: null }
     const selectedSessionFeedUrl = sessionFeedUrls[selectedChannel]
     const showingOneTimeResult = oneTimeResult?.channel === selectedChannel
-    const busy = Boolean(operation)
+    const busy = Boolean(operation) || confirming
 
     const clearSecret = useCallback(() => {
         setOneTimeResult(null)
@@ -82,6 +89,7 @@ export default function ProductFeedDialog({
     const loadTokens = useCallback(async () => {
         const requestId = ++requestIdRef.current
         setLoading(true)
+        setLoadErrorKey(null)
         clearSecret()
 
         try {
@@ -92,16 +100,20 @@ export default function ProductFeedDialog({
                 ]),
             )
 
-            if (requestId !== requestIdRef.current) return
+            if (requestId !== requestIdRef.current) return false
 
             setTokensByChannel(results.reduce((acc, [channel, tokens]) => {
                 acc[channel] = tokens
                 return acc
             }, emptyTokenState()))
+            return true
         } catch (error) {
             if (requestId === requestIdRef.current) {
-                showError(t(getSafeErrorKey(error)))
+                const safeErrorKey = getSafeErrorKey(error)
+                setLoadErrorKey(safeErrorKey)
+                showError(t(safeErrorKey))
             }
+            return false
         } finally {
             if (requestId === requestIdRef.current) {
                 setLoading(false)
@@ -118,6 +130,7 @@ export default function ProductFeedDialog({
         requestIdRef.current += 1
         setLoading(false)
         setOperation(null)
+        setConfirming(false)
         operationLockRef.current = false
         confirmationLockRef.current = false
         clearSecret()
@@ -146,12 +159,14 @@ export default function ProductFeedDialog({
     }
 
     const refreshAfterMissingToken = async () => {
-        await loadTokens()
-        showError(t('productFeed.errors.notFoundRefresh'))
+        const refreshed = await loadTokens()
+        if (refreshed) {
+            showError(t('productFeed.errors.notFoundRefresh'))
+        }
     }
 
     const handleOpenChange = (nextOpen) => {
-        if (!nextOpen && busy) return
+        if (!nextOpen && (busy || confirmationLockRef.current)) return
         if (!nextOpen) {
             clearSecret()
         }
@@ -175,6 +190,27 @@ export default function ProductFeedDialog({
         })
     }
 
+    const selectChannel = useCallback((channel) => {
+        clearSecret()
+        setSelectedChannel(channel)
+    }, [clearSecret])
+
+    const handleChannelKeyDown = (event, channelIndex) => {
+        const lastIndex = PRODUCT_FEED_CHANNELS.length - 1
+        let nextIndex = channelIndex
+
+        if (event.key === 'Home') nextIndex = 0
+        else if (event.key === 'End') nextIndex = lastIndex
+        else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = channelIndex === lastIndex ? 0 : channelIndex + 1
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = channelIndex === 0 ? lastIndex : channelIndex - 1
+        else return
+
+        event.preventDefault()
+        const nextChannel = PRODUCT_FEED_CHANNELS[nextIndex].id
+        selectChannel(nextChannel)
+        channelTabRefs.current[nextChannel]?.focus()
+    }
+
     const handleCreate = async () => {
         if (!beginOperation({ type: 'create', channel: selectedChannel })) return
         clearSecret()
@@ -190,6 +226,10 @@ export default function ProductFeedDialog({
                     revokedAtUtc: null,
                 }],
             }))
+            // A successful create is authoritative even if its response is
+            // malformed. Remove any stale URL before accepting the one-time
+            // replacement so Copy/Open can never target an older credential.
+            onSessionFeedUrlChange(selectedChannel, null)
             revealOneTimeUrl(selectedChannel, result, 'create')
             showSuccess(t('productFeed.feedCreated'))
         } catch (error) {
@@ -203,6 +243,7 @@ export default function ProductFeedDialog({
         if (operationLockRef.current || confirmationLockRef.current || !selectedState.token) return
 
         confirmationLockRef.current = true
+        setConfirming(true)
         const confirmed = await confirm({
             title: t('productFeed.rotateTitle', { channel: selectedConfig.name }),
             description: t('productFeed.rotateDescription'),
@@ -210,6 +251,7 @@ export default function ProductFeedDialog({
             confirmTone: 'warning',
         }).finally(() => {
             confirmationLockRef.current = false
+            setConfirming(false)
         })
         if (!confirmed) return
 
@@ -227,6 +269,10 @@ export default function ProductFeedDialog({
                     revokedAtUtc: null,
                 }],
             }))
+            // Rotation has already invalidated the previous credential. Clear
+            // it before processing the response so a missing feedUrl cannot
+            // leave stale Copy/Open actions wired to the old URL.
+            onSessionFeedUrlChange(selectedChannel, null)
             revealOneTimeUrl(selectedChannel, result, 'rotate')
             showSuccess(t('productFeed.feedRotated'))
         } catch (error) {
@@ -245,6 +291,7 @@ export default function ProductFeedDialog({
         if (operationLockRef.current || confirmationLockRef.current || !selectedState.token) return
 
         confirmationLockRef.current = true
+        setConfirming(true)
         const confirmed = await confirm({
             title: t('productFeed.revokeTitle', { channel: selectedConfig.name }),
             description: t('productFeed.revokeDescription'),
@@ -252,6 +299,7 @@ export default function ProductFeedDialog({
             confirmTone: 'danger',
         }).finally(() => {
             confirmationLockRef.current = false
+            setConfirming(false)
         })
         if (!confirmed) return
 
@@ -319,6 +367,11 @@ export default function ProductFeedDialog({
                 <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/50" />
                 <Dialog.Content
                     dir={dir}
+                    onCloseAutoFocus={(event) => {
+                        if (!restoreFocusRef?.current) return
+                        event.preventDefault()
+                        restoreFocusRef.current.focus()
+                    }}
                     className="fixed inset-0 z-50 m-auto flex h-[min(760px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg bg-white shadow-2xl focus:outline-none"
                 >
                     <div className="flex items-start justify-between gap-4 border-b border-gray-200 px-5 py-4">
@@ -346,10 +399,21 @@ export default function ProductFeedDialog({
                                 <div className="h-52 animate-pulse rounded-lg bg-gray-100" />
                                 <span className="sr-only">{t('productFeed.loadingChannels')}</span>
                             </div>
+                        ) : loadErrorKey ? (
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-4" role="alert">
+                                <p className="text-sm text-red-800">{t(loadErrorKey)}</p>
+                                <button
+                                    type="button"
+                                    onClick={() => void loadTokens()}
+                                    className="mt-3 rounded-lg border border-red-300 px-4 py-2 text-sm font-medium text-red-800 hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-500"
+                                >
+                                    {t('common.retry')}
+                                </button>
+                            </div>
                         ) : (
                             <div className="grid gap-5 lg:grid-cols-[280px_minmax(0,1fr)]">
                                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1" role="tablist" aria-label={t('productFeed.channelSelectorLabel')}>
-                                    {PRODUCT_FEED_CHANNELS.map((channel) => {
+                                    {PRODUCT_FEED_CHANNELS.map((channel, channelIndex) => {
                                         const state = channelStates[channel.id]
                                         const isSelected = selectedChannel === channel.id
                                         return (
@@ -357,13 +421,16 @@ export default function ProductFeedDialog({
                                                 key={channel.id}
                                                 type="button"
                                                 role="tab"
+                                                id={`product-feed-tab-${channel.id}`}
+                                                ref={(element) => {
+                                                    channelTabRefs.current[channel.id] = element
+                                                }}
                                                 aria-selected={isSelected}
                                                 aria-controls={`product-feed-panel-${channel.id}`}
+                                                tabIndex={isSelected ? 0 : -1}
                                                 disabled={busy || loading}
-                                                onClick={() => {
-                                                    clearSecret()
-                                                    setSelectedChannel(channel.id)
-                                                }}
+                                                onClick={() => selectChannel(channel.id)}
+                                                onKeyDown={(event) => handleChannelKeyDown(event, channelIndex)}
                                                 className={`rounded-lg border px-4 py-3 text-start transition focus:outline-none focus:ring-2 focus:ring-primary-500 ${
                                                     isSelected
                                                         ? 'border-primary-500 bg-primary-50'
@@ -396,12 +463,14 @@ export default function ProductFeedDialog({
                                 <section
                                     id={`product-feed-panel-${selectedChannel}`}
                                     role="tabpanel"
+                                    aria-labelledby={`product-feed-tab-${selectedChannel}`}
                                     className="min-w-0 rounded-lg border border-gray-200 bg-white p-4"
                                 >
                                     <div className="flex flex-wrap items-center justify-between gap-3">
                                         <div>
                                             <h3 className="text-lg font-semibold text-gray-900">{selectedConfig.name}</h3>
                                             <p className="mt-1 text-sm text-gray-600">{t('productFeed.channelHelp')}</p>
+                                            <p className="mt-1 text-xs text-gray-500">{t('productFeed.eligibilityNote')}</p>
                                         </div>
                                         <span className="inline-flex items-center gap-2 rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700">
                                             <span
@@ -419,7 +488,7 @@ export default function ProductFeedDialog({
                                     </div>
 
                                     {showingOneTimeResult ? (
-                                        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                                        <div className="mt-5 rounded-lg border border-amber-200 bg-amber-50 p-4" role="status" aria-live="polite">
                                             <div className="flex items-start gap-3">
                                                 <ShieldAlert className="h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
                                                 <div className="min-w-0">
@@ -429,7 +498,10 @@ export default function ProductFeedDialog({
                                                     <p className="mt-1 text-sm text-amber-900">
                                                         {t('productFeed.oneTimeDescription')}
                                                     </p>
-                                                    <p className="mt-3 break-all rounded-md border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-gray-900">
+                                                    <p
+                                                        className="mt-3 break-all rounded-md border border-amber-200 bg-white px-3 py-2 font-mono text-sm text-gray-900"
+                                                        aria-label={t('productFeed.privateUrlLabel')}
+                                                    >
                                                         {oneTimeResult.feedUrl}
                                                     </p>
                                                     <div className="mt-4 flex flex-wrap gap-2">

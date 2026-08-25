@@ -89,7 +89,13 @@ public static class ProductStorefrontVisibilityAuthority
         .Where(variant => variant.IsActive && variant.EffectivePrice > 0m);
 
     private static bool IsVariantOrderableByStockPolicy(ProductDocument product, ProductVariantDocument variant) =>
-        !product.TrackStock || product.AllowBackorder || variant.TotalStock > 0m;
+        IsOrderableByStockPolicy(product.TrackStock, product.AllowBackorder, variant.TotalStock);
+
+    public static bool IsOrderableByStockPolicy(
+        bool trackStock,
+        bool allowBackorder,
+        decimal availableStock) =>
+        !trackStock || allowBackorder || availableStock > 0m;
 
     private static string? ResolveSimpleProductUnavailableReason(
         ProductDocument product,
@@ -160,7 +166,7 @@ public static class ProductStorefrontVisibilityAuthority
                 Price: null,
                 MinVariantPrice: pricedActiveVariants.Min(variant => variant.EffectivePrice),
                 MaxVariantPrice: pricedActiveVariants.Max(variant => variant.EffectivePrice),
-                InStock: pricedActiveVariants.Any(variant => variant.TotalStock > 0),
+                InStock: pricedActiveVariants.Any(variant => IsVariantOrderableByStockPolicy(product, variant)),
                 TotalAvailableStock: Math.Max(
                     0,
                     decimal.ToInt32(decimal.Truncate(pricedActiveVariants.Sum(variant => variant.TotalStock)))));
@@ -184,9 +190,10 @@ public static class ProductStorefrontVisibilityAuthority
         var totalAvailableStock = pricedActiveVariants.Count > 0
             ? Math.Max(0, decimal.ToInt32(decimal.Truncate(pricedActiveVariants.Sum(variant => variant.TotalStock))))
             : Math.Max(0, product.StockQuantity);
-        var inStock = pricedActiveVariants.Count > 0
-            ? pricedActiveVariants.Any(variant => variant.TotalStock > 0)
-            : product.InStock;
+        var inStock = IsOrderableByStockPolicy(
+            product.TrackStock,
+            product.AllowBackorder,
+            totalAvailableStock);
 
         snapshot = new AffiliatePublicPricingSnapshot(
             Price: simplePrice,

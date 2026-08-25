@@ -4,6 +4,7 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.ReadModels.Evolution;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -46,12 +47,17 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IStorefrontProductProjectionMutationBoundary _mutationBoundary;
+    private readonly IStorefrontProductCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ProductSqlAuthorityProjectionWriter> _logger;
 
     public ProductSqlAuthorityProjectionWriter(
         ApplicationDbContext dbContext,
         IStorefrontProductProjectionMutationBoundary mutationBoundary)
-        : this(dbContext, mutationBoundary, NullLogger<ProductSqlAuthorityProjectionWriter>.Instance)
+        : this(
+            dbContext,
+            mutationBoundary,
+            NoopStorefrontProductCacheInvalidator.Instance,
+            NullLogger<ProductSqlAuthorityProjectionWriter>.Instance)
     {
     }
 
@@ -59,9 +65,23 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
         ApplicationDbContext dbContext,
         IStorefrontProductProjectionMutationBoundary mutationBoundary,
         ILogger<ProductSqlAuthorityProjectionWriter> logger)
+        : this(
+            dbContext,
+            mutationBoundary,
+            NoopStorefrontProductCacheInvalidator.Instance,
+            logger)
+    {
+    }
+
+    public ProductSqlAuthorityProjectionWriter(
+        ApplicationDbContext dbContext,
+        IStorefrontProductProjectionMutationBoundary mutationBoundary,
+        IStorefrontProductCacheInvalidator cacheInvalidator,
+        ILogger<ProductSqlAuthorityProjectionWriter> logger)
     {
         _dbContext = dbContext;
         _mutationBoundary = mutationBoundary;
+        _cacheInvalidator = cacheInvalidator;
         _logger = logger;
     }
 
@@ -136,6 +156,11 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
                     tombstone.Applied ? "TOMBSTONE" : "SKIPPED",
                     tombstone.Applied ? "Applied" : "MutationFenceRejected");
 
+                await InvalidateProjectedProductCacheAsync(
+                    request,
+                    slug: null,
+                    cancellationToken);
+
                 return new ProductSqlAuthorityProjectionWriteResult(disposition);
             }
 
@@ -167,6 +192,11 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
                 upsert.Applied ? "UPSERT" : "IGNORED",
                 upsert.Applied ? "Applied" : "MutationFenceRejected");
 
+            await InvalidateProjectedProductCacheAsync(
+                request,
+                sqlProjection.Slug,
+                cancellationToken);
+
             return new ProductSqlAuthorityProjectionWriteResult(upsertDisposition);
         }
         catch (Exception ex)
@@ -186,6 +216,17 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
             throw;
         }
     }
+
+    private Task InvalidateProjectedProductCacheAsync(
+        ProductSqlAuthorityProjectionWriteRequest request,
+        string? slug,
+        CancellationToken cancellationToken) =>
+        _cacheInvalidator.InvalidateProductAsync(
+            request.TenantId,
+            request.ProductId,
+            slug,
+            invalidateHomepage: true,
+            cancellationToken);
 
     private void LogProjectionWriterDecision(
         ProductSqlAuthorityProjectionWriteRequest request,
@@ -234,5 +275,22 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
         return sqlProjection is { IsActive: true, IsOnlineVisible: true }
             ? "Visible"
             : "NotVisible";
+    }
+
+    private sealed class NoopStorefrontProductCacheInvalidator : IStorefrontProductCacheInvalidator
+    {
+        public static readonly NoopStorefrontProductCacheInvalidator Instance = new();
+
+        public Task InvalidateProductAsync(
+            Guid tenantId,
+            Guid productId,
+            string? slug = null,
+            bool invalidateHomepage = true,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task InvalidateTenantAsync(
+            Guid tenantId,
+            bool invalidateHomepage = true,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

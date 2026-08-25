@@ -8,14 +8,12 @@ using PointOfSale.Infrastructure.Redis.Services;
 namespace PointOfSale.Infrastructure.Consumers;
 
 /// <summary>
-/// MassTransit consumer that invalidates Redis cache on ALL product-related events.
+/// MassTransit consumer that invalidates Redis cache for product stock/price events.
 /// 
 /// PHASE: Redis Hardening — Full Invalidation Coverage
 /// 
 /// Responsibilities:
-/// - Listen for ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent
 /// - Listen for ProductStockChangedEvent, ProductPriceChangedEvent
-/// - Listen for ProductPublishStatusChangedEvent
 /// - Invalidate tenant's product list cache
 /// - Invalidate specific product detail cache entries (id + slug)
 /// - Invalidate homepage caches (featured products, new arrivals, best sellers)
@@ -23,26 +21,19 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// 
 /// IMPORTANT:
 /// - Required invalidation failures are rethrown so the event can retry
-/// - MongoDB sync handles read-model projection updates
+/// - Create/update/delete/publication invalidation is owned by the SQL-authority
+///   projection writer after its Mongo mutation boundary returns
 /// </summary>
 public class ProductCacheInvalidationConsumer :
-    IConsumer<ProductCreatedEvent>,
-    IConsumer<ProductUpdatedEvent>,
-    IConsumer<ProductDeletedEvent>,
     IConsumer<ProductStockChangedEvent>,
-    IConsumer<ProductPriceChangedEvent>,
-    IConsumer<ProductPublishStatusChangedEvent>
+    IConsumer<ProductPriceChangedEvent>
 {
     private readonly IStorefrontProductCacheInvalidator _cacheInvalidator;
     private readonly ILogger<ProductCacheInvalidationConsumer> _logger;
     private readonly ApplicationDbContext _dbContext;
 
-    private const string ProductCreatedConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductCreatedEvent);
-    private const string ProductUpdatedConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductUpdatedEvent);
-    private const string ProductDeletedConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductDeletedEvent);
     private const string ProductPriceConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductPriceChangedEvent);
     private const string ProductStockConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductStockChangedEvent);
-    private const string ProductPublicationConsumerName = nameof(ProductCacheInvalidationConsumer) + ":" + nameof(ProductPublishStatusChangedEvent);
 
     public ProductCacheInvalidationConsumer(
         IStorefrontProductCacheInvalidator cacheInvalidator,
@@ -52,51 +43,6 @@ public class ProductCacheInvalidationConsumer :
         _cacheInvalidator = cacheInvalidator;
         _logger = logger;
         _dbContext = dbContext;
-    }
-
-    public async Task Consume(ConsumeContext<ProductCreatedEvent> context)
-    {
-        await InvalidateWithFenceAsync(
-            @event: context.Message,
-            eventName: nameof(ProductCreatedEvent),
-            eventType: typeof(ProductCreatedEvent).FullName ?? nameof(ProductCreatedEvent),
-            consumerName: ProductCreatedConsumerName,
-            tenantId: context.Message.TenantId,
-            productId: context.Message.ProductId,
-            slug: context.Message.Slug,
-            correlationId: context.Message.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A",
-            invalidateHomepage: true,
-            cancellationToken: context.CancellationToken);
-    }
-
-    public async Task Consume(ConsumeContext<ProductUpdatedEvent> context)
-    {
-        await InvalidateWithFenceAsync(
-            @event: context.Message,
-            eventName: nameof(ProductUpdatedEvent),
-            eventType: typeof(ProductUpdatedEvent).FullName ?? nameof(ProductUpdatedEvent),
-            consumerName: ProductUpdatedConsumerName,
-            tenantId: context.Message.TenantId,
-            productId: context.Message.ProductId,
-            slug: context.Message.Slug,
-            correlationId: context.Message.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A",
-            invalidateHomepage: true,
-            cancellationToken: context.CancellationToken);
-    }
-
-    public async Task Consume(ConsumeContext<ProductDeletedEvent> context)
-    {
-        await InvalidateWithFenceAsync(
-            @event: context.Message,
-            eventName: nameof(ProductDeletedEvent),
-            eventType: typeof(ProductDeletedEvent).FullName ?? nameof(ProductDeletedEvent),
-            consumerName: ProductDeletedConsumerName,
-            tenantId: context.Message.TenantId,
-            productId: context.Message.ProductId,
-            slug: null,
-            correlationId: context.Message.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A",
-            invalidateHomepage: true,
-            cancellationToken: context.CancellationToken);
     }
 
     public async Task Consume(ConsumeContext<ProductStockChangedEvent> context)
@@ -127,21 +73,6 @@ public class ProductCacheInvalidationConsumer :
             productId: message.ProductId,
             slug: null,
             correlationId: message.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A",
-            invalidateHomepage: true,
-            cancellationToken: context.CancellationToken);
-    }
-
-    public async Task Consume(ConsumeContext<ProductPublishStatusChangedEvent> context)
-    {
-        await InvalidateWithFenceAsync(
-            @event: context.Message,
-            eventName: nameof(ProductPublishStatusChangedEvent),
-            eventType: typeof(ProductPublishStatusChangedEvent).FullName ?? nameof(ProductPublishStatusChangedEvent),
-            consumerName: ProductPublicationConsumerName,
-            tenantId: context.Message.TenantId,
-            productId: context.Message.ProductId,
-            slug: null,
-            correlationId: context.Message.CorrelationId ?? context.CorrelationId?.ToString() ?? "N/A",
             invalidateHomepage: true,
             cancellationToken: context.CancellationToken);
     }

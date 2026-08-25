@@ -277,7 +277,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return command.ToResult(lifecycleDecision.Status, lifecycleDecision.Errors);
         }
 
-        product = product!;
+        product = product ?? throw new InvalidOperationException("Product authoring lifecycle admitted a missing product.");
 
         var existingIdempotencyResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
             command,
@@ -428,7 +428,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return command.ToResult(lifecycleDecision.Status, lifecycleDecision.Errors);
         }
 
-        product = product!;
+        product = product ?? throw new InvalidOperationException("Product authoring lifecycle admitted a missing product.");
         LogRuntimeRowVersionTraceBeforeIsStale(command, product);
         if (IsStale(command, product))
         {
@@ -464,12 +464,11 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
 
                 foreach (var variant in liveVariants)
                 {
-                    variant.IsActive = false;
-                    variant.UpdatedAt = product.UpdatedAt;
-
                     if (remove)
                     {
+                        variant.IsActive = false;
                         variant.IsDeleted = true;
+                        variant.UpdatedAt = product.UpdatedAt;
                     }
                 }
 
@@ -536,6 +535,30 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return command.ToResult(
                 ProductAuthoringStatus.ConcurrencyConflict,
                 [new ProductAuthoringValidationError("PRODUCT_CONCURRENCY_CONFLICT", "expectedVersion", "Product has been changed by another transaction.")]);
+        }
+        catch (DbUpdateException exception)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            if (ProductAuthoringDatabaseConflictClassifier.TryClassify(exception, out var conflict))
+            {
+                _logger.LogWarning(
+                    exception,
+                    "Product Authoring uniqueness conflict | Operation: {Operation} | ProductId: {ProductId} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
+                    command.Operation,
+                    product.Id,
+                    conflict.Code,
+                    command.Metadata.CorrelationId);
+                _context.ChangeTracker.Clear();
+                return command.ToResult(ProductAuthoringStatus.Conflict, [conflict]);
+            }
+
+            _logger.LogError(
+                exception,
+                "Product Authoring database commit failed | Operation: {Operation} | ProductId: {ProductId} | CorrelationId: {CorrelationId}",
+                command.Operation,
+                product.Id,
+                command.Metadata.CorrelationId);
+            throw;
         }
 
         _logger.LogInformation(
@@ -652,6 +675,24 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         var changedFields = ProductChangedFields();
         var idempotencyPrefix = BuildIdempotencyPrefix(command, product.Id);
 
+        await _marketplaceEventOutbox!.EnqueueAsync(new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
+        {
+            CorrelationId = command.Metadata.CorrelationId,
+            EntityId = product.Id,
+            AggregateRootId = product.Id,
+            TenantId = product.TenantId,
+            Version = eventVersion,
+            ChangedFields = changedFields,
+            Name = product.Name,
+            Sku = product.SKU,
+            Slug = product.Slug,
+            SalePrice = defaultUnitData?.SalePrice ?? 0m,
+            OnlinePrice = null,
+            CategoryId = product.CategoryId,
+            IsOnlineVisible = product.IsOnlineVisible,
+            HasVariants = product.HasVariants
+        }, cancellationToken);
+
         if (command.Operation == ProductAuthoringOperation.Create)
         {
             var productCreatedEvent = new ProductCreatedEvent
@@ -710,24 +751,6 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
 
             return;
         }
-
-        await _marketplaceEventOutbox!.EnqueueAsync(new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
-        {
-            CorrelationId = command.Metadata.CorrelationId,
-            EntityId = product.Id,
-            AggregateRootId = product.Id,
-            TenantId = product.TenantId,
-            Version = eventVersion,
-            ChangedFields = changedFields,
-            Name = product.Name,
-            Sku = product.SKU,
-            Slug = product.Slug,
-            SalePrice = defaultUnitData?.SalePrice ?? 0m,
-            OnlinePrice = null,
-            CategoryId = product.CategoryId,
-            IsOnlineVisible = product.IsOnlineVisible,
-            HasVariants = product.HasVariants
-        }, cancellationToken);
 
         var productUpdatedEvent = new ProductUpdatedEvent
         {
@@ -817,7 +840,20 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             }
             else if (defaultVariantSync.ChangedFields.Count > 0)
             {
-                await PublishDefaultVariantUpdatedAsync(defaultVariantSync.Variant, defaultVariantSync.ChangedFields, cancellationToken);
+                var authoredChangedFields = authoredVariantSync.Updated
+                    .Where(updated => updated.Variant.Id == defaultVariantSync.Variant.Id)
+                    .Select(updated => updated.ChangedFields)
+                    .FirstOrDefault();
+                var combinedChangedFields = authoredChangedFields is null
+                    ? defaultVariantSync.ChangedFields
+                    : defaultVariantSync.ChangedFields.Concat(authoredChangedFields).Distinct(StringComparer.Ordinal).ToArray();
+
+                await PublishDefaultVariantUpdatedAsync(
+                    command,
+                    defaultVariantSync.Variant,
+                    combinedChangedFields,
+                    idempotencyPrefix,
+                    cancellationToken);
             }
         }
 
@@ -834,7 +870,12 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 continue;
             }
 
-            await PublishDefaultVariantUpdatedAsync(variant, variantChangedFields, cancellationToken);
+            await PublishDefaultVariantUpdatedAsync(
+                command,
+                variant,
+                variantChangedFields,
+                idempotencyPrefix,
+                cancellationToken);
         }
 
         foreach (var variant in authoredVariantSync.Deleted)
@@ -967,7 +1008,12 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
     {
         _productMutationIdempotency!.Complete(
             record,
-            result.Status == ProductAuthoringStatus.Accepted ? 202 : 400,
+            result.Status switch
+            {
+                ProductAuthoringStatus.Accepted => StatusCodes.Status202Accepted,
+                ProductAuthoringStatus.Conflict or ProductAuthoringStatus.ConcurrencyConflict => StatusCodes.Status409Conflict,
+                _ => StatusCodes.Status400BadRequest
+            },
             result,
             result.ProductId);
     }
@@ -1284,13 +1330,21 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
     }
 
     private async Task PublishDefaultVariantUpdatedAsync(
+        ProductAuthoringCommand command,
         ProductVariant variant,
         IReadOnlyList<string> changedFields,
+        string idempotencyPrefix,
         CancellationToken cancellationToken)
     {
+        var eventVersion = ProductEventVersionHelper.ToProductEventVersion(
+            PendingVariantMutationVersion(variant));
+
         await _eventPublisher!.PublishAsync(new ProductVariantUpdatedEvent
         {
             TenantId = _tenantContext!.RequiredTenantId,
+            EventVersion = eventVersion,
+            IdempotencyKey = $"{idempotencyPrefix}:variant-updated:{variant.Id:N}:{eventVersion}",
+            CorrelationId = command.Metadata.CorrelationId,
             VariantId = variant.Id,
             ProductId = variant.ProductId,
             ChangedFields = changedFields.ToArray(),
@@ -1303,6 +1357,23 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             IsActive = variant.IsActive,
             MediaId = variant.MediaId,
             ImageUrl = variant.ImageUrl
+        }, cancellationToken);
+
+        if (!changedFields.Contains(nameof(ProductVariant.Price), StringComparer.Ordinal) &&
+            !changedFields.Contains(nameof(ProductVariant.OnlinePrice), StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        await _eventPublisher.PublishAsync(new VariantPriceUpdatedEvent
+        {
+            TenantId = _tenantContext.RequiredTenantId,
+            EventVersion = eventVersion,
+            IdempotencyKey = $"{idempotencyPrefix}:variant-price-updated:{variant.Id:N}:{eventVersion}",
+            CorrelationId = command.Metadata.CorrelationId,
+            ProductId = variant.ProductId,
+            VariantId = variant.Id,
+            NewPrice = CommerceHubPriceAuthority.ResolveBaseVariantPrice(variant.Price, variant.OnlinePrice)
         }, cancellationToken);
     }
 
@@ -1321,7 +1392,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         {
             var variant = new ProductVariant
             {
-                Id = authoredVariant.VariantId ?? Guid.NewGuid(),
+                // New variant identity is always server-owned. Client temporary IDs must
+                // never become authoritative aggregate identity.
+                Id = Guid.NewGuid(),
                 TenantId = product.TenantId,
                 ProductId = product.Id,
                 SKU = authoredVariant.Sku,
@@ -1405,7 +1478,9 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             {
                 var createdVariant = new ProductVariant
                 {
-                    Id = authoredVariant.VariantId ?? Guid.NewGuid(),
+                    // A supplied ID that does not resolve to this product is a client-side
+                    // temporary/stale identity, not authority to choose a persisted key.
+                    Id = Guid.NewGuid(),
                     TenantId = product.TenantId,
                     ProductId = product.Id,
                     SKU = authoredVariant.Sku,

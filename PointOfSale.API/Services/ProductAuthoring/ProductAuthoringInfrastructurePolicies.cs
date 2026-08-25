@@ -11,6 +11,140 @@ public sealed class ProductAuthoringValidator : IProductAuthoringValidator
     {
         var errors = new List<ProductAuthoringValidationError>();
 
+        if (!Enum.IsDefined(command.Publication.PublishStatus))
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_PUBLISH_STATUS_INVALID",
+                "publishStatus",
+                "Publish status must be Draft, Published, or Archived."));
+        }
+
+        if (command.Content.Name?.Length > 300)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_NAME_TOO_LONG",
+                "name",
+                "Product name must not exceed 300 characters."));
+        }
+
+        if (command.Identity.Sku?.Length > 100)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_SKU_TOO_LONG",
+                "sku",
+                "Product SKU must not exceed 100 characters."));
+        }
+
+        if (command.Identity.Barcode?.Length > 100)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_BARCODE_TOO_LONG",
+                "barcode",
+                "Product barcode must not exceed 100 characters."));
+        }
+
+        if (command.Inventory.Unit?.Length > 50)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_UNIT_NAME_TOO_LONG",
+                "unit",
+                "Product unit must not exceed 50 characters."));
+        }
+
+        if (command.Metadata.ProductTemplate?.Length > 100)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_TEMPLATE_TOO_LONG",
+                "productTemplate",
+                "Product template must not exceed 100 characters."));
+        }
+
+        if (command.Pricing.TaxRate is < 0m or > 100m)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_TAX_RATE_INVALID",
+                "taxRate",
+                "Tax rate must be between zero and 100."));
+        }
+
+        foreach (var variant in command.Variants)
+        {
+            if (variant.Sku?.Length > 100)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_SKU_TOO_LONG",
+                    "variants.sku",
+                    "Variant SKU must not exceed 100 characters."));
+            }
+
+            if (variant.Barcode?.Length > 100)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_BARCODE_TOO_LONG",
+                    "variants.barcode",
+                    "Variant barcode must not exceed 100 characters."));
+            }
+
+            if (variant.Price < 0m)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_PRICE_INVALID",
+                    "variants.price",
+                    "Variant POS price cannot be negative."));
+            }
+
+            if (variant.OnlinePrice is < 0m)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_ONLINE_PRICE_INVALID",
+                    "variants.onlinePrice",
+                    "Variant online price cannot be negative."));
+            }
+
+            if (variant.CostPrice < 0m)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_COST_PRICE_INVALID",
+                    "variants.costPrice",
+                    "Variant cost price cannot be negative."));
+            }
+
+            if (variant.Weight is < 0m)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_WEIGHT_INVALID",
+                    "variants.weight",
+                    "Variant weight cannot be negative."));
+            }
+
+            if (variant.ImageUrl?.Length > 500)
+            {
+                errors.Add(new ProductAuthoringValidationError(
+                    "PRODUCT_VARIANT_IMAGE_URL_TOO_LONG",
+                    "variants.imageUrl",
+                    "Variant image URL must not exceed 500 characters."));
+            }
+
+            foreach (var attribute in variant.Attributes)
+            {
+                if (attribute.Key?.Length > 100)
+                {
+                    errors.Add(new ProductAuthoringValidationError(
+                        "PRODUCT_VARIANT_ATTRIBUTE_NAME_TOO_LONG",
+                        "variants.attributes",
+                        "Variant attribute names must not exceed 100 characters."));
+                }
+
+                if (attribute.Value?.Length > 255)
+                {
+                    errors.Add(new ProductAuthoringValidationError(
+                        "PRODUCT_VARIANT_ATTRIBUTE_VALUE_TOO_LONG",
+                        "variants.attributes",
+                        "Variant attribute values must not exceed 255 characters."));
+                }
+            }
+        }
+
         foreach (var unit in command.Units.Items.Where(unit => unit.UnitId != Guid.Empty))
         {
             if (unit.ConversionFactor <= 0m)
@@ -171,13 +305,6 @@ public sealed class ProductAuthoringPolicy : IProductAuthoringPolicy
                     "Product name is required."));
             }
 
-            if (command.Pricing.TaxRate < 0m)
-            {
-                errors.Add(new ProductAuthoringValidationError(
-                    "PRODUCT_TAX_RATE_INVALID",
-                    "taxRate",
-                    "Tax rate cannot be negative."));
-            }
         }
 
         if (command.Operation is ProductAuthoringOperation.Create or ProductAuthoringOperation.Update &&

@@ -53,7 +53,8 @@ public enum ProductAuthoringStatus
     RejectedByProductTypePolicy = 4,
     Failed = 5,
     NotFound = 6,
-    ConcurrencyConflict = 7
+    ConcurrencyConflict = 7,
+    Conflict = 8
 }
 
 public sealed record ProductAuthoringValidationError(

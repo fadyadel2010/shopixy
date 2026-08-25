@@ -5,18 +5,18 @@
 // The dataset arrives pre-resolved from productExport.js — this module only
 // performs presentation, never filtering or business logic.
 
-import { loadExcelModule } from './reportExports'
+import { loadExcelModule } from './reportExports.js'
 import {
     EXPORT_SCOPE_SELECTED,
     buildProductExportFilename,
     buildProductExportRows,
-} from './productExport'
+} from './productExport.js'
 
 // Readable column widths (in characters), ordered like the header row.
 const COLUMN_WIDTHS = [36, 18, 16, 26, 14, 22, 16, 12, 14]
 const PRICE_COLUMN_INDEX = 4
 
-export async function exportProductsToExcel(products, { scope, t, formatCurrency, storeName }) {
+export async function exportProductsToExcel(products, { scope, t, formatCurrency, storeName, isRTL = false }) {
     const rows = buildProductExportRows(products, { t, formatCurrency })
     const XLSX = await loadExcelModule()
 
@@ -61,6 +61,19 @@ export async function exportProductsToExcel(products, { scope, t, formatCurrency
         if (cell) cell.z = '0.00'
     })
 
+    // XLSX cells have an explicit type, unlike CSV. Force every string cell
+    // to the OpenXML string type and remove formula metadata so user-controlled
+    // values beginning with =, +, - or @ can never become executable formulas.
+    for (let rowIndex = 0; rowIndex < aoa.length; rowIndex += 1) {
+        for (let columnIndex = 0; columnIndex < aoa[rowIndex].length; columnIndex += 1) {
+            const cell = worksheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })]
+            if (!cell || typeof cell.v !== 'string') continue
+            cell.t = 's'
+            delete cell.f
+            delete cell.F
+        }
+    }
+
     const workbook = XLSX.utils.book_new()
     // Report context lives in workbook properties so the data sheet stays a
     // clean table. No extra API calls are made to populate this metadata.
@@ -70,9 +83,19 @@ export async function exportProductsToExcel(products, { scope, t, formatCurrency
         Author: storeName || 'Shopixy',
         CreatedDate: new Date(),
     }
+    workbook.Workbook = {
+        ...(workbook.Workbook || {}),
+        Views: [{ RTL: !!isRTL }],
+    }
 
     // Sheet names are limited to 31 characters and must not contain []:*?/\
     const sheetName = String(t('products.title')).replace(/[[\]:*?/\\]/g, ' ').slice(0, 31) || 'Products'
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName)
-    XLSX.writeFile(workbook, buildProductExportFilename({ format: 'xlsx', scope }))
+    // SheetJS requires cellStyles for row/column presentation metadata such as
+    // the explicit readable column widths to be persisted to the XLSX file.
+    XLSX.writeFile(
+        workbook,
+        buildProductExportFilename({ format: 'xlsx', scope }),
+        { cellStyles: true },
+    )
 }

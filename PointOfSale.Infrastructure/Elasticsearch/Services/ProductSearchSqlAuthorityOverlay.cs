@@ -150,6 +150,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
 
         product.TenantId = tenantId;
         product.ProductId = sqlProduct.Id;
+        product.ProductGeneration = sqlProduct.ProjectionMutationVersion;
         product.Name = sqlProduct.Name;
         product.NameAr = sqlProduct.NameAr;
         product.CategoryId = sqlProduct.CategoryId;
@@ -179,6 +180,47 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         product.HasVariants = sqlProduct.HasVariants;
         product.TrackStock = sqlProduct.TrackStock;
         product.AllowBackorder = sqlProduct.AllowBackorder;
+
+        var affiliatePolicy = await dbContext.AffiliateProductPolicies
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(policy =>
+                policy.TenantId == tenantId &&
+                policy.ProductId == sqlProduct.Id &&
+                !policy.IsDeleted)
+            .Select(policy => new
+            {
+                policy.IsEnabled,
+                policy.AffiliateCategoryId,
+                policy.CreatedAt
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        var isAffiliateEnabled = affiliatePolicy?.IsEnabled == true &&
+                                 affiliatePolicy.AffiliateCategoryId.HasValue &&
+                                 await dbContext.AffiliateCategories
+                                     .AsNoTracking()
+                                     .IgnoreQueryFilters()
+                                      .AnyAsync(category =>
+                                          category.Id == affiliatePolicy.AffiliateCategoryId.Value &&
+                                          category.IsActive &&
+                                          !category.IsDeleted &&
+                                          ((category.Level == 1 && category.ParentId == null) ||
+                                           (category.Level == 2 &&
+                                            category.ParentId != null &&
+                                            dbContext.AffiliateCategories
+                                                .IgnoreQueryFilters()
+                                                .Any(parent =>
+                                                    parent.Id == category.ParentId.Value &&
+                                                    parent.Level == 1 &&
+                                                    parent.IsActive &&
+                                                    !parent.IsDeleted))),
+                                          cancellationToken);
+
+        product.IsAffiliateEnabled = isAffiliateEnabled;
+        product.AffiliateEnabledAtUtc = isAffiliateEnabled
+            ? affiliatePolicy!.CreatedAt
+            : null;
 
         var sqlUnits = await dbContext.ProductUnits
             .AsNoTracking()
@@ -339,7 +381,7 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
                 promotion.TenantId == tenantId &&
                 !promotion.IsDeleted &&
                 promotion.Scope == PointOfSale.Core.Enums.PromotionScope.Product &&
-                promotion.AppliesToId == product.ProductId)
+                (!promotion.AppliesToId.HasValue || promotion.AppliesToId == product.ProductId))
             .ToListAsync(cancellationToken);
 
         var winningPromotion = PromotionVisibilityProjectionSupport.SelectWinningProductPromotion(
@@ -348,6 +390,22 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         PromotionVisibilityProjectionSupport.ApplyProductPromotionOverlay(product, winningPromotion);
 
         return product;
+    }
+
+    public static Task<ProductSearchAuthorityFence?> LoadFenceAsync(
+        ApplicationDbContext dbContext,
+        Guid tenantId,
+        Guid productId,
+        CancellationToken cancellationToken)
+    {
+        return dbContext.Products
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(product => product.TenantId == tenantId && product.Id == productId)
+            .Select(product => new ProductSearchAuthorityFence(
+                product.ProjectionMutationVersion,
+                product.IsDeleted))
+            .SingleOrDefaultAsync(cancellationToken);
     }
 
     private static decimal SumCurrentVariantStock(Guid tenantId, ProductVariant variant)
@@ -500,3 +558,5 @@ public sealed class ProductSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<Prod
         string.Equals(mediaType, "image", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase);
 }
+
+public sealed record ProductSearchAuthorityFence(long ProductGeneration, bool IsDeleted);

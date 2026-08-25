@@ -304,6 +304,54 @@ describe('ProductFeedDialog', () => {
         expect(clipboardWriteMock).not.toHaveBeenCalledWith('https://api.shopixy.test/api/public/feeds/meta/old-secret')
     })
 
+    it('removes the old session URL when rotate succeeds without a replacement feedUrl', async () => {
+        const user = userEvent.setup()
+        installClipboardMock()
+        apiPostMock.mockImplementation((url: string) => {
+            if (url.endsWith('/rotate')) {
+                return Promise.resolve({
+                    data: {
+                        tokenId: 'rotated-token',
+                        channel: 'meta',
+                        createdAtUtc: '2026-08-20T01:00:00Z',
+                    },
+                })
+            }
+            return Promise.resolve({ data: undefined })
+        })
+        const oldUrl = 'https://api.shopixy.test/api/public/feeds/meta/old-secret'
+        renderDialogSessionHarness({ meta: oldUrl })
+
+        await user.click(await screen.findByRole('button', { name: 'productFeed.rotateAria' }))
+        await waitFor(() => expect(showErrorMock).toHaveBeenCalledWith('productFeed.errors.missingFeedUrl'))
+
+        expect(screen.getByText('productFeed.sessionUrlUnavailable')).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
+        expect(clipboardWriteMock).not.toHaveBeenCalledWith(oldUrl)
+        expect(windowOpenMock).not.toHaveBeenCalledWith(oldUrl, expect.anything(), expect.anything())
+    })
+
+    it('removes a stale channel URL when create succeeds without a one-time feedUrl', async () => {
+        const user = userEvent.setup()
+        apiPostMock.mockResolvedValue({
+            data: {
+                tokenId: 'created-token',
+                channel: 'google',
+                createdAtUtc: '2026-08-20T01:00:00Z',
+            },
+        })
+        renderDialogSessionHarness({ google: 'https://api.shopixy.test/api/public/feeds/google/stale-secret' })
+
+        await user.click(await screen.findByRole('tab', { name: /Google/ }))
+        await user.click(screen.getByRole('button', { name: 'productFeed.createAria' }))
+        await waitFor(() => expect(showErrorMock).toHaveBeenCalledWith('productFeed.errors.missingFeedUrl'))
+
+        expect(screen.getByText('productFeed.sessionUrlUnavailable')).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
+    })
+
     it('revokes after destructive confirmation, refreshes metadata, and clears one-time state', async () => {
         const user = userEvent.setup()
         renderDialog()
@@ -380,6 +428,66 @@ describe('ProductFeedDialog', () => {
         expect(screen.getByText('productFeed.sessionUrlUnavailable')).toBeTruthy()
         expect(screen.queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
         expect(windowOpenMock).not.toHaveBeenCalled()
+    })
+
+    it('blocks stale token actions when a later metadata load fails and recovers on retry', async () => {
+        const user = userEvent.setup()
+        let failLists = false
+        apiGetMock.mockImplementation((url: string) => {
+            if (failLists) return Promise.reject({ response: { status: 503 } })
+            return Promise.resolve({ data: feedListFor(url) })
+        })
+        renderDialogSessionHarness({ meta: 'https://api.shopixy.test/api/public/feeds/meta/session-secret' })
+
+        expect(await screen.findByRole('button', { name: 'productFeed.rotateAria' })).toBeTruthy()
+        await user.click(screen.getByRole('button', { name: 'common.close' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+        failLists = true
+        await user.click(screen.getByRole('button', { name: 'reopen-feed-dialog' }))
+        expect(await screen.findByRole('alert')).toHaveTextContent('productFeed.errors.server')
+        expect(screen.queryByRole('button', { name: 'productFeed.rotateAria' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'productFeed.copyUrl' })).toBeNull()
+        expect(screen.queryByRole('button', { name: 'productFeed.openFeedAria' })).toBeNull()
+
+        failLists = false
+        await user.click(screen.getByRole('button', { name: 'common.retry' }))
+        expect(await screen.findByRole('button', { name: 'productFeed.rotateAria' })).toBeTruthy()
+    })
+
+    it('supports roving focus and arrow-key selection across channel tabs', async () => {
+        const user = userEvent.setup()
+        renderDialog()
+
+        const metaTab = await screen.findByRole('tab', { name: /Meta/ })
+        const googleTab = screen.getByRole('tab', { name: /Google/ })
+        expect(metaTab).toHaveAttribute('tabindex', '0')
+        expect(googleTab).toHaveAttribute('tabindex', '-1')
+
+        metaTab.focus()
+        await user.keyboard('{ArrowRight}')
+
+        expect(googleTab).toHaveFocus()
+        expect(googleTab).toHaveAttribute('aria-selected', 'true')
+        expect(googleTab).toHaveAttribute('tabindex', '0')
+        expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'product-feed-tab-google')
+    })
+
+    it('prevents the feed dialog from closing while a rotate confirmation is pending', async () => {
+        const user = userEvent.setup()
+        let resolveConfirmation: (confirmed: boolean) => void = () => undefined
+        confirmMock.mockReturnValue(new Promise<boolean>((resolve) => {
+            resolveConfirmation = resolve
+        }))
+        renderDialog()
+
+        await user.click(await screen.findByRole('button', { name: 'productFeed.rotateAria' }))
+        expect(screen.getByRole('button', { name: 'common.close' })).toBeDisabled()
+        expect(apiPostMock).not.toHaveBeenCalled()
+
+        resolveConfirmation(false)
+        await waitFor(() => expect(screen.getByRole('button', { name: 'common.close' })).not.toBeDisabled())
+        expect(apiPostMock).not.toHaveBeenCalled()
     })
 
     it('clears a one-time raw URL when the dialog closes', async () => {

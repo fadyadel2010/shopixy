@@ -141,6 +141,7 @@ public sealed class CommerceHubSearchSqlAuthorityOverlay : ISqlAuthorityOverlay<
                 !item.IsDeleted &&
                 item.IsActive &&
                 item.IsOnlineVisible &&
+                item.IsSearchable &&
                 item.PublishStatus == PublishStatus.Published)
             .SingleOrDefaultAsync(cancellationToken);
 

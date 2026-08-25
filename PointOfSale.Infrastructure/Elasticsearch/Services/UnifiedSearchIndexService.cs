@@ -60,6 +60,24 @@ public class UnifiedSearchIndexService : IUnifiedSearchIndexService
         return await _productIndexService.DeleteAsync(tenantId, productId, cancellationToken);
     }
 
+    /// <inheritdoc />
+    public Task<bool> TombstoneProductAsync(
+        Guid tenantId,
+        Guid productId,
+        long productGeneration,
+        bool isDeleted,
+        Guid? eventId = null,
+        CancellationToken cancellationToken = default)
+    {
+        return _productIndexService.TombstoneAsync(
+            tenantId,
+            productId,
+            productGeneration,
+            isDeleted,
+            eventId,
+            cancellationToken);
+    }
+
     #endregion
 
     #region Category Operations

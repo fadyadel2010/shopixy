@@ -3,12 +3,14 @@ using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.CommerceHub.Commands;
 using PointOfSale.API.CommerceHub.Services;
 using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.API.Services;
 using PointOfSale.API.Services.Governance;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
@@ -122,6 +124,7 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
     private readonly ITenantContext _tenantContext;
     private readonly IUserGovernanceService _userGovernanceService;
     private readonly ICommerceHubPriceAuthority _priceAuthority;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<PublishToCommerceHubHandler> _logger;
 
     public PublishToCommerceHubHandler(
@@ -131,6 +134,7 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
         ITenantContext tenantContext,
         IUserGovernanceService userGovernanceService,
         ICommerceHubPriceAuthority priceAuthority,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<PublishToCommerceHubHandler> logger)
     {
         _dbContext = dbContext;
@@ -139,6 +143,7 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
         _tenantContext = tenantContext;
         _userGovernanceService = userGovernanceService;
         _priceAuthority = priceAuthority;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -233,6 +238,14 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
                 command.RequestId,
                 command.OverrideReason ?? "merchant_publish",
                 new { listing.CommerceHubCategoryId, listing.AttributesJson, listing.CommerceHubPrice });
+            await StageMarketplaceProductReadModelRebuildAsync(
+                _dbContext,
+                _marketplaceEventOutbox,
+                variant.Product,
+                listing,
+                command.CorrelationId,
+                "CommerceHubListingCreated",
+                cancellationToken);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -289,6 +302,14 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
             command.RequestId,
             command.OverrideReason ?? "merchant_publish_or_update",
             new { listing.CommerceHubCategoryId, listing.AttributesJson, listing.CommerceHubPrice });
+        await StageMarketplaceProductReadModelRebuildAsync(
+            _dbContext,
+            _marketplaceEventOutbox,
+            variant.Product,
+            listing,
+            command.CorrelationId,
+            "CommerceHubListingPublished",
+            cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -423,6 +444,39 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
             .FinalPrice;
     }
 
+    internal static async Task StageMarketplaceProductReadModelRebuildAsync(
+        ApplicationDbContext dbContext,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
+        Product product,
+        CommerceHubListing listing,
+        string? correlationId,
+        string changedField,
+        CancellationToken cancellationToken)
+    {
+        var occurredAtUtc = listing.UpdatedAt ?? listing.CreatedAt;
+        var normalizedCorrelationId = string.IsNullOrWhiteSpace(correlationId)
+            ? System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("D")
+            : correlationId;
+
+        var eventVersion = await MarketplaceProductProjectionVersion.AdvanceAsync(
+            dbContext,
+            product,
+            cancellationToken);
+
+        await marketplaceEventOutbox.EnqueueAsync(
+            new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
+            {
+                OccurredAtUtc = occurredAtUtc,
+                CorrelationId = normalizedCorrelationId,
+                EntityId = product.Id,
+                AggregateRootId = product.Id,
+                TenantId = product.TenantId,
+                Version = eventVersion,
+                ChangedFields = [changedField]
+            },
+            cancellationToken);
+    }
+
     internal static void ValidatePublishOrUpdate(Guid tenantId, Guid variantId, Guid categoryId, decimal? commerceHubPrice)
     {
         if (tenantId == Guid.Empty)
@@ -500,6 +554,7 @@ public class UpdateCommerceHubListingHandler : IUpdateCommerceHubListingHandler
     private readonly ITenantContext _tenantContext;
     private readonly IUserGovernanceService _userGovernanceService;
     private readonly ICommerceHubPriceAuthority _priceAuthority;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<UpdateCommerceHubListingHandler> _logger;
 
     public UpdateCommerceHubListingHandler(
@@ -509,6 +564,7 @@ public class UpdateCommerceHubListingHandler : IUpdateCommerceHubListingHandler
         ITenantContext tenantContext,
         IUserGovernanceService userGovernanceService,
         ICommerceHubPriceAuthority priceAuthority,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<UpdateCommerceHubListingHandler> logger)
     {
         _dbContext = dbContext;
@@ -517,6 +573,7 @@ public class UpdateCommerceHubListingHandler : IUpdateCommerceHubListingHandler
         _tenantContext = tenantContext;
         _userGovernanceService = userGovernanceService;
         _priceAuthority = priceAuthority;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -652,6 +709,14 @@ public class UpdateCommerceHubListingHandler : IUpdateCommerceHubListingHandler
             command.RequestId,
             command.OverrideReason ?? "merchant_update",
             new { listing.CommerceHubCategoryId, listing.AttributesJson, listing.CommerceHubPrice });
+        await PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
+            _dbContext,
+            _marketplaceEventOutbox,
+            variant.Product,
+            listing,
+            command.CorrelationId,
+            "CommerceHubListingUpdated",
+            cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -693,6 +758,7 @@ public class UnpublishFromCommerceHubHandler : IUnpublishFromCommerceHubHandler
     private readonly IEventPublisher _eventPublisher;
     private readonly ITenantContext _tenantContext;
     private readonly ICommerceHubPriceAuthority _priceAuthority;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<UnpublishFromCommerceHubHandler> _logger;
 
     public UnpublishFromCommerceHubHandler(
@@ -700,12 +766,14 @@ public class UnpublishFromCommerceHubHandler : IUnpublishFromCommerceHubHandler
         IEventPublisher eventPublisher,
         ITenantContext tenantContext,
         ICommerceHubPriceAuthority priceAuthority,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<UnpublishFromCommerceHubHandler> logger)
     {
         _dbContext = dbContext;
         _eventPublisher = eventPublisher;
         _tenantContext = tenantContext;
         _priceAuthority = priceAuthority;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -742,6 +810,16 @@ public class UnpublishFromCommerceHubHandler : IUnpublishFromCommerceHubHandler
                      x.TenantId == command.TenantId &&
                      x.Product.TenantId == command.TenantId,
                 cancellationToken);
+
+        var product = variant?.Product;
+        if (product == null && listing != null)
+        {
+            product = await _dbContext.Products
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(
+                    x => x.Id == listing.ProductId && x.TenantId == listing.TenantId,
+                    cancellationToken);
+        }
 
         if (listing == null && variant == null)
         {
@@ -796,6 +874,20 @@ public class UnpublishFromCommerceHubHandler : IUnpublishFromCommerceHubHandler
             command.RequestId,
             command.Reason ?? "merchant_unpublish",
             new { listing.CommerceHubCategoryId, listing.AttributesJson, listing.CommerceHubPrice });
+        if (product == null)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}.");
+        }
+
+        await PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
+            _dbContext,
+            _marketplaceEventOutbox,
+            product,
+            listing,
+            command.CorrelationId,
+            "CommerceHubListingUnpublished",
+            cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 

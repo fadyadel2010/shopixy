@@ -7,9 +7,10 @@ public sealed class CommerceHubSearchDiscoveryAuthorityCertificationTests
     {
         var queryService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs");
 
-        Assert.Contains("RecomposeVisibleListingItemsAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("Total = visibleItems.Count", queryService, StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("Total = result.TotalCount", queryService, StringComparison.Ordinal);
+        Assert.Contains("TotalCount = totalCount", queryService, StringComparison.Ordinal);
+        Assert.Contains(".Skip(PaginationGuard.GetSkip(page, pageSize))", queryService, StringComparison.Ordinal);
         Assert.Contains("MapSqlVisibleFacetsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("RecomposeVisibleSuggestionProductsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("RecomposeVisibleAutocompleteProductsAsync", queryService, StringComparison.Ordinal);
@@ -31,7 +32,7 @@ public sealed class CommerceHubSearchDiscoveryAuthorityCertificationTests
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", analytics, StringComparison.Ordinal);
         Assert.Contains("indexService.DeleteAsync", analytics, StringComparison.Ordinal);
         Assert.Contains("PopularityScore", readService, StringComparison.Ordinal);
-        Assert.Contains("RecomposeVisibleListingItemsAsync", ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs"), StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs"), StringComparison.Ordinal);
     }
 
     [Fact]

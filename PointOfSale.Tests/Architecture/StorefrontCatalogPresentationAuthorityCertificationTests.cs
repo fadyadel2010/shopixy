@@ -250,7 +250,8 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         Assert.Contains("product.Media = sqlProduct.Media", overlay, StringComparison.Ordinal);
         Assert.Contains("IsStorefrontProductMediaType(media.MediaType)", overlay, StringComparison.Ordinal);
         Assert.Contains("string.Equals(mediaType, \"video\", StringComparison.OrdinalIgnoreCase)", overlay, StringComparison.Ordinal);
-        Assert.Contains("IsStorefrontProductMediaType(item.MediaType)", mediaConsumer, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(item.MediaType, \"image\")", mediaConsumer, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(item.MediaType, \"video\")", mediaConsumer, StringComparison.Ordinal);
         Assert.Contains("OrderBy(item => item.Position)", mediaConsumer, StringComparison.Ordinal);
 
         Assert.Contains("product.media ?? []", mediaUtils, StringComparison.Ordinal);

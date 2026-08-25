@@ -167,6 +167,69 @@ public sealed class ProductVariantCloneImportAuthorityTests
     }
 
     [Fact]
+    public async Task SimpleProductBarcodeAuthority_AllowsMirrorsWithinTheCurrentAggregate()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var variantId = Guid.NewGuid();
+        var unitId = Guid.NewGuid();
+        var productUnitId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+
+        var product = CreateProduct(tenantId, productId, "Simple product");
+        product.Barcode = "SIMPLE-AGGREGATE-BARCODE";
+        var unit = new PointOfSale.Core.Entities.Unit
+        {
+            Id = unitId,
+            TenantId = tenantId,
+            Name = "Piece",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.AddRange(product, unit);
+        db.ProductVariants.Add(new ProductVariant
+        {
+            Id = variantId,
+            TenantId = tenantId,
+            ProductId = productId,
+            Barcode = product.Barcode,
+            Price = 10m,
+            CostPrice = 5m,
+            IsActive = true,
+            IsDefault = true,
+            CreatedAt = DateTime.UtcNow
+        });
+        db.ProductUnits.Add(new ProductUnit
+        {
+            Id = productUnitId,
+            ProductId = productId,
+            UnitId = unitId,
+            Barcode = product.Barcode,
+            ConversionFactor = 1m,
+            IsDefault = true,
+            IsBaseUnit = true,
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        Assert.False(await ProductVariantCloneImportAuthority.IsBarcodeOwnedByAnotherSemanticEntityAsync(
+            db,
+            tenantId,
+            product.Barcode,
+            productId,
+            variantId,
+            CancellationToken.None));
+
+        Assert.False(await ProductVariantCloneImportAuthority.IsProductUnitBarcodeOwnedByAnotherSemanticEntityAsync(
+            db,
+            tenantId,
+            product.Barcode,
+            productId,
+            productUnitId,
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ProductUnitBarcodeAuthority_BlocksProductVariantAndSiblingUnitCollisions()
     {
         var tenantId = Guid.NewGuid();

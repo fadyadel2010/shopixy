@@ -381,8 +381,11 @@ function deriveOptionGroupsFromVariants(variants) {
 }
 
 function getCombinationKeyFromVariant(variant) {
-    const attributeKey = attributesToKey(normalizeVariantAttributes(variant))
-    return attributeKey || `variant:${variant.id}`
+    if (variant?.id) {
+        return `variant:${variant.id}`
+    }
+
+    return attributesToKey(normalizeVariantAttributes(variant))
 }
 
 function getRowName(attributes, fallbackName) {
@@ -497,10 +500,29 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     const [excludedRules, setExcludedRules] = useState([])
     const [draftExclusionRule, setDraftExclusionRule] = useState({})
     const [confirmedGenerationSignature, setConfirmedGenerationSignature] = useState('')
+    const fetchSequenceRef = useRef(0)
 
     useEffect(() => {
+        const requestSequence = ++fetchSequenceRef.current
+
+        setVariants([])
+        setOptionGroups([])
+        setRowDrafts({})
+        setDeletedKeys(new Set())
+        setSelectedKeys(new Set())
+        setDefaultKey(null)
+        setError('')
+
         if (productId) {
-            fetchVariants()
+            void fetchVariants(productId, requestSequence)
+        } else {
+            setLoading(false)
+        }
+
+        return () => {
+            if (fetchSequenceRef.current === requestSequence) {
+                fetchSequenceRef.current += 1
+            }
         }
     }, [productId])
 
@@ -515,10 +537,14 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         }))
     }, [productSkuPrefix])
 
-    const fetchVariants = async () => {
+    const fetchVariants = async (targetProductId = productId, requestSequence = ++fetchSequenceRef.current) => {
         try {
             setLoading(true)
-            const variantsResponse = await api.get(`/products/${productId}/variants`)
+            const variantsResponse = await api.get(`/products/${targetProductId}/variants`)
+            if (requestSequence !== fetchSequenceRef.current) {
+                return
+            }
+
             const nextVariants = (variantsResponse.data || []).map(normalizeVariantForMatrix)
             const derivedGroups = reconstructOptionGroupsFromVariants(nextVariants)
             const currentDefault = nextVariants.find(variant => variant.isDefault)
@@ -537,10 +563,16 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             setSelectedKeys(new Set())
             setDefaultKey(currentDefault ? getCombinationKeyFromVariant(currentDefault) : null)
         } catch (err) {
-            console.error('Failed to load variants', err)
+            if (requestSequence !== fetchSequenceRef.current) {
+                return
+            }
+
+            console.error('Failed to load variants')
             setError(tx('variants.failedToLoad', 'Failed to load variants'))
         } finally {
-            setLoading(false)
+            if (requestSequence === fetchSequenceRef.current) {
+                setLoading(false)
+            }
         }
     }
 
@@ -590,14 +622,16 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
 
         if (generatedCombinations.length > 0 && !generationBlocked) {
             generatedCombinations.forEach((attributes, index) => {
-                const key = attributesToKey(attributes)
-                if (deletedKeys.has(key)) {
-                    return
-                }
+                const combinationKey = attributesToKey(attributes)
 
-                let existingVariant = existingByKey.get(key)
+                let existingVariant = existingByKey.get(combinationKey)
                 if (!existingVariant && index === 0 && reusableLegacyDefaultVariant && !matchedVariantIds.has(reusableLegacyDefaultVariant.id)) {
                     existingVariant = reusableLegacyDefaultVariant
+                }
+
+                const key = existingVariant ? getCombinationKeyFromVariant(existingVariant) : combinationKey
+                if (deletedKeys.has(key)) {
+                    return
                 }
 
                 if (existingVariant) {
@@ -930,8 +964,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             generatedVariants: matrixRows.length,
             active: matrixRows.filter(row => row.isActive).length,
             inactive: matrixRows.filter(row => !row.isActive).length,
-            missingPurchasePrice: matrixRows.filter(row => row.costPrice === '' || Number.isNaN(parseFloat(row.costPrice))).length,
-            missingSellingPrice: matrixRows.filter(row => row.price === '' || Number.isNaN(parseFloat(row.price)) || parseFloat(row.price) <= 0).length,
+            missingPurchasePrice: matrixRows.filter(row => row.costPrice === '' || Number.isNaN(parseFloat(row.costPrice)) || parseFloat(row.costPrice) < 0).length,
+            missingSellingPrice: matrixRows.filter(row => row.price === '' || Number.isNaN(parseFloat(row.price)) || parseFloat(row.price) < 0).length,
             missingSku: matrixRows.filter(row => !normalizeText(row.sku)).length,
             duplicateSku: 0,
             duplicateBarcode: 0,
@@ -972,6 +1006,15 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             if (row.weight !== '' && !Number.isNaN(parseFloat(row.weight)) && parseFloat(row.weight) < 0) {
                 rowIssues.weight = true
             }
+            if (row.costPrice === '' || Number.isNaN(parseFloat(row.costPrice)) || parseFloat(row.costPrice) < 0) {
+                rowIssues.costPrice = true
+            }
+            if (row.price === '' || Number.isNaN(parseFloat(row.price)) || parseFloat(row.price) < 0) {
+                rowIssues.price = true
+            }
+            if (row.onlinePrice !== '' && (Number.isNaN(parseFloat(row.onlinePrice)) || parseFloat(row.onlinePrice) < 0)) {
+                rowIssues.onlinePrice = true
+            }
 
             if (Object.keys(rowIssues).length > 0) {
                 issues[row.key] = rowIssues
@@ -1003,9 +1046,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             return tx('variants.noVariants', 'No variants to save.')
         }
 
-        const duplicateCombination = rows.some((row, index) => (
-            rows.findIndex(candidate => candidate.key === row.key) !== index
-        ))
+        const combinationKeys = rows.map(row => attributesToKey(row.attributes)).filter(Boolean)
+        const duplicateCombination = combinationKeys.some((key, index) => combinationKeys.indexOf(key) !== index)
         if (duplicateCombination) {
             return tx('variants.duplicateCombination', 'Duplicate variant combinations are not allowed.')
         }
@@ -1026,12 +1068,16 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             return tx('variants.duplicateBarcode', 'Duplicate barcode values are not allowed.')
         }
 
-        if (rows.some(row => row.costPrice === '' || Number.isNaN(parseFloat(row.costPrice)))) {
-            return tx('variants.purchasePriceRequired', 'Each variant requires a purchase price.')
+        if (rows.some(row => row.costPrice === '' || Number.isNaN(parseFloat(row.costPrice)) || parseFloat(row.costPrice) < 0)) {
+            return tx('variants.purchasePriceRequired', 'Each variant requires a cost price of zero or more.')
         }
 
-        if (rows.some(row => row.price === '' || Number.isNaN(parseFloat(row.price)) || parseFloat(row.price) <= 0)) {
-            return tx('variants.priceRequired', 'Each variant requires a valid selling price.')
+        if (rows.some(row => row.price === '' || Number.isNaN(parseFloat(row.price)) || parseFloat(row.price) < 0)) {
+            return tx('variants.priceRequired', 'Each variant requires a POS price of zero or more.')
+        }
+
+        if (rows.some(row => row.onlinePrice !== '' && (Number.isNaN(parseFloat(row.onlinePrice)) || parseFloat(row.onlinePrice) < 0))) {
+            return tx('variants.onlinePriceInvalid', 'Online price must be empty or zero or more.')
         }
 
         if (rows.some(row => row.weight !== '' && (Number.isNaN(parseFloat(row.weight)) || parseFloat(row.weight) < 0))) {
@@ -1150,13 +1196,26 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                     return next
                 })
             } catch (err) {
-                console.error('Failed to generate barcodes', err)
+                console.error('Failed to generate barcodes')
                 setError(extractApiErrorMessage(err, tx('products.failedToGenerateBarcode', 'Failed to generate barcode')))
             }
             return
         }
 
         if (type === 'delete-selected') {
+            if (selectedRows.some(row => row.id)) {
+                const confirmed = await confirm({
+                    confirmLabel: tx('common.delete', 'Delete'),
+                    description: tx('variants.deleteSelectedConfirm', 'Removed persisted variants will be soft-deleted when you save. Continue?'),
+                    title: tx('variants.deleteSelectedTitle', 'Remove selected variants?'),
+                    variant: 'danger'
+                })
+
+                if (!confirmed) {
+                    return
+                }
+            }
+
             setDeletedKeys(prev => new Set([...prev, ...selectedRows.map(row => row.key)]))
             setSelectedKeys(new Set())
             return
@@ -1210,24 +1269,14 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         try {
             setSavingMatrix(true)
 
-            if (import.meta.env.DEV) {
-                console.info('[ProductVariantsTab] Matrix draft handoff starting', {
-                    productId,
-                    variantCount: draft.authoringVariants.length
-                })
-            }
-
             const savedProduct = await onSaveVariantDraft(draft)
-            if (import.meta.env.DEV) {
-                console.info('[ProductVariantsTab] Matrix draft handoff saved', {
-                    productId
-                })
+            if (savedProduct?.__productAuthoringStaleResponse) {
+                return false
             }
-
-            await fetchVariants()
+            await fetchVariants(productId)
             return savedProduct
         } catch (err) {
-            console.error('Failed to hand off variant matrix draft', err)
+            console.error('Failed to hand off variant matrix draft')
             const message = err.response?.status === 401
                 ? 'Your session expired or this account is not allowed to manage variants. Please sign in again.'
                 : (err.message || extractApiErrorMessage(err, tx('variants.failedToSave', 'Failed to save variant matrix')))

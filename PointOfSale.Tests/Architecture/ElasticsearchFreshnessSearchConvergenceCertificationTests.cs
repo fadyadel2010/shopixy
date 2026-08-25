@@ -23,6 +23,8 @@ public sealed class ElasticsearchFreshnessSearchConvergenceCertificationTests
 
         Assert.Contains("IndexedAtUtc", productDocument, StringComparison.Ordinal);
         Assert.Contains("LastEventId", productDocument, StringComparison.Ordinal);
+        Assert.Contains("ProductGeneration", productDocument, StringComparison.Ordinal);
+        Assert.Contains("IsTombstone", productDocument, StringComparison.Ordinal);
         Assert.Contains("IndexedAtUtc", categoryDocument, StringComparison.Ordinal);
         Assert.Contains("IndexedAtUtc", cmsDocument, StringComparison.Ordinal);
         Assert.Contains("UpdatedAtUtc", commerceHubDocument, StringComparison.Ordinal);
@@ -47,7 +49,7 @@ public sealed class ElasticsearchFreshnessSearchConvergenceCertificationTests
             Assert.Contains("Fence", source, StringComparison.Ordinal);
         }
 
-        Assert.Contains("DeleteAsync(", productLifecycle, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", productLifecycle, StringComparison.Ordinal);
         Assert.Contains("DeleteProductFromSearchAsync", adminSearch, StringComparison.Ordinal);
         Assert.Contains("DeleteStaleCategoriesAsync", adminSearch, StringComparison.Ordinal);
         Assert.Contains("DeleteStaleCmsPagesAsync", adminSearch, StringComparison.Ordinal);

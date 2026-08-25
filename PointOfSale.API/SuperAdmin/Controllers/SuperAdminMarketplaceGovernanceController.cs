@@ -11,6 +11,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Pagination;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
@@ -24,6 +25,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
     private readonly IEventPublisher _eventPublisher;
     private readonly ICommerceHubAutoHealingQueue _autoHealingQueue;
     private readonly ISuperAdminAuditService _auditService;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<SuperAdminMarketplaceGovernanceController> _logger;
 
     public SuperAdminMarketplaceGovernanceController(
@@ -31,12 +33,14 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
         IEventPublisher eventPublisher,
         ICommerceHubAutoHealingQueue autoHealingQueue,
         ISuperAdminAuditService auditService,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<SuperAdminMarketplaceGovernanceController> logger)
     {
         _dbContext = dbContext;
         _eventPublisher = eventPublisher;
         _autoHealingQueue = autoHealingQueue;
         _auditService = auditService;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -269,6 +273,10 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
                 HttpContext.TraceIdentifier,
                 request.Reason,
                 new { listing.TenantId, listing.ProductId, listing.VariantId });
+            await StageMarketplaceProductReadModelRebuildAsync(
+                listing,
+                "CommerceHubListingGovernanceSuppressed",
+                cancellationToken);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
             EnqueueListingVerification(listing, "SUPER_ADMIN_LISTING_SUPPRESSION");
@@ -383,6 +391,10 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
                 HttpContext.TraceIdentifier,
                 request.Reason,
                 new { listing.TenantId, listing.ProductId, listing.VariantId });
+            await StageMarketplaceProductReadModelRebuildAsync(
+                listing,
+                "CommerceHubListingGovernanceRestored",
+                cancellationToken);
 
             await _dbContext.SaveChangesAsync(cancellationToken);
             EnqueueListingVerification(listing, "SUPER_ADMIN_LISTING_RESTORE");
@@ -409,6 +421,29 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
                 : "Listing did not carry governance restore intent.",
             AppliedAtUtc = DateTime.UtcNow
         });
+    }
+
+    private async Task StageMarketplaceProductReadModelRebuildAsync(
+        CommerceHubListing listing,
+        string changedField,
+        CancellationToken cancellationToken)
+    {
+        var product = await _dbContext.Products
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(
+                item => item.Id == listing.ProductId && item.TenantId == listing.TenantId,
+                cancellationToken)
+            ?? throw new InvalidOperationException(
+                $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}.");
+
+        await PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
+            _dbContext,
+            _marketplaceEventOutbox,
+            product,
+            listing,
+            HttpContext.TraceIdentifier,
+            changedField,
+            cancellationToken);
     }
 
     [HttpPost("tenants/{tenantId:guid}/suspend")]

@@ -159,9 +159,12 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
 
             if (product == null)
             {
-                var deleted = await _indexService.DeleteProductAsync(
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
                     @event.TenantId.Value,
                     @event.ProductId,
+                    @event.EventId,
                     context.CancellationToken);
                 if (!deleted)
                 {
@@ -180,9 +183,12 @@ public class ProductUpdatedSearchIndexConsumer : IConsumer<ProductUpdatedEvent>
                     @event.ProductId,
                     @event.TenantId);
 
-                var deleted = await _indexService.DeleteProductAsync(
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
                     @event.TenantId.Value,
                     @event.ProductId,
+                    @event.EventId,
                     context.CancellationToken);
                 if (!deleted)
                 {

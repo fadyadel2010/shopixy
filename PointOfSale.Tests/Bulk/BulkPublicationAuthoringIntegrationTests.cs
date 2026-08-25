@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using PointOfSale.API.Controllers;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.ProductAuthoring;
@@ -218,6 +219,140 @@ public sealed class BulkPublicationAuthoringIntegrationTests
     }
 
     [Fact]
+    public async Task PublicVariantCandidate_IsAcceptedConsistentlyBySingleUpdateAndBulkPublish()
+    {
+        await using var harness = BulkFoundationTestHarness.Create(seedProducts: false);
+        var seeded = await SeedVariantAsync(harness, pricedVariantActive: true);
+        var pipeline = CreatePipeline(harness);
+
+        var singleResult = await PublishThroughSingleUpdateAsync(
+            harness,
+            pipeline,
+            seeded.ProductId,
+            "single-ready-variant");
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, singleResult.Status);
+        var singlePublished = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        Assert.Equal(PublishStatus.Published, singlePublished.PublishStatus);
+        Assert.True(singlePublished.IsOnlineVisible);
+
+        var unpublish = await pipeline.Bulk.ExecuteLifecycleAsync(
+            BulkOperationType.Unpublish,
+            Request(singlePublished.Id, singlePublished.RowVersion),
+            "cross-path-ready-variant-unpublish");
+        Assert.Equal(BulkItemStatus.Processed, Assert.Single(unpublish.OperationResult!.Results).Status);
+
+        var draft = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        var bulkResult = await pipeline.Bulk.ExecuteLifecycleAsync(
+            BulkOperationType.Publish,
+            Request(draft.Id, draft.RowVersion),
+            "cross-path-ready-variant-publish");
+
+        Assert.Equal(BulkItemStatus.Processed, Assert.Single(bulkResult.OperationResult!.Results).Status);
+        var bulkPublished = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        Assert.Equal(PublishStatus.Published, bulkPublished.PublishStatus);
+        Assert.True(bulkPublished.IsOnlineVisible);
+    }
+
+    [Fact]
+    public async Task PublicSimpleCandidate_IsAcceptedConsistentlyBySingleUpdateAndBulkPublish()
+    {
+        await using var harness = BulkFoundationTestHarness.Create(seedProducts: false);
+        var seeded = await SeedSimpleAsync(
+            harness, isActive: true, PublishStatus.Draft, isOnlineVisible: false, withUnits: true);
+        var pipeline = CreatePipeline(harness);
+
+        var singleResult = await PublishThroughSingleUpdateAsync(
+            harness,
+            pipeline,
+            seeded.ProductId,
+            "single-ready-simple");
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, singleResult.Status);
+        var singlePublished = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        Assert.Equal(PublishStatus.Published, singlePublished.PublishStatus);
+        Assert.True(singlePublished.IsOnlineVisible);
+
+        var unpublish = await pipeline.Bulk.ExecuteLifecycleAsync(
+            BulkOperationType.Unpublish,
+            Request(singlePublished.Id, singlePublished.RowVersion),
+            "cross-path-ready-simple-unpublish");
+        Assert.Equal(BulkItemStatus.Processed, Assert.Single(unpublish.OperationResult!.Results).Status);
+
+        var draft = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        var bulkResult = await pipeline.Bulk.ExecuteLifecycleAsync(
+            BulkOperationType.Publish,
+            Request(draft.Id, draft.RowVersion),
+            "cross-path-ready-simple-publish");
+
+        Assert.Equal(BulkItemStatus.Processed, Assert.Single(bulkResult.OperationResult!.Results).Status);
+        var bulkPublished = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        Assert.Equal(PublishStatus.Published, bulkPublished.PublishStatus);
+        Assert.True(bulkPublished.IsOnlineVisible);
+    }
+
+    [Theory]
+    [InlineData("inactive-priced-and-active-zero")]
+    [InlineData("deleted-priced-and-active-zero")]
+    [InlineData("no-live-variants")]
+    public async Task PublicVariantCandidate_IsRejectedConsistentlyBySingleUpdateAndBulkPublish(
+        string invalidShape)
+    {
+        await using var harness = BulkFoundationTestHarness.Create(seedProducts: false);
+        var seeded = await SeedVariantAsync(
+            harness,
+            pricedVariantActive: invalidShape == "deleted-priced-and-active-zero");
+
+        if (invalidShape is "deleted-priced-and-active-zero" or "no-live-variants")
+        {
+            var variants = await harness.Context.ProductVariants
+                .IgnoreQueryFilters()
+                .Where(variant => variant.ProductId == seeded.ProductId)
+                .OrderBy(variant => variant.SKU)
+                .ToListAsync();
+            variants[0].IsDeleted = true;
+            if (invalidShape == "no-live-variants")
+            {
+                variants[1].IsDeleted = true;
+            }
+            await harness.Context.SaveChangesAsync();
+            harness.Context.ChangeTracker.Clear();
+        }
+
+        var pipeline = CreatePipeline(harness);
+        var singleResult = await PublishThroughSingleUpdateAsync(
+            harness,
+            pipeline,
+            seeded.ProductId,
+            $"single-not-ready-{invalidShape}");
+
+        Assert.Equal(ProductAuthoringStatus.NotReadyForPublication, singleResult.Status);
+        Assert.Contains(singleResult.ValidationErrors, error =>
+            error.Code == "PRODUCT_ACTIVE_PRICED_VARIANT_REQUIRED");
+
+        var unchanged = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        var bulkResult = await pipeline.Bulk.ExecuteLifecycleAsync(
+            BulkOperationType.Publish,
+            Request(unchanged.Id, unchanged.RowVersion),
+            $"cross-path-not-ready-{invalidShape}");
+
+        var bulkItem = Assert.Single(bulkResult.OperationResult!.Results);
+        Assert.Equal(BulkItemStatus.Failed, bulkItem.Status);
+        Assert.Equal(BulkErrorCodes.PublicationNotReady, bulkItem.Code);
+        var stillDraft = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(product => product.Id == seeded.ProductId);
+        Assert.Equal(PublishStatus.Draft, stillDraft.PublishStatus);
+        Assert.False(stillDraft.IsOnlineVisible);
+    }
+
+    [Fact]
     public async Task Unpublish_PublishedVisibleProduct_BecomesDraftHiddenPreservingActiveState()
     {
         await using var harness = BulkFoundationTestHarness.Create(seedProducts: false);
@@ -284,7 +419,10 @@ public sealed class BulkPublicationAuthoringIntegrationTests
         Assert.DoesNotContain(typeof(ProductArchivedEvent).FullName, events);
     }
 
-    private static BulkProductLifecycleService CreateService(BulkFoundationTestHarness harness)
+    private static BulkProductLifecycleService CreateService(BulkFoundationTestHarness harness) =>
+        CreatePipeline(harness).Bulk;
+
+    private static AuthoringPipeline CreatePipeline(BulkFoundationTestHarness harness)
     {
         var context = harness.Context;
         var httpContextAccessor = new HttpContextAccessor();
@@ -309,7 +447,8 @@ public sealed class BulkPublicationAuthoringIntegrationTests
             new ProductAuthoringReconstructionService(context, harness.TenantContext));
 
         var productLoader = new BulkProductLoader(context, harness.TenantContext);
-        return new BulkProductLifecycleService(
+        var mapper = new ProductAuthoringCommandMapper(harness.TenantContext, httpContextAccessor);
+        var bulk = new BulkProductLifecycleService(
             new BulkPreparationService(
                 new BulkProductRequestValidator(),
                 productLoader,
@@ -320,11 +459,81 @@ public sealed class BulkPublicationAuthoringIntegrationTests
             new BulkOperationResultAggregator(),
             productLoader,
             orchestrator,
-            new ProductAuthoringCommandMapper(harness.TenantContext, httpContextAccessor),
+            mapper,
             Mock.Of<IValidationService>(),
             context,
             harness.TenantContext,
             NullLogger<BulkProductLifecycleService>.Instance);
+
+        return new AuthoringPipeline(bulk, orchestrator, mapper);
+    }
+
+    private static async Task<ProductAuthoringResult> PublishThroughSingleUpdateAsync(
+        BulkFoundationTestHarness harness,
+        AuthoringPipeline pipeline,
+        Guid productId,
+        string idempotencyKey)
+    {
+        harness.Context.ChangeTracker.Clear();
+        var product = await harness.Context.Products.AsNoTracking()
+            .SingleAsync(item => item.Id == productId);
+        var request = new UpdateProductRequest(
+            Name: product.Name,
+            NameAr: product.NameAr,
+            Barcode: product.Barcode,
+            SKU: product.SKU,
+            Description: product.Description,
+            DescriptionAr: product.DescriptionAr,
+            CategoryId: product.CategoryId,
+            PurchasePrice: product.PurchasePrice,
+            SalePrice: product.SalePrice,
+            OnlinePrice: product.OnlinePrice,
+            PriceIncludesTax: product.PriceIncludesTax,
+            TaxRate: product.TaxRate,
+            Unit: product.Unit,
+            MinimumStockLevel: product.MinimumStockLevel,
+            Images: product.Images,
+            IsActive: true,
+            TrackStock: product.TrackStock,
+            HasVariants: product.HasVariants,
+            Slug: product.Slug,
+            MetaTitle: product.MetaTitle,
+            MetaDescription: product.MetaDescription,
+            MetaKeywords: product.MetaKeywords,
+            Weight: product.Weight,
+            Length: product.Length,
+            Width: product.Width,
+            Height: product.Height,
+            WeightUnit: product.WeightUnit,
+            DimensionUnit: product.DimensionUnit,
+            PublishStatus: (int)PublishStatus.Published,
+            IsOnlineVisible: true,
+            IsSearchable: product.IsSearchable,
+            IsFeatured: product.IsFeatured,
+            LowStockThreshold: product.LowStockThreshold,
+            AllowBackorder: product.AllowBackorder,
+            Brand: product.Brand,
+            Manufacturer: product.Manufacturer,
+            Tags: product.Tags,
+            VideoUrl: product.VideoUrl,
+            ProductTemplate: product.ProductTemplate,
+            ProductUnits: null,
+            Variants: null);
+        var command = pipeline.Mapper.FromUpdateRequest(
+            ProductAuthoringOperation.Update,
+            product.Id,
+            request,
+            variants: null);
+        command = command with
+        {
+            Metadata = command.Metadata with
+            {
+                IdempotencyKey = idempotencyKey,
+                ExpectedVersion = product.RowVersion
+            }
+        };
+
+        return await pipeline.Orchestrator.AuthorAsync(command);
     }
 
     private static async Task<SeededProduct> SeedSimpleAsync(
@@ -467,6 +676,11 @@ public sealed class BulkPublicationAuthoringIntegrationTests
         ]);
 
     private sealed record SeededProduct(Guid ProductId, uint RowVersion);
+
+    private sealed record AuthoringPipeline(
+        BulkProductLifecycleService Bulk,
+        ProductAuthoringOrchestrator Orchestrator,
+        ProductAuthoringCommandMapper Mapper);
 
     private sealed class PersistedEventPublisher(ApplicationDbContext context) : IEventPublisher
     {

@@ -3,11 +3,17 @@ using PointOfSale.API.DTOs;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Pricing;
+using PointOfSale.Infrastructure.Reliability;
 
 namespace PointOfSale.API.Mappers;
 
 public static class SafeResponseMapper
 {
+    private static readonly JsonSerializerOptions PersistedJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
     public static SupplierResponseDto ToResponseDto(this Supplier supplier) => new()
     {
         Id = supplier.Id,
@@ -95,6 +101,7 @@ public static class SafeResponseMapper
         Features = DeserializeStringList(product.FeaturesJson),
         Faqs = DeserializeFaqs(product.FaqJson),
         AiGenerated = product.AiGenerated,
+        AiMetadata = DeserializeJsonElement(product.AiMetadataJson),
         VideoUrl = product.VideoUrl,
         ProductTemplate = product.ProductTemplate,
         RowVersion = product.RowVersion.ToString(),
@@ -104,7 +111,7 @@ public static class SafeResponseMapper
             .Select(ToProductUnitResponseDto)
             .ToList(),
         Variants = product.Variants
-            .Where(variant => !variant.IsDeleted)
+            .Where(variant => !variant.IsDeleted && ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner(variant))
             .Select(variant => ToProductVariantReferenceDto(variant)!)
             .ToList()
     };
@@ -155,6 +162,7 @@ public static class SafeResponseMapper
         Features = DeserializeStringList(product.FeaturesJson),
         Faqs = DeserializeFaqs(product.FaqJson),
         AiGenerated = product.AiGenerated,
+        AiMetadata = DeserializeJsonElement(product.AiMetadataJson),
         VideoUrl = product.VideoUrl,
         ProductTemplate = product.ProductTemplate,
         RowVersion = product.RowVersion.ToString(),
@@ -164,7 +172,7 @@ public static class SafeResponseMapper
             .Select(ToProductUnitResponseDto)
             .ToList(),
         Variants = product.Variants
-            .Where(variant => !variant.IsDeleted)
+            .Where(variant => !variant.IsDeleted && ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner(variant))
             .Select(variant => ToProductVariantReferenceDto(variant)!)
             .ToList()
     };
@@ -358,7 +366,9 @@ public static class SafeResponseMapper
 
     private static List<ProductWarehouseStockResponseDto> ToDerivedProductWarehouseStockResponseDtos(Product product) =>
         product.Variants
-            .Where(variant => !variant.IsDeleted)
+            .Where(variant =>
+                !variant.IsDeleted &&
+                ProductVariantMergeSplitAuthority.IsCurrentSemanticOwner(variant))
             .SelectMany(variant => variant.Stocks.Where(stock => !stock.IsDeleted))
             .GroupBy(stock => stock.WarehouseId)
             .Select(group => new ProductWarehouseStockResponseDto
@@ -497,11 +507,40 @@ public static class SafeResponseMapper
 
         try
         {
-            return JsonSerializer.Deserialize<List<ProductFaqResponseDto>>(json) ?? new List<ProductFaqResponseDto>();
+            return (JsonSerializer.Deserialize<List<ProductFaqResponseDto>>(json, PersistedJsonOptions)
+                    ?? new List<ProductFaqResponseDto>())
+                .Where(item => item is not null)
+                .Select(item => new ProductFaqResponseDto
+                {
+                    Question = item.Question?.Trim() ?? string.Empty,
+                    Answer = item.Answer?.Trim() ?? string.Empty
+                })
+                .Where(item => item.Question.Length > 0 || item.Answer.Length > 0)
+                .ToList();
         }
         catch
         {
             return Array.Empty<ProductFaqResponseDto>();
+        }
+    }
+
+    private static JsonElement? DeserializeJsonElement(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return null;
+        }
+
+        try
+        {
+            var value = JsonSerializer.Deserialize<JsonElement>(json);
+            return value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined
+                ? null
+                : value;
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 }

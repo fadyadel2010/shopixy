@@ -171,9 +171,12 @@ public class ProductDeletedSearchIndexConsumer :
             }
             else
             {
-                success = await _indexService.DeleteProductAsync(
+                success = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
                     tenantId,
                     productId,
+                    @event.EventId,
                     cancellationToken);
 
                 _logger.LogInformation(

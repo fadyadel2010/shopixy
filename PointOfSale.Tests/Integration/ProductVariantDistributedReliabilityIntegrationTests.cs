@@ -1640,6 +1640,7 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             sameVersionCorruptedPayload);
 
         Assert.Equal(1, firstDelivery.SearchIndexCount);
+        Assert.Equal(1, firstDelivery.CacheInvalidationCount);
         var indexedDocument = Assert.Single(firstDelivery.IndexedDocuments);
         Assert.Equal(VarCon09V11MediaUrl, indexedDocument.ImageUrl);
 
@@ -1663,6 +1664,7 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             sameVersionCorruptedPayload);
 
         Assert.Equal(0, duplicateDelivery.SearchIndexCount);
+        Assert.Equal(0, duplicateDelivery.CacheInvalidationCount);
 
         var staleReplay = BuildVarCon09ProductMediaChangedEvent(
             varCon09Seeded,
@@ -1692,6 +1694,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         Assert.Equal(0, staleReplayResult.SearchIndexCount);
         Assert.Equal(0, futureReplayResult.SearchIndexCount);
+        Assert.Equal(0, staleReplayResult.CacheInvalidationCount);
+        Assert.Equal(0, futureReplayResult.CacheInvalidationCount);
 
         var afterRejectedReplays = await CaptureVarCon09MediaVisibilityAsync(
             scope,
@@ -1977,6 +1981,9 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             TaxRate = 0m,
             Unit = "Piece",
             IsActive = true,
+            PublishStatus = PublishStatus.Published,
+            IsOnlineVisible = true,
+            IsSearchable = true,
             TrackStock = false,
             HasVariants = true,
             CreatedAt = SeededUtc
@@ -6362,6 +6369,7 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
         var consumer = new ProductMediaChangedEventConsumer(
             mongoDatabase,
             searchIndexService.Object,
+            Mock.Of<IStorefrontProductCacheInvalidator>(),
             NullLogger<ProductMediaChangedEventConsumer>.Instance);
 
         await consumer.Consume(BuildConsumeContext(mediaEvent).Object);
@@ -6385,9 +6393,22 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
             .Callback<ProductSearchDocument, CancellationToken>((document, _) => indexedDocuments.Add(document))
             .ReturnsAsync(true);
 
+        var cacheInvalidationCount = 0;
+        var cacheInvalidator = new Mock<IStorefrontProductCacheInvalidator>(MockBehavior.Strict);
+        cacheInvalidator
+            .Setup(entry => entry.InvalidateProductAsync(
+                mediaEvent.TenantId!.Value,
+                mediaEvent.ProductId,
+                It.IsAny<string?>(),
+                true,
+                It.IsAny<CancellationToken>()))
+            .Callback(() => cacheInvalidationCount++)
+            .Returns(Task.CompletedTask);
+
         var consumer = new ProductMediaChangedEventConsumer(
             mongoDatabase,
             searchIndexService.Object,
+            cacheInvalidator.Object,
             NullLogger<ProductMediaChangedEventConsumer>.Instance,
             dbContext);
 
@@ -6395,7 +6416,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
         return new VarCon09BMediaConsumerResult(
             indexedDocuments.Count,
-            indexedDocuments.ToList());
+            indexedDocuments.ToList(),
+            cacheInvalidationCount);
     }
 
     private static async Task RebuildVarCon09MediaVisibilityFromSqlAsync(
@@ -9970,7 +9992,8 @@ public sealed class ProductVariantDistributedReliabilityIntegrationTests
 
     private sealed record VarCon09BMediaConsumerResult(
         int SearchIndexCount,
-        IReadOnlyList<ProductSearchDocument> IndexedDocuments);
+        IReadOnlyList<ProductSearchDocument> IndexedDocuments,
+        int CacheInvalidationCount);
 
     private sealed record VarCon06ProjectionDeliveryResult(
         VariantProjectionWorkerResult WorkerResult,

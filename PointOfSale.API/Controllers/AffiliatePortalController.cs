@@ -13,6 +13,8 @@ using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Core.Enums;
+using PointOfSale.Core.Pagination;
 
 namespace PointOfSale.API.Controllers;
 
@@ -391,14 +393,14 @@ public class AffiliatePortalController : ControllerBase
     // ═══════════════════════════════════════════════════════════════════
     // AF-27B §3: MY LANDING PAGES
     // Makes landing pages first-class affiliate-controlled assets.
-    // Data sourced from MongoDB only (no SQL aggregation).
+    // MongoDB supplies candidates; SQL authority admits and recomposes them.
     // ═══════════════════════════════════════════════════════════════════
 
     /// <summary>
     /// GET /api/affiliate/landing-pages
     /// Returns all affiliate-eligible products with pre-built landing page URLs.
     /// AF-27B §3: Landing pages are affiliate-controlled assets, not just public routes.
-    /// MongoDB-only — no SQL aggregation.
+    /// MongoDB candidates are filtered and recomposed from current SQL authority.
     /// </summary>
     [HttpGet("landing-pages")]
     public async Task<ActionResult<AffiliateLandingPagesResponse>> GetLandingPages(
@@ -424,22 +426,12 @@ public class AffiliatePortalController : ControllerBase
         if (affiliate == null)
             return NotFound(new { message = "Affiliate account not found" });
 
-        // Fetch storefront-purchasable affiliate products only.
-        var filter = Builders<AffiliateProductIntelligenceDocument>.Filter.And(
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Gt(d => d.BasePrice, 0m),
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.IsOutOfStock, false));
-
-        var totalCount = await _mongoDbContext.AffiliateProductIntelligence
-            .CountDocumentsAsync(filter, cancellationToken: ct);
-
-        var docs = await _mongoDbContext.AffiliateProductIntelligence.Find(filter)
-            .SortBy(d => d.IsOutOfStock)
-            .ThenByDescending(d => d.CommissionRate)
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync(ct);
-
-        var visibleDocs = await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(docs, ct);
+        var admittedDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
+        var visibleDocs = OrderAffiliateDocuments(admittedDocs, "commission_desc")
+            .Skip(PaginationGuard.GetSkip(page, pageSize))
+            .Take(pageSize)
+            .ToList();
+        var totalCount = admittedDocs.Count;
 
         var landingPages = visibleDocs.Select(d =>
         {
@@ -493,8 +485,8 @@ public class AffiliatePortalController : ControllerBase
             AffiliateCode = affiliate.ReferralCode,
             Page = page,
             PageSize = pageSize,
-            TotalCount = visibleDocs.Count,
-            TotalPages = (int)Math.Ceiling(visibleDocs.Count / (double)pageSize)
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
         });
     }
 
@@ -532,52 +524,12 @@ public class AffiliatePortalController : ControllerBase
             return Ok(new List<AffiliateCategoryDiscoveryItem>());
         }
 
-        // AF-32H PERFORMANCE FIX: Single bulk query instead of N+1 sequential queries
-        // With 50 categories, old approach = 100 MongoDB round-trips. New approach = 2.
-        var categorySlugs = mainCategories.Select(c => c.Slug).ToList();
-        var visibleDiscoveryFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.And(
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Gt(d => d.BasePrice, 0m),
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.IsOutOfStock, false));
-
-        // Query 1: Count products by parent category slug (products in subcategories)
-        var parentSlugFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.And(
-            visibleDiscoveryFilter,
-            Builders<AffiliateProductIntelligenceDocument>.Filter.In(d => d.AffiliateParentCategorySlug, categorySlugs));
-        var parentCountDocs = await _mongoDbContext.AffiliateProductIntelligence
-            .Find(parentSlugFilter)
-            .ToListAsync(ct);
-        var visibleParentDocs = await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(parentCountDocs, ct);
-        var parentCounts = visibleParentDocs
-            .Where(d => d.AffiliateParentCategorySlug != null)
-            .GroupBy(d => d.AffiliateParentCategorySlug)
-            .Select(g => new { Slug = g.Key, Count = g.Count() })
-            .ToList();
-
-        // Query 2: Count products directly assigned to main category slug
-        var directSlugFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.And(
-            visibleDiscoveryFilter,
-            Builders<AffiliateProductIntelligenceDocument>.Filter.In(d => d.AffiliateCategorySlug, categorySlugs));
-        var directCountDocs = await _mongoDbContext.AffiliateProductIntelligence
-            .Find(directSlugFilter)
-            .ToListAsync(ct);
-        var visibleDirectDocs = await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(directCountDocs, ct);
-        var directCounts = visibleDirectDocs
-            .Where(d => d.AffiliateCategorySlug != null)
-            .GroupBy(d => d.AffiliateCategorySlug)
-            .Select(g => new { Slug = g.Key, Count = g.Count() })
-            .ToList();
-
-        // Merge counts: parent + direct (O(N) dictionary merge)
-        var productCounts = new Dictionary<string, int>();
-        foreach (var p in parentCounts.Where(p => p.Slug != null))
-            productCounts[p.Slug!] = p.Count;
-        foreach (var d in directCounts.Where(d => d.Slug != null))
-        {
-            if (productCounts.ContainsKey(d.Slug!))
-                productCounts[d.Slug!] += d.Count;
-            else
-                productCounts[d.Slug!] = d.Count;
-        }
+        var visibleDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
+        var productCounts = visibleDocs
+            .Select(document => document.AffiliateParentCategorySlug ?? document.AffiliateCategorySlug)
+            .Where(slug => !string.IsNullOrWhiteSpace(slug))
+            .GroupBy(slug => slug!, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
 
         var result = mainCategories.Select(c => new AffiliateCategoryDiscoveryItem
         {
@@ -602,12 +554,11 @@ public class AffiliatePortalController : ControllerBase
     /// <summary>
     /// GET /api/affiliate/discover/products?page=1&pageSize=20&search=&minCommissionRate=&inStockOnly=&storeTenantId=&categorySlug=&sort=commission_desc
     /// Returns enriched product intelligence for affiliate discovery.
-    /// AF-22: Read-only, event-driven, no SQL joins.
+    /// SQL authority admits products before Mongo hydration and final pagination.
     /// AF-30: Category filtering support.
-    /// AF-31: Made public (AllowAnonymous) — consumed by landing page and category page.
+    /// Commission-bearing product intelligence is restricted to authenticated affiliates.
     /// AF-33: Deterministic backend sorting with URL-driven sort parameter.
     /// </summary>
-    [AllowAnonymous]
     [HttpGet("discover/products")]
     public async Task<ActionResult<AffiliateProductDiscoveryResponse>> DiscoverProducts(
         [FromQuery] int page = 1,
@@ -633,75 +584,29 @@ public class AffiliatePortalController : ControllerBase
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 100);
 
-        var filters = new List<FilterDefinition<AffiliateProductIntelligenceDocument>>
-        {
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Gt(d => d.BasePrice, 0m),
-            Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.IsOutOfStock, false)
-        };
-
-        // Optional store filter
-        if (storeTenantId.HasValue)
-        {
-            filters.Add(Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.TenantId, storeTenantId.Value));
-        }
-
-        // Optional search filter
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            // AF-22 FIX: Use regex search instead of text search (doesn't require text index)
-            // This allows case-insensitive partial matching on product name
-            var searchFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.Regex(
-                d => d.ProductName,
-                new MongoDB.Bson.BsonRegularExpression(search, "i") // "i" = case-insensitive
-            );
-            filters.Add(searchFilter);
-        }
-
-        // Optional commission rate filter
-        if (minCommissionRate.HasValue)
-        {
-            filters.Add(Builders<AffiliateProductIntelligenceDocument>.Filter.Gte(d => d.CommissionRate, minCommissionRate.Value));
-        }
-
         // Retained for API compatibility; storefront-purchasable filtering is now mandatory.
         _ = inStockOnly;
 
         // AF-30: Category filter (matches both main category and subcategory)
+        HashSet<AffiliateAuthorityKey>? categoryProductKeys = null;
         if (!string.IsNullOrWhiteSpace(categorySlug))
         {
-            var categoryFilter = Builders<AffiliateProductIntelligenceDocument>.Filter.Or(
-                Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.AffiliateCategorySlug, categorySlug),
-                Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.AffiliateParentCategorySlug, categorySlug)
-            );
-            filters.Add(categoryFilter);
+            categoryProductKeys = (await ResolveLiveAffiliateCategoryProductKeysAsync(categorySlug, ct)).ToHashSet();
         }
 
-        var filter = filters.Any()
-            ? Builders<AffiliateProductIntelligenceDocument>.Filter.And(filters)
-            : Builders<AffiliateProductIntelligenceDocument>.Filter.Empty;
-
-        var totalCount = await _mongoDbContext.AffiliateProductIntelligence.CountDocumentsAsync(filter, cancellationToken: ct);
-
-        // AF-33: Deterministic sorting — applied BEFORE pagination (Skip/Limit)
-        // Sort is Mongo-native, never client-side. Index-optimized for each sort path.
-        var query = _mongoDbContext.AffiliateProductIntelligence.Find(filter);
-
-        query = sort.ToLowerInvariant() switch
-        {
-            "commission_desc" => query.SortBy(d => d.IsOutOfStock).ThenByDescending(d => d.CommissionRate),
-            "commission_asc" => query.SortBy(d => d.IsOutOfStock).ThenBy(d => d.CommissionRate),
-            "newest" => query.SortByDescending(d => d.LastUpdatedUtc),
-            "price_desc" => query.SortByDescending(d => d.BasePrice),
-            "price_asc" => query.SortBy(d => d.BasePrice),
-            "ranking" => query.SortByDescending(d => d.RankingScore),
-            _ => query.SortByDescending(d => d.CommissionRate) // Unreachable due to validation above
-        };
-
-        var docs = await query
-            .Skip((page - 1) * pageSize)
-            .Limit(pageSize)
-            .ToListAsync(ct);
-        var visibleDocs = await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(docs, ct);
+        var admittedDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
+        var filteredDocs = FilterAffiliateDocuments(
+                admittedDocs,
+                search,
+                minCommissionRate,
+                storeTenantId,
+                categoryProductKeys)
+            .ToList();
+        var totalCount = filteredDocs.Count;
+        var visibleDocs = OrderAffiliateDocuments(filteredDocs, sort)
+            .Skip(PaginationGuard.GetSkip(page, pageSize))
+            .Take(pageSize)
+            .ToList();
 
         // AF-22 HARDENING: Defensive API contract (never return null, always return valid structure)
         return Ok(new AffiliateProductDiscoveryResponse
@@ -727,17 +632,16 @@ public class AffiliatePortalController : ControllerBase
             }).ToList(),
             Page = page,
             PageSize = pageSize,
-            TotalCount = visibleDocs.Count,
-            TotalPages = (int)Math.Ceiling(visibleDocs.Count / (double)pageSize)
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
         });
     }
 
     /// <summary>
     /// GET /api/affiliate/discover/products/{productId}
     /// Returns full product intelligence including variants and stock details.
-    /// AF-22: Read-only, event-driven, no SQL joins.
+    /// SQL authority is recomposed over the Mongo display projection.
     /// </summary>
-    [AllowAnonymous]
     [HttpGet("discover/products/{productId:guid}")]
     public async Task<ActionResult<AffiliateProductDetailResponse>> GetProductDetail(
         Guid productId,
@@ -1169,6 +1073,113 @@ public class AffiliatePortalController : ControllerBase
             : currency.Trim().ToUpperInvariant();
     }
 
+    private async Task<List<AffiliateProductIntelligenceDocument>> LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(
+        CancellationToken ct)
+    {
+        var authorityKeys = await (
+                from policy in _dbContext.AffiliateProductPolicies.AsNoTracking().IgnoreQueryFilters()
+                join category in _dbContext.AffiliateCategories.AsNoTracking().IgnoreQueryFilters()
+                    on policy.AffiliateCategoryId equals (Guid?)category.Id
+                join product in _dbContext.Products.AsNoTracking().IgnoreQueryFilters()
+                    on new { policy.TenantId, policy.ProductId }
+                    equals new { product.TenantId, ProductId = product.Id }
+                join tenant in _dbContext.Tenants.AsNoTracking().IgnoreQueryFilters()
+                    on policy.TenantId equals tenant.Id
+                where policy.IsEnabled &&
+                      !policy.IsDeleted &&
+                      category.IsActive &&
+                      !category.IsDeleted &&
+                      ((category.Level == 1 && category.ParentId == null) ||
+                       (category.Level == 2 &&
+                        category.ParentId != null &&
+                        _dbContext.AffiliateCategories.IgnoreQueryFilters().Any(parent =>
+                            parent.Id == category.ParentId.Value &&
+                            parent.Level == 1 &&
+                            parent.ParentId == null &&
+                            parent.IsActive &&
+                            !parent.IsDeleted))) &&
+                      !product.IsDeleted &&
+                      product.IsActive &&
+                      product.IsOnlineVisible &&
+                      product.IsSearchable &&
+                      product.PublishStatus == PublishStatus.Published &&
+                      tenant.IsActive &&
+                      tenant.Status == TenantStatus.Active &&
+                      tenant.DeletedAtUtc == null
+                select new { policy.TenantId, policy.ProductId })
+            .Distinct()
+            .ToListAsync(ct);
+
+        if (authorityKeys.Count == 0)
+        {
+            return [];
+        }
+
+        var keySet = authorityKeys
+            .Select(key => (key.TenantId, key.ProductId))
+            .ToHashSet();
+        var productIds = authorityKeys
+            .Select(key => key.ProductId)
+            .Distinct()
+            .ToList();
+
+        // MongoDB is hydration/search metadata only. It receives the SQL-admitted
+        // identity set and never establishes a page boundary or total.
+        var candidates = await _mongoDbContext.AffiliateProductIntelligence
+            .Find(Builders<AffiliateProductIntelligenceDocument>.Filter.In(
+                document => document.ProductId,
+                productIds))
+            .ToListAsync(ct);
+        candidates = candidates
+            .Where(candidate => keySet.Contains((candidate.TenantId, candidate.ProductId)))
+            .GroupBy(candidate => (candidate.TenantId, candidate.ProductId))
+            .Select(group => group
+                .OrderByDescending(candidate => candidate.LastUpdatedUtc)
+                .ThenBy(candidate => candidate.Id)
+                .First())
+            .ToList();
+
+        return await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(candidates, ct);
+    }
+
+    internal static IEnumerable<AffiliateProductIntelligenceDocument> FilterAffiliateDocuments(
+        IEnumerable<AffiliateProductIntelligenceDocument> documents,
+        string? search,
+        decimal? minCommissionRate,
+        Guid? storeTenantId,
+        IReadOnlySet<AffiliateAuthorityKey>? categoryProductKeys)
+    {
+        var searchTerm = search?.Trim();
+        return documents.Where(document =>
+            document.BasePrice > 0m &&
+            !document.IsOutOfStock &&
+            (!storeTenantId.HasValue || document.TenantId == storeTenantId.Value) &&
+            (string.IsNullOrWhiteSpace(searchTerm) ||
+             document.ProductName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) &&
+            (!minCommissionRate.HasValue || document.CommissionRate >= minCommissionRate.Value) &&
+            (categoryProductKeys == null ||
+             categoryProductKeys.Contains(new AffiliateAuthorityKey(document.TenantId, document.ProductId))));
+    }
+
+    internal static IOrderedEnumerable<AffiliateProductIntelligenceDocument> OrderAffiliateDocuments(
+        IEnumerable<AffiliateProductIntelligenceDocument> documents,
+        string sort)
+    {
+        var ordered = sort.ToLowerInvariant() switch
+        {
+            "commission_asc" => documents.OrderBy(document => document.CommissionRate),
+            "newest" => documents.OrderByDescending(document => document.LastUpdatedUtc),
+            "price_desc" => documents.OrderByDescending(document => document.BasePrice),
+            "price_asc" => documents.OrderBy(document => document.BasePrice),
+            "ranking" => documents.OrderByDescending(document => document.RankingScore),
+            _ => documents.OrderByDescending(document => document.CommissionRate)
+        };
+
+        return ordered
+            .ThenBy(document => document.TenantId)
+            .ThenBy(document => document.ProductId);
+    }
+
     private async Task<List<AffiliateProductIntelligenceDocument>> RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(
         IReadOnlyCollection<AffiliateProductIntelligenceDocument> candidates,
         CancellationToken ct)
@@ -1195,7 +1206,7 @@ public class AffiliatePortalController : ControllerBase
             return null;
         }
 
-        var policyExists = await _dbContext.AffiliateProductPolicies
+        var policyAuthority = await _dbContext.AffiliateProductPolicies
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Join(
@@ -1203,16 +1214,54 @@ public class AffiliatePortalController : ControllerBase
                 policy => policy.AffiliateCategoryId,
                 category => (Guid?)category.Id,
                 (policy, category) => new { Policy = policy, Category = category })
-            .AnyAsync(item =>
+            .Where(item =>
                 item.Policy.TenantId == candidate.TenantId &&
                 item.Policy.ProductId == candidate.ProductId &&
                 item.Policy.IsEnabled &&
                 !item.Policy.IsDeleted &&
                 item.Category.IsActive &&
-                !item.Category.IsDeleted,
-                ct);
+                !item.Category.IsDeleted)
+            .Select(item => new
+            {
+                item.Category.Id,
+                item.Category.Name,
+                item.Category.Slug,
+                item.Category.Level,
+                item.Category.ParentId,
+                item.Policy.CommissionRate,
+                item.Policy.MaxCommissionPerItem,
+                item.Policy.TemplateType
+            })
+            .FirstOrDefaultAsync(ct);
 
-        if (!policyExists)
+        if (policyAuthority == null)
+        {
+            return null;
+        }
+
+        string? parentCategoryName = null;
+        string? parentCategorySlug = null;
+        if (policyAuthority.Level == 2 && policyAuthority.ParentId.HasValue)
+        {
+            var parent = await _dbContext.AffiliateCategories
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(item =>
+                    item.Id == policyAuthority.ParentId.Value &&
+                    item.Level == 1 &&
+                    item.IsActive &&
+                    !item.IsDeleted)
+                .Select(item => new { item.Name, item.Slug })
+                .FirstOrDefaultAsync(ct);
+            if (parent == null)
+            {
+                return null;
+            }
+
+            parentCategoryName = parent.Name;
+            parentCategorySlug = parent.Slug;
+        }
+        else if (policyAuthority.Level != 1 || policyAuthority.ParentId.HasValue)
         {
             return null;
         }
@@ -1227,9 +1276,8 @@ public class AffiliatePortalController : ControllerBase
             candidate.TenantId,
             ct);
 
-        if (product is not { IsActive: true, IsOnlineVisible: true } ||
+        if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
             !product.TryResolveAffiliatePublicPricing(out var pricing) ||
-            pricing.TotalAvailableStock <= 0 ||
             !pricing.InStock)
         {
             return null;
@@ -1257,14 +1305,92 @@ public class AffiliatePortalController : ControllerBase
             .Where(url => !string.IsNullOrWhiteSpace(url))
             .ToList();
         candidate.BasePrice = pricing.Price ?? pricing.MinVariantPrice ?? 0m;
+        var estimatedCommission = candidate.BasePrice * policyAuthority.CommissionRate;
+        candidate.CommissionRate = policyAuthority.CommissionRate;
+        candidate.EstimatedCommission = policyAuthority.MaxCommissionPerItem.HasValue
+            ? Math.Min(estimatedCommission, policyAuthority.MaxCommissionPerItem.Value)
+            : estimatedCommission;
+        candidate.TemplateType = policyAuthority.TemplateType;
         candidate.Currency = tenant.Currency ?? candidate.Currency;
         candidate.TotalAvailableStock = pricing.TotalAvailableStock;
         candidate.IsOutOfStock = !pricing.InStock;
         candidate.StoreName = tenant.Name;
         candidate.StoreSlug = tenant.Slug ?? candidate.StoreSlug;
-        candidate.AffiliateCategoryName = product.CategoryName;
+        candidate.AffiliateCategoryId = policyAuthority.Id;
+        candidate.AffiliateCategoryName = policyAuthority.Name;
+        candidate.AffiliateCategorySlug = policyAuthority.Slug;
+        candidate.AffiliateParentCategoryName = parentCategoryName;
+        candidate.AffiliateParentCategorySlug = parentCategorySlug;
         return candidate;
     }
+
+    private async Task<List<AffiliateAuthorityKey>> ResolveLiveAffiliateCategoryProductKeysAsync(
+        string categorySlug,
+        CancellationToken cancellationToken)
+    {
+        var category = await _dbContext.AffiliateCategories
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(item =>
+                item.Slug == categorySlug.Trim() &&
+                item.IsActive &&
+                !item.IsDeleted)
+            .Select(item => new { item.Id, item.Level, item.ParentId })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (category == null)
+        {
+            return [];
+        }
+
+        List<Guid> categoryIds;
+        if (category.Level == 1 && !category.ParentId.HasValue)
+        {
+            categoryIds = await _dbContext.AffiliateCategories
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(item =>
+                    (item.Id == category.Id || item.ParentId == category.Id) &&
+                    item.IsActive &&
+                    !item.IsDeleted)
+                .Select(item => item.Id)
+                .ToListAsync(cancellationToken);
+        }
+        else if (category.Level == 2 && category.ParentId.HasValue &&
+                 await _dbContext.AffiliateCategories
+                     .AsNoTracking()
+                     .IgnoreQueryFilters()
+                     .AnyAsync(parent =>
+                         parent.Id == category.ParentId.Value &&
+                         parent.Level == 1 &&
+                         parent.IsActive &&
+                         !parent.IsDeleted,
+                         cancellationToken))
+        {
+            categoryIds = [category.Id];
+        }
+        else
+        {
+            return [];
+        }
+
+        var keys = await _dbContext.AffiliateProductPolicies
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(policy =>
+                policy.IsEnabled &&
+                !policy.IsDeleted &&
+                policy.AffiliateCategoryId.HasValue &&
+                categoryIds.Contains(policy.AffiliateCategoryId.Value))
+            .Select(policy => new { policy.TenantId, policy.ProductId })
+            .Distinct()
+            .ToListAsync(cancellationToken);
+
+        return keys
+            .Select(key => new AffiliateAuthorityKey(key.TenantId, key.ProductId))
+            .ToList();
+    }
+
+    internal readonly record struct AffiliateAuthorityKey(Guid TenantId, Guid ProductId);
 
     private async Task<Guid?> ResolveAffiliateAccountId(CancellationToken ct)
     {

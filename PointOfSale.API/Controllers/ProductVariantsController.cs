@@ -1606,7 +1606,11 @@ public class ProductVariantsController : ControllerBase
             SortOrder = variant.SortOrder,
             CreatedAt = variant.CreatedAt,
             UpdatedAt = variant.UpdatedAt,
-            TotalStock = variant.Stocks?.Sum(s => s.Quantity) ?? 0,
+            // Keep TotalStock consistent with ProductResponseDto: it represents
+            // currently available quantity, not on-hand quantity that is reserved.
+            TotalStock = variant.Stocks?
+                .Where(stock => !stock.IsDeleted)
+                .Sum(stock => stock.Quantity - stock.ReservedQuantity) ?? 0,
             Attributes = variant.Attributes?.Select(a => new VariantAttributeDto
             {
                 Id = a.Id,

@@ -134,6 +134,7 @@ public sealed class AffiliatePromotionLinkResolutionStorefrontEntryCertification
         Assert.Contains("ResolveAffiliateCartLineAdmissionAsync", cartService, StringComparison.Ordinal);
         Assert.Contains("ApplyAffiliateCartLineAdmission(existingItem, lineAdmission)", cartService, StringComparison.Ordinal);
         Assert.Contains("ApplyAffiliateCartLineAdmission(item, refreshedLineAdmission)", cartService, StringComparison.Ordinal);
+        Assert.Contains("ApplyAffiliateCartLineAdmission(\n                    item,\n                    AffiliateCartLineAdmission.NotEligible)", cartService.Replace("\r\n", "\n"), StringComparison.Ordinal);
         Assert.Contains("HasCurrentAffiliatePolicyAndCategoryAsync", cartService, StringComparison.Ordinal);
         Assert.Contains("HasPositiveAffiliateLinePriceAsync", cartService, StringComparison.Ordinal);
         Assert.Contains("HasAvailableAffiliateLineInventoryAsync", cartService, StringComparison.Ordinal);

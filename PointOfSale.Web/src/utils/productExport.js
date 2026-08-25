@@ -59,6 +59,15 @@ export function buildProductExportRows(products, { t, formatCurrency }) {
         const tracked = !!product.trackStock
         const variantManaged = tracked && !!product.hasVariants
 
+        // Treat malformed/non-numeric transport values as missing. This keeps
+        // Excel from receiving NaN/Infinity and prevents PDF from presenting a
+        // missing value as zero through a permissive currency formatter.
+        const rawStockValue = product.totalStock
+        const numericStockValue = rawStockValue === null || rawStockValue === undefined
+            ? NaN
+            : Number(rawStockValue)
+        const hasNumericStock = Number.isFinite(numericStockValue)
+
         // Stock presentation mirrors renderStockCell in Products.jsx:
         //  - untracked            -> "—"
         //  - variant-managed      -> "Managed by variants"
@@ -67,7 +76,7 @@ export function buildProductExportRows(products, { t, formatCurrency }) {
             ? FALLBACK_CELL
             : variantManaged
                 ? t('products.managedByVariants')
-                : product.totalStock
+                : hasNumericStock ? numericStockValue : FALLBACK_CELL
 
         // Stock state mirrors the table badges: variant-managed rows show no
         // badge (redundant next to "Managed by variants"), untracked shows "—".
@@ -90,8 +99,8 @@ export function buildProductExportRows(products, { t, formatCurrency }) {
             typeLabel: t(product.hasVariants ? 'products.variantProductType' : 'products.simpleProductType'),
             category: product.categoryName || product.category?.name || FALLBACK_CELL,
             priceValue: hasNumericPrice ? priceValue : null,
-            priceDisplay: formatCurrency(product.salePrice) || FALLBACK_CELL,
-            stockValue: tracked && !variantManaged ? product.totalStock : null,
+            priceDisplay: hasNumericPrice ? (formatCurrency(priceValue) || FALLBACK_CELL) : FALLBACK_CELL,
+            stockValue: tracked && !variantManaged && hasNumericStock ? numericStockValue : null,
             stockDisplay,
             stockStateLabel,
             statusLabel: product.isActive ? t('products.active') : t('products.inactive'),

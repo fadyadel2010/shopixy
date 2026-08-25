@@ -48,6 +48,9 @@ public sealed class AffiliateCheckoutRuntimeCertificationTests
         Assert.Contains("AFFILIATE_PROMOTION_LINK_STALE", checkout, StringComparison.Ordinal);
         Assert.Contains("AFFILIATE_AUTHORITY_STALE", checkout, StringComparison.Ordinal);
         Assert.Contains("AFFILIATE_POLICY_AUTHORITY_CONFLICT", checkout, StringComparison.Ordinal);
+        Assert.Contains("LoadAffiliateEligibleProductIdsAsync", checkout, StringComparison.Ordinal);
+        Assert.Contains("category.ParentId != null", checkout, StringComparison.Ordinal);
+        Assert.Contains("parent.IsActive", checkout, StringComparison.Ordinal);
         Assert.Contains("HasIndex(e => new { e.TenantId, e.OrderId })", attributionConfig, StringComparison.Ordinal);
         Assert.Contains("IsUnique()", attributionConfig, StringComparison.Ordinal);
         Assert.Contains("append-only and cannot be changed after conversion", dbContext, StringComparison.Ordinal);

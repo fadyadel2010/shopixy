@@ -3,6 +3,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Infrastructure.Data;
@@ -310,7 +311,13 @@ public class ProductPromotionSearchIndexConsumer :
                 cancellationToken);
             if (sqlOverlay == null || !sqlOverlay.IsActive || !sqlOverlay.IsOnlineVisible || !sqlOverlay.IsSearchable)
             {
-                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId: null,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -391,49 +398,41 @@ public class ProductPromotionSearchIndexConsumer :
                 "Syncing product promotion search from SQL authority for tenant scope | TenantId: {TenantId} | PromotionId: {PromotionId}",
                 tenantId, promotionId);
 
-            // Find all products that used to have this promotion
-            // Note: MongoDB has already cleared the fields, so we look for products
-            // where the promotion was just cleared (HasActivePromotion = false AND ActivePromotionId = null)
-            // Since we can't easily track this, we do a broad sync for all active products
-            // This is acceptable because deletes/expires are infrequent
-
-            // For efficiency, we only sync products that had visible promotions
-            // This is a simplified approach - a production system might track affected products
-            var filter = Builders<ProductDocument>.Filter.And(
-                Builders<ProductDocument>.Filter.Eq(x => x.TenantId, tenantId),
-                Builders<ProductDocument>.Filter.Eq(x => x.IsActive, true),
-                Builders<ProductDocument>.Filter.Eq(x => x.IsOnlineVisible, true)
-            );
-
-            var cursor = await _productCollection.FindAsync(filter, new FindOptions<ProductDocument>
-            {
-                BatchSize = 100
-            }, cancellationToken);
+            var productIds = await _dbContext.Products
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .Where(product =>
+                    product.TenantId == tenantId &&
+                    !product.IsDeleted &&
+                    product.IsActive &&
+                    product.IsOnlineVisible &&
+                    product.IsSearchable &&
+                    product.PublishStatus == PublishStatus.Published)
+                .OrderBy(product => product.Id)
+                .Select(product => product.Id)
+                .ToListAsync(cancellationToken);
 
             var syncCount = 0;
 
             var failedProductIds = new List<Guid>();
 
-            while (await cursor.MoveNextAsync(cancellationToken))
+            foreach (var productId in productIds)
             {
-                foreach (var product in cursor.Current)
+                try
                 {
-                    try
-                    {
-                        await RefreshProductPromotionSearchFromSqlAsync(
-                            tenantId,
-                            product.ProductId,
-                            promotionId,
-                            cancellationToken);
-                        syncCount++;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex,
-                            "Failed to sync product to ES during promotion cleanup | ProductId: {ProductId} | TenantId: {TenantId} | PromotionId: {PromotionId}",
-                            product.ProductId, tenantId, promotionId);
-                        failedProductIds.Add(product.ProductId);
-                    }
+                    await RefreshProductPromotionSearchFromSqlAsync(
+                        tenantId,
+                        productId,
+                        promotionId,
+                        cancellationToken);
+                    syncCount++;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "Failed to sync product to ES during promotion cleanup | ProductId: {ProductId} | TenantId: {TenantId} | PromotionId: {PromotionId}",
+                        productId, tenantId, promotionId);
+                    failedProductIds.Add(productId);
                 }
             }
 
@@ -483,7 +482,12 @@ public class ProductPromotionSearchIndexConsumer :
             Builders<ProductDocument>.Filter.Eq(x => x.TenantId, tenantId),
             Builders<ProductDocument>.Filter.Eq(x => x.ProductId, productId));
 
-        return await _productCollection.Find(filter).FirstOrDefaultAsync(cancellationToken);
+        return await _productCollection.Find(filter).FirstOrDefaultAsync(cancellationToken)
+            ?? new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = productId
+            };
     }
 
     private async Task<PromotionSearchAuthority> LoadSqlPromotionAuthorityAsync(

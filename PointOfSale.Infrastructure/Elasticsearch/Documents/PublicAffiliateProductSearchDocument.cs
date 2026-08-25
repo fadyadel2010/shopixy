@@ -91,7 +91,7 @@ public class PublicAffiliateProductSearchDocument
 
     /// <summary>
     /// AF-17A: Total available stock across all variants/warehouses.
-    /// CRITICAL: Products with TotalAvailableStock = 0 must NOT be indexed.
+    /// Zero remains zero for untracked/backorder products; InStock carries purchasability.
     /// </summary>
     [Number(NumberType.Integer)]
     public int TotalAvailableStock { get; set; }

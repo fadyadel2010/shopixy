@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using Nest;
+using Elasticsearch.Net;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Infrastructure.Consumers;
@@ -35,6 +36,10 @@ public class AffiliateProductPolicyProjectionConsumer :
     IConsumer<ProductPublishStatusChangedEvent>,
     IConsumer<ProductPriceChangedEvent>,
     IConsumer<ProductStockChangedEvent>,
+    IConsumer<ProductVariantCreatedEvent>,
+    IConsumer<ProductVariantUpdatedEvent>,
+    IConsumer<ProductVariantDeletedEvent>,
+    IConsumer<VariantPriceUpdatedEvent>,
     IConsumer<ProductVariantStockChangedEvent>,
     IConsumer<PromotionCreatedEvent>,
     IConsumer<PromotionUpdatedEvent>,
@@ -55,6 +60,7 @@ public class AffiliateProductPolicyProjectionConsumer :
     private const string ProductPriceConsumerName = nameof(AffiliateProductPolicyProjectionConsumer) + ":" + nameof(ProductPriceChangedEvent);
     private const string ProductMediaConsumerName = nameof(AffiliateProductPolicyProjectionConsumer) + ":" + nameof(ProductMediaChangedEvent);
     private const string ProductLifecycleConsumerName = nameof(AffiliateProductPolicyProjectionConsumer) + ":ProductLifecycle";
+    private const string ProductVariantTriggerConsumerName = nameof(AffiliateProductPolicyProjectionConsumer) + ":ProductVariantSqlAuthorityTrigger";
     private const string PromotionConsumerName = nameof(AffiliateProductPolicyProjectionConsumer) + ":Promotion";
 
     public AffiliateProductPolicyProjectionConsumer(
@@ -291,6 +297,38 @@ public class AffiliateProductPolicyProjectionConsumer :
 
         await SyncPublicAffiliateProductAsync(context.Message.TenantId.Value, context.Message.ProductId, context.CancellationToken);
     }
+
+    public Task Consume(ConsumeContext<ProductVariantCreatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<ProductVariantUpdatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<ProductVariantDeletedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<VariantPriceUpdatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
 
     public async Task Consume(ConsumeContext<ProductDeletedEvent> context)
     {
@@ -944,6 +982,75 @@ public class AffiliateProductPolicyProjectionConsumer :
         }
     }
 
+    private async Task ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+        IntegrationEvent @event,
+        Guid? tenantId,
+        Guid productId,
+        Guid variantId,
+        CancellationToken ct)
+    {
+        if (!tenantId.HasValue)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PUBLIC_PRODUCT_PROJECTION_TENANT_REQUIRED: Product {productId} variant event is missing TenantId.");
+        }
+
+        if (productId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PUBLIC_PRODUCT_PROJECTION_PRODUCT_REQUIRED: Variant {variantId} event has an empty ProductId | TenantId: {tenantId.Value}.");
+        }
+
+        if (variantId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PUBLIC_PRODUCT_PROJECTION_VARIANT_REQUIRED: Product {productId} event has an empty VariantId | TenantId: {tenantId.Value}.");
+        }
+
+        ProjectionConsumerEventFence? fence = null;
+        var eventType = @event.GetType().FullName ?? @event.GetType().Name;
+        try
+        {
+            fence = await ProjectionConsumerEventFence.TryAcquireAsync(
+                _dbContext,
+                @event,
+                ProductVariantTriggerConsumerName,
+                eventType,
+                variantId,
+                ct);
+
+            if (fence == null)
+            {
+                return;
+            }
+
+            await RecomposePublicAffiliateProductFromSqlAuthorityAsync(tenantId.Value, productId, ct);
+
+            await fence.CompleteAsync(
+                @event,
+                ProductVariantTriggerConsumerName,
+                eventType,
+                variantId,
+                ct);
+        }
+        finally
+        {
+            if (fence != null)
+            {
+                await fence.DisposeAsync();
+            }
+        }
+    }
+
+    private async Task RecomposePublicAffiliateProductFromSqlAuthorityAsync(
+        Guid tenantId,
+        Guid productId,
+        CancellationToken ct)
+    {
+        await SyncPublicAffiliateProductAsync(tenantId, productId, ct);
+        await RefreshPublicAffiliateStoreAsync(tenantId, ct);
+    }
+
     private async Task SyncProductLifecycleVisibilityWithFenceAsync(
         IntegrationEvent @event,
         string eventType,
@@ -1038,7 +1145,8 @@ public class AffiliateProductPolicyProjectionConsumer :
             if (product == null ||
                 !policyAuthority.IsEnabled ||
                 !product.IsActive ||
-                !product.IsOnlineVisible)
+                !product.IsOnlineVisible ||
+                !product.IsSearchable)
             {
                 await DeletePublicAffiliateProductVisibilityAsync(tenantId, productId, ct);
                 return;
@@ -1095,7 +1203,6 @@ public class AffiliateProductPolicyProjectionConsumer :
             // ═══════════════════════════════════════════════════════════════════════════════
 
             if (!product.TryResolveAffiliatePublicPricing(out var pricing) ||
-                pricing.TotalAvailableStock <= 0 ||
                 !pricing.InStock)
             {
                 _logger.LogWarning(
@@ -1462,39 +1569,32 @@ public class AffiliateProductPolicyProjectionConsumer :
                         $"AFFILIATE_PRODUCT_SEARCH_PROJECTION_NOT_READY: Product {productId} is affiliate-enabled in SQL but product search projection base document is missing.");
                 }
 
-                var deleteResponse = await _elasticClient.DeleteAsync(
-                    new DocumentPath<ProductSearchDocument>($"{tenantId}_{productId}"),
-                    descriptor => descriptor
-                        .Index(_elasticSettings.ProductsIndexName),
-                    ct);
+                var fence = await ProductSearchSqlAuthorityOverlay.LoadFenceAsync(
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    ct) ?? throw new InvalidOperationException(
+                        $"AFFILIATE_PRODUCT_SEARCH_TOMBSTONE_AUTHORITY_MISSING: Product {productId} has no durable SQL generation.");
 
-                if (!deleteResponse.IsValid &&
-                    deleteResponse.Result != Result.NotFound)
+                await IndexVersionedProductSearchDocumentAsync(new ProductSearchDocument
                 {
-                    throw new InvalidOperationException(
-                        deleteResponse.ServerError?.Error?.Reason ??
-                        deleteResponse.OriginalException?.Message ??
-                        $"Elasticsearch delete failed for product {productId}.");
-                }
+                    TenantId = tenantId,
+                    ProductId = productId,
+                    ProductGeneration = fence.ProductGeneration,
+                    IsTombstone = true,
+                    IsDeleted = fence.IsDeleted,
+                    IsActive = false,
+                    IsOnlineVisible = false,
+                    IsSearchable = false,
+                    Name = string.Empty,
+                    IndexedAtUtc = DateTime.UtcNow
+                }, ct);
 
                 return;
             }
 
             var searchDocument = ProductSearchDocumentMapper.MapFromProductDocument(product);
-            var response = await _elasticClient.IndexAsync(
-                searchDocument,
-                descriptor => descriptor
-                    .Index(_elasticSettings.ProductsIndexName)
-                    .Id($"{tenantId}_{productId}"),
-                ct);
-
-            if (!response.IsValid)
-            {
-                throw new InvalidOperationException(
-                    response.ServerError?.Error?.Reason ??
-                    response.OriginalException?.Message ??
-                    $"Elasticsearch indexing failed for product {productId}.");
-            }
+            await IndexVersionedProductSearchDocumentAsync(searchDocument, ct);
         }
         catch (Exception ex)
         {
@@ -1502,6 +1602,30 @@ public class AffiliateProductPolicyProjectionConsumer :
             throw new InvalidOperationException(
                 $"AFFILIATE_PRODUCT_SEARCH_PROJECTION_FAILED: Product {productId} could not be synchronized to Elasticsearch from SQL affiliate policy authority.",
                 ex);
+        }
+    }
+
+    private async Task IndexVersionedProductSearchDocumentAsync(
+        ProductSearchDocument document,
+        CancellationToken cancellationToken)
+    {
+        var response = await _elasticClient.IndexAsync(
+            document,
+            descriptor => descriptor
+                .Index(_elasticSettings.ProductsIndexName)
+                .Id(document.GetDocumentId())
+                .Version(ProductSearchIndexService.ToElasticsearchVersion(document.ProductGeneration))
+                .VersionType(VersionType.External),
+            cancellationToken);
+
+        if (!response.IsValid &&
+            response.ApiCall?.HttpStatusCode != 409 &&
+            response.ServerError?.Status != 409)
+        {
+            throw new InvalidOperationException(
+                response.ServerError?.Error?.Reason ??
+                response.OriginalException?.Message ??
+                $"Elasticsearch indexing failed for product {document.ProductId}.");
         }
     }
 

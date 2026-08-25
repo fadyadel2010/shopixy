@@ -57,8 +57,8 @@ public sealed class ProductDetailMediaPublicProjectionCertificationTests
         Assert.Contains("ProjectionAuthorityValidator.ValidateSqlVersion", mediaConsumer, StringComparison.Ordinal);
         Assert.Contains("item.TenantId == tenantId", mediaConsumer, StringComparison.Ordinal);
         Assert.Contains("item.ProductId == productId", mediaConsumer, StringComparison.Ordinal);
-        Assert.Contains("IsStorefrontProductMediaType(item.MediaType)", mediaConsumer, StringComparison.Ordinal);
-        Assert.Contains("string.Equals(mediaType, \"video\", StringComparison.OrdinalIgnoreCase)", mediaConsumer, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(item.MediaType, \"image\")", mediaConsumer, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(item.MediaType, \"video\")", mediaConsumer, StringComparison.Ordinal);
         Assert.Contains("OrderBy(item => item.Position)", mediaConsumer, StringComparison.Ordinal);
         Assert.Contains("product.Media = sqlProduct.Media", overlay, StringComparison.Ordinal);
         Assert.Contains("IsStorefrontProductMediaType(media.MediaType)", overlay, StringComparison.Ordinal);

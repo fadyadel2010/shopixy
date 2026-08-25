@@ -109,8 +109,8 @@ function fillRequiredPrices(container: HTMLElement) {
     const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
     fireEvent.change(numericInputs[0], { target: { value: '5' } })
     fireEvent.change(numericInputs[1], { target: { value: '10' } })
-    fireEvent.change(numericInputs[3], { target: { value: '6' } })
-    fireEvent.change(numericInputs[4], { target: { value: '12' } })
+    fireEvent.change(numericInputs[4], { target: { value: '6' } })
+    fireEvent.change(numericInputs[5], { target: { value: '12' } })
 }
 
 describe('variant authoring workspace', () => {
@@ -318,6 +318,161 @@ describe('variant authoring workspace', () => {
         expect(screen.queryByText('Inventory')).not.toBeInTheDocument()
         expect(screen.queryByText('Set Inventory')).not.toBeInTheDocument()
         expect(screen.getAllByText('Managed by inventory workflows').length).toBeGreaterThan(0)
+        expect(screen.getByText('Available Stock')).toBeInTheDocument()
+    })
+
+    it('shows authoritative inactive state and preserves it during an unrelated pricing save', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({
+                    data: [{
+                        id: 'variant-1',
+                        productId: 'product-1',
+                        sku: 'TSHIRT-RED',
+                        barcode: '1001',
+                        price: 400,
+                        onlinePrice: null,
+                        costPrice: 125.5,
+                        weight: null,
+                        isDefault: true,
+                        isActive: false,
+                        totalStock: 3,
+                        attributes: [{ name: 'Color', value: 'Red', sortOrder: 0 }],
+                    }],
+                })
+            }
+            if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        renderVariantTab()
+
+        const status = await screen.findByLabelText('Red: Status — Inactive')
+        expect(status).not.toBeChecked()
+        expect(screen.getByText('Status: Inactive')).toBeInTheDocument()
+        expect(screen.getByLabelText('Red: POS Price')).toHaveValue(400)
+        expect(screen.getByLabelText('Red: Online Price')).toHaveValue(null)
+        expect(screen.getByLabelText('Red: Cost Price')).toHaveValue(125.5)
+
+        fireEvent.change(screen.getByLabelText('Red: POS Price'), { target: { value: '500.25' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                authoringVariants: [expect.objectContaining({
+                    variantId: 'variant-1',
+                    price: 500.25,
+                    onlinePrice: null,
+                    costPrice: 125.5,
+                    isActive: false,
+                })],
+            })
+        ))
+    })
+
+    it('preserves zero separately from null and allows Online Price to satisfy pricing', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({
+                    data: [{
+                        id: 'variant-zero',
+                        productId: 'product-1',
+                        sku: 'ZERO-ONLINE',
+                        barcode: '',
+                        price: 0,
+                        onlinePrice: 12.75,
+                        costPrice: 0,
+                        isDefault: true,
+                        isActive: true,
+                        totalStock: 0,
+                        attributes: [{ name: 'Plan', value: 'Online', sortOrder: 0 }],
+                    }],
+                })
+            }
+            if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        renderVariantTab()
+
+        expect(await screen.findByLabelText('Online: POS Price')).toHaveValue(0)
+        expect(screen.getByLabelText('Online: Online Price')).toHaveValue(12.75)
+        expect(screen.getByLabelText('Online: Cost Price')).toHaveValue(0)
+
+        fireEvent.change(screen.getByLabelText('Online: Online Price'), { target: { value: '0' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+                authoringVariants: [expect.objectContaining({
+                    price: 0,
+                    onlinePrice: 0,
+                    costPrice: 0,
+                })],
+            })
+        ))
+    })
+
+    it('ignores a late variant response from the previously opened product', async () => {
+        let resolveProductA: ((value: unknown) => void) | undefined
+        const productAResponse = new Promise((resolve) => {
+            resolveProductA = resolve
+        })
+
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-a/variants') return productAResponse
+            if (url === '/products/product-b/variants') {
+                return Promise.resolve({
+                    data: [{
+                        id: 'variant-b',
+                        productId: 'product-b',
+                        sku: 'PRODUCT-B',
+                        price: 20,
+                        onlinePrice: null,
+                        costPrice: 10,
+                        isDefault: true,
+                        isActive: true,
+                        attributes: [{ name: 'Product', value: 'B', sortOrder: 0 }],
+                    }],
+                })
+            }
+            if (url.includes('/media')) return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        const view = render(
+            <ProductVariantsTab
+                productId="product-a"
+                forceMatrixMode
+                onSaveVariantDraft={saveVariantDraftMock}
+            />
+        )
+        view.rerender(
+            <ProductVariantsTab
+                productId="product-b"
+                forceMatrixMode
+                onSaveVariantDraft={saveVariantDraftMock}
+            />
+        )
+
+        expect(await screen.findByLabelText('B: POS Price')).toHaveValue(20)
+
+        resolveProductA?.({
+            data: [{
+                id: 'variant-a',
+                productId: 'product-a',
+                sku: 'PRODUCT-A',
+                price: 30,
+                onlinePrice: null,
+                costPrice: 15,
+                isDefault: true,
+                isActive: false,
+                attributes: [{ name: 'Product', value: 'A', sortOrder: 0 }],
+            }],
+        })
+
+        await waitFor(() => expect(screen.queryByLabelText('A: POS Price')).not.toBeInTheDocument())
+        expect(screen.getByLabelText('B: POS Price')).toHaveValue(20)
     })
 
     it('blocks negative weight before save', async () => {
@@ -326,7 +481,7 @@ describe('variant authoring workspace', () => {
         await createTwoGeneratedRows(container)
         fillRequiredPrices(container)
         const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
-        fireEvent.change(numericInputs[2], { target: { value: '-0.5' } })
+        fireEvent.change(numericInputs[3], { target: { value: '-0.5' } })
         fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
 
         expect((await screen.findAllByText('Weight cannot be negative.')).length).toBeGreaterThan(0)

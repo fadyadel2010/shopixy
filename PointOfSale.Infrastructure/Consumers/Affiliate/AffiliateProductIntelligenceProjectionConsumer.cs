@@ -55,6 +55,10 @@ public class AffiliateProductIntelligenceProjectionConsumer :
     IConsumer<ProductArchivedEvent>,
     IConsumer<ProductPublishStatusChangedEvent>,
     IConsumer<ProductStockChangedEvent>,
+    IConsumer<ProductVariantCreatedEvent>,
+    IConsumer<ProductVariantUpdatedEvent>,
+    IConsumer<ProductVariantDeletedEvent>,
+    IConsumer<VariantPriceUpdatedEvent>,
     IConsumer<ProductVariantStockChangedEvent>, // AF-22 FIX
     IConsumer<AffiliateProductPolicyChangedEvent>,
     IConsumer<StoreProfileUpdatedEvent>,
@@ -62,6 +66,7 @@ public class AffiliateProductIntelligenceProjectionConsumer :
 {
     private const int StoreProfileUpdateBatchSize = 250;
     private const string ProductMediaConsumerName = nameof(AffiliateProductIntelligenceProjectionConsumer) + ":" + nameof(ProductMediaChangedEvent);
+    private const string ProductVariantTriggerConsumerName = nameof(AffiliateProductIntelligenceProjectionConsumer) + ":ProductVariantSqlAuthorityTrigger";
 
     private readonly MongoDbContext _mongoDbContext;
     private readonly ApplicationDbContext _dbContext;
@@ -179,11 +184,14 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         // decide affiliate inventory availability.
         var variants = await GetProductVariantsAsync(evt.ProductId, tenantId, ct);
 
-        // Calculate total stock
-            var totalStock = variants.Sum(v => v.Stock);
-        var isOutOfStock = totalStock <= 0;
-        // AF-22 HARDENING: Configurable low stock threshold
-        var lowStock = totalStock > 0 && totalStock <= _lowStockThreshold;
+        // Calculate total stock without manufacturing inventory for products whose
+        // SQL stock policy permits ordering at zero.
+        var totalStock = variants.Sum(v => v.Stock);
+        var stockAvailability = await ResolveAffiliateStockAvailabilityAsync(
+            tenantId,
+            evt.ProductId,
+            totalStock,
+            ct);
 
         var filter = BuildFreshProductEventFilter(evt.ProductId, tenantId, eventId, evt.EventVersion, evt.OccurredAtUtc);
 
@@ -204,8 +212,8 @@ public class AffiliateProductIntelligenceProjectionConsumer :
             .Set(d => d.EstimatedCommission, estimatedCommission)
             .Set(d => d.TemplateType, policy?.TemplateType ?? PointOfSale.Core.Constants.LandingTemplates.ClassicV1)
             .Set(d => d.TotalAvailableStock, totalStock)
-            .Set(d => d.IsOutOfStock, isOutOfStock)
-            .Set(d => d.LowStock, lowStock)
+            .Set(d => d.IsOutOfStock, stockAvailability.IsOutOfStock)
+            .Set(d => d.LowStock, stockAvailability.LowStock)
             .Set(d => d.Variants, variants)
             .Set(d => d.LastProductEventVersion, evt.EventVersion)
             .Set(d => d.LastProductEventOccurredAtUtc, evt.OccurredAtUtc)
@@ -365,6 +373,38 @@ public class AffiliateProductIntelligenceProjectionConsumer :
             evt.ProductId,
             tenantId);
     }
+
+    public Task Consume(ConsumeContext<ProductVariantCreatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<ProductVariantUpdatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<ProductVariantDeletedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
+
+    public Task Consume(ConsumeContext<VariantPriceUpdatedEvent> context) =>
+        ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+            context.Message,
+            context.Message.TenantId,
+            context.Message.ProductId,
+            context.Message.VariantId,
+            context.CancellationToken);
 
     // ═══════════════════════════════════════════════════════════════════
     // PRODUCT STOCK CHANGED
@@ -553,19 +593,19 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         // stock event is only a trigger for derivative affiliate visibility.
         var variants = await GetProductVariantsAsync(evt.ProductId, tenantId, ct);
 
-        // Calculate total stock
-            var totalStock = variants.Sum(v => v.Stock);
-        var isOutOfStock = totalStock <= 0;
-        
-        // AF-22 HARDENING: Configurable low stock threshold
-        var lowStock = totalStock > 0 && totalStock <= _lowStockThreshold;
+        var totalStock = variants.Sum(v => v.Stock);
+        var stockAvailability = await ResolveAffiliateStockAvailabilityAsync(
+            tenantId,
+            evt.ProductId,
+            totalStock,
+            ct);
 
         var filter = BuildFreshStockEventFilter(evt.ProductId, tenantId, eventId, evt.EventVersion, null);
 
         var update = Builders<AffiliateProductIntelligenceDocument>.Update
             .Set(d => d.TotalAvailableStock, totalStock)
-            .Set(d => d.IsOutOfStock, isOutOfStock)
-            .Set(d => d.LowStock, lowStock)
+            .Set(d => d.IsOutOfStock, stockAvailability.IsOutOfStock)
+            .Set(d => d.LowStock, stockAvailability.LowStock)
             .Set(d => d.Variants, variants)
             .Set(d => d.LastStockEventVersion, evt.EventVersion)
             .Set(d => d.LastUpdatedUtc, DateTime.UtcNow)
@@ -680,15 +720,18 @@ public class AffiliateProductIntelligenceProjectionConsumer :
                 ct);
 
             var totalStock = variants.Sum(v => v.Stock);
-            var isOutOfStock = totalStock <= 0;
-            var lowStock = totalStock > 0 && totalStock <= _lowStockThreshold;
+            var stockAvailability = await ResolveAffiliateStockAvailabilityAsync(
+                tenantId,
+                evt.ProductId,
+                totalStock,
+                ct);
 
             var filter = BuildFreshStockEventFilter(evt.ProductId, tenantId, eventId, evt.EventVersion, evt.StockUpdatedAtUtc);
 
             var update = Builders<AffiliateProductIntelligenceDocument>.Update
                 .Set(d => d.TotalAvailableStock, totalStock)
-                .Set(d => d.IsOutOfStock, isOutOfStock)
-                .Set(d => d.LowStock, lowStock)
+                .Set(d => d.IsOutOfStock, stockAvailability.IsOutOfStock)
+                .Set(d => d.LowStock, stockAvailability.LowStock)
                 .Set(d => d.Variants, variants)
                 .Set(d => d.LastStockEventVersion, evt.EventVersion)
                 .Set(d => d.LastStockUpdatedAtUtc, evt.StockUpdatedAtUtc)
@@ -1024,6 +1067,155 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         ex.WriteError?.Category == ServerErrorCategory.DuplicateKey ||
         ex.WriteError?.Code == 11000;
 
+    private async Task ConsumeProductVariantTriggerFromSqlAuthorityAsync(
+        IntegrationEvent @event,
+        Guid? tenantId,
+        Guid productId,
+        Guid variantId,
+        CancellationToken ct)
+    {
+        if (!tenantId.HasValue)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PRODUCT_INTELLIGENCE_TENANT_REQUIRED: Product {productId} variant event is missing TenantId.");
+        }
+
+        if (productId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PRODUCT_INTELLIGENCE_PRODUCT_REQUIRED: Variant {variantId} event has an empty ProductId | TenantId: {tenantId.Value}.");
+        }
+
+        if (variantId == Guid.Empty)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_PRODUCT_INTELLIGENCE_VARIANT_REQUIRED: Product {productId} event has an empty VariantId | TenantId: {tenantId.Value}.");
+        }
+
+        ProjectionConsumerEventFence? fence = null;
+        var eventType = @event.GetType().FullName ?? @event.GetType().Name;
+        try
+        {
+            fence = await ProjectionConsumerEventFence.TryAcquireAsync(
+                _dbContext,
+                @event,
+                ProductVariantTriggerConsumerName,
+                eventType,
+                variantId,
+                ct);
+
+            if (fence == null)
+            {
+                return;
+            }
+
+            await RecomposeProductIntelligenceFromSqlAuthorityAsync(tenantId.Value, productId, ct);
+
+            await fence.CompleteAsync(
+                @event,
+                ProductVariantTriggerConsumerName,
+                eventType,
+                variantId,
+                ct);
+        }
+        finally
+        {
+            if (fence != null)
+            {
+                await fence.DisposeAsync();
+            }
+        }
+    }
+
+    private async Task RecomposeProductIntelligenceFromSqlAuthorityAsync(
+        Guid tenantId,
+        Guid productId,
+        CancellationToken ct)
+    {
+        var filter = Builders<AffiliateProductIntelligenceDocument>.Filter.And(
+            Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(document => document.TenantId, tenantId),
+            Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(document => document.ProductId, productId));
+
+        if (!await IsProductVisibleInSqlAsync(tenantId, productId, ct))
+        {
+            await _mongoDbContext.AffiliateProductIntelligence.DeleteOneAsync(filter, ct);
+            return;
+        }
+
+        var product = await LoadCurrentStorefrontAuthorityProductAsync(
+            tenantId,
+            productId,
+            fallbackName: null,
+            fallbackDescription: null,
+            fallbackImages: null,
+            occurredAtUtc: DateTime.UtcNow,
+            ct);
+
+        if (product == null || !product.TryResolveAffiliateDiscoveryBasePrice(out var basePrice))
+        {
+            await _mongoDbContext.AffiliateProductIntelligence.DeleteOneAsync(filter, ct);
+            return;
+        }
+
+        var policy = await _dbContext.AffiliateProductPolicies
+            .AsNoTracking()
+            .Where(item => item.TenantId == tenantId && item.ProductId == productId)
+            .Select(item => new
+            {
+                item.CommissionRate,
+                item.TemplateType,
+                item.AffiliateCategoryId
+            })
+            .FirstOrDefaultAsync(ct);
+        var variants = await GetProductVariantsAsync(productId, tenantId, ct);
+        var totalStock = variants.Sum(variant => variant.Stock);
+        var stockAvailability = await ResolveAffiliateStockAvailabilityAsync(
+            tenantId,
+            productId,
+            totalStock,
+            ct);
+        var productSlug = product.Slug ?? productId.ToString();
+        var storeContext = await GetStoreContextAsync(tenantId, productSlug, ct);
+
+        if (string.IsNullOrWhiteSpace(storeContext.StorefrontUrl))
+        {
+            return;
+        }
+
+        var commissionRate = policy?.CommissionRate ?? 0m;
+        var update = Builders<AffiliateProductIntelligenceDocument>.Update
+            .SetOnInsert(document => document.ProductId, productId)
+            .SetOnInsert(document => document.TenantId, tenantId)
+            .SetOnInsert(document => document.CreatedAtUtc, DateTime.UtcNow)
+            .Set(document => document.StoreSlug, storeContext.StoreSlug)
+            .Set(document => document.StoreName, storeContext.StoreName)
+            .Set(document => document.StoreLogo, storeContext.StoreLogo)
+            .Set(document => document.StorefrontUrl, storeContext.StorefrontUrl)
+            .Set(document => document.ProductName, product.Name)
+            .Set(document => document.ProductSlug, productSlug)
+            .Set(document => document.Description, product.Description ?? string.Empty)
+            .Set(document => document.Images, ResolveAuthorityImages(product, fallbackImages: null))
+            .Set(document => document.BasePrice, basePrice)
+            .Set(document => document.Currency, await ResolveTenantCurrencyAsync(tenantId, ct))
+            .Set(document => document.CommissionRate, commissionRate)
+            .Set(document => document.EstimatedCommission, basePrice * commissionRate)
+            .Set(document => document.TemplateType, policy?.TemplateType ?? PointOfSale.Core.Constants.LandingTemplates.ClassicV1)
+            .Set(document => document.AffiliateCategoryId, policy?.AffiliateCategoryId)
+            .Set(document => document.TotalAvailableStock, totalStock)
+            .Set(document => document.IsOutOfStock, stockAvailability.IsOutOfStock)
+            .Set(document => document.LowStock, stockAvailability.LowStock)
+            .Set(document => document.Variants, variants)
+            .Set(document => document.LastUpdatedUtc, DateTime.UtcNow);
+
+        await UpsertProductIntelligenceAsync(
+            productId,
+            tenantId,
+            eventId: "sql-authority-variant-trigger",
+            filter,
+            update,
+            ct);
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     // HELPER METHODS
     // ═══════════════════════════════════════════════════════════════════
@@ -1080,8 +1272,48 @@ public class AffiliateProductIntelligenceProjectionConsumer :
                 !product.IsDeleted &&
                 product.IsActive &&
                 product.IsOnlineVisible &&
+                product.IsSearchable &&
                 product.PublishStatus == PublishStatus.Published,
                 ct);
+    }
+
+    private async Task<AffiliateStockAvailability> ResolveAffiliateStockAvailabilityAsync(
+        Guid tenantId,
+        Guid productId,
+        int totalAvailableStock,
+        CancellationToken ct)
+    {
+        var stockPolicy = await _dbContext.Products
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(product =>
+                product.TenantId == tenantId &&
+                product.Id == productId &&
+                !product.IsDeleted &&
+                product.IsActive &&
+                product.IsOnlineVisible &&
+                product.PublishStatus == PublishStatus.Published)
+            .Select(product => new
+            {
+                product.TrackStock,
+                product.AllowBackorder
+            })
+            .SingleOrDefaultAsync(ct);
+
+        if (stockPolicy == null)
+        {
+            return new AffiliateStockAvailability(IsOutOfStock: true, LowStock: false);
+        }
+
+        var stockConstrained = stockPolicy.TrackStock && !stockPolicy.AllowBackorder;
+        return new AffiliateStockAvailability(
+            IsOutOfStock: !ProductStorefrontVisibilityAuthority.IsOrderableByStockPolicy(
+                stockPolicy.TrackStock,
+                stockPolicy.AllowBackorder,
+                totalAvailableStock),
+            LowStock: stockConstrained &&
+                      totalAvailableStock > 0 &&
+                      totalAvailableStock <= _lowStockThreshold);
     }
 
     private async Task DeleteProductIntelligenceFromSqlLifecycleAsync(
@@ -1101,6 +1333,7 @@ public class AffiliateProductIntelligenceProjectionConsumer :
                 product.IsDeleted,
                 product.IsActive,
                 product.IsOnlineVisible,
+                product.IsSearchable,
                 product.PublishStatus,
                 product.UpdatedAt,
                 product.CreatedAt,
@@ -1113,6 +1346,7 @@ public class AffiliateProductIntelligenceProjectionConsumer :
                 IsDeleted: false,
                 IsActive: true,
                 IsOnlineVisible: true,
+                IsSearchable: true,
                 PublishStatus: PublishStatus.Published
             })
         {
@@ -1416,15 +1650,13 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         return sqlVariants.Select(sqlVariant =>
         {
             projectedById.TryGetValue(sqlVariant.VariantId, out var projected);
-            var name = projected?.Attributes != null && projected.Attributes.Any()
-                ? string.Join(" - ", projected.Attributes.OrderBy(attribute => attribute.SortOrder).Select(attribute => attribute.Value))
-                : sqlVariant.Attributes.Count > 0
-                    ? string.Join(" - ", sqlVariant.Attributes.OrderBy(attribute => attribute.SortOrder).Select(attribute => attribute.Value))
+            var name = sqlVariant.Attributes.Count > 0
+                ? string.Join(" - ", sqlVariant.Attributes.OrderBy(attribute => attribute.SortOrder).Select(attribute => attribute.Value))
+                : projected?.Attributes != null && projected.Attributes.Any()
+                    ? string.Join(" - ", projected.Attributes.OrderBy(attribute => attribute.SortOrder).Select(attribute => attribute.Value))
                     : sqlVariant.Sku ?? "Default";
 
-            var price = projected?.EffectivePrice > 0
-                ? projected.EffectivePrice
-                : ResolveEffectivePrice(sqlVariant.Price, sqlVariant.OnlinePrice);
+            var price = ResolveEffectivePrice(sqlVariant.Price, sqlVariant.OnlinePrice);
 
             return new VariantStockSubDocument
             {
@@ -1589,4 +1821,6 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         int EventVersion);
 
     private sealed record SqlVariantAttributeSnapshot(string Value, int SortOrder);
+
+    private sealed record AffiliateStockAvailability(bool IsOutOfStock, bool LowStock);
 }

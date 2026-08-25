@@ -1310,11 +1310,11 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     }
 
     [Fact]
-    public void ProductStockPriceSearchIndex_MustDeleteHiddenProductsAndRetryFailedWrites()
+    public void ProductStockPriceSearchIndex_MustTombstoneHiddenProductsAndRetryFailedWrites()
     {
         var consumer = File.ReadAllText(InfrastructurePath("Consumers", "ProductStockPriceSearchIndexConsumer.cs"));
 
-        Assert.Contains("_indexService.DeleteProductAsync(tenantId, productId", consumer, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchTombstoneWriter.WriteAsync", consumer, StringComparison.Ordinal);
         Assert.Contains("SearchIndexSyncException", consumer, StringComparison.Ordinal);
         Assert.Contains("Elasticsearch index failed", consumer, StringComparison.Ordinal);
         Assert.Contains("Elasticsearch delete failed", consumer, StringComparison.Ordinal);
@@ -1519,9 +1519,9 @@ public sealed class CrossSystemCriticalRiskHardeningTests
 
         AssertContainsInOrder(
             rebuildMethod!,
-            "if (product.IsDeleted)",
+            "if (product.IsDeleted ||",
             "DeleteIfFreshAsync");
-        Assert.Contains(".Where(variant => variant.IsActive && !variant.IsDeleted)", projection, StringComparison.Ordinal);
+        Assert.Contains("ProductVariantLifecycleAuthority.IsPubliclyVisibleLineage", rebuildMethod!, StringComparison.Ordinal);
         Assert.Contains("product.IsDeleted || !product.IsActive || !product.IsOnlineVisible", availabilityMethod!, StringComparison.Ordinal);
     }
 

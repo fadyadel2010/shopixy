@@ -3,6 +3,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Services;
@@ -43,17 +44,20 @@ public class ProductMediaService : IProductMediaService
     private readonly ApplicationDbContext _context;
     private readonly ITenantContext _tenantContext;
     private readonly IEventPublisher _eventPublisher;
+    private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<ProductMediaService> _logger;
 
     public ProductMediaService(
         ApplicationDbContext context,
         ITenantContext tenantContext,
         IEventPublisher eventPublisher,
+        IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<ProductMediaService> logger)
     {
         _context = context;
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
+        _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
 
@@ -273,6 +277,11 @@ public class ProductMediaService : IProductMediaService
         DateTime changedAtUtc,
         CancellationToken cancellationToken)
     {
+        var correlationId = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString("D");
+        var eventVersion = await MarketplaceProductProjectionVersion.AdvanceAsync(
+            _context,
+            product,
+            cancellationToken);
         var projectedMedia = media
             .OrderBy(m => m.Position)
             .ThenBy(m => m.CreatedAtUtc)
@@ -292,8 +301,22 @@ public class ProductMediaService : IProductMediaService
             ProductId = product.Id,
             Media = projectedMedia,
             OccurredAtUtc = changedAtUtc,
-            EventVersion = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion + 1)
+            CorrelationId = correlationId,
+            EventVersion = eventVersion
         }, cancellationToken);
+
+        await _marketplaceEventOutbox.EnqueueAsync(
+            new PointOfSale.Core.Events.Marketplace.ProductUpdatedEvent
+            {
+                OccurredAtUtc = changedAtUtc,
+                CorrelationId = correlationId,
+                EntityId = product.Id,
+                AggregateRootId = product.Id,
+                TenantId = product.TenantId,
+                Version = eventVersion,
+                ChangedFields = ["Media"]
+            },
+            cancellationToken);
     }
 
     private static void TouchProductForMediaProjection(Product product, DateTime changedAtUtc)

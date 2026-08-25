@@ -47,6 +47,7 @@ public sealed class UserGovernanceServiceTests : IDisposable
             _dbContext,
             _publishEndpoint.Object,
             autoHealingQueue,
+            Mock.Of<PointOfSale.Core.Interfaces.Marketplace.IMarketplaceEventOutboxService>(),
             NullLogger<CommerceHubVendorVisibilityService>.Instance);
 
         _service = new UserGovernanceService(

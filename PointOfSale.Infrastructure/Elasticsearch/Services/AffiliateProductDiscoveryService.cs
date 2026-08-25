@@ -127,6 +127,9 @@ public class AffiliateDiscoveryItem
 
 public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryService
 {
+    private const int CandidateBatchSize = 500;
+    private static readonly TimeSpan CandidateScrollTimeout = TimeSpan.FromMinutes(2);
+
     private readonly IElasticClient _client;
     private readonly ApplicationDbContext _dbContext;
     private readonly IConfiguration _configuration;
@@ -170,8 +173,6 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
             query.PageSize = Math.Clamp(query.PageSize, 1, 100);
             if (query.Page < 1) query.Page = 1;
 
-            var skip = (query.Page - 1) * query.PageSize;
-
             _logger.LogInformation(
                 "Affiliate discovery | TenantId: {TenantId} | Query: {Query} | CategoryId: {CategoryId} | Page: {Page}",
                 tenantId, query.Q ?? "(browse)", query.CategoryId, query.Page);
@@ -193,14 +194,6 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                 f => f.Term(t => t.Field(p => p.InStock).Value(true))
             };
 
-            // Optional: category filter
-            if (query.CategoryId.HasValue)
-            {
-                // We don't have CategoryId in public affiliate index, so we can't filter by it directly yet
-                // filters.Add(f => f.Term(t => t.Field(p => p.CategoryId).Value(query.CategoryId.Value)));
-                _logger.LogWarning("CategoryId filtering is not supported on public affiliate products index.");
-            }
-
             // ═══════════════════════════════════════════════════════════════════
             // BUILD QUERY
             // ═══════════════════════════════════════════════════════════════════
@@ -212,8 +205,8 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                 // Text search mode: multi_match + filters
                 searchResponse = await _client.SearchAsync<PublicAffiliateProductSearchDocument>(s => s
                     .Index(_settings.PublicAffiliateProductsIndexName)
-                    .From(skip)
-                    .Size(query.PageSize)
+                    .Size(CandidateBatchSize)
+                    .Scroll(CandidateScrollTimeout)
                     .Query(q => q
                         .Bool(b => b
                             .Must(m => m.MultiMatch(mm => mm
@@ -242,8 +235,8 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                 // Browse mode: no text query, just filters
                 searchResponse = await _client.SearchAsync<PublicAffiliateProductSearchDocument>(s => s
                     .Index(_settings.PublicAffiliateProductsIndexName)
-                    .From(skip)
-                    .Size(query.PageSize)
+                    .Size(CandidateBatchSize)
+                    .Scroll(CandidateScrollTimeout)
                     .Query(q => q
                         .Bool(b => b
                             .Filter(filters.ToArray())
@@ -255,8 +248,6 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                     .TrackTotalHits(true),
                     cancellationToken);
             }
-
-            stopwatch.Stop();
 
             if (!searchResponse.IsValid)
             {
@@ -276,13 +267,15 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
             // AF-17A: Map using Storefront-aligned inventory and pricing fields
             // ═══════════════════════════════════════════════════════════════════
 
-            var items = await RecomposeDiscoveryItemsFromSqlAuthorityAsync(
-                searchResponse.Hits.Select(hit => hit.Source).ToList(),
+            var candidates = await ReadAllSearchCandidatesAsync(searchResponse, cancellationToken);
+            var deliverableItems = await RecomposeDiscoveryItemsFromSqlAuthorityAsync(
+                candidates,
+                query.CategoryId,
                 cancellationToken);
             
             // AF-16F: STRICT MODE — Fail-fast if any product lacks StorefrontBaseUrl
             // This prevents silent data corruption and ensures data integrity
-            var invalidProducts = items.Where(p => string.IsNullOrWhiteSpace(p.StorefrontBaseUrl)).ToList();
+            var invalidProducts = deliverableItems.Where(p => string.IsNullOrWhiteSpace(p.StorefrontBaseUrl)).ToList();
             if (invalidProducts.Any())
             {
                 _logger.LogError(
@@ -298,16 +291,24 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                     "Run: af16e-trigger-reindex-via-events.sql or af16e-reindex-products.ps1");
             }
 
+            var total = deliverableItems.Count;
+            var skip = (long)(query.Page - 1) * query.PageSize;
+            var pageItems = skip >= total
+                ? []
+                : deliverableItems.Skip((int)skip).Take(query.PageSize).ToList();
+
+            stopwatch.Stop();
+
             _logger.LogInformation(
                 "Affiliate discovery success | TenantId: {TenantId} | Results: {Count}/{Total} | TimeMs: {TimeMs}",
-                tenantId, items.Count, searchResponse.Total, stopwatch.ElapsedMilliseconds);
+                tenantId, pageItems.Count, total, stopwatch.ElapsedMilliseconds);
 
             return new AffiliateDiscoveryResult
             {
                 Page = query.Page,
                 PageSize = query.PageSize,
-                Total = items.Count,
-                Items = items
+                Total = total,
+                Items = pageItems
             };
         }
         catch (Exception ex)
@@ -325,8 +326,58 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
         }
     }
 
+    private async Task<List<PublicAffiliateProductSearchDocument>> ReadAllSearchCandidatesAsync(
+        ISearchResponse<PublicAffiliateProductSearchDocument> initialResponse,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<PublicAffiliateProductSearchDocument>();
+        var response = initialResponse;
+        var scrollId = response.ScrollId;
+
+        try
+        {
+            while (response.Documents.Count > 0)
+            {
+                candidates.AddRange(response.Documents);
+
+                if (string.IsNullOrWhiteSpace(scrollId))
+                {
+                    break;
+                }
+
+                response = await _client.ScrollAsync<PublicAffiliateProductSearchDocument>(
+                    CandidateScrollTimeout,
+                    scrollId,
+                    ct: cancellationToken);
+
+                if (!response.IsValid)
+                {
+                    _logger.LogError(
+                        "Affiliate discovery candidate scroll failed | Error: {Error}",
+                        response.ServerError?.Error?.Reason ?? "Unknown");
+
+                    throw new InvalidOperationException("Affiliate discovery candidate scan failed.");
+                }
+
+                scrollId = response.ScrollId;
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(scrollId))
+            {
+                await _client.ClearScrollAsync(
+                    clear => clear.ScrollId(scrollId),
+                    cancellationToken);
+            }
+        }
+
+        return candidates;
+    }
+
     private async Task<List<AffiliateDiscoveryItem>> RecomposeDiscoveryItemsFromSqlAuthorityAsync(
         IReadOnlyList<PublicAffiliateProductSearchDocument> candidates,
+        Guid? categoryId,
         CancellationToken cancellationToken)
     {
         var recomposed = new List<AffiliateDiscoveryItem>(candidates.Count);
@@ -352,7 +403,17 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                     item.Policy.IsEnabled &&
                     !item.Policy.IsDeleted &&
                     item.Category.IsActive &&
-                    !item.Category.IsDeleted,
+                    !item.Category.IsDeleted &&
+                    ((item.Category.Level == 1 && item.Category.ParentId == null) ||
+                     (item.Category.Level == 2 &&
+                      item.Category.ParentId != null &&
+                      _dbContext.AffiliateCategories
+                          .IgnoreQueryFilters()
+                          .Any(parent =>
+                              parent.Id == item.Category.ParentId.Value &&
+                              parent.Level == 1 &&
+                              parent.IsActive &&
+                              !parent.IsDeleted))),
                     cancellationToken);
 
             if (!policyExists)
@@ -370,9 +431,9 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                 candidate.TenantId,
                 cancellationToken);
 
-            if (product is not { IsActive: true, IsOnlineVisible: true } ||
+            if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
+                (categoryId.HasValue && product.CategoryId != categoryId.Value) ||
                 !product.TryResolveAffiliatePublicPricing(out var pricing) ||
-                pricing.TotalAvailableStock <= 0 ||
                 !pricing.InStock)
             {
                 continue;

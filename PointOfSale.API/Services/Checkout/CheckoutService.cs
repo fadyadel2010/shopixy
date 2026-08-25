@@ -7448,9 +7448,19 @@ public class CheckoutService : ICheckoutService
                       !product.IsDeleted &&
                       product.IsActive &&
                       product.PublishStatus == PublishStatus.Published &&
-                      product.IsOnlineVisible &&
-                      category.IsActive &&
-                      !category.IsDeleted
+                       product.IsOnlineVisible &&
+                       category.IsActive &&
+                       !category.IsDeleted &&
+                       ((category.Level == 1 && category.ParentId == null) ||
+                        (category.Level == 2 &&
+                         category.ParentId != null &&
+                         _dbContext.AffiliateCategories
+                             .IgnoreQueryFilters()
+                             .Any(parent =>
+                                 parent.Id == category.ParentId.Value &&
+                                 parent.Level == 1 &&
+                                 parent.IsActive &&
+                                 !parent.IsDeleted)))
                 select new
                 {
                     policy.ProductId,
@@ -7569,14 +7579,27 @@ public class CheckoutService : ICheckoutService
             return new HashSet<Guid>();
         }
 
-        var eligibleProductIds = await _dbContext.AffiliateProductPolicies
-            .IgnoreQueryFilters()
-            .Where(policy =>
-                policy.TenantId == tenantId &&
-                policy.IsEnabled &&
-                !policy.IsDeleted &&
-                distinctProductIds.Contains(policy.ProductId))
-            .Select(policy => policy.ProductId)
+        var eligibleProductIds = await (
+                from policy in _dbContext.AffiliateProductPolicies.IgnoreQueryFilters()
+                join category in _dbContext.AffiliateCategories.IgnoreQueryFilters()
+                    on policy.AffiliateCategoryId equals category.Id
+                where policy.TenantId == tenantId &&
+                      policy.IsEnabled &&
+                      !policy.IsDeleted &&
+                      distinctProductIds.Contains(policy.ProductId) &&
+                      category.IsActive &&
+                      !category.IsDeleted &&
+                      ((category.Level == 1 && category.ParentId == null) ||
+                       (category.Level == 2 &&
+                        category.ParentId != null &&
+                        _dbContext.AffiliateCategories
+                            .IgnoreQueryFilters()
+                            .Any(parent =>
+                                parent.Id == category.ParentId.Value &&
+                                parent.Level == 1 &&
+                                parent.IsActive &&
+                                !parent.IsDeleted)))
+                select policy.ProductId)
             .ToListAsync(cancellationToken);
 
         return eligibleProductIds.ToHashSet();

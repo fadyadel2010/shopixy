@@ -1,3 +1,4 @@
+using System.Text.Json;
 using PointOfSale.Core.Enums;
 
 namespace PointOfSale.API.DTOs;
@@ -180,6 +181,7 @@ public class ProductResponseDto
     public IReadOnlyList<string> Features { get; set; } = Array.Empty<string>();
     public IReadOnlyList<ProductFaqResponseDto> Faqs { get; set; } = Array.Empty<ProductFaqResponseDto>();
     public bool AiGenerated { get; set; }
+    public JsonElement? AiMetadata { get; set; }
     public string? VideoUrl { get; set; }
     public string? ProductTemplate { get; set; }
     public IReadOnlyList<ProductWarehouseStockResponseDto> WarehouseStocks { get; set; } = Array.Empty<ProductWarehouseStockResponseDto>();

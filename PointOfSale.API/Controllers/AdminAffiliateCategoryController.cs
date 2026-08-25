@@ -287,15 +287,8 @@ public class AdminAffiliateCategoryController : ControllerBase
             if (request.DisplayOrder.HasValue)
                 category.UpdateDisplayOrder(request.DisplayOrder.Value);
 
-            await _dbContext.SaveChangesAsync(ct);
-
-            _logger.LogInformation(
-                "[AF-30A] Category updated: {Id} → {Name} ({Slug})",
-                id, category.Name, category.Slug);
-
-            // AF-30A FIX T-1: Publish event for projection update through the configured bus outbox.
-            // Publish failures are still logged aggressively because projection freshness matters,
-            // but the transport handoff remains outbox-backed under UseBusOutbox().
+            // Stage the authoritative global event while the category mutation is still pending.
+            // The following SaveChanges persists both through the configured bus outbox transaction.
             if (hasNameOrSlugChange)
             {
                 // Fetch parent details if subcategory
@@ -315,34 +308,24 @@ public class AdminAffiliateCategoryController : ControllerBase
                     }
                 }
 
-                try
+                await _eventPublisher.PublishAsync(new AffiliateCategoryUpdatedEvent
                 {
-                    await _eventPublisher.PublishAsync(new AffiliateCategoryUpdatedEvent
-                    {
-                        CategoryId = category.Id,
-                        NewName = category.Name,
-                        NewSlug = category.Slug,
-                        OldName = oldName,
-                        OldSlug = oldSlug,
-                        ParentId = category.ParentId,
-                        ParentCategoryName = parentName,
-                        ParentCategorySlug = parentSlug
-                    }, ct);
-
-                    _logger.LogInformation(
-                        "[AF-30A] AffiliateCategoryUpdatedEvent published for category {Id}: {OldName} → {NewName}",
-                        id, oldName, category.Name);
-                }
-                catch (Exception ex)
-                {
-                    // AF-30A FIX T-1: DB committed but event publish failed.
-                    // MongoDB projections will be stale until manual re-projection.
-                    _logger.LogCritical(ex,
-                        "[AF-30A:PROJECTION-DRIFT] Category {Id} renamed {OldName}→{NewName} in SQL but event " +
-                        "publish FAILED. MongoDB projections are STALE. Use admin re-projection endpoint to fix.",
-                        id, oldName, category.Name);
-                }
+                    CategoryId = category.Id,
+                    NewName = category.Name,
+                    NewSlug = category.Slug,
+                    OldName = oldName,
+                    OldSlug = oldSlug,
+                    ParentId = category.ParentId,
+                    ParentCategoryName = parentName,
+                    ParentCategorySlug = parentSlug
+                }, ct);
             }
+
+            await _dbContext.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "[AF-30A] Category updated: {Id} → {Name} ({Slug})",
+                id, category.Name, category.Slug);
 
             return Ok(new CategoryResponse
             {
@@ -384,7 +367,6 @@ public class AdminAffiliateCategoryController : ControllerBase
             return NotFound(new { message = "Category not found" });
 
         category.Activate();
-        await _dbContext.SaveChangesAsync(ct);
 
         // AF-30A FIX P-2: Re-publish category data to restore MongoDB projections
         // that were nullified during deactivation.
@@ -404,31 +386,23 @@ public class AdminAffiliateCategoryController : ControllerBase
             }
         }
 
-        try
+        await _eventPublisher.PublishAsync(new AffiliateCategoryUpdatedEvent
         {
-            await _eventPublisher.PublishAsync(new AffiliateCategoryUpdatedEvent
-            {
-                CategoryId = category.Id,
-                NewName = category.Name,
-                NewSlug = category.Slug,
-                OldName = category.Name, // Same (no rename, just reactivation)
-                OldSlug = category.Slug,
-                ParentId = category.ParentId,
-                ParentCategoryName = parentName,
-                ParentCategorySlug = parentSlug
-            }, ct);
+            CategoryId = category.Id,
+            NewName = category.Name,
+            NewSlug = category.Slug,
+            OldName = category.Name, // Same (no rename, just reactivation)
+            OldSlug = category.Slug,
+            ParentId = category.ParentId,
+            ParentCategoryName = parentName,
+            ParentCategorySlug = parentSlug
+        }, ct);
 
-            _logger.LogInformation(
-                "[AF-30] Category activated: {Id} ({Name}) — AffiliateCategoryUpdatedEvent published for re-projection",
-                id, category.Name);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogCritical(ex,
-                "[AF-30A:PROJECTION-DRIFT] Category {Id} activated in SQL but event publish FAILED. " +
-                "MongoDB projections may still show nullified category fields.",
-                id);
-        }
+        await _dbContext.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "[AF-30] Category activated: {Id} ({Name}) - AffiliateCategoryUpdatedEvent staged for re-projection",
+            id, category.Name);
 
         return Ok(new { message = "Category activated" });
     }
@@ -449,30 +423,21 @@ public class AdminAffiliateCategoryController : ControllerBase
             return NotFound(new { message = "Category not found" });
 
         category.Deactivate();
+
+        // AF-30A FIX P-2: Stage deactivation so the consumer nullifies category
+        // fields on all products assigned to this category.
+        await _eventPublisher.PublishAsync(new AffiliateCategoryDeactivatedEvent
+        {
+            CategoryId = category.Id,
+            CategoryName = category.Name,
+            CategorySlug = category.Slug
+        }, ct);
+
         await _dbContext.SaveChangesAsync(ct);
 
-        try
-        {
-            // AF-30A FIX P-2: Publish deactivation event so consumer nullifies
-            // category fields on all products assigned to this category.
-            await _eventPublisher.PublishAsync(new AffiliateCategoryDeactivatedEvent
-            {
-                CategoryId = category.Id,
-                CategoryName = category.Name,
-                CategorySlug = category.Slug
-            }, ct);
-
-            _logger.LogInformation(
-                "[AF-30] Category deactivated: {Id} ({Name}) — AffiliateCategoryDeactivatedEvent published",
-                id, category.Name);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogCritical(ex,
-                "[AF-30A:PROJECTION-DRIFT] Category {Id} deactivated in SQL but event publish FAILED. " +
-                "Products in MongoDB still show category data for deactivated category {Name}.",
-                id, category.Name);
-        }
+        _logger.LogInformation(
+            "[AF-30] Category deactivated: {Id} ({Name}) - AffiliateCategoryDeactivatedEvent staged",
+            id, category.Name);
 
         return Ok(new { message = "Category deactivated" });
     }

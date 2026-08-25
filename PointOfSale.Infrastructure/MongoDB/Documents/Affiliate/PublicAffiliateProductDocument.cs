@@ -88,7 +88,7 @@ public class PublicAffiliateProductDocument
     /// Computed using Storefront's exact logic:
     /// - Variant products: Sum of all active variant TotalStock
     /// - Simple products: Product StockQuantity
-    /// CRITICAL: Products with TotalAvailableStock = 0 must NOT be indexed.
+    /// Zero remains zero for untracked/backorder products; InStock carries purchasability.
     /// </summary>
     [BsonElement("totalAvailableStock")]
     public int TotalAvailableStock { get; set; }
@@ -96,8 +96,8 @@ public class PublicAffiliateProductDocument
     /// <summary>
     /// AF-17A: Whether product is in stock.
     /// Computed using Storefront's exact logic:
-    /// - Variant products: ANY active variant has TotalStock > 0
-    /// - Simple products: Product InStock property
+    /// - Untracked/backorder products remain purchasable at zero available stock
+    /// - Otherwise, at least one eligible stock quantity must be positive
     /// CRITICAL: Must match Storefront's InStock calculation exactly.
     /// </summary>
     [BsonElement("inStock")]

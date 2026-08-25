@@ -6,7 +6,9 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Events;
+using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.EventBus;
@@ -16,6 +18,74 @@ namespace PointOfSale.Tests.Infrastructure;
 
 public sealed class MassTransitEventPublisherRuntimeTypeTests
 {
+    [Fact]
+    public async Task GlobalAffiliateCategoryEvent_IsTenantlessAndAtomicWithSourceMutation()
+    {
+        var tenantId = Guid.NewGuid();
+        var databaseName = $"publisher-global-category-{Guid.NewGuid():N}";
+        var connectionString = $"Data Source={databaseName};Mode=Memory;Cache=Shared";
+
+        await using var rootConnection = new SqliteConnection(connectionString);
+        await rootConnection.OpenAsync();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton<ITenantContext>(new TestTenantContext(tenantId));
+        services.AddScoped<ApplicationDbContext>(_ => new PublisherOutboxDbContext(
+            new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseSqlite(connectionString)
+                .Options,
+            new TestTenantContext(tenantId)));
+        services.AddScoped<IEventPublisher, MassTransitEventPublisher>();
+        services.AddMassTransitTestHarness(configurator =>
+        {
+            configurator.AddEntityFrameworkOutbox<ApplicationDbContext>(outbox =>
+            {
+                outbox.UseSqlite();
+                outbox.UseBusOutbox();
+            });
+        });
+
+        await using var provider = services.BuildServiceProvider(validateScopes: true);
+        await using (var setupScope = provider.CreateAsyncScope())
+        {
+            await setupScope.ServiceProvider.GetRequiredService<ApplicationDbContext>()
+                .Database.EnsureCreatedAsync();
+        }
+
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var publisher = scope.ServiceProvider.GetRequiredService<IEventPublisher>();
+            await using var transaction = await dbContext.Database.BeginTransactionAsync();
+            var category = AffiliateCategory.CreateMainCategory("Electronics", "electronics");
+            dbContext.AffiliateCategories.Add(category);
+            var categoryEvent = new AffiliateCategoryUpdatedEvent
+            {
+                CategoryId = category.Id,
+                NewName = category.Name,
+                NewSlug = category.Slug
+            };
+
+            await publisher.PublishAsync(categoryEvent);
+
+            Assert.Null(categoryEvent.TenantId);
+            Assert.IsAssignableFrom<IGlobalPlatformIntegrationEvent>(categoryEvent);
+            Assert.Equal(EntityState.Added, dbContext.Entry(category).State);
+            Assert.Contains(
+                dbContext.ChangeTracker.Entries(),
+                entry => entry.Entity is MassTransitOutboxMessage && entry.State == EntityState.Added);
+
+            await dbContext.SaveChangesAsync();
+            await transaction.RollbackAsync();
+        }
+
+        await using var verificationScope = provider.CreateAsyncScope();
+        var verificationContext = verificationScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        Assert.Empty(await verificationContext.AffiliateCategories.ToListAsync());
+        Assert.Empty(await verificationContext.Set<MassTransitOutboxMessage>().ToListAsync());
+    }
+
     [Fact]
     public async Task ProductUpdatedEvent_PreservesConcreteContract_ThroughEfBusOutboxDispatch()
     {
@@ -119,7 +189,7 @@ public sealed class MassTransitEventPublisherRuntimeTypeTests
                     property.PropertyType.IsGenericType &&
                     property.PropertyType.GetGenericTypeDefinition() == typeof(DbSet<>))
                 .Select(property => property.PropertyType.GetGenericArguments()[0])
-                .Where(entityType => entityType != typeof(Product))
+                .Where(entityType => entityType != typeof(Product) && entityType != typeof(AffiliateCategory))
                 .Distinct();
 
             foreach (var entityType in excludedEntityTypes)
@@ -136,6 +206,8 @@ public sealed class MassTransitEventPublisherRuntimeTypeTests
                 entity.Ignore(product => product.WarehouseStocks);
                 entity.Ignore(product => product.ProductUnits);
             });
+
+            modelBuilder.Entity<AffiliateCategory>(entity => entity.HasKey(category => category.Id));
 
             modelBuilder.AddInboxStateEntity();
             modelBuilder.AddOutboxMessageEntity();

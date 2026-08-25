@@ -294,6 +294,11 @@ public class MassTransitEventPublisher : IEventPublisher
     /// </summary>
     private void EnrichEventWithTenantContext<T>(T @event) where T : IntegrationEvent
     {
+        if (@event is IGlobalPlatformIntegrationEvent)
+        {
+            return;
+        }
+
         // Only set TenantId if not already explicitly set and tenant context is available
         if (!@event.TenantId.HasValue && _tenantContext.HasTenant)
         {
@@ -671,6 +676,19 @@ public class MassTransitEventPublisher : IEventPublisher
         }
 
         ValidateAuthoritativeEventContract(eventType);
+
+        if (@event is IGlobalPlatformIntegrationEvent)
+        {
+            if (@event.TenantId.HasValue)
+            {
+                throw new InvalidOperationException(
+                    "Global platform integration events must not carry a TenantId. " +
+                    $"EventType={eventType.Name}; EventId={@event.EventId}; TenantId={@event.TenantId}");
+            }
+
+            EnsureAuthoritativeOrderingMetadata(@event, eventType);
+            return;
+        }
 
         if (@event.TenantId.HasValue && @event.TenantId.Value != Guid.Empty)
         {

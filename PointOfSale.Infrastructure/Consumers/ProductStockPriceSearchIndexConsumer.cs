@@ -333,7 +333,13 @@ public class ProductStockPriceSearchIndexConsumer :
                     productId,
                     tenantId);
 
-                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -351,7 +357,13 @@ public class ProductStockPriceSearchIndexConsumer :
                     "[ES-{EventName}] SQL product authority is not searchable - deleting stale ES document | ProductId: {ProductId} | TenantId: {TenantId}",
                     eventName, productId, tenantId);
 
-                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -475,7 +487,13 @@ public class ProductStockPriceSearchIndexConsumer :
 
             if (product == null)
             {
-                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(
@@ -487,7 +505,13 @@ public class ProductStockPriceSearchIndexConsumer :
 
             if (!product.IsActive || !product.IsOnlineVisible || !product.IsSearchable)
             {
-                var deleted = await _indexService.DeleteProductAsync(tenantId, productId, cancellationToken);
+                var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                    _indexService,
+                    _dbContext,
+                    tenantId,
+                    productId,
+                    eventId,
+                    cancellationToken);
                 if (!deleted)
                 {
                     throw new SearchIndexSyncException(

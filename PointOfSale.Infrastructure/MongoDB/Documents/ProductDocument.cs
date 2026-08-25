@@ -391,6 +391,12 @@ public class ProductDocument : IReadModelEvolutionDocument
     public int LastEventVersion { get; set; }
 
     /// <summary>
+    /// Canonical PostgreSQL Product.ProjectionMutationVersion for the entire product aggregate.
+    /// All downstream search mutations use this value rather than stream-local event versions.
+    /// </summary>
+    public long ProductGeneration { get; set; }
+
+    /// <summary>
     /// Event id of the newest authoritative stock event applied to product-level stock fields.
     /// Kept separate from product lifecycle ordering so variant stock cannot be rejected
     /// by an unrelated product update event.

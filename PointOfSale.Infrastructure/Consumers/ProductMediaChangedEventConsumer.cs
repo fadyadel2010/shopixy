@@ -9,6 +9,7 @@ using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.Reliability;
+using PointOfSale.Infrastructure.Redis.Services;
 
 namespace PointOfSale.Infrastructure.Consumers;
 
@@ -18,17 +19,20 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
 
     private readonly IMongoCollection<ProductDocument> _collection;
     private readonly IUnifiedSearchIndexService _searchIndexService;
+    private readonly IStorefrontProductCacheInvalidator _productCacheInvalidator;
     private readonly ILogger<ProductMediaChangedEventConsumer> _logger;
     private readonly ApplicationDbContext? _dbContext;
 
     public ProductMediaChangedEventConsumer(
         IMongoDatabase database,
         IUnifiedSearchIndexService searchIndexService,
+        IStorefrontProductCacheInvalidator productCacheInvalidator,
         ILogger<ProductMediaChangedEventConsumer> logger,
         ApplicationDbContext? dbContext = null)
     {
         _collection = database.GetCollection<ProductDocument>("products");
         _searchIndexService = searchIndexService;
+        _productCacheInvalidator = productCacheInvalidator;
         _logger = logger;
         _dbContext = dbContext;
     }
@@ -132,17 +136,10 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                     if (existingEventId == @event.EventId)
                     {
                         _logger.LogInformation(
-                            "ProductMediaChangedEvent duplicate retry collapsed with no side effects | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
+                            "ProductMediaChangedEvent retry resuming downstream side effects without overwriting MongoDB | EventId: {EventId} | ProductId: {ProductId} | TenantId: {TenantId}",
                             @event.EventId,
                             @event.ProductId,
                             @event.TenantId);
-
-                        if (fence != null && _dbContext != null)
-                        {
-                            await fence.CompleteAsync(@event, fenceKey!, context.CancellationToken);
-                        }
-
-                        return;
                     }
                     else
                     {
@@ -163,14 +160,16 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                         return;
                     }
                 }
-
-                // Product doesn't exist or has no LastMediaEventId - retry until product projection exists
-                _logger.LogWarning(
-                    "Product document not found for ProductMediaChangedEvent; retrying until product projection exists | ProductId: {ProductId} | TenantId: {TenantId}",
-                    @event.ProductId,
-                    @event.TenantId);
-                throw new InvalidOperationException(
-                    $"Product read model {@event.ProductId} not found before ProductMediaChangedEvent projection.");
+                else
+                {
+                    // Product doesn't exist or has no LastMediaEventId - retry until product projection exists
+                    _logger.LogWarning(
+                        "Product document not found for ProductMediaChangedEvent; retrying until product projection exists | ProductId: {ProductId} | TenantId: {TenantId}",
+                        @event.ProductId,
+                        @event.TenantId);
+                    throw new InvalidOperationException(
+                        $"Product read model {@event.ProductId} not found before ProductMediaChangedEvent projection.");
+                }
             }
 
             _logger.LogInformation(
@@ -199,9 +198,12 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                             @event.EventId,
                             @event.ProductId,
                             @event.TenantId);
-                        var deleted = await _searchIndexService.DeleteProductAsync(
+                        var deleted = await ProductSearchTombstoneWriter.WriteAsync(
+                            _searchIndexService,
+                            _dbContext,
                             @event.TenantId.Value,
                             @event.ProductId,
+                            @event.EventId,
                             context.CancellationToken);
                         if (!deleted)
                         {
@@ -230,6 +232,13 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
                         searchDocument.ImageUrl ?? "none");
                 }
             }
+
+            await _productCacheInvalidator.InvalidateProductAsync(
+                @event.TenantId.Value,
+                @event.ProductId,
+                product?.Slug,
+                invalidateHomepage: true,
+                cancellationToken: context.CancellationToken);
 
             if (fence != null && _dbContext != null)
             {
@@ -285,7 +294,7 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
         var versionValidation = ProjectionAuthorityValidator.ValidateSqlVersion(
             sqlVersion,
             eventVersion,
-            requireExactVersion: true);
+            requireExactVersion: false);
         if (!versionValidation.IsAccepted)
         {
             return null;
@@ -297,7 +306,8 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
             .Where(item =>
                 item.TenantId == tenantId &&
                 item.ProductId == productId &&
-                IsStorefrontProductMediaType(item.MediaType))
+                (EF.Functions.ILike(item.MediaType, "image") ||
+                 EF.Functions.ILike(item.MediaType, "video")))
             .OrderBy(item => item.Position)
             .ThenBy(item => item.CreatedAtUtc)
             .Select(item => new ProductMediaItemData
@@ -345,7 +355,4 @@ public class ProductMediaChangedEventConsumer : IConsumer<ProductMediaChangedEve
 
     private sealed record SqlMediaAuthoritySnapshot(List<ProductMediaItemData> Media);
 
-    private static bool IsStorefrontProductMediaType(string? mediaType) =>
-        string.Equals(mediaType, "image", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(mediaType, "video", StringComparison.OrdinalIgnoreCase);
 }

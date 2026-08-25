@@ -22,6 +22,17 @@ public interface IUnifiedSearchIndexService
     /// Deletes a product from the search index.
     /// </summary>
     Task<bool> DeleteProductAsync(Guid tenantId, Guid productId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retains a versioned product tombstone so delayed events cannot resurrect hidden state.
+    /// </summary>
+    Task<bool> TombstoneProductAsync(
+        Guid tenantId,
+        Guid productId,
+        long productGeneration,
+        bool isDeleted,
+        Guid? eventId = null,
+        CancellationToken cancellationToken = default);
     
     #endregion
     

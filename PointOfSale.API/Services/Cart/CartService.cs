@@ -2103,10 +2103,24 @@ public class CartService : ICartService
         }
         catch (Exception ex)
         {
-            // Don't fail the request if product validation fails
             _logger.LogWarning(ex,
-                "Product re-validation failed - continuing with current cart | TenantId: {TenantId} | CartId: {CartId} | CorrelationId: {CorrelationId}",
+                "Product re-validation failed - clearing unverified affiliate attribution | TenantId: {TenantId} | CartId: {CartId} | CorrelationId: {CorrelationId}",
                 cart.TenantId, cart.CartId, correlationId);
+
+            var affiliateAdmissionCleared = false;
+            foreach (var item in cart.Items)
+            {
+                affiliateAdmissionCleared |= ApplyAffiliateCartLineAdmission(
+                    item,
+                    AffiliateCartLineAdmission.NotEligible);
+            }
+
+            if (affiliateAdmissionCleared)
+            {
+                cart.RecalculateTotals();
+                await SaveCartToRedisAsync(cart, cacheKey, correlationId, cancellationToken);
+            }
+
             return cart;
         }
 
@@ -2253,7 +2267,20 @@ public class CartService : ICartService
                 policy => policy.AffiliateCategoryId!.Value,
                 category => category.Id,
                 (policy, category) => category)
-            .AnyAsync(category => !category.IsDeleted && category.IsActive, cancellationToken);
+            .AnyAsync(category =>
+                !category.IsDeleted &&
+                category.IsActive &&
+                ((category.Level == 1 && category.ParentId == null) ||
+                 (category.Level == 2 &&
+                  category.ParentId != null &&
+                  _dbContext.AffiliateCategories
+                      .IgnoreQueryFilters()
+                      .Any(parent =>
+                          parent.Id == category.ParentId.Value &&
+                          parent.Level == 1 &&
+                          parent.IsActive &&
+                          !parent.IsDeleted))),
+                cancellationToken);
     }
 
     private async Task<bool> HasPositiveAffiliateLinePriceAsync(Product product, CancellationToken cancellationToken)

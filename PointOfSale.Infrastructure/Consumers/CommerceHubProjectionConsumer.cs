@@ -401,6 +401,11 @@ public class CommerceHubProjectionConsumer :
         {
             if (listing.LastEventId == message.EventId)
             {
+                if (RequiresSearchSyncRetry(listing))
+                {
+                    await SyncSearchAsync(listing, context.CancellationToken);
+                }
+
                 continue;
             }
 

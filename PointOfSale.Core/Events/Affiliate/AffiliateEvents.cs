@@ -237,7 +237,7 @@ public class AffiliateProductPolicyChangedEvent : IntegrationEvent
 /// - Event can be replayed safely
 /// - UpdateMany is idempotent
 /// </summary>
-public class AffiliateCategoryUpdatedEvent : IntegrationEvent
+public class AffiliateCategoryUpdatedEvent : IntegrationEvent, IGlobalPlatformIntegrationEvent
 {
     public Guid CategoryId { get; set; }
     public string NewName { get; set; } = string.Empty;
@@ -262,7 +262,7 @@ public class AffiliateCategoryUpdatedEvent : IntegrationEvent
 /// IDEMPOTENCY:
 /// - Event can be replayed safely (setting null is idempotent)
 /// </summary>
-public class AffiliateCategoryDeactivatedEvent : IntegrationEvent
+public class AffiliateCategoryDeactivatedEvent : IntegrationEvent, IGlobalPlatformIntegrationEvent
 {
     public Guid CategoryId { get; set; }
     public string CategoryName { get; set; } = string.Empty;

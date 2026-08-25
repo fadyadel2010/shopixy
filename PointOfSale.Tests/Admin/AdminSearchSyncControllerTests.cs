@@ -93,7 +93,13 @@ public sealed class AdminSearchSyncControllerTests
         Assert.Equal(productId, indexed.ProductId);
 
         searchIndexService.Verify(
-            service => service.DeleteProductAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            service => service.TombstoneProductAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<long>(),
+                It.IsAny<bool>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -150,9 +156,12 @@ public sealed class AdminSearchSyncControllerTests
 
         var searchIndexService = new Mock<IUnifiedSearchIndexService>(MockBehavior.Strict);
         searchIndexService
-            .Setup(service => service.DeleteProductAsync(
+            .Setup(service => service.TombstoneProductAsync(
                 tenantId,
                 productId,
+                It.IsAny<long>(),
+                false,
+                null,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -162,9 +171,12 @@ public sealed class AdminSearchSyncControllerTests
 
         Assert.IsType<OkObjectResult>(result);
         searchIndexService.Verify(
-            service => service.DeleteProductAsync(
+            service => service.TombstoneProductAsync(
                 tenantId,
                 productId,
+                It.IsAny<long>(),
+                false,
+                null,
                 It.IsAny<CancellationToken>()),
             Times.Once);
         searchIndexService.Verify(

@@ -5,7 +5,7 @@ namespace PointOfSale.Tests.Infrastructure;
 public sealed class AffiliateStorefrontPricingSnapshotTests
 {
     [Fact]
-    public void TryResolveAffiliatePublicPricing_SimpleProductUsesStorefrontVisiblePriceAndVariantStockFallback()
+    public void TryResolveAffiliatePublicPricing_SimpleProductUsesDefaultUnitPriceAndVariantStockFallback()
     {
         var product = new ProductDocument
         {
@@ -32,7 +32,7 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
         var resolved = product.TryResolveAffiliatePublicPricing(out var snapshot);
 
         Assert.True(resolved);
-        Assert.Equal(999m, snapshot.Price);
+        Assert.Equal(25m, snapshot.Price);
         Assert.Null(snapshot.MinVariantPrice);
         Assert.Null(snapshot.MaxVariantPrice);
         Assert.True(snapshot.InStock);
@@ -40,7 +40,7 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
     }
 
     [Fact]
-    public void TryResolveAffiliateDiscoveryBasePrice_SimpleProductUsesStorefrontVisiblePriceButRequiresDefaultUnit()
+    public void TryResolveAffiliateDiscoveryBasePrice_SimpleProductUsesDefaultUnitPrice()
     {
         var product = new ProductDocument
         {
@@ -67,7 +67,7 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
         var resolved = product.TryResolveAffiliateDiscoveryBasePrice(out var basePrice);
 
         Assert.True(resolved);
-        Assert.Equal(60m, basePrice);
+        Assert.Equal(25m, basePrice);
     }
 
     [Fact]
