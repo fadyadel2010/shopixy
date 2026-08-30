@@ -11,6 +11,7 @@ const authority = {
             label: 'Cancel',
             targetStatus: 'Cancelled',
             requiresConfirmation: true,
+            requiredFields: [],
         },
     ],
 }
@@ -29,5 +30,6 @@ describe('Shipment action authority', () => {
     it('rejects fabricated or malformed action evidence', () => {
         expect(() => requireShipmentActionAuthority({ ...authority, availableActions: [{ ...authority.availableActions[0], code: 'frontend-cancel' }] }, 'order-1')).toThrow(/action evidence/)
         expect(() => requireShipmentActionAuthority({ ...authority, availableActions: [{ ...authority.availableActions[0], requiresConfirmation: 'yes' }] }, 'order-1')).toThrow(/action evidence/)
+        expect(() => requireShipmentActionAuthority({ ...authority, availableActions: [{ ...authority.availableActions[0], code: 'delivered', targetStatus: 'Delivered' }] }, 'order-1')).toThrow(/action evidence/)
     })
 })

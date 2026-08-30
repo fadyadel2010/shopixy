@@ -81,6 +81,17 @@ const translations = {
             noAccount: "Don't have an account?",
             signUp: 'Sign up for free',
             storeError: 'Unable to connect to store. Please try again.',
+            forgotPassword: 'Forgot password?',
+            invalidCredentials: 'Invalid email or password.',
+            verificationRequired: 'Verify your email before signing in.',
+            suspended: 'This affiliate account is suspended.',
+            malformed: 'Email and password are required.',
+            failed: 'Login failed. Please try again.',
+            registrationPending: 'Account created. Check your email and verify it before signing in.',
+            resendVerification: 'Resend verification email',
+            resending: 'Sending...',
+            resendSent: 'Verification email sent',
+            resendFailed: 'Could not resend the verification email. Please try again.',
         },
 
         // ─── Register ───
@@ -106,6 +117,42 @@ const translations = {
             nameRequired: 'Display name is required',
             passwordMin: 'Password must be at least 8 characters',
             passwordMismatch: 'Passwords do not match',
+            passwordStrong: 'Use 8 or more characters with uppercase, lowercase, number, and special character.',
+            duplicateEmail: 'An affiliate account already exists for this email.',
+            failed: 'Registration failed. Please try again.',
+        },
+
+        identity: {
+            backToHub: '← Back to Affiliate Hub',
+            signIn: 'Sign in',
+            email: 'Email',
+            verify: {
+                title: 'Verify your email',
+                subtitle: 'Confirm your affiliate identity to activate sign-in.',
+                missingToken: 'This verification link is missing its token.',
+                verifying: 'Verifying your email...',
+                success: 'Your email is verified. You can now sign in.',
+                failed: 'This verification link is invalid or expired.',
+            },
+            forgot: {
+                title: 'Reset your password',
+                subtitle: 'Enter your affiliate email to receive reset instructions.',
+                success: 'If the affiliate account exists, reset instructions have been sent.',
+                failed: 'Could not request a password reset. Please try again.',
+                submit: 'Send reset instructions',
+            },
+            reset: {
+                title: 'Choose a new password',
+                subtitle: 'Use a strong password for your affiliate account.',
+                missingToken: 'This reset link is missing its token.',
+                mismatch: 'Passwords do not match.',
+                passwordStrong: 'Use 8 or more characters with uppercase, lowercase, number, and special character.',
+                failed: 'This reset link is invalid or expired.',
+                success: 'Your password was reset and existing sessions were revoked.',
+                password: 'New password',
+                confirmPassword: 'Confirm password',
+                submit: 'Reset password',
+            },
         },
 
         // ─── Portal ───
@@ -122,6 +169,9 @@ const translations = {
             settings: 'Settings',
             collapse: 'Collapse',
             logout: 'Logout',
+            restoringSession: 'Restoring secure affiliate session...',
+            sessionRestoreError: 'We could not verify your session because the service is unavailable. Your session was not discarded.',
+            retrySession: 'Retry session check',
 
             dashboardStats: {
                 totalEarned: 'Total Earned',
@@ -424,6 +474,17 @@ const translations = {
             noAccount: 'ليس لديك حساب؟',
             signUp: 'سجل مجاناً',
             storeError: 'تعذر الاتصال بالمتجر. يرجى المحاولة مرة أخرى.',
+            forgotPassword: 'هل نسيت كلمة المرور؟',
+            invalidCredentials: 'البريد الإلكتروني أو كلمة المرور غير صحيحة.',
+            verificationRequired: 'تحقق من بريدك الإلكتروني قبل تسجيل الدخول.',
+            suspended: 'تم تعليق حساب التسويق هذا.',
+            malformed: 'البريد الإلكتروني وكلمة المرور مطلوبان.',
+            failed: 'فشل تسجيل الدخول. يرجى المحاولة مرة أخرى.',
+            registrationPending: 'تم إنشاء الحساب. افتح بريدك وتحقق منه قبل تسجيل الدخول.',
+            resendVerification: 'إعادة إرسال رسالة التحقق',
+            resending: 'جاري الإرسال...',
+            resendSent: 'تم إرسال رسالة التحقق',
+            resendFailed: 'تعذر إعادة الإرسال. يرجى المحاولة مرة أخرى.',
         },
 
         // ─── Register ───
@@ -449,6 +510,42 @@ const translations = {
             nameRequired: 'الاسم المعروض مطلوب',
             passwordMin: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل',
             passwordMismatch: 'كلمتا المرور غير متطابقتين',
+            passwordStrong: 'استخدم 8 أحرف على الأقل وحرفاً كبيراً وصغيراً ورقماً ورمزاً خاصاً.',
+            duplicateEmail: 'يوجد حساب تسويق بهذا البريد بالفعل.',
+            failed: 'فشل إنشاء الحساب. يرجى المحاولة مرة أخرى.',
+        },
+
+        identity: {
+            backToHub: '→ العودة إلى مركز التسويق',
+            signIn: 'تسجيل الدخول',
+            email: 'البريد الإلكتروني',
+            verify: {
+                title: 'التحقق من البريد',
+                subtitle: 'أكد هويتك لتفعيل تسجيل الدخول.',
+                missingToken: 'رابط التحقق لا يحتوي على رمز.',
+                verifying: 'جاري التحقق من البريد...',
+                success: 'تم التحقق. يمكنك الآن تسجيل الدخول.',
+                failed: 'رابط التحقق غير صالح أو منتهي.',
+            },
+            forgot: {
+                title: 'إعادة تعيين كلمة المرور',
+                subtitle: 'أدخل بريد التسويق لاستلام التعليمات.',
+                success: 'إذا كان الحساب موجوداً فقد تم إرسال التعليمات.',
+                failed: 'تعذر طلب إعادة التعيين. حاول مرة أخرى.',
+                submit: 'إرسال التعليمات',
+            },
+            reset: {
+                title: 'اختر كلمة مرور جديدة',
+                subtitle: 'استخدم كلمة مرور قوية لحسابك.',
+                missingToken: 'رابط إعادة التعيين لا يحتوي على رمز.',
+                mismatch: 'كلمتا المرور غير متطابقتين.',
+                passwordStrong: 'استخدم 8 أحرف على الأقل وحرفاً كبيراً وصغيراً ورقماً ورمزاً خاصاً.',
+                failed: 'رابط إعادة التعيين غير صالح أو منتهي.',
+                success: 'تم تغيير كلمة المرور وإلغاء الجلسات القديمة.',
+                password: 'كلمة المرور الجديدة',
+                confirmPassword: 'تأكيد كلمة المرور',
+                submit: 'إعادة تعيين كلمة المرور',
+            },
         },
 
         // ─── Portal ───
@@ -465,6 +562,9 @@ const translations = {
             settings: 'الإعدادات',
             collapse: 'طي',
             logout: 'تسجيل الخروج',
+            restoringSession: 'جاري استعادة جلسة التسويق الآمنة...',
+            sessionRestoreError: 'تعذر التحقق من جلستك لأن الخدمة غير متاحة. لم يتم حذف الجلسة.',
+            retrySession: 'إعادة فحص الجلسة',
 
             dashboardStats: {
                 totalEarned: 'إجمالي الأرباح',

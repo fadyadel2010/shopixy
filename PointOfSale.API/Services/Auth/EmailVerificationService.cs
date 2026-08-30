@@ -431,7 +431,7 @@ public interface IEmailSender
 
 /// <summary>
 /// Logging email sender for development.
-/// Logs emails to console instead of sending.
+/// Logs delivery metadata only; message bodies can contain credential-bearing links.
 /// </summary>
 public class LoggingEmailSender : IEmailSender
 {
@@ -445,12 +445,9 @@ public class LoggingEmailSender : IEmailSender
     public Task SendEmailAsync(string to, string subject, string htmlBody, string textBody)
     {
         _logger.LogInformation(
-            "📧 EMAIL WOULD BE SENT:\n" +
-            "To: {To}\n" +
-            "Subject: {Subject}\n" +
-            "Body (text):\n{TextBody}\n" +
-            "---END EMAIL---",
-            to, subject, textBody);
+            "Email delivery skipped because no sender is configured | To: {To} | Subject: {Subject}",
+            to,
+            subject);
         
         return Task.CompletedTask;
     }

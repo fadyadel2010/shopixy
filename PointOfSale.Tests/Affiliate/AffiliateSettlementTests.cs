@@ -271,6 +271,58 @@ public class AffiliateSettlementTests
     }
 
     [Fact]
+    public void CreatePaidNetOfReversals_CappedCommission_PreservesProportionalRemainder()
+    {
+        var earned = AffiliateCommissionLedger.CreateEarned(
+            storeTenantId: Guid.NewGuid(),
+            attributionId: Guid.NewGuid(),
+            affiliateAccountId: Guid.NewGuid(),
+            orderId: Guid.NewGuid(),
+            orderItemId: Guid.NewGuid(),
+            paidAmount: 100.00m,
+            commissionRate: 0.10m,
+            maxPerItem: 5.00m,
+            currency: "EGP");
+        var approved = AffiliateCommissionLedger.CreateApproved(earned);
+
+        var paid = AffiliateCommissionLedger.CreatePaidNetOfReversals(
+            approved,
+            payableBaseAmount: 80.00m,
+            payableCommissionAmount: 4.00m,
+            approvedMaxPerItem: 5.00m);
+
+        Assert.Equal(80.00m, paid.BaseAmount);
+        Assert.Equal(4.00m, paid.CommissionAmount);
+    }
+
+    [Fact]
+    public void CreatePaidNetOfReversals_MultipleRoundedRefunds_TrustsLedgerRemainder()
+    {
+        var earned = AffiliateCommissionLedger.CreateEarned(
+            storeTenantId: Guid.NewGuid(),
+            attributionId: Guid.NewGuid(),
+            affiliateAccountId: Guid.NewGuid(),
+            orderId: Guid.NewGuid(),
+            orderItemId: Guid.NewGuid(),
+            paidAmount: 1.00m,
+            commissionRate: 0.3333m,
+            maxPerItem: null,
+            currency: "EGP");
+        var approved = AffiliateCommissionLedger.CreateApproved(earned);
+
+        // Two 0.3333-base reversals each truncate to 0.1110 commission. The
+        // canonical remainder is therefore 0.1113, not a recalculated 0.1111.
+        var paid = AffiliateCommissionLedger.CreatePaidNetOfReversals(
+            approved,
+            payableBaseAmount: 0.3334m,
+            payableCommissionAmount: 0.1113m,
+            approvedMaxPerItem: null);
+
+        Assert.Equal(0.3334m, paid.BaseAmount);
+        Assert.Equal(0.1113m, paid.CommissionAmount);
+    }
+
+    [Fact]
     public void CommissionEntryType_HasApprovedAndPaidValues()
     {
         Assert.Equal(2, (int)CommissionEntryType.Approved);

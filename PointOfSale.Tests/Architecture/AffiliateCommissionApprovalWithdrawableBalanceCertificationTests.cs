@@ -21,7 +21,70 @@ public sealed class AffiliateCommissionApprovalWithdrawableBalanceCertificationT
 
         Assert.Contains("EnsureAffiliateDeliveryApprovalAuthority", reconciliationMethod, StringComparison.Ordinal);
         Assert.Contains("RecordCommissionDeliveredOrderReconciliation", reconciliationMethod, StringComparison.Ordinal);
+        Assert.Contains("deliveryReference: order.DeliveryReference", reconciliationMethod, StringComparison.Ordinal);
+        Assert.Contains("proofOfDeliveryUrl: order.ProofOfDeliveryUrl", reconciliationMethod, StringComparison.Ordinal);
         Assert.Contains("AffiliateCommissionLedger.CreateApproved(earned)", reconciliationMethod, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ManualDeliveryEvidence_MustBePersistedForLaterFinancialRevalidation()
+    {
+        var order = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/Order.cs");
+        var fulfillment = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Fulfillment/OrderFulfillmentService.cs");
+        var developmentSettings = CertificationSource.ReadRepoFile("PointOfSale.API/appsettings.Development.json");
+        var productionSettings = CertificationSource.ReadRepoFile("PointOfSale.API/appsettings.json");
+
+        Assert.Contains("public string? DeliveryReference", order, StringComparison.Ordinal);
+        Assert.Contains("public string? ProofOfDeliveryUrl", order, StringComparison.Ordinal);
+        Assert.Contains("order.DeliveryReference = normalizedDeliveryReference", fulfillment, StringComparison.Ordinal);
+        Assert.Contains("order.ProofOfDeliveryUrl = normalizedProofOfDeliveryUrl", fulfillment, StringComparison.Ordinal);
+        Assert.Contains("MANUAL_DELIVERY_EVIDENCE_CONFLICT", fulfillment, StringComparison.Ordinal);
+        Assert.Contains("order.DeliveryReference ??= normalizedDeliveryReference", fulfillment, StringComparison.Ordinal);
+        Assert.Contains("order.ProofOfDeliveryUrl ??= normalizedProofOfDeliveryUrl", fulfillment, StringComparison.Ordinal);
+
+        Assert.Contains("\"AllowManualDeliveryEvidenceOverride\": true", developmentSettings, StringComparison.Ordinal);
+        Assert.Contains("\"AllowManualDeliveryEvidenceOverride\": false", productionSettings, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PostgresApprovalLockQuery_MustProjectXminConcurrencyToken()
+    {
+        var service = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Services/Affiliate/AffiliateService.cs");
+        var authorityLoader = Slice(
+            service,
+            "private async Task<Order> LoadAffiliateApprovalOrderAuthorityAsync",
+            "private void EnsureAffiliateDeliveryApprovalAuthority");
+
+        Assert.Contains("SELECT *, xmin", authorityLoader, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", authorityLoader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DeliveryBeforeCodCollection_MustDeferToAuthoritativeAccountingReconciliation()
+    {
+        var service = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Services/Affiliate/AffiliateService.cs");
+        var consumer = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Consumers/Affiliate/AffiliateSettlementConsumers.cs");
+
+        Assert.Contains("AFFILIATE_DELIVERY_PAYMENT_AUTHORITY_NOT_CONFIRMED", service, StringComparison.Ordinal);
+        Assert.Contains("AffiliateCommissionDeferredException", service, StringComparison.Ordinal);
+        Assert.Contains("catch (AffiliateCommissionDeferredException ex)", consumer, StringComparison.Ordinal);
+        Assert.Contains("Deferred to payment/accounting reconciliation", consumer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CommissionReversalProjection_MustRemainReadableAcrossLegacyGuidRepresentations()
+    {
+        var document = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/MongoDB/Documents/OrderDocument.cs");
+        var consumer = CertificationSource.ReadRepoFile(
+            "PointOfSale.Infrastructure/Consumers/OrderProjectionConsumer.cs");
+
+        Assert.Contains("BsonSerializer(typeof(NullableGuidStringSerializer))", document, StringComparison.Ordinal);
+        Assert.Contains("{ \"LastEventId\", @event.EventId.ToString(\"D\") }", consumer, StringComparison.Ordinal);
+        Assert.Contains("{ \"LastAffiliateCommissionEventId\", @event.EventId.ToString(\"D\") }", consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain("new BsonBinaryData(@event.EventId", consumer, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -61,6 +124,18 @@ public sealed class AffiliateCommissionApprovalWithdrawableBalanceCertificationT
 
         Assert.Contains("IsUniqueViolation(ex)", service, StringComparison.Ordinal);
         Assert.Contains("RecordIdempotentSkip", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EarnedAccountingReplay_MustAcceptEquivalentJournalAcrossProcessingDates()
+    {
+        var consumer = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Consumers/Affiliate/AffiliateAccountingConsumer.cs");
+
+        Assert.Contains("GetJournalByIdempotencyKeyAsync", consumer, StringComparison.Ordinal);
+        Assert.Contains("EnsureEquivalentEarnedJournal", consumer, StringComparison.Ordinal);
+        Assert.Contains("existingJournal.SourceId != request.SourceId", consumer, StringComparison.Ordinal);
+        Assert.Contains("!existingLines.SequenceEqual(requestedLines)", consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain("existingJournal.JournalDate != request.JournalDate", consumer, StringComparison.Ordinal);
     }
 
     [Fact]

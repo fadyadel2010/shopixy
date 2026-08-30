@@ -4,11 +4,10 @@
  * Dark-first design with glassmorphism, animated gradients, and
  * conversion-optimized layout. Inspired by Stripe, Linear, and Vercel.
  */
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import axios from 'axios'
-import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
+import { discoverPublicProducts } from '../lib/publicDiscoverApi'
 import {
     TrendingUp, Zap, Shield, DollarSign, ArrowRight,
     Link2, BarChart3, Users, Star, ChevronRight,
@@ -333,20 +332,43 @@ function FeaturedProductsSection() {
     const [products, setProducts] = useState([])
     const [loading, setLoading] = useState(true)
     const [searchQuery, setSearchQuery] = useState('')
+    const requestSeq = useRef(0)
+    const abortRef = useRef(null)
 
     useEffect(() => {
-        fetchProducts()
+        void fetchProducts()
+
+        return () => {
+            requestSeq.current += 1
+            abortRef.current?.abort()
+        }
     }, [])
 
     const fetchProducts = async (q = '') => {
+        const currentRequest = ++requestSeq.current
+        abortRef.current?.abort()
+        const controller = new AbortController()
+        abortRef.current = controller
         setLoading(true)
         try {
-            const response = await axios.get('/api/public/affiliate/products', { params: { q, pageSize: 12 } })
-            setProducts(response.data.items || [])
-        } catch {
-            setProducts([])
+            const response = await discoverPublicProducts({
+                page: 1,
+                pageSize: 12,
+                ...(q.trim() && { search: q.trim() }),
+                signal: controller.signal,
+            })
+            if (currentRequest === requestSeq.current) {
+                setProducts(response?.items || [])
+            }
+        } catch (error) {
+            if (error?.name === 'AbortError' || error?.name === 'CanceledError' || error?.code === 'ERR_CANCELED') return
+            if (currentRequest === requestSeq.current) {
+                setProducts([])
+            }
         } finally {
-            setLoading(false)
+            if (currentRequest === requestSeq.current) {
+                setLoading(false)
+            }
         }
     }
 
@@ -355,12 +377,8 @@ function FeaturedProductsSection() {
         fetchProducts(searchQuery)
     }
 
-    const handlePromote = (slug) => {
-        if (!affiliateAuthApi.isAuthenticated()) {
-            navigate('/affiliate/register')
-        } else {
-            navigate(`/affiliate/portal?tab=discover&q=${encodeURIComponent(slug)}`)
-        }
+    const handlePromote = (productName) => {
+        navigate(`/affiliate/portal?tab=discover&search=${encodeURIComponent(productName)}`)
     }
 
     const formatProductPrice = (product) => {
@@ -369,19 +387,8 @@ function FeaturedProductsSection() {
             return 'Currency unavailable'
         }
 
-        if (product.hasVariants) {
-            if (product.minVariantPrice == null) {
-                return '—'
-            }
-
-            if (product.maxVariantPrice != null && product.maxVariantPrice > product.minVariantPrice) {
-                return `${currency} ${product.minVariantPrice.toFixed(2)} - ${product.maxVariantPrice.toFixed(2)}`
-            }
-
-            return `${currency} ${product.minVariantPrice.toFixed(2)}`
-        }
-
-        return product.price != null ? `${currency} ${product.price.toFixed(2)}` : '—'
+        const price = Number(product.price)
+        return product.price != null && Number.isFinite(price) ? `${currency} ${price.toFixed(2)}` : '—'
     }
 
     return (
@@ -447,9 +454,9 @@ function FeaturedProductsSection() {
                             >
                                 {/* Image */}
                                 <div className="aspect-square bg-gradient-to-br from-gray-100 to-gray-50 dark:from-white/5 dark:to-white/[0.02] flex items-center justify-center overflow-hidden relative">
-                                    {product.thumbnail ? (
+                                    {product.images?.[0] ? (
                                         <img
-                                            src={product.thumbnail}
+                                            src={product.images[0]}
                                             alt={product.name}
                                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                                             loading="lazy"
@@ -457,19 +464,16 @@ function FeaturedProductsSection() {
                                     ) : (
                                         <Package className="w-12 h-12 text-gray-600" />
                                     )}
-                                    {/* Commission rate badge */}
-                                    {product.commissionRate != null && (
-                                        <div className="absolute top-2 right-2 px-2 py-1 rounded-lg bg-emerald-500/90 text-white text-[11px] font-bold shadow-lg">
-                                            {(product.commissionRate * 100).toFixed(0)}% {t('landing.commission')}
-                                        </div>
-                                    )}
                                 </div>
 
                                 {/* Info */}
                                 <div className="p-5 space-y-3">
-                                    <h4 className="text-gray-900 dark:text-white font-medium text-sm line-clamp-2 leading-snug min-h-[2.5rem]">
+                                    <Link
+                                        to={`/affiliate/products/${product.productId}`}
+                                        className="block text-gray-900 dark:text-white font-medium text-sm line-clamp-2 leading-snug min-h-[2.5rem] hover:text-[#6C63FF]"
+                                    >
                                         {product.name}
-                                    </h4>
+                                    </Link>
 
                                     {product.storeName && (
                                         <p className="text-xs text-gray-500">{t('landing.byStore')} {product.storeName}</p>
@@ -479,26 +483,16 @@ function FeaturedProductsSection() {
                                         <span className="text-lg font-bold text-gray-900 dark:text-white">
                                             {formatProductPrice(product)}
                                         </span>
-                                        {product.category && (
+                                        {product.categoryName && (
                                             <span className="text-xs px-2 py-1 rounded-full bg-[#6C63FF]/10 text-[#6C63FF] border border-[#6C63FF]/20">
-                                                {product.category}
+                                                {product.categoryName}
                                             </span>
                                         )}
                                     </div>
 
-                                    {/* Estimated commission */}
-                                    {product.estimatedCommission != null && (
-                                        <div className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-                                            <DollarSign className="w-3.5 h-3.5 text-emerald-400" />
-                                            <span className="text-xs text-emerald-400 font-medium">
-                                                {t('landing.youEarn')}: <span className="font-bold">{formatProductPrice({ ...product, hasVariants: false, price: product.estimatedCommission })}</span>
-                                            </span>
-                                        </div>
-                                    )}
-
                                     <button
                                         id={`landing-promote-${product.productId}`}
-                                        onClick={() => handlePromote(product.slug)}
+                                        onClick={() => handlePromote(product.name)}
                                         className="w-full mt-2 py-2.5 rounded-lg bg-gradient-to-r from-[#6C63FF] to-[#8B5CF6] text-white text-sm font-medium hover:shadow-lg hover:shadow-[#6C63FF]/20 hover:scale-[1.01] transition-all duration-300 flex items-center justify-center gap-2"
                                     >
                                         <Sparkles className="w-4 h-4" />

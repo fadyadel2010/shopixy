@@ -1,10 +1,34 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
+using Moq;
 using PointOfSale.API.Configuration;
+using PointOfSale.API.HealthChecks;
 using PointOfSale.API.Instrumentation;
+using PointOfSale.API.Services.Payments.Fawry;
 
 namespace PointOfSale.Tests.Architecture;
 
 public sealed class FawryProductionOperationalReadinessTests
 {
+    [Fact]
+    public async Task OperationalHealth_DisabledOptionalProvider_IsHealthy()
+    {
+        var foundation = new FawryFoundationHealthContributor(Options.Create(new FawryOptions
+        {
+            Enabled = false
+        }));
+        var contributor = new FawryOperationalReadinessHealthContributor(foundation);
+        var healthCheck = new FawryOperationalReadinessHealthCheck(
+            contributor,
+            Mock.Of<IServiceScopeFactory>());
+
+        var result = await healthCheck.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Healthy, result.Status);
+        Assert.Equal(false, result.Data["enabled"]);
+    }
+
     [Fact]
     public void OperationalHealth_MustCoverRequiredFawryReadinessComponents()
     {
@@ -43,6 +67,8 @@ public sealed class FawryProductionOperationalReadinessTests
         Assert.Contains("IsRegisteredOnce<IFawryRuntimeBridge>", health, StringComparison.Ordinal);
         Assert.Contains("IsRegisteredOnce<IFawryWebhookRuntimeIntegrationService>", health, StringComparison.Ordinal);
         Assert.Contains("FawryWebhookReplayRecords", health, StringComparison.Ordinal);
+        Assert.Contains("if (!configuration.Enabled)", health, StringComparison.Ordinal);
+        Assert.Contains("optional provider readiness is not required", health, StringComparison.Ordinal);
     }
 
     [Fact]

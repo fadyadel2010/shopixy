@@ -561,8 +561,8 @@ public sealed class InventoryReservationLifecycleIntegrationTests
             orderStatus: OrderStatus.Shipped,
             quantity: 3);
 
-        var firstResult = await service.MarkOfflineCollectionDeliveredAsync(scenario.OrderId, deliveryReference: "COD-1");
-        var secondResult = await service.MarkOfflineCollectionDeliveredAsync(scenario.OrderId, deliveryReference: "COD-1");
+        var firstResult = await service.MarkOfflineCollectionDeliveredAsync(tenantId, scenario.OrderId, deliveryReference: "COD-1");
+        var secondResult = await service.MarkOfflineCollectionDeliveredAsync(tenantId, scenario.OrderId, deliveryReference: "COD-1");
 
         Assert.True(firstResult.Success, firstResult.ErrorMessage);
         Assert.True(secondResult.Success, secondResult.ErrorMessage);

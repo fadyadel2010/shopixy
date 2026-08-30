@@ -65,6 +65,78 @@ public sealed class AdminOrderListPostgresTests
         }
     }
 
+    [Fact]
+    public async Task ListOrders_Postgres_UsesCanonicalTenantForAffiliateOrderWithoutPaymentOrShipment()
+    {
+        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext))
+        {
+            return;
+        }
+
+        await using (var scope = databaseScope!)
+        {
+            await using var context = scope.CreateDbContext(tenantContext!);
+            var orderId = Guid.NewGuid();
+            var order = NewStorefrontOrder(orderId, tenantId);
+            order.OrderNumber = $"ORD-AFFILIATE-{orderId:N}";
+            order.Status = OrderStatus.Processing;
+            order.PaymentStatus = PaymentStatus.Pending;
+            order.AffiliateAccountId = Guid.NewGuid();
+            order.AffiliateReferralCode = "AFFILIATE-TEST";
+
+            context.Tenants.Add(NewTenant(tenantId));
+            context.Orders.Add(order);
+            await context.SaveChangesAsync();
+
+            var service = CreateService(context);
+            var result = await service.ListOrdersAsync(
+                tenantId,
+                new AdminOrderListQuery
+                {
+                    Page = 1,
+                    PageSize = 1,
+                    Search = order.OrderNumber,
+                    SortBy = "createdAt",
+                    SortDirection = "desc"
+                },
+                "admin-affiliate-order-without-optional-relations");
+
+            var listed = Assert.Single(result.Items);
+            Assert.Equal(1, result.TotalCount);
+            Assert.Equal(1, result.TotalPages);
+            Assert.Equal(orderId, listed.OrderId);
+            Assert.Equal(tenantId, listed.TenantId);
+            Assert.Equal(OrderStatus.Processing, listed.Status);
+            Assert.Equal(PaymentStatus.Pending, listed.PaymentStatus);
+            Assert.Equal(OrderSource.Ecommerce, listed.Source);
+
+            var details = await service.GetOrderDetailsAsync(
+                tenantId,
+                orderId,
+                "admin-affiliate-order-details");
+            Assert.NotNull(details);
+            Assert.Empty(details.Payments);
+            Assert.Null(details.Shipment);
+
+            var foreignTenantId = Guid.NewGuid();
+            var foreignList = await service.ListOrdersAsync(
+                foreignTenantId,
+                new AdminOrderListQuery
+                {
+                    Page = 1,
+                    PageSize = 20,
+                    Search = order.OrderNumber
+                },
+                "admin-affiliate-order-foreign-tenant");
+            Assert.Empty(foreignList.Items);
+            Assert.Equal(0, foreignList.TotalCount);
+            Assert.Null(await service.GetOrderDetailsAsync(
+                foreignTenantId,
+                orderId,
+                "admin-affiliate-order-foreign-details"));
+        }
+    }
+
     private static AdminOrderService CreateService(ApplicationDbContext context) => new(
         context,
         Mock.Of<IEventPublisher>(),

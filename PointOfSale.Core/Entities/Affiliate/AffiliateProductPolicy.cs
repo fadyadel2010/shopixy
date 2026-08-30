@@ -55,6 +55,10 @@ public class AffiliateProductPolicy : BaseEntity, ITenantOwned
     {
         if (tenantId == Guid.Empty) throw new ArgumentException("TenantId required", nameof(tenantId));
         if (productId == Guid.Empty) throw new ArgumentException("ProductId required", nameof(productId));
+        if (!categoryId.HasValue || categoryId.Value == Guid.Empty)
+            throw new ArgumentException(
+                "Affiliate category is required when creating an enabled policy",
+                nameof(categoryId));
         ValidateRate(commissionRate);
         ValidateMaxCap(maxPerItem);
 
@@ -122,13 +126,25 @@ public class AffiliateProductPolicy : BaseEntity, ITenantOwned
     {
         if (rate < 0.0001m || rate > 0.50m)
             throw new ArgumentException("CommissionRate must be between 0.01% (0.0001) and 50% (0.50)");
+
+        if (GetScale(rate) > 6)
+            throw new ArgumentException("CommissionRate supports at most 6 decimal places");
     }
 
     private static void ValidateMaxCap(decimal? maxCap)
     {
         if (maxCap.HasValue && maxCap.Value <= 0)
             throw new ArgumentException("MaxCommissionPerItem must be positive when set");
+
+        if (maxCap.HasValue &&
+            (GetScale(maxCap.Value) > 4 || maxCap.Value > 99_999_999_999_999.9999m))
+        {
+            throw new ArgumentException("MaxCommissionPerItem exceeds decimal(18,4) precision");
+        }
     }
+
+    private static int GetScale(decimal value) =>
+        (decimal.GetBits(value)[3] >> 16) & 0x7F;
 
     // AF-30A FIX D-1: EF Core setter methods REMOVED.
     // EF Core materializes entities via reflection on `private set` properties.

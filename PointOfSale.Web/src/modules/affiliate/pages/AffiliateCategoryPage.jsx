@@ -11,7 +11,9 @@
  *
  * RULES:
  * - Supports direct deep-link access (no landing page preload)
- * - Uses categorySlug filter on existing discover/products endpoint
+ * - AF-39: Uses the anonymous public-products endpoint with categorySlug filter
+ *   (the member discover/products route is AffiliateOnly and returns 401 here)
+ * - Public-safe sorts only — commission ordering never leaves the portal
  * - AbortController on unmount
  * - SEO: dynamic title tag
  * - Link-based navigation back to landing
@@ -21,15 +23,19 @@ import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
     Search, Package, ArrowLeft, ArrowRight, RefreshCw,
-    AlertCircle, TrendingUp, Sparkles, DollarSign,
+    AlertCircle, Sparkles, DollarSign,
     ChevronRight
 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import ThemeSwitcher from '../components/ThemeSwitcher'
-import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
-import CommissionBadge from './portal/badges/CommissionBadge'
-import SortDropdown, { DEFAULT_SORT, isValidSort } from './portal/SortDropdown'
+import SortDropdown from './portal/SortDropdown'
+import {
+    discoverPublicProducts,
+    PUBLIC_SORT_OPTIONS,
+    DEFAULT_PUBLIC_SORT,
+    isValidPublicSort
+} from '../lib/publicDiscoverApi'
 
 const fadeUp = {
     hidden: { opacity: 0, y: 20 },
@@ -42,9 +48,9 @@ export default function AffiliateCategoryPage() {
     const [searchParams, setSearchParams] = useSearchParams()
     const { t, dir, isRTL } = useLanguage()
 
-    // AF-33: Sort from URL
-    const urlSort = searchParams.get('sort') || DEFAULT_SORT
-    const activeSort = isValidSort(urlSort) ? urlSort : DEFAULT_SORT
+    // AF-33/AF-39: Sort from URL, clamped to the public-safe allowlist
+    const urlSort = searchParams.get('sort') || DEFAULT_PUBLIC_SORT
+    const activeSort = isValidPublicSort(urlSort) ? urlSort : DEFAULT_PUBLIC_SORT
 
     const [state, setState] = useState('loading') // loading | loaded | empty | notfound | error
     const [data, setData] = useState(null)
@@ -66,12 +72,11 @@ export default function AffiliateCategoryPage() {
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedQuery(searchQuery)
-            setPage(1)
         }, 400)
         return () => clearTimeout(timer)
     }, [searchQuery])
 
-    // Fetch products with category filter
+    // Fetch products with category filter (anonymous public contract)
     const fetchProducts = useCallback(() => {
         const fetchId = ++fetchIdRef.current
         setState('loading')
@@ -79,19 +84,14 @@ export default function AffiliateCategoryPage() {
         const controller = new AbortController()
         abortRef.current = controller
 
-        const params = new URLSearchParams({
-            page: page.toString(),
-            pageSize: pageSize.toString(),
+        discoverPublicProducts({
+            page,
+            pageSize,
             categorySlug: slug,
-            sort: activeSort
+            sort: activeSort,
+            ...(debouncedQuery && { search: debouncedQuery }),
+            signal: controller.signal
         })
-        if (debouncedQuery) params.set('search', debouncedQuery)
-
-        fetch(`/api/affiliate/discover/products?${params}`, { signal: controller.signal })
-            .then(r => {
-                if (!r.ok) throw new Error(`HTTP ${r.status}`)
-                return r.json()
-            })
             .then(d => {
                 // AF-32H: Only apply if still latest fetch and mounted
                 if (fetchIdRef.current !== fetchId || !mountedRef.current) return
@@ -104,8 +104,7 @@ export default function AffiliateCategoryPage() {
             })
             .catch(err => {
                 if (fetchIdRef.current !== fetchId || !mountedRef.current) return
-                if (err.name === 'AbortError') return
-                console.error('[AF-31] Failed to fetch category products:', err)
+                if (err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return
                 setState('error')
             })
     }, [slug, debouncedQuery, activeSort, page])
@@ -144,12 +143,8 @@ export default function AffiliateCategoryPage() {
     }, [categoryName])
 
     const handlePromote = () => {
-        if (!affiliateAuthApi.isAuthenticated()) {
-            navigate('/affiliate/register')
-        } else {
-            // AF-32H FIX: URL param is 'category' not 'categorySlug' to match AF-32
-            navigate(`/affiliate/portal?tab=discover&category=${encodeURIComponent(slug)}`)
-        }
+        // The portal restores the cookie-backed session and owns the login redirect.
+        navigate(`/affiliate/portal?tab=discover&category=${encodeURIComponent(slug)}`)
     }
 
     return (
@@ -226,7 +221,10 @@ export default function AffiliateCategoryPage() {
                         <input
                             type="text"
                             value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onChange={(e) => {
+                                setSearchQuery(e.target.value)
+                                setPage(1)
+                            }}
                             placeholder={`Search in ${categoryName || 'category'}...`}
                             className="w-full pl-11 pr-4 py-3 rounded-xl bg-white dark:bg-white/[0.03] border border-gray-200 dark:border-white/[0.08] text-gray-900 dark:text-white placeholder:text-gray-500 text-sm focus:border-[#6C63FF]/50 focus:ring-2 focus:ring-[#6C63FF]/20 outline-none transition-all"
                             id="af31-category-search"
@@ -234,6 +232,7 @@ export default function AffiliateCategoryPage() {
                     </div>
                     <SortDropdown
                         selectedSort={activeSort}
+                        options={PUBLIC_SORT_OPTIONS}
                         onChange={(newSort) => {
                             setSearchParams(prev => {
                                 const p = new URLSearchParams(prev)
@@ -323,16 +322,16 @@ export default function AffiliateCategoryPage() {
                                     ) : (
                                         <Package className="w-10 h-10 text-gray-400" />
                                     )}
-                                    <div className="absolute top-2 right-2">
-                                        <CommissionBadge commissionRate={product.commissionRate} />
-                                    </div>
                                 </div>
 
                                 {/* Content */}
                                 <div className="p-4 space-y-2">
-                                    <h4 className="text-sm font-medium text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem]">
+                                    <Link
+                                        to={`/affiliate/products/${product.productId}`}
+                                        className="block text-sm font-medium text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem] hover:text-[#6C63FF]"
+                                    >
                                         {product.name}
-                                    </h4>
+                                    </Link>
 
                                     <div className="flex items-center justify-between">
                                         <span className="text-base font-bold text-gray-900 dark:text-white">
@@ -342,16 +341,6 @@ export default function AffiliateCategoryPage() {
                                             {product.storeName}
                                         </span>
                                     </div>
-
-                                    {/* Estimated commission */}
-                                    {product.commissionRate != null && (
-                                        <div className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-                                            <TrendingUp className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                                            <span className="text-xs text-emerald-400 font-medium">
-                                                Earn {(product.commissionRate * 100).toFixed(0)}% commission
-                                            </span>
-                                        </div>
-                                    )}
 
                                     {/* CTA */}
                                     <button

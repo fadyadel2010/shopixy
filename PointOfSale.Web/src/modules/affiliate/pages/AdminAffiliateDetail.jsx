@@ -359,7 +359,7 @@ function OrdersTab({ affiliateId, formatCurrency }) {
                                                                 </div>
                                                                 <div className="flex items-center gap-4 text-sm">
                                                                     <span className="text-gray-500">{t('adminAffiliateDetail.orders.items.paid', { amount: formatCurrency(item.paidAmount, order.currency) })}</span>
-                                                                    <span className="font-semibold text-gray-900">{t('adminAffiliateDetail.orders.items.commission', { amount: formatCurrency(item.commissionAmount, order.currency) })}</span>
+                                                                    <span className="font-semibold text-gray-900">{t('adminAffiliateDetail.orders.items.commission', { amount: formatCurrency(item.netCommissionAmount ?? item.commissionAmount, order.currency) })}</span>
                                                                     <StatusBadge status={item.isReversed ? 'Reversed' : item.settlementStatus} />
                                                                 </div>
                                                             </div>

@@ -89,6 +89,7 @@ public class AffiliateEventPipelineTests
             .Setup(x => x.ReverseCommissionForOrderItemAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<decimal?>(),
                 It.IsAny<string?>()))
@@ -119,12 +120,49 @@ public class AffiliateEventPipelineTests
         Assert.Null(exception);
         mockService.Verify(
             x => x.ReverseCommissionForOrderItemAsync(
+                _tenantId,
                 _orderId,
                 _orderItemId,
                 It.IsAny<CancellationToken>(),
                 It.IsAny<decimal?>(),
                 It.IsAny<string?>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task RefundEvent_WithoutTenantAuthority_DoesNotReverseCommission()
+    {
+        var mockService = new Mock<IAffiliateService>();
+        var telemetry = new AffiliateTelemetry();
+        var consumer = new OrderItemRefundedAffiliateConsumer(
+            mockService.Object, telemetry,
+            Mock.Of<ILogger<OrderItemRefundedAffiliateConsumer>>());
+
+        var evt = new OrderItemRefundedEvent
+        {
+            TenantId = null,
+            OrderId = _orderId,
+            OrderNumber = "ORD-TENANT-GUARD",
+            OrderItemId = _orderItemId,
+            ProductId = Guid.NewGuid(),
+            ProductName = "Widget",
+            RefundedAmount = 25m,
+            CumulativeRefundedAmount = 25m,
+            Reason = "Tenant authority guard",
+            RefundedAt = DateTime.UtcNow
+        };
+
+        await consumer.Consume(CreateConsumeContext(evt));
+
+        mockService.Verify(
+            x => x.ReverseCommissionForOrderItemAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<decimal?>(),
+                It.IsAny<string?>()),
+            Times.Never);
     }
 
     // ═══════════════════════════════════════════════════════════════════

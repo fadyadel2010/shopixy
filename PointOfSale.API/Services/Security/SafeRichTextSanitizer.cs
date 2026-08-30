@@ -241,9 +241,28 @@ internal static class SafeRichTextSanitizer
         }
 
         var trimmedValue = value.Trim();
-        if (trimmedValue.StartsWith("//", StringComparison.Ordinal))
+        if (trimmedValue.StartsWith("//", StringComparison.Ordinal) ||
+            trimmedValue.StartsWith("\\", StringComparison.Ordinal))
         {
             return false;
+        }
+
+        // Do not let malformed or obfuscated schemes fall through as relative URLs.
+        // Browsers and downstream decoders can normalize embedded whitespace/control
+        // characters differently (for example, "java\nscript:").
+        var colonIndex = trimmedValue.IndexOf(':');
+        var firstPathDelimiter = trimmedValue.IndexOfAny(['/', '?', '#']);
+        if (colonIndex >= 0 && (firstPathDelimiter < 0 || colonIndex < firstPathDelimiter))
+        {
+            var scheme = trimmedValue.AsSpan(0, colonIndex);
+            if (scheme.IsEmpty ||
+                !char.IsAsciiLetter(scheme[0]) ||
+                scheme[1..].ContainsAnyExcept("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-"))
+            {
+                return false;
+            }
+
+            return SafeHrefSchemes.Contains(scheme.ToString());
         }
 
         if (Uri.TryCreate(trimmedValue, UriKind.Absolute, out var absoluteUri))

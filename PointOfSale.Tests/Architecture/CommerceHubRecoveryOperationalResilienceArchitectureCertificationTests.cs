@@ -103,6 +103,7 @@ public sealed class CommerceHubRecoveryOperationalResilienceArchitectureCertific
 
         Assert.Contains("ReconcileProcessingRefundsAsync", refundHostedRecovery, StringComparison.Ordinal);
         Assert.Contains("RecoverReconciliationRequiredRefundsAsync", refundHostedRecovery, StringComparison.Ordinal);
+        Assert.Contains("refund.GatewayStatus == \"execution_unknown\"", refundRecovery, StringComparison.Ordinal);
         Assert.Contains("BuildRefundRecoveryLockKey", refundRecovery, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginRefund()", refundRecovery, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginFinancialWorkflow()", refundRecovery, StringComparison.Ordinal);

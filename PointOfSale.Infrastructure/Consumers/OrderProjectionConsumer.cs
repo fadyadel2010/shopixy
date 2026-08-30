@@ -34,6 +34,7 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// - OrderShippedEvent → Update tracking info + Timeline
 /// - OrderDeliveredEvent → Update delivery info + Timeline
 /// - OrderCancelledEvent → Update Status to Cancelled + Timeline
+/// - Fulfillment events → Rebuild shipping visibility from current SQL authority
 /// </summary>
 public class OrderProjectionConsumer :
     IConsumer<OrderCreatedEvent>,
@@ -43,6 +44,14 @@ public class OrderProjectionConsumer :
     IConsumer<OrderShippedEvent>,
     IConsumer<OrderDeliveredEvent>,
     IConsumer<OrderCancelledEvent>,
+    IConsumer<FulfillmentConfirmedEvent>,
+    IConsumer<OrderPackedEvent>,
+    IConsumer<OrderOutForDeliveryEvent>,
+    IConsumer<FulfillmentDeliveredEvent>,
+    IConsumer<OrderCompletedEvent>,
+    IConsumer<OrderReturnedEvent>,
+    IConsumer<OrderDeliveryFailedEvent>,
+    IConsumer<OrderFulfillmentCancelledEvent>,
     IConsumer<AffiliateAttributedEvent>,       // AF-35: Mark order as affiliate-attributed
     IConsumer<AffiliateCommissionEarnedEvent>, // AF-35: Update commission amount
     IConsumer<AffiliateCommissionReversedEvent>
@@ -930,6 +939,65 @@ public class OrderProjectionConsumer :
 
     #endregion
 
+    #region Fulfillment Events
+
+    public Task Consume(ConsumeContext<FulfillmentConfirmedEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(FulfillmentConfirmedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderPackedEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderPackedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderOutForDeliveryEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderOutForDeliveryEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<FulfillmentDeliveredEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(FulfillmentDeliveredEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderCompletedEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderCompletedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderReturnedEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderReturnedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderDeliveryFailedEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderDeliveryFailedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderFulfillmentCancelledEvent> context) =>
+        ConsumeFulfillmentEventAsync(context.Message, nameof(OrderFulfillmentCancelledEvent), context.CancellationToken);
+
+    private async Task ConsumeFulfillmentEventAsync(
+        OrderFulfillmentEventBase @event,
+        string eventName,
+        CancellationToken cancellationToken)
+    {
+        if (!ValidateTenantId(@event.TenantId, @event.OrderId, eventName))
+        {
+            return;
+        }
+
+        var rehydrated = await TryRehydrateOrderProjectionAsync(
+            @event.TenantId!.Value,
+            @event.OrderId,
+            @event.EventId,
+            @event.OccurredAtUtc,
+            cancellationToken);
+
+        if (!rehydrated)
+        {
+            throw new InvalidOperationException(
+                $"Order projection could not apply {eventName} because SQL source order {@event.OrderId} for tenant {@event.TenantId} was not found.");
+        }
+
+        _logger.LogInformation(
+            "[Order] Fulfillment visibility synchronized from SQL authority | EventType: {EventType} | TenantId: {TenantId} | OrderId: {OrderId} | FulfillmentStatus: {FulfillmentStatus}",
+            eventName,
+            @event.TenantId,
+            @event.OrderId,
+            @event.NewStatus);
+    }
+
+    #endregion
+
     // ═══════════════════════════════════════════════════════════════════
     // AF-35: AFFILIATE ORDER ATTRIBUTION PROJECTION
     // ═══════════════════════════════════════════════════════════════════
@@ -1495,8 +1563,10 @@ public class OrderProjectionConsumer :
                         },
                         { "IsAffiliateOrder", true },
                         { "UpdatedAt", DateTime.UtcNow },
-                        { "LastEventId", new BsonBinaryData(@event.EventId, GuidRepresentation.Standard) },
-                        { "LastAffiliateCommissionEventId", new BsonBinaryData(@event.EventId, GuidRepresentation.Standard) },
+                        // OrderDocument persists nullable event IDs as canonical strings while
+                        // its compatibility serializer can still read historical UUID binaries.
+                        { "LastEventId", @event.EventId.ToString("D") },
+                        { "LastAffiliateCommissionEventId", @event.EventId.ToString("D") },
                         { "LastAffiliateCommissionEventVersion", @event.EventVersion },
                         { "LastAffiliateCommissionEventOccurredAtUtc", @event.OccurredAtUtc }
                     })

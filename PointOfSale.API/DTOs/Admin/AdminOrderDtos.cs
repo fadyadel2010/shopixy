@@ -159,6 +159,18 @@ public class AdminOrderDetailsDto
     /// Shipment details (null if no shipment exists).
     /// </summary>
     public AdminShipmentDto? Shipment { get; set; }
+
+    /// <summary>
+    /// Backend-authoritative order commands available to the current POS admin
+    /// route. The UI must not reconstruct these lifecycle rules from status.
+    /// </summary>
+    public List<AdminOrderActionCapabilityDto> AvailableOrderActions { get; set; } = new();
+
+    /// <summary>
+    /// Backend-authoritative shipment commands available from this order view.
+    /// Shipment cancellation remains distinct from order cancellation.
+    /// </summary>
+    public List<AdminOrderActionCapabilityDto> AvailableShipmentActions { get; set; } = new();
     
     /// <summary>
     /// Order totals breakdown.
@@ -231,6 +243,15 @@ public class AdminOrderDetailsDto
     /// Billing address details (if different from shipping).
     /// </summary>
     public AdminAddressDto? BillingAddress { get; set; }
+}
+
+public sealed class AdminOrderActionCapabilityDto
+{
+    public string Code { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public string? TargetStatus { get; set; }
+    public bool RequiresConfirmation { get; set; }
+    public List<string> RequiredFields { get; set; } = new();
 }
 
 public class AdminOrderCheckoutFieldSnapshotDto

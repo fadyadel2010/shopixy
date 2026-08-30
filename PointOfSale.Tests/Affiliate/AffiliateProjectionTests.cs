@@ -225,6 +225,7 @@ public class AffiliateProjectionTests
         Assert.Contains("VariantName", names);
         Assert.Contains("PaidAmount", names);
         Assert.Contains("CommissionAmount", names);
+        Assert.Contains("ReversedAmount", names);
         Assert.Contains("IsReversed", names);
     }
 

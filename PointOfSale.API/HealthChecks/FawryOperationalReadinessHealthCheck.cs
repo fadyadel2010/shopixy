@@ -27,6 +27,14 @@ public sealed class FawryOperationalReadinessHealthCheck : IHealthCheck
         var configuration = readiness.ConfigurationStatus;
         var credentials = configuration.CredentialValidation;
 
+        if (!configuration.Enabled)
+        {
+            return HealthCheckResult.Healthy("Fawry is disabled; optional provider readiness is not required.", new Dictionary<string, object>
+            {
+                ["enabled"] = false
+            });
+        }
+
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 

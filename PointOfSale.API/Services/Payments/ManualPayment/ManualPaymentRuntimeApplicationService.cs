@@ -1110,6 +1110,7 @@ public sealed class ManualPaymentReviewApplicationService : IManualPaymentReview
             var lifecycleResult = await _paymentLifecycleService.HandlePaymentResultAsync(
                 new HandlePaymentResultRequest
                 {
+                    TenantId = request.TenantId,
                     OrderId = paymentIntent.OrderId,
                     PaymentIntentId = paymentIntent.Id,
                     Outcome = outcome == ManualPaymentReviewOutcome.Approved
@@ -1380,6 +1381,7 @@ public sealed class ManualPaymentExpirationAuthority : IManualPaymentExpirationA
         foreach (var orderId in expiredOrderIds)
         {
             var result = await _paymentLifecycleService.MarkPaymentExpiredAsync(
+                tenantId,
                 orderId,
                 ExpiredReason,
                 cancellationToken);
@@ -1408,6 +1410,7 @@ public sealed class ManualPaymentExpirationAuthority : IManualPaymentExpirationA
         if (failure == ManualPaymentExpirationFailure.Expired)
         {
             var result = await _paymentLifecycleService.MarkPaymentExpiredAsync(
+                paymentIntent.TenantId,
                 paymentIntent.OrderId,
                 ExpiredReason,
                 cancellationToken);

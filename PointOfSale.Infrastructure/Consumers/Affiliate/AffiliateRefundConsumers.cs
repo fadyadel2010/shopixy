@@ -77,13 +77,28 @@ public class OrderRefundedAffiliateConsumer : IConsumer<OrderRefundedEvent>
 
         _telemetry.RecordAttempt(tenantId, EventType);
 
+        if (tenantId == Guid.Empty)
+        {
+            _logger.LogError(
+                "[Affiliate:Refund] Rejected refund event without tenant authority | OrderId: {OrderId} | RefundId: {RefundId} | EventId: {EventId}",
+                evt.OrderId,
+                evt.RefundId,
+                evt.EventId);
+            _telemetry.RecordSkipped(tenantId, "tenant_authority_missing");
+            return;
+        }
+
         try
         {
             // Load order items to know which OrderItemIds to reverse
             var order = await _db.Orders
                 .IgnoreQueryFilters()
                 .Include(o => o.Items)
-                .FirstOrDefaultAsync(o => o.Id == evt.OrderId && !o.IsDeleted, ct);
+                .FirstOrDefaultAsync(o =>
+                    o.Id == evt.OrderId &&
+                    o.TenantId == tenantId &&
+                    !o.IsDeleted,
+                    ct);
 
             if (order == null)
             {
@@ -98,6 +113,7 @@ public class OrderRefundedAffiliateConsumer : IConsumer<OrderRefundedEvent>
                 .IgnoreQueryFilters()
                 .Include(item => item.Lines)
                 .FirstOrDefaultAsync(item =>
+                    item.TenantId == tenantId &&
                     item.OrderId == evt.OrderId &&
                     item.RefundId == evt.RefundId &&
                     !item.IsDeleted,
@@ -155,6 +171,7 @@ public class OrderRefundedAffiliateConsumer : IConsumer<OrderRefundedEvent>
             foreach (var item in itemsToReverse)
             {
                 await _affiliateService.ReverseCommissionForOrderItemAsync(
+                    tenantId,
                     evt.OrderId,
                     item.Item.Id,
                     ct,
@@ -245,9 +262,21 @@ public class OrderItemRefundedAffiliateConsumer : IConsumer<OrderItemRefundedEve
 
         _telemetry.RecordAttempt(tenantId, EventType);
 
+        if (tenantId == Guid.Empty)
+        {
+            _logger.LogError(
+                "[Affiliate:ItemRefund] Rejected item refund event without tenant authority | OrderId: {OrderId} | OrderItemId: {OrderItemId} | EventId: {EventId}",
+                evt.OrderId,
+                evt.OrderItemId,
+                evt.EventId);
+            _telemetry.RecordSkipped(tenantId, "tenant_authority_missing");
+            return;
+        }
+
         try
         {
             await _affiliateService.ReverseCommissionForOrderItemAsync(
+                tenantId,
                 evt.OrderId,
                 evt.OrderItemId,
                 ct,

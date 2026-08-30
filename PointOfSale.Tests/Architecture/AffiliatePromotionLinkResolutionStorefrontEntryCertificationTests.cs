@@ -88,7 +88,8 @@ public sealed class AffiliatePromotionLinkResolutionStorefrontEntryCertification
         Assert.Contains("_protector.Unprotect(token)", evidence, StringComparison.Ordinal);
 
         Assert.Contains("The header only HINTS to the middleware which ref code to validate", tracker, StringComparison.Ordinal);
-        Assert.Contains("sessionStorage.setItem(SESSION_KEY, refFromUrl)", tracker, StringComparison.Ordinal);
+        Assert.Contains("sessionStorage.setItem(storageKey, refFromUrl)", tracker, StringComparison.Ordinal);
+        Assert.Contains("tryGetTenantScopedStorageKey(SESSION_KEY)", tracker, StringComparison.Ordinal);
         Assert.Contains("config.headers['X-Affiliate-Ref'] = affiliateRef", httpClient, StringComparison.Ordinal);
         Assert.Contains("ProductCard", productList, StringComparison.Ordinal);
         Assert.Contains("useProductListDiscovery", productList, StringComparison.Ordinal);

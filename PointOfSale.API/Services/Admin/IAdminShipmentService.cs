@@ -218,4 +218,23 @@ public class CarrierManagedTrackingAuthorityException : AdminShipmentException
     public string CarrierCode { get; }
 }
 
+/// <summary>
+/// Thrown when an admin status DTO attempts to impersonate carrier lifecycle authority.
+/// HTTP 409
+/// </summary>
+public class CarrierManagedStatusAuthorityException : AdminShipmentException
+{
+    public CarrierManagedStatusAuthorityException(Guid shipmentId, string carrierCode)
+        : base(
+            "CARRIER_STATUS_AUTHORITY_REQUIRED",
+            $"Shipment {shipmentId} is managed by carrier '{carrierCode}'. Status must come from carrier tracking sync or a verified webhook.")
+    {
+        ShipmentId = shipmentId;
+        CarrierCode = carrierCode;
+    }
+
+    public Guid ShipmentId { get; }
+    public string CarrierCode { get; }
+}
+
 #endregion

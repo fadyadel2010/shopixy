@@ -72,15 +72,30 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             // This is a global readiness check, so it must not inherit the
             // request-scoped tenant query filter. Deleted SQL rows are excluded
             // because the storefront projection removes them from this collection.
-            var pgProductCount = await _dbContext.Products
+            var currentSqlProducts = _dbContext.Products
                 .IgnoreQueryFilters()
+                .AsNoTracking();
+            var pgProductCount = await currentSqlProducts
                 .CountAsync(product => !product.IsDeleted, timeoutCts.Token);
+            var currentTenantIds = await currentSqlProducts
+                .Select(product => product.TenantId)
+                .Distinct()
+                .ToListAsync(timeoutCts.Token);
             
-            // Count products in MongoDB
+            // This Mongo database can be shared with historical/development tenants that
+            // are intentionally absent from the current SQL database. Compare only the
+            // current SQL tenant scope, while reporting foreign documents separately.
             var mongoProducts = _mongoDatabase.GetCollection<ProductDocument>("products");
-            var mongoProductCount = await mongoProducts.CountDocumentsAsync(
+            var mongoTotalProductCount = await mongoProducts.CountDocumentsAsync(
                 FilterDefinition<ProductDocument>.Empty, 
                 cancellationToken: timeoutCts.Token);
+            var currentTenantFilter = currentTenantIds.Count == 0
+                ? Builders<ProductDocument>.Filter.Where(_ => false)
+                : Builders<ProductDocument>.Filter.In(product => product.TenantId, currentTenantIds);
+            var mongoProductCount = await mongoProducts.CountDocumentsAsync(
+                currentTenantFilter,
+                cancellationToken: timeoutCts.Token);
+            var foreignTenantDocumentCount = Math.Max(0, mongoTotalProductCount - mongoProductCount);
 
             var drift = Math.Abs(pgProductCount - mongoProductCount);
             var driftDirection = mongoProductCount > pgProductCount
@@ -93,6 +108,8 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             {
                 ["PostgreSQLCount"] = pgProductCount,
                 ["MongoDBCount"] = mongoProductCount,
+                ["MongoDBTotalCount"] = mongoTotalProductCount,
+                ["ForeignTenantDocumentCount"] = foreignTenantDocumentCount,
                 ["Drift"] = drift,
                 ["Direction"] = driftDirection
             };
@@ -130,6 +147,13 @@ public class ProjectionDriftHealthCheck : IHealthCheck
                 
                 return HealthCheckResult.Degraded(
                     $"Minor projection drift detected: {drift} documents",
+                    data: data);
+            }
+
+            if (foreignTenantDocumentCount > 0)
+            {
+                return HealthCheckResult.Degraded(
+                    $"Current SQL tenant projection scope is aligned within threshold; {foreignTenantDocumentCount} foreign-tenant MongoDB documents are isolated and preserved.",
                     data: data);
             }
 
@@ -335,6 +359,111 @@ public class ProjectionOutboxHealthCheck : IHealthCheck
             _logger.LogError(ex, "Projection outbox health check failed");
             return HealthCheckResult.Unhealthy(
                 "Failed to check projection outbox health",
+                exception: ex);
+        }
+    }
+}
+
+/// <summary>
+/// Readiness check for the generic transactional integration outbox.
+/// A zero-attempt stale row means the publisher is not running, while repeated
+/// failures or operator reconciliation indicate blocked authoritative fanout.
+/// </summary>
+public sealed class IntegrationOutboxReadinessHealthCheck : IHealthCheck
+{
+    private static readonly TimeSpan WarningLag = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan CriticalLag = TimeSpan.FromMinutes(15);
+    private const int RepeatedFailureThreshold = 3;
+
+    private readonly ApplicationDbContext _dbContext;
+    private readonly ILogger<IntegrationOutboxReadinessHealthCheck> _logger;
+
+    public IntegrationOutboxReadinessHealthCheck(
+        ApplicationDbContext dbContext,
+        ILogger<IntegrationOutboxReadinessHealthCheck> logger)
+    {
+        _dbContext = dbContext;
+        _logger = logger;
+    }
+
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var nowUtc = DateTime.UtcNow;
+            var warningCutoffUtc = nowUtc.Subtract(WarningLag);
+            var criticalCutoffUtc = nowUtc.Subtract(CriticalLag);
+
+            var metrics = await _dbContext.OutboxMessages
+                .AsNoTracking()
+                .Where(message => message.ProcessedAtUtc == null)
+                .GroupBy(_ => 1)
+                .Select(group => new
+                {
+                    PendingCount = group.Count(),
+                    ZeroAttemptCriticalLagCount = group.Count(message =>
+                        message.RetryCount == 0 && message.CreatedAtUtc <= criticalCutoffUtc),
+                    RepeatedFailureCount = group.Count(message =>
+                        message.RetryCount >= RepeatedFailureThreshold),
+                    OperatorReconciliationCount = group.Count(message =>
+                        message.RequiresOperatorReconciliation),
+                    CriticalLagCount = group.Count(message => message.CreatedAtUtc <= criticalCutoffUtc),
+                    WarningLagCount = group.Count(message => message.CreatedAtUtc <= warningCutoffUtc)
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            var data = new Dictionary<string, object>
+            {
+                ["PendingCount"] = metrics?.PendingCount ?? 0,
+                ["ZeroAttemptCriticalLagCount"] = metrics?.ZeroAttemptCriticalLagCount ?? 0,
+                ["RepeatedFailureCount"] = metrics?.RepeatedFailureCount ?? 0,
+                ["OperatorReconciliationCount"] = metrics?.OperatorReconciliationCount ?? 0,
+                ["CriticalLagCount"] = metrics?.CriticalLagCount ?? 0,
+                ["WarningLagCount"] = metrics?.WarningLagCount ?? 0
+            };
+
+            if (metrics is
+                {
+                    CriticalLagCount: > 0
+                } or
+                {
+                    RepeatedFailureCount: > 0
+                } or
+                {
+                    OperatorReconciliationCount: > 0
+                })
+            {
+                _logger.LogError(
+                    "Integration outbox readiness failed | Pending: {Pending} | ZeroAttemptCriticalLag: {ZeroAttemptCriticalLag} | RepeatedFailures: {RepeatedFailures} | OperatorReconciliation: {OperatorReconciliation} | CriticalLag: {CriticalLag}",
+                    metrics?.PendingCount ?? 0,
+                    metrics?.ZeroAttemptCriticalLagCount ?? 0,
+                    metrics?.RepeatedFailureCount ?? 0,
+                    metrics?.OperatorReconciliationCount ?? 0,
+                    metrics?.CriticalLagCount ?? 0);
+
+                return HealthCheckResult.Unhealthy(
+                    "Integration outbox delivery is blocked; authoritative event fanout may be stale.",
+                    data: data);
+            }
+
+            if (metrics is { WarningLagCount: > 0 })
+            {
+                return HealthCheckResult.Degraded(
+                    "Integration outbox delivery is lagging.",
+                    data: data);
+            }
+
+            return HealthCheckResult.Healthy(
+                "Integration outbox is delivering within readiness thresholds.",
+                data);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Integration outbox readiness health check failed");
+            return HealthCheckResult.Unhealthy(
+                "Failed to check integration outbox readiness.",
                 exception: ex);
         }
     }

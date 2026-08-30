@@ -40,10 +40,8 @@ public enum FulfillmentStatus
     /// <summary>
     /// Order physically delivered to customer.
     /// 
-    /// TRIGGERS PAYMENT LIFECYCLE:
-    /// - Offline collection: IPaymentLifecycleService.MarkOfflineCollectionDeliveredAsync()
-    /// - Wallet (AwaitingVerification): Auto-approve may trigger
-    /// - Online: No action (already Collected via webhook)
+    /// COD collection remains a separate payment lifecycle action requiring
+    /// explicit collection evidence. Delivery never implies payment.
     /// </summary>
     Delivered = 4,
     

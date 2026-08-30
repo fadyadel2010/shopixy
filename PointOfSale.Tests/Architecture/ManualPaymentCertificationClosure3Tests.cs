@@ -27,6 +27,7 @@ public sealed class ManualPaymentCertificationClosure3Tests
         var lifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         lifecycle
             .Setup(service => service.MarkPaymentExpiredAsync(
+                TenantId,
                 OrderId,
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -39,6 +40,7 @@ public sealed class ManualPaymentCertificationClosure3Tests
             new DateTimeOffset(CreatedAtUtc.AddHours(1), TimeSpan.Zero));
 
         lifecycle.Verify(service => service.MarkPaymentExpiredAsync(
+            TenantId,
             OrderId,
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -55,6 +57,7 @@ public sealed class ManualPaymentCertificationClosure3Tests
         var lifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         lifecycle
             .Setup(service => service.MarkPaymentExpiredAsync(
+                TenantId,
                 OrderId,
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -69,6 +72,7 @@ public sealed class ManualPaymentCertificationClosure3Tests
 
         Assert.Equal("MANUAL_PAYMENT_EXPIRED", exception.Code);
         lifecycle.Verify(service => service.MarkPaymentExpiredAsync(
+            TenantId,
             OrderId,
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -89,6 +93,7 @@ public sealed class ManualPaymentCertificationClosure3Tests
 
         Assert.Equal("MANUAL_PAYMENT_EXPIRATION_MISSING", exception.Code);
         lifecycle.Verify(service => service.MarkPaymentExpiredAsync(
+            It.IsAny<Guid>(),
             It.IsAny<Guid>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);

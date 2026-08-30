@@ -26,7 +26,7 @@ public static class OrderOperationalFinancialAuthority
             return false;
         }
 
-        return !PaymentStatusAuthority.IsPaidState(order.PaymentStatus);
+        return !HasRecognizedCollectionAuthority(order.PaymentStatus);
     }
 
     public static bool RequiresPostedCollectionAccountingBeforeOutboundProgress(Order order)
@@ -50,6 +50,32 @@ public static class OrderOperationalFinancialAuthority
     public static bool CanAdvanceOutboundProgress(Order order) =>
         !RequiresRecognizedPaymentBeforeOutboundProgress(order) &&
         !RequiresPostedCollectionAccountingBeforeOutboundProgress(order);
+
+    /// <summary>
+    /// Completion is stricter than outbound fulfillment. COD is intentionally
+    /// allowed to ship and be delivered before collection, but a positive-value
+    /// order cannot be declared complete until collection is recognized and its
+    /// accounting journal is posted (or explicitly not required).
+    /// </summary>
+    public static string? GetCompletionBlockReason(Order order)
+    {
+        if (order.Total <= 0m)
+        {
+            return null;
+        }
+
+        if (!HasRecognizedCollectionAuthority(order.PaymentStatus))
+        {
+            return "Cannot complete order until payment is collected.";
+        }
+
+        if (order.FinancialPostingStatus is not (FinancialPostingStatus.Posted or FinancialPostingStatus.NotRequired))
+        {
+            return "Cannot complete order until the payment collection accounting journal is posted.";
+        }
+
+        return null;
+    }
 
     public static string? GetOutboundProgressBlockReason(Order order)
     {
@@ -78,4 +104,8 @@ public static class OrderOperationalFinancialAuthority
             or OrderStatus.Shipped
             or OrderStatus.Delivered
             or OrderStatus.Completed;
+
+    private static bool HasRecognizedCollectionAuthority(PaymentStatus paymentStatus) =>
+        PaymentStatusAuthority.IsPaidState(paymentStatus) ||
+        paymentStatus == PaymentStatus.PartiallyRefunded;
 }

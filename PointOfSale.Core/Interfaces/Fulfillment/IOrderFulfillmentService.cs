@@ -87,7 +87,7 @@ public interface IOrderFulfillmentService
     /// SECURITY: Requires explicit source. Manual source blocked for Carrier orders.
     /// 
     /// PAYMENT INTEGRATION:
-    /// - Offline collection: Publishes OrderDeliveredEvent -> Handler calls IPaymentLifecycleService.MarkOfflineCollectionDeliveredAsync
+    /// - Offline collection: remains pending until explicit collection evidence enters IPaymentLifecycleService
     /// - Wallet: May trigger approval workflow
     /// - Online: No financial action (already collected)
     /// </summary>
@@ -335,6 +335,13 @@ public class FulfillmentAction
     /// Whether this action requires confirmation
     /// </summary>
     public bool RequiresConfirmation { get; set; }
+
+    /// <summary>
+    /// Request fields the authoritative endpoint requires before this action can
+    /// be submitted. UI clients must collect these fields rather than disabling
+    /// an otherwise available backend transition.
+    /// </summary>
+    public List<string> RequiredFields { get; set; } = new();
     
     /// <summary>
     /// CSS class or icon hint for UI

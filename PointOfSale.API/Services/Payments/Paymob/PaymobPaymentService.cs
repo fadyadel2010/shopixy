@@ -240,6 +240,7 @@ public class PaymobPaymentService : IPaymobPaymentService
         {
             await PrepareOrderForPaymobRetryAsync(
                 order,
+                existingIntent!.Id,
                 newSessionExpiresAtUtc,
                 correlationId,
                 cancellationToken);
@@ -250,14 +251,14 @@ public class PaymobPaymentService : IPaymobPaymentService
                 order,
                 newSessionExpiresAtUtc,
                 cancellationToken);
-            await CheckoutInventoryAuthorityGuard.EnsureOrderReservationsActiveAsync(
+            await CheckoutInventoryAuthorityGuard.EnsureStorefrontOrderReservationsActiveAsync(
                 _dbContext,
                 order,
                 cancellationToken);
         }
         else
         {
-            await CheckoutInventoryAuthorityGuard.EnsureOrderReservationsActiveAsync(
+            await CheckoutInventoryAuthorityGuard.EnsureStorefrontOrderReservationsActiveAsync(
                 _dbContext,
                 order,
                 cancellationToken);
@@ -654,6 +655,7 @@ public class PaymobPaymentService : IPaymobPaymentService
 
     private async Task PrepareOrderForPaymobRetryAsync(
         Order order,
+        Guid failedPaymentIntentId,
         DateTime reservationExpiresAtUtc,
         string correlationId,
         CancellationToken cancellationToken)
@@ -668,27 +670,17 @@ public class PaymobPaymentService : IPaymobPaymentService
             order,
             cancellationToken);
 
-        PaymentStatusSaveChangesInterceptor.EnableAuthorizedContext();
-        try
+        var lifecycleResult = await _paymentLifecycleService.ResetFailedPaymentForRetryAsync(
+            order.Id,
+            failedPaymentIntentId,
+            cancellationToken);
+        if (!lifecycleResult.Success)
         {
-            if (order.CheckoutState == CheckoutState.Failed || order.CheckoutState == CheckoutState.Expired)
-            {
-                order.TransitionCheckoutState(CheckoutState.PendingPaymentIntent);
-            }
-
-            if (order.CheckoutState == CheckoutState.PendingPaymentIntent)
-            {
-                order.TransitionCheckoutState(CheckoutState.PaymentPending);
-            }
-
-            order.PaymentStatus = PaymentStatus.Pending;
-            order.AcceptPaymentStatusChange();
-            order.IsPaid = false;
-            order.PaidAt = null;
-        }
-        finally
-        {
-            PaymentStatusSaveChangesInterceptor.DisableAuthorizedContext();
+            throw new PaymentOrderInvalidStateException(
+                order.Id,
+                $"Order:{order.Status}/Payment:{order.PaymentStatus}/Checkout:{order.CheckoutState}",
+                "Order:Pending/Payment:Failed/Checkout:Failed",
+                lifecycleResult.FailureCode ?? "PAYMENT_RETRY_REJECTED");
         }
 
         _logger.LogInformation(

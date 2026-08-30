@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -182,12 +183,18 @@ public class AffiliateAuthController : ControllerBase
         // Now set the AffiliateAccount.UserId to the AffiliateUser.Id
         affiliateAccount.SetUserId(affiliateUser.Id);
 
+        string rawVerificationToken;
+        await using var registrationTransaction = await _dbContext.Database.BeginTransactionAsync(ct);
         try
         {
             await _dbContext.SaveChangesAsync(ct);
+            rawVerificationToken = await ReplaceVerificationTokenAsync(affiliateUser, ct)
+                ?? throw new InvalidOperationException("New affiliate identity was not eligible for verification token issuance.");
+            await registrationTransaction.CommitAsync(ct);
         }
         catch (DbUpdateException ex) when (IsAffiliateRegistrationUniquenessViolation(ex))
         {
+            await registrationTransaction.RollbackAsync(ct);
             _logger.LogWarning(
                 ex,
                 "[AF-PA3.1:RegistrationDuplicate] Duplicate affiliate registration rejected | Email: {Email}",
@@ -200,8 +207,7 @@ public class AffiliateAuthController : ControllerBase
             affiliateUser.Id, affiliateAccount.Id, email);
 
         // Registration issues verification only; authenticated authority starts at verified login.
-
-        await IssueVerificationEmailAsync(affiliateUser, ct);
+        await SendVerificationEmailAsync(affiliateUser, rawVerificationToken);
 
         return Ok(new AffiliateAuthResponse
         {
@@ -253,7 +259,9 @@ public class AffiliateAuthController : ControllerBase
             return Unauthorized(new { message = "Email verification is required before login" });
 
         // Check if affiliate account is active
-        if (affiliateUser.AffiliateAccount == null || !affiliateUser.AffiliateAccount.IsActive)
+        if (affiliateUser.AffiliateAccount == null ||
+            affiliateUser.AffiliateAccount.IsDeleted ||
+            !affiliateUser.AffiliateAccount.IsActive)
             return Unauthorized(new { message = "Affiliate account is suspended" });
 
         // Issue JWT
@@ -347,7 +355,9 @@ public class AffiliateAuthController : ControllerBase
             return Unauthorized(new { message = "Email verification is required before refresh" });
 
         // Check if affiliate account is still active
-        if (affiliateUser.AffiliateAccount == null || !affiliateUser.AffiliateAccount.IsActive)
+        if (affiliateUser.AffiliateAccount == null ||
+            affiliateUser.AffiliateAccount.IsDeleted ||
+            !affiliateUser.AffiliateAccount.IsActive)
             return Unauthorized(new { message = "Affiliate account is suspended" });
 
         var (accessToken, refreshToken, refreshTokenHash) = GenerateTokens(affiliateUser, affiliateUser.AffiliateAccount);
@@ -429,14 +439,74 @@ public class AffiliateAuthController : ControllerBase
             return BadRequest(new { message = "Verification token is required" });
 
         var now = DateTime.UtcNow;
+
+        if (!AffiliateEmailVerificationToken.IsSupportedPresentedToken(request.Token))
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+
         var tokenHash = AffiliateEmailVerificationToken.HashToken(request.Token);
+
+        // /api/affiliate/auth/* bypasses tenant resolution, so CurrentTenantId is null here.
+        // The tenant-filtered AffiliateAccount include is a required navigation; without
+        // IgnoreQueryFilters EF Core silently drops the whole row and every valid fresh
+        // token would be rejected as invalid or expired.
         var token = await _dbContext.AffiliateEmailVerificationTokens
+            .IgnoreQueryFilters()
             .Include(t => t.AffiliateUser)
             .ThenInclude(u => u.AffiliateAccount)
             .FirstOrDefaultAsync(t => t.TokenHash == tokenHash, ct);
 
-        if (token == null || !token.CanConsume(now) || token.AffiliateUser.IsDeleted)
-            return Unauthorized(new { message = "Invalid or expired verification token" });
+        // IgnoreQueryFilters bypasses the soft-delete half of the AffiliateUser and
+        // AffiliateAccount filters too, so deleted identities are re-checked explicitly.
+        if (token == null ||
+            token.IsDeleted ||
+            token.AffiliateUser.IsDeleted ||
+            token.AffiliateUser.AffiliateAccount == null ||
+            token.AffiliateUser.AffiliateAccount.IsDeleted)
+        {
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+        }
+
+        if (token.ConsumedAtUtc != null)
+        {
+            // Idempotent repeat click: the same link may only confirm an account
+            // that actually completed verification; no duplicate audit event runs.
+            if (token.AffiliateUser.EmailVerified)
+                return Ok(new { message = "Email verified successfully" });
+
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+        }
+
+        if (!token.CanConsume(now))
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+
+        // Serialize verification and resend on the user row before touching token rows.
+        // This gives both operations the same lock order and prevents resend from replacing
+        // a token while verification is consuming it.
+        await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+        var eligibleUserRows = await _dbContext.AffiliateUsers
+            .IgnoreQueryFilters()
+            .Where(u => u.Id == token.AffiliateUserId && !u.IsDeleted && !u.EmailVerified)
+            .ExecuteUpdateAsync(update => update.SetProperty(u => u.UpdatedAt, now), ct);
+
+        if (eligibleUserRows != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+        }
+
+        // The conditional UPDATE still arbitrates same-token requests at the token row;
+        // exactly one caller can claim it.
+        var claimedRows = await _dbContext.AffiliateEmailVerificationTokens
+            .Where(t => t.Id == token.Id && !t.IsDeleted && t.ConsumedAtUtc == null && t.ExpiresAtUtc > now)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(t => t.ConsumedAtUtc, now)
+                .SetProperty(t => t.UpdatedAt, now), ct);
+
+        if (claimedRows != 1)
+        {
+            await transaction.RollbackAsync(ct);
+            return Unauthorized(new { message = InvalidVerificationTokenMessage });
+        }
 
         token.Consume(now);
         token.AffiliateUser.VerifyEmail();
@@ -452,6 +522,8 @@ public class AffiliateAuthController : ControllerBase
             "Affiliate email verification token consumed.",
             true,
             ct);
+
+        await transaction.CommitAsync(ct);
 
         return Ok(new { message = "Email verified successfully" });
     }
@@ -469,7 +541,19 @@ public class AffiliateAuthController : ControllerBase
             .FirstOrDefaultAsync(u => u.Email == email && !u.IsDeleted, ct);
 
         if (affiliateUser != null && !affiliateUser.EmailVerified)
-            await IssueVerificationEmailAsync(affiliateUser, ct);
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(ct);
+            var rawToken = await ReplaceVerificationTokenAsync(affiliateUser, ct);
+            if (rawToken == null)
+            {
+                await transaction.RollbackAsync(ct);
+            }
+            else
+            {
+                await transaction.CommitAsync(ct);
+                await SendVerificationEmailAsync(affiliateUser, rawToken);
+            }
+        }
 
         return Ok(new { message = "If the affiliate account exists, verification instructions have been sent." });
     }
@@ -622,18 +706,50 @@ public class AffiliateAuthController : ControllerBase
             : request.RefreshToken;
     }
 
-    private async Task IssueVerificationEmailAsync(AffiliateUser affiliateUser, CancellationToken ct)
+    /// <summary>
+    /// Persists the newest verification token under a last-token-wins replacement policy:
+    /// every previously outstanding (unconsumed) token for the affiliate is invalidated
+    /// first, so exactly one live verification link can exist per account. Raw tokens
+    /// are never logged and never persisted — only their SHA-256 hash is stored.
+    /// </summary>
+    private async Task<string?> ReplaceVerificationTokenAsync(AffiliateUser affiliateUser, CancellationToken ct)
     {
+        // Verification uses the same user-then-token lock order. Concurrent resends
+        // therefore serialize before deleting and replacing the current live token.
+        var eligibleRows = await _dbContext.AffiliateUsers
+            .IgnoreQueryFilters()
+            .Where(u => u.Id == affiliateUser.Id && !u.IsDeleted && !u.EmailVerified)
+            .ExecuteUpdateAsync(update => update.SetProperty(u => u.UpdatedAt, DateTime.UtcNow), ct);
+
+        var accountExists = await _dbContext.AffiliateAccounts
+            .IgnoreQueryFilters()
+            .AnyAsync(a => a.Id == affiliateUser.AffiliateAccountId && !a.IsDeleted, ct);
+
+        if (eligibleRows != 1 || !accountExists)
+        {
+            return null;
+        }
+
+        await _dbContext.AffiliateEmailVerificationTokens
+            .Where(t => t.AffiliateUserId == affiliateUser.Id && t.ConsumedAtUtc == null)
+            .ExecuteDeleteAsync(ct);
+
         var rawToken = GenerateRawToken();
         _dbContext.AffiliateEmailVerificationTokens.Add(
             AffiliateEmailVerificationToken.Create(affiliateUser.Id, rawToken, DateTime.UtcNow.AddHours(24)));
         await _dbContext.SaveChangesAsync(ct);
 
+        return rawToken;
+    }
+
+    private async Task SendVerificationEmailAsync(AffiliateUser affiliateUser, string rawToken)
+    {
         var link = $"{AffiliatePublicBaseUrl().TrimEnd('/')}/affiliate/verify-email?token={Uri.EscapeDataString(rawToken)}";
+        var safeLink = WebUtility.HtmlEncode(link);
         await _emailSender.SendEmailAsync(
             affiliateUser.Email,
             "Verify your affiliate account",
-            $"<p>Verify your affiliate account:</p><p><a href=\"{link}\">{link}</a></p>",
+            $"<p>Verify your affiliate account:</p><p><a href=\"{safeLink}\">{safeLink}</a></p>",
             $"Verify your affiliate account: {link}");
     }
 
@@ -758,7 +874,9 @@ public class AffiliateAuthController : ControllerBase
             StringComparison.Ordinal);
 
     private static string GenerateRawToken() =>
-        Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
+        AffiliateEmailVerificationToken.NewRawToken();
+
+    private const string InvalidVerificationTokenMessage = "Invalid or expired verification token";
 
     private static string HashToken(string rawToken)
     {

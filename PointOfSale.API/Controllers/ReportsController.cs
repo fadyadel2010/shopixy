@@ -57,11 +57,13 @@ public class ReportsController : ControllerBase, IActionFilter
         _cashboxLedgerAccountService = cashboxLedgerAccountService;
     }
 
+    [NonAction]
     public void OnActionExecuting(ActionExecutingContext context)
     {
         _ = _tenantContext.RequiredTenantId;
     }
 
+    [NonAction]
     public void OnActionExecuted(ActionExecutedContext context)
     {
     }

@@ -3,11 +3,19 @@ using MassTransit;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PointOfSale.API.Controllers;
+using PointOfSale.Core.DTOs.Affiliate;
+using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Events.Affiliate;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Affiliate;
 
@@ -196,6 +204,7 @@ public class AdminProductAffiliateTests
     [Theory]
     [InlineData("ProductId", typeof(Guid))]
     [InlineData("IsEnabled", typeof(bool))]
+    [InlineData("IsPolicyEnabled", typeof(bool))]
     [InlineData("CommissionRate", typeof(decimal?))]
     [InlineData("MaxCommissionPerItem", typeof(decimal?))]
     [InlineData("TemplateType", typeof(string))]
@@ -208,10 +217,10 @@ public class AdminProductAffiliateTests
     }
 
     [Fact]
-    public void SettingsResponse_HasExactly6Properties()
+    public void SettingsResponse_HasExactly7Properties()
     {
         var props = typeof(ProductAffiliateSettingsResponse).GetProperties();
-        Assert.Equal(6, props.Length);
+        Assert.Equal(7, props.Length);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -352,5 +361,155 @@ public class AdminProductAffiliateTests
         Assert.NotNull(method);
         Assert.NotNull(method!.GetCustomAttribute<HttpPostAttribute>());
         Assert.Null(method!.GetCustomAttribute<HttpDeleteAttribute>());
+    }
+
+    [Fact]
+    public async Task EnableWithCategory_ForeignProductReturnsNotFoundWithoutRevealingTenantReadiness()
+    {
+        var tenantId = Guid.NewGuid();
+        var foreignTenantId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        await using var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        var foreignProductId = Guid.NewGuid();
+        context.Products.Add(new Product
+        {
+            Id = foreignProductId,
+            TenantId = foreignTenantId,
+            Name = "Foreign product",
+            CategoryId = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var readiness = new Mock<IAffiliateReadinessService>(MockBehavior.Strict);
+        var affiliateService = new Mock<IAffiliateService>(MockBehavior.Strict);
+        var controller = new AdminProductAffiliateController(
+            context,
+            affiliateService.Object,
+            readiness.Object,
+            new TestTenantContext(tenantId),
+            NullLogger<AdminProductAffiliateController>.Instance);
+
+        var result = await controller.EnableAffiliateWithCategory(
+            foreignProductId,
+            new EnableAffiliateWithCategoryRequest
+            {
+                CategoryId = Guid.NewGuid(),
+                CommissionRate = 0.10m
+            },
+            CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result.Result);
+        readiness.Verify(
+            service => service.CheckAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        affiliateService.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EnableWithCategory_ExistingEnabledPolicySkipsReadinessForAffiliateOwnedEdits()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var categoryId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        await using var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        context.Products.Add(new Product
+        {
+            Id = productId,
+            TenantId = tenantId,
+            Name = "Existing affiliate product",
+            CategoryId = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow
+        });
+        var policy = AffiliateProductPolicy.Create(tenantId, productId, 0.10m, 25m, categoryId);
+        context.AffiliateProductPolicies.Add(policy);
+        await context.SaveChangesAsync();
+
+        var readiness = new Mock<IAffiliateReadinessService>(MockBehavior.Strict);
+        var affiliateService = new Mock<IAffiliateService>(MockBehavior.Strict);
+        affiliateService
+            .Setup(service => service.EnableAffiliateWithCategoryAsync(
+                productId, 0.12m, categoryId, 25m, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AffiliatePolicyWithCategoryDetails { Policy = policy });
+        var controller = new AdminProductAffiliateController(
+            context,
+            affiliateService.Object,
+            readiness.Object,
+            new TestTenantContext(tenantId),
+            NullLogger<AdminProductAffiliateController>.Instance);
+
+        var result = await controller.EnableAffiliateWithCategory(
+            productId,
+            new EnableAffiliateWithCategoryRequest
+            {
+                CategoryId = categoryId,
+                CommissionRate = 0.12m,
+                MaxCommissionPerItem = 25m
+            },
+            CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        readiness.VerifyNoOtherCalls();
+        affiliateService.VerifyAll();
+    }
+
+    [Fact]
+    public async Task EnableWithCategory_ConcurrentWriteReturnsStableConflict()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var categoryId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        await using var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        context.Products.Add(new Product
+        {
+            Id = productId,
+            TenantId = tenantId,
+            Name = "Concurrent affiliate product",
+            CategoryId = Guid.NewGuid(),
+            CreatedAt = DateTime.UtcNow
+        });
+        context.AffiliateProductPolicies.Add(
+            AffiliateProductPolicy.Create(tenantId, productId, 0.10m, categoryId: categoryId));
+        await context.SaveChangesAsync();
+
+        var readiness = new Mock<IAffiliateReadinessService>(MockBehavior.Strict);
+        var affiliateService = new Mock<IAffiliateService>(MockBehavior.Strict);
+        affiliateService
+            .Setup(service => service.EnableAffiliateWithCategoryAsync(
+                productId, 0.12m, categoryId, null, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DbUpdateConcurrencyException("concurrent write"));
+
+        var controller = new AdminProductAffiliateController(
+            context,
+            affiliateService.Object,
+            readiness.Object,
+            new TestTenantContext(tenantId),
+            NullLogger<AdminProductAffiliateController>.Instance);
+
+        var result = await controller.EnableAffiliateWithCategory(
+            productId,
+            new EnableAffiliateWithCategoryRequest
+            {
+                CategoryId = categoryId,
+                CommissionRate = 0.12m
+            },
+            CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(409, conflict.StatusCode);
+        Assert.Contains("AFFILIATE_POLICY_CONFLICT", conflict.Value?.ToString(), StringComparison.Ordinal);
+        readiness.VerifyNoOtherCalls();
+        affiliateService.VerifyAll();
     }
 }

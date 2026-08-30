@@ -33,6 +33,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.SuperAdmin.Models;
 using PointOfSale.Infrastructure.Consumers;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Data.Seeding;
 using PointOfSale.Infrastructure.EventBus;
 using PointOfSale.Infrastructure.MongoDB;
 using PointOfSale.Infrastructure.MultiTenancy;
@@ -291,6 +292,7 @@ builder.Services.AddSwaggerGen(c =>
             Email = "support@example.com"
         }
     });
+    c.CustomSchemaIds(type => (type.FullName ?? type.Name).Replace('+', '.'));
     
     // Add JWT authentication to Swagger
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -347,6 +349,23 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
         sp.GetRequiredService<MarketplaceInvariantInterceptor>(),
         sp.GetRequiredService<PrivilegedRefreshTokenRevocationInterceptor>());
 });
+
+// =============================================================================
+// AF-30B: AFFILIATE TAXONOMY BOOTSTRAP (insert-only startup boundary)
+// Ensures the source-defined baseline AffiliateCategory rows
+// (DB/sql/add_affiliate_category_system.sql) exist after EF migrations/schema
+// initialization. Registered BEFORE CacheWarmupService so hosted-service start
+// order guarantees request handling and cache warmup never observe an empty
+// taxonomy. The seed is awaited (no fire-and-forget) and failures abort startup
+// visibly. Semantics are strictly insert-only: existing rows (including renamed,
+// deactivated, or soft-deleted ones), future-managed categories, and tenant
+// product-policy references are never updated, deleted, or tenant-scoped.
+// Database-safe under simultaneous instances via deterministic PKs, a single
+// transaction, and PostgreSQL ON CONFLICT DO NOTHING with visible collision
+// detection. The deterministic test-host branch below strips this hosted
+// service; tests exercise the seeder directly.
+// =============================================================================
+builder.Services.AddAffiliateTaxonomyBootstrap();
 
 // Production hardening: Order lifecycle writes must now stay inside the explicit
 // authorized boundaries used by checkout, payment, admin, and shipment workflows.
@@ -550,6 +569,7 @@ builder.Services.AddSignalR();
 // =============================================================================
 builder.Services.AddCoreLedgerEngine();
 builder.Services.AddAccountingOutboxWorker(); // Background outbox processor + COA startup seeder
+builder.Services.AddHostedService<PointOfSale.Infrastructure.Jobs.OutboxPublisherJob>(); // Generic transactional integration outbox
 builder.Services.AddPaymentCancellationOutbox(builder.Configuration); // Durable payment cancellation operations
 builder.Services.AddProviderDeliveryInfrastructure(builder.Configuration); // Durable provider delivery outbox + worker
 builder.Services.AddMarketplaceEventBackbone(builder.Configuration);
@@ -2034,7 +2054,7 @@ builder.Services.AddMassTransit(x =>
     // =============================================================================
     // FULFILLMENT DELIVERED EVENT CONSUMER (Phase OFL - Order Fulfillment Lifecycle)
     // Integrates Fulfillment Lifecycle with Payment Lifecycle.
-    // FulfillmentDeliveredEvent -> PaymentLifecycleService.MarkOfflineCollectionDeliveredAsync() -> Ledger
+    // FulfillmentDeliveredEvent observes delivery only; COD collection requires separate payment evidence.
     // Ensures COD revenue recognition happens exactly at delivery.
     // =============================================================================
     x.AddConsumer<FulfillmentDeliveredEventConsumer>();
@@ -3013,6 +3033,7 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(allowedOrigins)
               .AllowAnyMethod()
               .AllowAnyHeader()
+              .WithExposedHeaders("X-Total-Count", "X-Page", "X-Page-Size", "X-Total-Pages")
               .AllowCredentials();
     });
 });

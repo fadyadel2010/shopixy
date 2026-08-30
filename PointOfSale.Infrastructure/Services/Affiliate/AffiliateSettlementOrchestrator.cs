@@ -402,7 +402,8 @@ public class AffiliateSettlementOrchestrator : IAffiliateSettlementOrchestrator
                 .ThenBy(e => e.Id)
                 .ToListAsync(ct);
 
-            // Fetch MaxCommissionPerItem for validation from policies
+            // Use the immutable checkout-time cap snapshot. Current product policy is
+            // not payout authority for a historical approved commission.
             var approvedOrderItemIds = approvedEntries
                 .Select(entry => entry.OrderItemId)
                 .Distinct()
@@ -410,12 +411,14 @@ public class AffiliateSettlementOrchestrator : IAffiliateSettlementOrchestrator
 
             var maxPerItemByOrderItem = approvedOrderItemIds.Count == 0
                 ? new Dictionary<Guid, decimal?>()
-                : await (from orderItem in _db.OrderItems.IgnoreQueryFilters()
-                         join order in _db.Orders.IgnoreQueryFilters() on orderItem.OrderId equals order.Id
-                         join policy in _db.AffiliateProductPolicies.IgnoreQueryFilters()
-                             on new { orderItem.ProductId, TenantId = order.TenantId } equals new { policy.ProductId, policy.TenantId }
-                         where approvedOrderItemIds.Contains(orderItem.Id)
-                         select new { orderItem.Id, policy.MaxCommissionPerItem })
+                : await _db.OrderItems
+                    .IgnoreQueryFilters()
+                    .Where(orderItem => approvedOrderItemIds.Contains(orderItem.Id))
+                    .Select(orderItem => new
+                    {
+                        orderItem.Id,
+                        MaxCommissionPerItem = orderItem.AffiliateMaxCommissionPerItemSnapshot
+                    })
                     .ToDictionaryAsync(x => x.Id, x => x.MaxCommissionPerItem, ct);
 
             var reversalAmountsByOrderItem = approvedOrderItemIds.Count == 0
@@ -946,12 +949,14 @@ public class AffiliateSettlementOrchestrator : IAffiliateSettlementOrchestrator
 
             var maxPerItemByOrderItem = approvedOrderItemIds.Count == 0
                 ? new Dictionary<Guid, decimal?>()
-                : await (from orderItem in _db.OrderItems.IgnoreQueryFilters()
-                          join order in _db.Orders.IgnoreQueryFilters() on orderItem.OrderId equals order.Id
-                          join policy in _db.AffiliateProductPolicies.IgnoreQueryFilters()
-                              on new { orderItem.ProductId, TenantId = order.TenantId } equals new { policy.ProductId, policy.TenantId }
-                          where approvedOrderItemIds.Contains(orderItem.Id)
-                          select new { orderItem.Id, policy.MaxCommissionPerItem })
+                : await _db.OrderItems
+                    .IgnoreQueryFilters()
+                    .Where(orderItem => approvedOrderItemIds.Contains(orderItem.Id))
+                    .Select(orderItem => new
+                    {
+                        orderItem.Id,
+                        MaxCommissionPerItem = orderItem.AffiliateMaxCommissionPerItemSnapshot
+                    })
                     .ToDictionaryAsync(x => x.Id, x => x.MaxCommissionPerItem, ct);
 
             var reversalAmountsByOrderItem = approvedOrderItemIds.Count == 0

@@ -9,6 +9,11 @@ const FULFILLMENT_ACTION_CODES = new Set([
     'returned',
     'cancel',
 ])
+const REQUIRED_FIELDS_BY_ACTION = new Map([
+    ['delivered', ['deliveryReference', 'proofOfDeliveryUrl']],
+    ['failed-delivery', ['reason']],
+    ['returned', ['reason']],
+])
 
 function isNonEmptyString(value) {
     return typeof value === 'string' && value.trim().length > 0
@@ -29,13 +34,19 @@ export function requireShipmentActionAuthority(authority, expectedOrderId) {
 
     const seenCodes = new Set()
     for (const action of authority.availableActions) {
+        const requiredFields = action?.requiredFields
+        const expectedFields = REQUIRED_FIELDS_BY_ACTION.get(action?.code) || []
         if (
             !isNonEmptyString(action?.code) ||
             !FULFILLMENT_ACTION_CODES.has(action.code) ||
             seenCodes.has(action.code) ||
             !isNonEmptyString(action.label) ||
             !isNonEmptyString(action.targetStatus) ||
-            typeof action.requiresConfirmation !== 'boolean'
+            typeof action.requiresConfirmation !== 'boolean' ||
+            !Array.isArray(requiredFields) ||
+            requiredFields.length !== expectedFields.length ||
+            expectedFields.some((field) => !requiredFields.includes(field)) ||
+            new Set(requiredFields).size !== requiredFields.length
         ) {
             throw new Error('Shipment action authority rejected malformed backend action evidence.')
         }

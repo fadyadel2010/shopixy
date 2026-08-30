@@ -115,7 +115,7 @@ describe('Affiliate checkout frontend certification', () => {
             .join('\n');
 
         expect(checkoutStore).toContain("SHIPPING_METHODS: '/api/storefront/shipping-methods'");
-        expect(checkoutStore).toContain('admitStorefrontShippingMethods(response.data)');
+        expect(checkoutStore).toContain('admitStorefrontShippingMethodsPreview(response.data)');
         expect(shippingStep).toContain('shippingMethods.map((method)');
         expect(shippingStep).toContain('name={method.name}');
         expect(shippingStep).toContain('price={method.price}');

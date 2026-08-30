@@ -248,6 +248,10 @@ public class AdminShipmentsController : ControllerBase
         {
             return Conflict(new AdminShipmentApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (CarrierManagedStatusAuthorityException ex)
+        {
+            return Conflict(new AdminShipmentApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "UpdateShipmentStatus | TenantId: {TenantId} | ShipmentId: {ShipmentId} | Error | TraceId: {TraceId}", 

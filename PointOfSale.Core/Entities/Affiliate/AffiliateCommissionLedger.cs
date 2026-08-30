@@ -355,16 +355,29 @@ public class AffiliateCommissionLedger
         if (payableCommissionAmount > approvedEntry.CommissionAmount)
             throw new ArgumentException("Payable commission amount cannot exceed the approved commission amount.", nameof(payableCommissionAmount));
 
-        // Validate that payableCommissionAmount matches the approved rate and cap
-        var expectedRaw = payableBaseAmount * approvedEntry.CommissionRate;
-        var expectedCommission = approvedMaxPerItem.HasValue 
-            ? Math.Min(expectedRaw, approvedMaxPerItem.Value) 
-            : expectedRaw;
-        expectedCommission = Math.Round(expectedCommission, 4, MidpointRounding.ToZero);
+        // Validate a full payment against the immutable approved authority. For a
+        // partial remainder the caller supplies exact append-only ledger subtraction
+        // (Approved - Reversed). Recalculating it from the remaining base can reject a
+        // valid history after multiple independently rounded reversals, and reapplying
+        // the cap can recreate value for capped commissions. The upper-bound checks
+        // above keep the partial result inside the approved authority.
+        var isPartialRemainder = payableBaseAmount < approvedEntry.BaseAmount ||
+                                  payableCommissionAmount < approvedEntry.CommissionAmount;
+        var expectedCommission = approvedMaxPerItem.HasValue
+                ? Math.Round(
+                    Math.Min(
+                        approvedEntry.BaseAmount * approvedEntry.CommissionRate,
+                        approvedMaxPerItem.Value),
+                    4,
+                    MidpointRounding.ToZero)
+                : Math.Round(
+                    approvedEntry.BaseAmount * approvedEntry.CommissionRate,
+                    4,
+                    MidpointRounding.ToZero);
 
         // Allow small rounding tolerance (0.0001) for currency precision
         var tolerance = 0.0001m;
-        if (Math.Abs(payableCommissionAmount - expectedCommission) > tolerance)
+        if (!isPartialRemainder && Math.Abs(payableCommissionAmount - expectedCommission) > tolerance)
         {
             throw new InvalidOperationException(
                 $"Payable commission amount does not match approved calculation. " +

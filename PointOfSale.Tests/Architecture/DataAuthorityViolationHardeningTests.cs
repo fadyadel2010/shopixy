@@ -544,6 +544,10 @@ public sealed class DataAuthorityViolationHardeningTests
             Assert.DoesNotContain("CommissionAmount = i.CommissionAmount", method, StringComparison.Ordinal);
             Assert.Contains("ledger?.TotalCommission", method, StringComparison.Ordinal);
             Assert.Contains("itemLedger?.CommissionAmount", method, StringComparison.Ordinal);
+            Assert.Contains("OrderStatus = d.OrderStatus", method, StringComparison.Ordinal);
+            Assert.Contains("FulfillmentStatus = d.FulfillmentStatus", method, StringComparison.Ordinal);
+            Assert.Contains("PaymentMethod = d.PaymentMethod", method, StringComparison.Ordinal);
+            Assert.Contains("PaidAmount = ledger?.PaidAmount", method, StringComparison.Ordinal);
         }
 
         foreach (var source in new[] { adminController, portalController })

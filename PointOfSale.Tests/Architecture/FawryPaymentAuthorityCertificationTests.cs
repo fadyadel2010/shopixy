@@ -63,7 +63,7 @@ public sealed class FawryPaymentAuthorityCertificationTests
         Assert.Contains("ProviderCode = new ProviderCode(paymentMethodCode)", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentIntentId = paymentIntent?.Id", checkoutService, StringComparison.Ordinal);
         Assert.Contains("PaymentStatus = order.PaymentStatus.ToString()", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("ReferenceCode = paymentIntent?.ReferenceCode", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("ReferenceCode = GetStorefrontReferenceCode(paymentMethodCode, paymentIntent?.ReferenceCode)", checkoutService, StringComparison.Ordinal);
         Assert.Contains("ExpiresAtUtc = paymentIntent?.ExpiresAtUtc", checkoutService, StringComparison.Ordinal);
         Assert.Contains("string.Equals(order.PaymentMethodCode, \"FAWRY\"", checkoutService, StringComparison.Ordinal);
         Assert.Contains("response.ReferenceCode = null", checkoutService, StringComparison.Ordinal);

@@ -93,17 +93,14 @@ public class PaymentLifecycleController : ControllerBase
     {
         var userName = User.Identity?.Name ?? "System";
         
-        var result = await _lifecycleService.HandlePaymentResultAsync(new HandlePaymentResultRequest
-        {
-            OrderId = orderId,
-            Outcome = PaymentLifecycleOutcome.Succeeded,
-            Source = PaymentLifecycleSource.OfflineCollection,
-            PaymentReference = request?.DeliveryReference,
-            Actor = userName
-        });
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(
+            _tenantContext.RequiredTenantId,
+            orderId,
+            request?.DeliveryReference,
+            userName);
         
         if (!result.Success)
-            return BadRequest(new { error = result.ErrorMessage });
+            return SettlementFailure(result);
         
         return Ok(new PaymentActionResponse
         {
@@ -178,10 +175,10 @@ public class PaymentLifecycleController : ControllerBase
     public async Task<IActionResult> RecordRefund(Guid orderId, [FromBody] RefundRequest request)
     {
         if (request.Amount <= 0)
-            return BadRequest(new { error = "Refund amount must be positive" });
+            return BadRequest(new { error = "Refund amount must be positive", code = "REFUND_AMOUNT_INVALID" });
         
         if (string.IsNullOrWhiteSpace(request.RefundId))
-            return BadRequest(new { error = "Refund ID is required" });
+            return BadRequest(new { error = "Refund ID is required", code = "REFUND_ID_REQUIRED" });
         
         var result = await _lifecycleService.RecordRefundAsync(
             orderId,
@@ -190,7 +187,7 @@ public class PaymentLifecycleController : ControllerBase
             request.Reason ?? "Customer refund");
         
         if (!result.Success)
-            return BadRequest(new { error = result.ErrorMessage });
+            return SettlementFailure(result);
         
         return Ok(new PaymentActionResponse
         {
@@ -346,8 +343,8 @@ public class PaymentLifecycleController : ControllerBase
             list.Add(new AvailableAction
             {
                 ActionCode = "cod-delivered",
-                Label = "Mark as Delivered",
-                Description = "Confirm cash collected from customer",
+                Label = "Record COD Collection",
+                Description = "Confirm cash collection after physical delivery",
                 Method = "POST",
                 Endpoint = $"/api/payments/lifecycle/{actions.OrderId}/cod-delivered"
             });

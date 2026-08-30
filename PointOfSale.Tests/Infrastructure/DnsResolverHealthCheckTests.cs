@@ -170,6 +170,9 @@ public class DnsResolverHealthCheckTests
         Assert.True(healthResult.Data.ContainsKey("resolver"));
         Assert.Equal("1.1.1.1", (string)healthResult.Data["resolver"]!);
         Assert.True(healthResult.Data.ContainsKey("test_hostname"));
-        Assert.Equal("cloudflare.com", (string)healthResult.Data["test_hostname"]!);
+        Assert.Equal("_dmarc.google.com", (string)healthResult.Data["test_hostname"]!);
+        _mockDnsResolver.Verify(
+            resolver => resolver.ResolveTxtAsync("_dmarc.google.com", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }

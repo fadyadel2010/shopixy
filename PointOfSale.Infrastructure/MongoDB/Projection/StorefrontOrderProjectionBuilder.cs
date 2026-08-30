@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 
 namespace PointOfSale.Infrastructure.MongoDB.Projection;
@@ -18,11 +19,7 @@ public static class StorefrontOrderProjectionBuilder
 
         var customerEmail = order.GuestEmail ?? order.OnlineCustomer?.Email ?? order.Customer?.Email;
         var customerName = order.GuestName ?? order.OnlineCustomer?.DisplayName ?? order.Customer?.Name;
-        var shippingStatus = authoritySnapshot?.ShipmentShippingStatus ?? (order.DeliveredAt.HasValue
-            ? "Delivered"
-            : order.ShippedAt.HasValue
-                ? "Shipped"
-                : "Pending");
+        var shippingStatus = ResolveShippingStatus(order, authoritySnapshot);
 
         var timeline = existingTimeline?.ToList() ?? [];
         timeline.Add(new OrderTimelineItem
@@ -146,6 +143,33 @@ public static class StorefrontOrderProjectionBuilder
             .Max();
 
         return NormalizeForMongoDateTime(sourceTimestamp);
+    }
+
+    private static string ResolveShippingStatus(
+        Order order,
+        StorefrontOrderProjectionAuthoritySnapshot? authoritySnapshot)
+    {
+        var terminalStatus = order.FulfillmentStatus switch
+        {
+            FulfillmentStatus.Returned => "Returned",
+            FulfillmentStatus.FailedDelivery => "Failed",
+            FulfillmentStatus.Cancelled => "Cancelled",
+            FulfillmentStatus.Delivered or FulfillmentStatus.Completed => "Delivered",
+            _ => null
+        };
+
+        if (terminalStatus != null)
+        {
+            return terminalStatus;
+        }
+
+        return authoritySnapshot?.ShipmentShippingStatus ?? order.FulfillmentStatus switch
+        {
+            FulfillmentStatus.Confirmed or FulfillmentStatus.Packed => "Processing",
+            FulfillmentStatus.OutForDelivery => "OutForDelivery",
+            _ when order.ShippedAt.HasValue => "Shipped",
+            _ => "Pending"
+        };
     }
 
     public static DateTime NormalizeForMongoDateTime(DateTime value)

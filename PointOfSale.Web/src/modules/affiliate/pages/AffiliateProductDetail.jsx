@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import axios from 'axios'
 import { sanitizeRichTextHtml } from '@/utils/htmlSanitizer'
-import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
+import { discoverPublicProductDetail } from '../lib/publicDiscoverApi'
 
 const AffiliateProductDetail = () => {
     const { slug } = useParams()
@@ -16,37 +15,34 @@ const AffiliateProductDetail = () => {
     )
 
     useEffect(() => {
+        const controller = new AbortController()
+        let active = true
         const fetchProduct = async () => {
             try {
-                const response = await axios.get(`/api/public/affiliate/products/${slug}`)
-                setProduct(response.data)
+                // AF-39: canonical anonymous public detail (same admission path as category page)
+                const data = await discoverPublicProductDetail(slug, { signal: controller.signal })
+                if (active) setProduct(data)
             } catch (err) {
-                console.error('[AffiliateProductDetail] Failed to fetch product:', err)
-                setError('Failed to load product details.')
+                if (err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return
+                if (active) setError('Failed to load product details.')
             } finally {
-                setLoading(false)
+                if (active) setLoading(false)
             }
         }
         fetchProduct()
+        return () => {
+            active = false
+            controller.abort()
+        }
     }, [slug])
 
     const handlePromote = () => {
-        if (!affiliateAuthApi.isAuthenticated()) {
-            navigate('/affiliate/register')
-        } else {
-            navigate(`/affiliate/portal?productSlug=${slug}`)
-        }
+        navigate(`/affiliate/portal?tab=discover&search=${encodeURIComponent(product?.name || '')}`)
     }
 
-    const priceLabel = product?.hasVariants
-        ? product?.minVariantPrice == null
-            ? '—'
-            : product.maxVariantPrice != null && product.maxVariantPrice > product.minVariantPrice
-                ? `${product.minVariantPrice} - ${product.maxVariantPrice} ${product.currency}`
-                : `${product.minVariantPrice} ${product.currency}`
-        : product?.price != null
-            ? `${product.price} ${product.currency}`
-            : '—'
+    const priceLabel = product?.price != null
+        ? `${product.price} ${product.currency}`
+        : '—'
 
     if (loading) return (
         <div style={styles.loadingContainer}>
@@ -85,8 +81,8 @@ const AffiliateProductDetail = () => {
                 <div style={styles.grid}>
                     {/* Gallery Section */}
                     <div style={styles.galleryCard}>
-                        {product.thumbnail ? (
-                            <img src={product.thumbnail} alt={product.name} style={styles.mainImage} />
+                        {product.images && product.images.length > 0 ? (
+                            <img src={product.images[0]} alt={product.name} style={styles.mainImage} />
                         ) : (
                             <div style={styles.placeholderImage}>📦 No Image</div>
                         )}
@@ -94,7 +90,7 @@ const AffiliateProductDetail = () => {
 
                     {/* Product Info Section */}
                     <div style={styles.infoCard}>
-                        <div style={styles.categoryBadge}>{product.category}</div>
+                        <div style={styles.categoryBadge}>{product.categoryName || 'Affiliate'}</div>
                         <h1 style={styles.title}>{product.name}</h1>
                         <p style={styles.price}>{priceLabel}</p>
 

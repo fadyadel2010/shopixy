@@ -4,10 +4,10 @@
  * Sidebar + TopBar + Content layout.
  * Dark-first premium SaaS design.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { AFFILIATE_AUTH_STORAGE_KEYS, affiliateAuthApi } from '../../../services/affiliateAuthApi'
+import { AFFILIATE_AUTH_SESSION_EVENT_KEY, affiliateAuthApi } from '../../../services/affiliateAuthApi'
 import affiliateApi from '../../../services/affiliateApi'
 import { Menu, X, Wallet, Clock, User, Bell, ChevronLeft, LogOut, Settings, BarChart3, DollarSign, ShoppingBag, Link2, Package, LayoutDashboard, Globe, ArrowDownCircle } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -48,55 +48,64 @@ const AffiliatePortal = () => {
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
     const [profile, setProfile] = useState(null)
     const [isBootstrapping, setIsBootstrapping] = useState(true)
+    const [authError, setAuthError] = useState(false)
+    const mountedRef = useRef(false)
+    const restoreInFlightRef = useRef(null)
 
-    useEffect(() => {
-        let active = true
+    const restoreSession = useCallback(() => {
+        if (restoreInFlightRef.current) return restoreInFlightRef.current
 
-        const restoreSession = () => affiliateAuthApi.restoreSession()
+        const request = affiliateAuthApi.restoreSession()
             .then((sessionProfile) => {
-                if (active) {
+                if (mountedRef.current) {
                     setProfile(sessionProfile)
+                    setAuthError(false)
                 }
             })
-            .catch(() => {
-                if (!active) {
-                    return
-                }
+            .catch((error) => {
+                if (!mountedRef.current) return
 
-                affiliateAuthApi.clearSessionPresentation()
-                setProfile(null)
-                navigate('/affiliate/login', { replace: true })
+                if (error.response?.status === 401 || error.response?.status === 403) {
+                    setProfile(null)
+                    setAuthError(false)
+                    const returnUrl = `${window.location.pathname}${window.location.search}`
+                    navigate(`/affiliate/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replace: true })
+                } else {
+                    setAuthError(true)
+                }
             })
             .finally(() => {
-                if (active) {
+                restoreInFlightRef.current = null
+                if (mountedRef.current) {
                     setIsBootstrapping(false)
                 }
             })
+
+        restoreInFlightRef.current = request
+        return request
+    }, [navigate])
+
+    useEffect(() => {
+        mountedRef.current = true
 
         void restoreSession()
         const revalidationInterval = window.setInterval(() => {
             void restoreSession()
         }, AFFILIATE_SESSION_REVALIDATION_INTERVAL_MS)
 
-        return () => {
-            active = false
-            window.clearInterval(revalidationInterval)
-        }
-    }, [navigate])
-
-    useEffect(() => {
-        const watchedKeys = new Set(Object.values(AFFILIATE_AUTH_STORAGE_KEYS))
-
         const handleStorage = (event) => {
-            if (event.key && watchedKeys.has(event.key) && event.oldValue !== event.newValue) {
-                setProfile(null)
-                navigate('/affiliate/login', { replace: true })
+            if (event.key === AFFILIATE_AUTH_SESSION_EVENT_KEY && event.oldValue !== event.newValue) {
+                void restoreSession()
             }
         }
 
         window.addEventListener('storage', handleStorage)
-        return () => window.removeEventListener('storage', handleStorage)
-    }, [navigate])
+        return () => {
+            mountedRef.current = false
+            window.clearInterval(revalidationInterval)
+            window.removeEventListener('storage', handleStorage)
+        }
+    }, [restoreSession])
 
     const switchTab = useCallback((tab) => {
         setActiveTab(tab)
@@ -156,7 +165,20 @@ const AffiliatePortal = () => {
                 style={{ fontFamily: isRTL ? "'Noto Kufi Arabic', 'Inter', sans-serif" : "'Inter', -apple-system, system-ui, sans-serif" }}
             >
                 <div className="rounded-2xl border border-gray-200 dark:border-white/[0.06] bg-white dark:bg-[#0D1117] px-6 py-4 shadow-sm dark:shadow-none">
-                    <p className="text-sm text-gray-600 dark:text-gray-400">Restoring secure affiliate session...</p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">{t('portal.restoringSession')}</p>
+                </div>
+            </div>
+        )
+    }
+
+    if (authError && !profile) {
+        return (
+            <div dir={dir} className="min-h-screen bg-gray-50 dark:bg-[#0B0F19] flex items-center justify-center px-4">
+                <div className="max-w-md rounded-2xl border border-red-500/20 bg-white dark:bg-[#0D1117] p-6 text-center">
+                    <p className="text-sm text-gray-700 dark:text-gray-300">{t('portal.sessionRestoreError')}</p>
+                    <button type="button" onClick={() => void restoreSession()} className="mt-4 rounded-xl bg-[#6C63FF] px-5 py-3 text-sm font-semibold text-white">
+                        {t('portal.retrySession')}
+                    </button>
                 </div>
             </div>
         )

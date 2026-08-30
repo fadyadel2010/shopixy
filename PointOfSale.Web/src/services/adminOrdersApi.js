@@ -11,6 +11,42 @@ import {
 
 const DEFAULT_PAGE = 1
 const DEFAULT_PAGE_SIZE = 20
+const SAFE_ERROR_CODE_PATTERN = /^[A-Z0-9_]{2,80}$/
+const SAFE_TRACE_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,160}$/
+
+export function mapAdminOrdersError(error, fallback) {
+    const status = Number.isInteger(error?.response?.status) ? error.response.status : null
+    const backendError = error?.response?.data?.error
+    const backendCode = error?.response?.data?.code
+        || (typeof backendError === 'string' && SAFE_ERROR_CODE_PATTERN.test(backendError) ? backendError : null)
+    const backendTraceId = error?.response?.data?.traceId
+        || error?.response?.headers?.['x-correlation-id']
+        || error?.response?.headers?.['x-request-id']
+    const isClientAuthorityError = !error?.response && !error?.config && error instanceof Error
+    const clientMessage = error?.message === 'Tenant context is unavailable. Sign in again before viewing orders.'
+        ? error.message
+        : 'Orders response could not be verified. Please retry or sign in again.'
+    const mapped = new Error(
+        isClientAuthorityError
+            ? clientMessage
+            : getSafeApiErrorMessage(error, fallback),
+    )
+
+    mapped.name = 'AdminOrdersError'
+    mapped.status = status
+    mapped.code = typeof backendCode === 'string' && SAFE_ERROR_CODE_PATTERN.test(backendCode)
+        ? backendCode
+        : status
+            ? `HTTP_${status}`
+            : isClientAuthorityError
+                ? 'ORDER_CLIENT_AUTHORITY_REJECTED'
+                : 'ORDER_API_UNAVAILABLE'
+    mapped.traceId = typeof backendTraceId === 'string' && SAFE_TRACE_ID_PATTERN.test(backendTraceId)
+        ? backendTraceId
+        : null
+
+    return mapped
+}
 
 function resolveTenantId() {
     return useAuthStore.getState().user?.tenantId || ''
@@ -71,29 +107,31 @@ function buildOrderQueryParams(filters) {
     return params
 }
 
-export async function getAdminOrders(filters) {
+export async function getAdminOrders(filters, signal) {
     try {
         const response = await api.get(`/admin/orders?${buildOrderQueryParams(filters).toString()}`, {
             headers: buildTenantHeaders(),
+            signal,
         })
 
         const lifecycleAccepted = requireMarketplaceOrderLifecycleListAuthority(response.data)
         return requireVendorOrderVisibilityListAuthority(lifecycleAccepted, useAuthStore.getState().user)
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to load tenant orders right now.'))
+        throw mapAdminOrdersError(error, 'Unable to load tenant orders right now.')
     }
 }
 
-export async function getAdminOrderDetails(orderId) {
+export async function getAdminOrderDetails(orderId, signal) {
     try {
         const response = await api.get(`/admin/orders/${orderId}`, {
             headers: buildTenantHeaders(),
+            signal,
         })
 
         const lifecycleAccepted = requireMarketplaceOrderLifecycleAuthority(response.data)
         return requireVendorOrderVisibilityAuthority(lifecycleAccepted, useAuthStore.getState().user, orderId)
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to load order details right now.'))
+        throw mapAdminOrdersError(error, 'Unable to load order details right now.')
     }
 }
 
@@ -119,28 +157,89 @@ export async function updateAdminOrderStatus(orderId, { newStatus, reason, rowVe
 
         return response.data
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to update order status right now.'))
+        throw mapAdminOrdersError(error, 'Unable to update order status right now.')
     }
 }
 
-export async function getAdminOrderFulfillmentActions(orderId) {
+export async function getAdminOrderFulfillmentActions(orderId, signal) {
     try {
         const response = await api.get(`/orders/${orderId}/fulfillment/actions`, {
             headers: buildTenantHeaders(),
+            signal,
         })
 
         return response.data
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to load fulfillment actions right now.'))
+        throw mapAdminOrdersError(error, 'Unable to load fulfillment actions right now.')
     }
 }
 
-export async function runAdminOrderFulfillmentAction(orderId, actionCode) {
+const PAYMENT_ACTION_CODES = new Set(['cod-delivered', 'refund'])
+
+export function requireAdminOrderPaymentActionAuthority(authority, expectedOrderId) {
+    if (!authority || String(authority.orderId || '').toLowerCase() !== String(expectedOrderId || '').toLowerCase()) {
+        throw new Error('Payment action authority rejected order-target mismatch.')
+    }
+
+    if (!Array.isArray(authority.availableActions)) {
+        throw new Error('Payment action authority rejected missing backend action evidence.')
+    }
+
+    const seen = new Set()
+    for (const action of authority.availableActions) {
+        if (
+            !PAYMENT_ACTION_CODES.has(action?.actionCode) ||
+            seen.has(action.actionCode) ||
+            typeof action.label !== 'string' ||
+            !action.label.trim() ||
+            action.method !== 'POST'
+        ) {
+            throw new Error('Payment action authority rejected malformed backend action evidence.')
+        }
+        seen.add(action.actionCode)
+    }
+
+    return authority
+}
+
+export async function getAdminOrderPaymentActions(orderId, signal) {
+    try {
+        const response = await api.get(`/payments/lifecycle/${orderId}/actions`, {
+            headers: buildTenantHeaders(),
+            signal,
+        })
+
+        return requireAdminOrderPaymentActionAuthority(response.data, orderId)
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to load payment actions right now.')
+    }
+}
+
+export async function runAdminOrderPaymentAction(orderId, actionCode, payload = {}) {
+    if (!PAYMENT_ACTION_CODES.has(actionCode)) {
+        throw new Error('This payment action is not supported by the Orders control.')
+    }
+
+    try {
+        const endpoint = actionCode === 'cod-delivered'
+            ? `/payments/lifecycle/${orderId}/cod-delivered`
+            : `/payments/lifecycle/${orderId}/refund`
+        const response = await api.post(endpoint, payload, { headers: buildTenantHeaders() })
+        return response.data
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to run the selected payment action right now.')
+    }
+}
+
+export async function runAdminOrderFulfillmentAction(orderId, actionCode, payload = {}) {
     const supportedActionCodes = new Set([
         'confirm',
         'pack',
         'out-for-delivery',
+        'delivered',
         'complete',
+        'returned',
+        'failed-delivery',
         'retry-delivery',
     ])
 
@@ -151,7 +250,7 @@ export async function runAdminOrderFulfillmentAction(orderId, actionCode) {
     try {
         const response = await api.post(
             `/orders/${orderId}/fulfillment/${actionCode}`,
-            {},
+            payload,
             {
                 headers: buildTenantHeaders(),
             },
@@ -159,7 +258,7 @@ export async function runAdminOrderFulfillmentAction(orderId, actionCode) {
 
         return response.data
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to run the selected lifecycle action right now.'))
+        throw mapAdminOrdersError(error, 'Unable to run the selected lifecycle action right now.')
     }
 }
 
@@ -181,7 +280,24 @@ export async function cancelAdminOrder(orderId, reason) {
 
         return response.data
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to cancel this order right now.'))
+        throw mapAdminOrdersError(error, 'Unable to cancel this order right now.')
+    }
+}
+
+export async function cancelAdminShipment(shipmentId, reason) {
+    if (!reason?.trim()) {
+        throw new Error('Shipment cancellation reason is required.')
+    }
+
+    try {
+        const response = await api.post(
+            `/admin/shipments/${shipmentId}/cancel`,
+            { reason: reason.trim() },
+            { headers: buildTenantHeaders() },
+        )
+        return response.data
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to cancel this shipment right now.')
     }
 }
 
@@ -201,6 +317,6 @@ export async function downloadAdminOrderCheckoutAttachment(orderId, attachmentId
         link.remove()
         window.URL.revokeObjectURL(blobUrl)
     } catch (error) {
-        throw new Error(getSafeApiErrorMessage(error, 'Unable to download this attachment right now.'))
+        throw mapAdminOrdersError(error, 'Unable to download this attachment right now.')
     }
 }

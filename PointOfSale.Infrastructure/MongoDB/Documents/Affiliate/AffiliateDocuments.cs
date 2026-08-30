@@ -256,6 +256,15 @@ public class AffiliateOrderItemSubDocument
     [BsonRepresentation(BsonType.Decimal128)]
     public decimal CommissionAmount { get; set; }
 
+    /// <summary>
+    /// Cumulative commission amount reversed for this order item. This is kept
+    /// separately from IsReversed so multiple partial reversals remain visible
+    /// and can converge to the append-only SQL commission ledger.
+    /// </summary>
+    [BsonElement("reversedAmount")]
+    [BsonRepresentation(BsonType.Decimal128)]
+    public decimal ReversedAmount { get; set; }
+
     [BsonElement("isReversed")]
     public bool IsReversed { get; set; }
 

@@ -97,6 +97,7 @@ public class OrderFulfillmentController : ControllerBase
                 label = a.Label,
                 targetStatus = a.TargetStatus.ToString(),
                 requiresConfirmation = a.RequiresConfirmation,
+                requiredFields = a.RequiredFields,
                 iconHint = a.IconHint
             }).ToList()
         });
@@ -199,10 +200,10 @@ public class OrderFulfillmentController : ControllerBase
     /// Marks an order as delivered.
     /// Transition: OutForDelivery → Delivered
     /// 
-    /// PAYMENT INTEGRATION:
-    /// - For COD orders: Triggers PaymentLifecycle → Ledger journal creation
-    /// - For Wallet orders: May trigger approval workflow
-    /// - For Online orders: No additional action (already collected)
+    /// PAYMENT BOUNDARY:
+    /// - Delivery records fulfillment evidence only.
+    /// - COD collection requires the payment lifecycle command or carrier collection evidence.
+    /// - Online payment authority remains unchanged.
     /// </summary>
     [HttpPost("delivered")]
     public async Task<IActionResult> Delivered(
@@ -428,14 +429,91 @@ public class OrderFulfillmentController : ControllerBase
             });
         }
 
-        return BadRequest(new
+        var (statusCode, code) = MapFulfillmentFailure(result.ErrorMessage);
+        var traceId = Activity.Current?.TraceId.ToString() ?? HttpContext.TraceIdentifier;
+
+        return StatusCode(statusCode, new
         {
             success = false,
             orderId = result.OrderId,
             orderNumber = result.OrderNumber,
             currentStatus = result.OldStatus.ToString(),
-            error = result.ErrorMessage
+            code,
+            message = result.ErrorMessage ?? "The fulfillment transition was rejected.",
+            traceId
         });
+    }
+
+    private static (int StatusCode, string Code) MapFulfillmentFailure(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "FULFILLMENT_TRANSITION_REJECTED");
+        }
+
+        if (message.Contains("Order not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status404NotFound, "ORDER_NOT_FOUND");
+        }
+
+        if (message.StartsWith("MANUAL_DELIVERY_EVIDENCE_REQUIRED", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "MANUAL_DELIVERY_EVIDENCE_REQUIRED");
+        }
+
+        if (message.StartsWith("MANUAL_DELIVERY_PROOF_URL_INVALID", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "MANUAL_DELIVERY_PROOF_URL_INVALID");
+        }
+
+        if (message.StartsWith("MANUAL_DELIVERY_EVIDENCE_INVALID", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "MANUAL_DELIVERY_EVIDENCE_INVALID");
+        }
+
+        if (message.StartsWith("FAILED_DELIVERY_EVIDENCE_INVALID", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "FAILED_DELIVERY_EVIDENCE_INVALID");
+        }
+
+        if (message.StartsWith("RETURN_EVIDENCE_INVALID", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status422UnprocessableEntity, "RETURN_EVIDENCE_INVALID");
+        }
+
+        if (message.StartsWith("REFUND_LIFECYCLE_REQUIRED", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status409Conflict, "REFUND_LIFECYCLE_REQUIRED");
+        }
+
+        if (message.StartsWith("ORDER_CANCELLATION_LIFECYCLE_REQUIRED", StringComparison.Ordinal))
+        {
+            return (StatusCodes.Status409Conflict, "ORDER_CANCELLATION_LIFECYCLE_REQUIRED");
+        }
+
+        if (message.Contains("accounting", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status409Conflict, "ACCOUNTING_STATE_CONFLICT");
+        }
+
+        if (message.Contains("payment", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status409Conflict, "PAYMENT_STATE_CONFLICT");
+        }
+
+        if (message.Contains("Cannot manually update", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("source", StringComparison.OrdinalIgnoreCase) && message.Contains("not allowed", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status409Conflict, "FULFILLMENT_AUTHORITY_MISMATCH");
+        }
+
+        if (message.Contains("Cannot transition", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("terminal order", StringComparison.OrdinalIgnoreCase))
+        {
+            return (StatusCodes.Status409Conflict, "FULFILLMENT_TRANSITION_INVALID");
+        }
+
+        return (StatusCodes.Status422UnprocessableEntity, "FULFILLMENT_TRANSITION_REJECTED");
     }
 
     private async Task<bool> IsCurrentTenantOrderAsync(Guid orderId, CancellationToken cancellationToken)

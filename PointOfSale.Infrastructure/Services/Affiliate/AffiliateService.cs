@@ -193,11 +193,16 @@ public class AffiliateService : IAffiliateService
         if (product == null)
             throw new InvalidOperationException($"Product {productId} not found");
 
-        await EnsureProductEligibleForAffiliateAsync(product, ct);
-
         // Upsert: check if policy already exists
         var existing = await _context.AffiliateProductPolicies
-            .FirstOrDefaultAsync(p => p.ProductId == productId, ct);
+            .FirstOrDefaultAsync(p => p.ProductId == productId && p.TenantId == tenantId, ct);
+
+        // Product lifecycle gates entry/re-entry only. Editing an already-enabled
+        // Affiliate policy must not become a hidden Product lifecycle mutation rule.
+        if (existing == null || !existing.IsEnabled)
+        {
+            await EnsureProductEligibleForAffiliateAsync(product, ct);
+        }
 
         if (existing != null)
         {
@@ -213,38 +218,18 @@ public class AffiliateService : IAffiliateService
                     "Affiliate category is required. Assign a category before enabling affiliate marketing.");
             }
             
-            // AF-30A-FIX: Validate category is active before enabling
-            var category = await _context.AffiliateCategories
-                .FirstOrDefaultAsync(c => c.Id == existing.AffiliateCategoryId.Value, ct);
-            
-            if (category == null)
-            {
-                _logger.LogError(
-                    "[AF-30A:CategoryNotFound] Category {CategoryId} not found for Product {ProductId}",
-                    existing.AffiliateCategoryId.Value, productId);
-                throw new InvalidOperationException(
-                    $"Affiliate category {existing.AffiliateCategoryId.Value} not found. " +
-                    "Assign a valid category before enabling affiliate marketing.");
-            }
-            
-            if (!category.IsActive)
-            {
-                _logger.LogWarning(
-                    "[AF-30A:InactiveCategory] Cannot enable affiliate for Product {ProductId} with inactive category {CategoryId} ({CategoryName})",
-                    productId, existing.AffiliateCategoryId.Value, category.Name);
-                throw new InvalidOperationException(
-                    $"Affiliate category '{category.Name}' is not active. " +
-                    "Assign an active category before enabling affiliate marketing.");
-            }
+            // Validate the entire category lineage, not only the selected node.
+            var category = await GetSelectableAffiliateCategoryAsync(
+                existing.AffiliateCategoryId.Value,
+                ct);
             
             existing.Enable();
-            TouchProductProjectionVersion(product);
             await PublishAffiliateProductPolicyChangedAsync(existing, category, ct);
             await _context.SaveChangesAsync(ct);
 
             _logger.LogInformation(
-                "[AF-30A] Affiliate policy updated for Product {ProductId}: rate={Rate}, category={CategoryId}",
-                productId, commissionRate, existing.AffiliateCategoryId.Value);
+                "[AF-30A] Affiliate policy updated for Product {ProductId}",
+                productId);
             return existing;
         }
 
@@ -285,19 +270,7 @@ public class AffiliateService : IAffiliateService
         CategoryDetails? categoryDetails = null;
         if (categoryId.HasValue)
         {
-            var category = await _context.AffiliateCategories
-                .FirstOrDefaultAsync(c => c.Id == categoryId.Value, ct);
-
-            if (category == null)
-                throw new InvalidOperationException($"Affiliate category {categoryId.Value} not found");
-
-            if (!category.IsActive)
-            {
-                _logger.LogWarning(
-                    "[AF-30:InactiveCategory] Product {ProductId} assigned to inactive category {CategoryId} ({CategoryName})",
-                    productId, categoryId.Value, category.Name);
-                throw new InvalidOperationException($"Affiliate category {categoryId.Value} is not active");
-            }
+            var category = await GetSelectableAffiliateCategoryAsync(categoryId.Value, ct);
 
             // Fetch parent details if subcategory
             string? parentName = null;
@@ -327,13 +300,12 @@ public class AffiliateService : IAffiliateService
         }
 
         existing.UpdateCategory(categoryId);
-        TouchProductProjectionVersion(product);
         await PublishAffiliateProductPolicyChangedAsync(existing, categoryDetails, ct);
         await _context.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "[AF-30] Affiliate category updated to {CategoryId} for Product {ProductId}",
-            categoryId, productId);
+            "[AF-30] Affiliate category updated for Product {ProductId}",
+            productId);
 
         return new AffiliatePolicyWithCategoryDetails
         {
@@ -348,73 +320,41 @@ public class AffiliateService : IAffiliateService
         CancellationToken ct = default)
     {
         var tenantId = TenantId;
-
-        var product = await _context.Products.FirstOrDefaultAsync(p => p.Id == productId && p.TenantId == tenantId, ct);
-        if (product == null)
-            throw new InvalidOperationException($"Product {productId} not found");
-
-        await EnsureProductEligibleForAffiliateAsync(product, ct);
-
-        // Validate category
-        var category = await _context.AffiliateCategories
-            .FirstOrDefaultAsync(c => c.Id == categoryId, ct);
-
-        if (category == null)
-            throw new InvalidOperationException($"Affiliate category {categoryId} not found");
-
-        if (!category.IsActive)
-            throw new InvalidOperationException($"Affiliate category {categoryId} is not active");
-
-        // Fetch parent details if subcategory
-        string? parentName = null;
-        string? parentSlug = null;
-        if (category.ParentId.HasValue)
-        {
-            var parent = await _context.AffiliateCategories
-                .Where(c => c.Id == category.ParentId.Value)
-                .Select(c => new { c.Name, c.Slug })
-                .FirstOrDefaultAsync(ct);
-
-            if (parent != null)
-            {
-                parentName = parent.Name;
-                parentSlug = parent.Slug;
-            }
-        }
-
-        var categoryDetails = new CategoryDetails
-        {
-            CategoryId = category.Id,
-            CategoryName = category.Name,
-            CategorySlug = category.Slug,
-            ParentCategoryName = parentName,
-            ParentCategorySlug = parentSlug
-        };
-
-        // AF-30A-FIX: Wrap in explicit transaction for atomicity
         var ownsTransaction = _context.Database.CurrentTransaction == null;
         await using IDbContextTransaction? transaction = ownsTransaction
-            ? await _context.Database.BeginTransactionAsync(ct)
+            ? await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct)
             : null;
 
         try
         {
-            // Upsert: check if policy already exists
+            var product = await _context.Products
+                .FirstOrDefaultAsync(p => p.Id == productId && p.TenantId == tenantId, ct)
+                ?? throw new InvalidOperationException($"Product {productId} not found");
+
             var existing = await _context.AffiliateProductPolicies
-                .FirstOrDefaultAsync(p => p.ProductId == productId, ct);
+                .FirstOrDefaultAsync(p => p.ProductId == productId && p.TenantId == tenantId, ct);
+
+            // Product eligibility gates only entry/re-entry into Affiliate participation.
+            // Affiliate-owned edits to an enabled policy must not depend on Product state.
+            if (existing == null || !existing.IsEnabled)
+            {
+                await EnsureProductEligibleForAffiliateAsync(product, ct);
+            }
+
+            var category = await GetSelectableAffiliateCategoryAsync(categoryId, ct);
+            var categoryDetails = await BuildCategoryDetailsAsync(category, ct);
 
             if (existing != null)
             {
                 existing.UpdateRate(commissionRate, maxPerItem);
                 existing.UpdateCategory(categoryId);
                 existing.Enable();
-                TouchProductProjectionVersion(product);
                 await PublishAffiliateProductPolicyChangedAsync(existing, categoryDetails, ct);
                 await _context.SaveChangesAsync(ct);
 
                 _logger.LogInformation(
-                    "[AF-30A] Affiliate enabled for Product {ProductId}: rate={Rate}, category={CategoryId}",
-                    productId, commissionRate, categoryId);
+                    "[AF-30A] Affiliate enabled for Product {ProductId}",
+                    productId);
 
                 if (ownsTransaction && transaction != null)
                 {
@@ -431,13 +371,12 @@ public class AffiliateService : IAffiliateService
             // Create new policy with category
             var policy = AffiliateProductPolicy.Create(tenantId, productId, commissionRate, maxPerItem, categoryId);
             _context.AffiliateProductPolicies.Add(policy);
-            TouchProductProjectionVersion(product);
             await PublishAffiliateProductPolicyChangedAsync(policy, categoryDetails, ct);
             await _context.SaveChangesAsync(ct);
 
             _logger.LogInformation(
-                "[AF-30A] Affiliate policy created for Product {ProductId}: rate={Rate}, category={CategoryId}",
-                productId, commissionRate, categoryId);
+                "[AF-30A] Affiliate policy created for Product {ProductId}",
+                productId);
 
             if (ownsTransaction && transaction != null)
             {
@@ -450,12 +389,19 @@ public class AffiliateService : IAffiliateService
                 CategoryDetails = categoryDetails
             };
         }
-        catch
+        catch (Exception ex)
         {
             if (ownsTransaction && transaction != null)
             {
                 await transaction.RollbackAsync(ct);
             }
+
+            if (IsAffiliatePolicyWriteConflict(ex))
+            {
+                throw new DbUpdateConcurrencyException(
+                    "Affiliate policy changed concurrently. Reload and retry the operation.", ex);
+            }
+
             throw;
         }
     }
@@ -482,7 +428,6 @@ public class AffiliateService : IAffiliateService
         }
 
         existing.Disable();
-        TouchProductProjectionVersion(product);
         await PublishAffiliateProductPolicyChangedAsync(existing, categoryDetails: null, ct);
         await _context.SaveChangesAsync(ct);
 
@@ -504,8 +449,11 @@ public class AffiliateService : IAffiliateService
             throw new InvalidOperationException($"Affiliate policy for Product {productId} not found");
 
         existing.UpdateTemplate(templateType);
-        TouchProductProjectionVersion(await _context.Products.FirstOrDefaultAsync(p => p.Id == productId && p.TenantId == tenantId, ct)
-            ?? throw new InvalidOperationException($"Product {productId} not found"));
+        if (!await _context.Products.AnyAsync(p => p.Id == productId && p.TenantId == tenantId, ct))
+        {
+            throw new InvalidOperationException($"Product {productId} not found");
+        }
+
         await PublishAffiliateProductPolicyChangedAsync(existing, categoryDetails: null, ct);
         await _context.SaveChangesAsync(ct);
 
@@ -519,15 +467,6 @@ public class AffiliateService : IAffiliateService
     // ═══════════════════════════════════════════════════════════════════
     // ATTRIBUTION
     // ═══════════════════════════════════════════════════════════════════
-
-    private static void TouchProductProjectionVersion(Product product)
-    {
-        var nextVersion = product.ProjectionMutationVersion <= 0
-            ? 1L
-            : product.ProjectionMutationVersion + 1L;
-
-        product.AdvanceProjectionMutationVersion(nextVersion);
-    }
 
     private async Task EnsureProductEligibleForAffiliateAsync(Product product, CancellationToken ct)
     {
@@ -663,6 +602,48 @@ public class AffiliateService : IAffiliateService
             AffiliateParentCategoryName = categoryDetails?.ParentCategoryName,
             AffiliateParentCategorySlug = categoryDetails?.ParentCategorySlug
         }, ct);
+    }
+
+    private async Task<AffiliateCategory> GetSelectableAffiliateCategoryAsync(
+        Guid categoryId,
+        CancellationToken ct)
+    {
+        var category = await _context.AffiliateCategories
+            .FirstOrDefaultAsync(candidate => candidate.Id == categoryId && !candidate.IsDeleted, ct);
+
+        if (category == null)
+        {
+            throw new InvalidOperationException($"Affiliate category {categoryId} not found");
+        }
+
+        if (!category.IsActive)
+        {
+            throw new InvalidOperationException($"Affiliate category {categoryId} is not active");
+        }
+
+        if (category.Level == 1 && category.ParentId == null)
+        {
+            return category;
+        }
+
+        if (category.Level == 2 && category.ParentId.HasValue)
+        {
+            var liveRootExists = await _context.AffiliateCategories.AnyAsync(
+                parent => parent.Id == category.ParentId.Value &&
+                          !parent.IsDeleted &&
+                          parent.IsActive &&
+                          parent.Level == 1 &&
+                          parent.ParentId == null,
+                ct);
+
+            if (liveRootExists)
+            {
+                return category;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Affiliate category {categoryId} is not available because its hierarchy is inactive or invalid");
     }
 
     private async Task<CategoryDetails?> LoadCategoryDetailsAsync(Guid? categoryId, CancellationToken ct)
@@ -1906,6 +1887,19 @@ public class AffiliateService : IAffiliateService
         return new ReversalTotals(baseToReverse, commissionToReverse);
     }
 
+    private static bool IsFullyReversed(
+        AffiliateCommissionLedger earned,
+        IReadOnlyDictionary<Guid, ReversalTotals> reversalTotalsByOriginalEntryId)
+    {
+        if (!reversalTotalsByOriginalEntryId.TryGetValue(earned.Id, out var totals))
+        {
+            return false;
+        }
+
+        return totals.BaseAmount >= earned.BaseAmount ||
+               totals.CommissionAmount >= earned.CommissionAmount;
+    }
+
     private static string BuildRefundReversalIdempotencyKey(
         string refundReference,
         Guid orderItemId,
@@ -1927,18 +1921,25 @@ public class AffiliateService : IAffiliateService
         EnsureAffiliateDeliveryApprovalAuthority(
             order,
             order.TenantId,
-            deliveredAtUtc: DateTime.UtcNow,
+            deliveredAtUtc: order.DeliveredAt ?? DateTime.UtcNow,
             sourceEvent: "RecordCommissionDeliveredOrderReconciliation",
             eventVersion: 1,
-            deliveryReference: null,
-            proofOfDeliveryUrl: null);
+            deliveryReference: order.DeliveryReference,
+            proofOfDeliveryUrl: order.ProofOfDeliveryUrl);
 
         var existingTerminalEntries = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
             .Where(entry => entry.OrderId == order.Id &&
                             (entry.EntryType == CommissionEntryType.Approved ||
                              entry.EntryType == CommissionEntryType.Reversed))
-            .Select(entry => new { entry.OrderItemId, entry.EntryType })
+            .Select(entry => new
+            {
+                entry.OrderItemId,
+                entry.EntryType,
+                entry.OriginalEntryId,
+                entry.BaseAmount,
+                entry.CommissionAmount
+            })
             .ToListAsync(ct);
 
         var approvedItemIds = existingTerminalEntries
@@ -1946,17 +1947,22 @@ public class AffiliateService : IAffiliateService
             .Select(entry => entry.OrderItemId)
             .ToHashSet();
 
-        var reversedItemIds = existingTerminalEntries
+        var reversalTotalsByOriginalEntryId = existingTerminalEntries
             .Where(entry => entry.EntryType == CommissionEntryType.Reversed)
-            .Select(entry => entry.OrderItemId)
-            .ToHashSet();
+            .Where(entry => entry.OriginalEntryId.HasValue)
+            .GroupBy(entry => entry.OriginalEntryId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => new ReversalTotals(
+                    group.Sum(entry => entry.BaseAmount),
+                    group.Sum(entry => entry.CommissionAmount)));
 
         var approvedEntries = new List<AffiliateCommissionLedger>();
 
         foreach (var earned in earnedEntries)
         {
             if (approvedItemIds.Contains(earned.OrderItemId) ||
-                reversedItemIds.Contains(earned.OrderItemId))
+                IsFullyReversed(earned, reversalTotalsByOriginalEntryId))
             {
                 continue;
             }
@@ -2009,6 +2015,7 @@ public class AffiliateService : IAffiliateService
     }
 
     private async Task<bool> ShouldRetryMissingEarnedCommissionForRefundAsync(
+        Guid tenantId,
         Guid orderId,
         Guid orderItemId,
         CancellationToken ct)
@@ -2016,7 +2023,11 @@ public class AffiliateService : IAffiliateService
         var order = await _context.Orders
             .IgnoreQueryFilters()
             .Include(item => item.Items)
-            .FirstOrDefaultAsync(item => item.Id == orderId && !item.IsDeleted, ct);
+            .FirstOrDefaultAsync(item =>
+                item.Id == orderId &&
+                item.TenantId == tenantId &&
+                !item.IsDeleted,
+                ct);
 
         if (order == null)
         {
@@ -2071,11 +2082,13 @@ public class AffiliateService : IAffiliateService
             "[Affiliate:Approve] Delivered affiliate order has no earned commission yet - retrying | OrderId: {OrderId}",
             orderId);
 
-        throw new InvalidOperationException(
-            $"AFFILIATE_COMMISSION_NOT_READY_FOR_DELIVERY_APPROVAL: Delivered affiliate order {orderId} has no earned commission entry yet.");
+        throw new AffiliateCommissionDeferredException(
+            orderId,
+            "AFFILIATE_COMMISSION_NOT_READY_FOR_DELIVERY_APPROVAL: No earned commission entry exists yet");
     }
 
     public async Task ReverseCommissionForOrderItemAsync(
+        Guid tenantId,
         Guid orderId,
         Guid orderItemId,
         CancellationToken ct = default,
@@ -2087,12 +2100,14 @@ public class AffiliateService : IAffiliateService
         var original = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(e =>
+                e.StoreTenantId == tenantId &&
+                e.OrderId == orderId &&
                 e.OrderItemId == orderItemId &&
                 e.EntryType == CommissionEntryType.Earned, ct);
 
         if (original == null)
         {
-            if (await ShouldRetryMissingEarnedCommissionForRefundAsync(orderId, orderItemId, ct))
+            if (await ShouldRetryMissingEarnedCommissionForRefundAsync(tenantId, orderId, orderItemId, ct))
             {
                 _logger.LogWarning(
                     "[Affiliate:Reverse] Earned commission is not ready for refunded affiliate item - retrying | OrderId: {OrderId} | OrderItemId: {OrderItemId}",
@@ -2112,7 +2127,11 @@ public class AffiliateService : IAffiliateService
         // Load order for event payload (IgnoreQueryFilters for consumer context)
         var order = await _context.Orders
             .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(o => o.Id == orderId && !o.IsDeleted, ct);
+            .FirstOrDefaultAsync(o =>
+                o.Id == orderId &&
+                o.TenantId == tenantId &&
+                !o.IsDeleted,
+                ct);
 
         var existingReversalTotalsByOriginalId = await LoadReversalTotalsByOriginalEntryIdAsync(
             new[] { original.Id },
@@ -2288,10 +2307,15 @@ public class AffiliateService : IAffiliateService
             return;
         }
 
-        var reversedItemIds = allEntries
+        var reversalTotalsByOriginalEntryId = allEntries
             .Where(e => e.EntryType == CommissionEntryType.Reversed)
-            .Select(e => e.OrderItemId)
-            .ToHashSet();
+            .Where(e => e.OriginalEntryId.HasValue)
+            .GroupBy(e => e.OriginalEntryId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => new ReversalTotals(
+                    group.Sum(entry => entry.BaseAmount),
+                    group.Sum(entry => entry.CommissionAmount)));
 
         var approvedItemIds = allEntries
             .Where(e => e.EntryType == CommissionEntryType.Approved)
@@ -2304,10 +2328,10 @@ public class AffiliateService : IAffiliateService
 
         foreach (var earned in earnedEntries)
         {
-            if (reversedItemIds.Contains(earned.OrderItemId))
+            if (IsFullyReversed(earned, reversalTotalsByOriginalEntryId))
             {
                 _logger.LogDebug(
-                    "[Affiliate:Approve] OrderItem {OrderItemId} was reversed — skipping approval",
+                    "[Affiliate:Approve] OrderItem {OrderItemId} was fully reversed — skipping approval",
                     earned.OrderItemId);
                 skippedReversed++;
                 continue;
@@ -2475,7 +2499,7 @@ public class AffiliateService : IAffiliateService
         {
             order = await _context.Orders
                 .FromSqlInterpolated($@"
-                    SELECT *
+                    SELECT *, xmin
                     FROM ""Orders""
                     WHERE ""Id"" = {orderId}
                       AND ""IsDeleted"" = FALSE
@@ -2560,24 +2584,25 @@ public class AffiliateService : IAffiliateService
             }
         }
 
-        if (order.Total > 0m &&
-            (order.PaymentStatus is PaymentStatus.Pending
-                or PaymentStatus.Authorized
-                or PaymentStatus.AwaitingVerification
-                or PaymentStatus.Failed
-                or PaymentStatus.Rejected
-                or PaymentStatus.Expired
-                or PaymentStatus.CashOnDelivery))
+        if (order.Status is OrderStatus.Cancelled or OrderStatus.Refunded)
         {
             throw new InvalidOperationException(
-                $"AFFILIATE_DELIVERY_PAYMENT_AUTHORITY_NOT_CONFIRMED: Cannot approve affiliate commission until payment is financially recognized. OrderId={order.Id}; PaymentStatus={order.PaymentStatus}; SourceEvent={sourceEvent}; EventVersion={eventVersion}.");
+                $"AFFILIATE_DELIVERY_ORDER_AUTHORITY_NOT_ELIGIBLE: Cannot approve affiliate commission for a cancelled or fully refunded order. OrderId={order.Id}; OrderStatus={order.Status}; SourceEvent={sourceEvent}; EventVersion={eventVersion}.");
+        }
+
+        if (order.Total > 0m && !HasPendingCommissionPaymentAuthority(order.PaymentStatus))
+        {
+            throw new AffiliateCommissionDeferredException(
+                order.Id,
+                $"AFFILIATE_DELIVERY_PAYMENT_AUTHORITY_NOT_CONFIRMED: PaymentStatus={order.PaymentStatus}; SourceEvent={sourceEvent}; EventVersion={eventVersion}");
         }
 
         if (order.Total > 0m &&
             order.FinancialPostingStatus is not (FinancialPostingStatus.Posted or FinancialPostingStatus.NotRequired))
         {
-            throw new InvalidOperationException(
-                $"AFFILIATE_DELIVERY_ACCOUNTING_AUTHORITY_NOT_CONFIRMED: Cannot approve affiliate commission until collection accounting is posted. OrderId={order.Id}; FinancialPostingStatus={order.FinancialPostingStatus}; SourceEvent={sourceEvent}; EventVersion={eventVersion}.");
+            throw new AffiliateCommissionDeferredException(
+                order.Id,
+                $"AFFILIATE_DELIVERY_ACCOUNTING_AUTHORITY_NOT_CONFIRMED: FinancialPostingStatus={order.FinancialPostingStatus}; SourceEvent={sourceEvent}; EventVersion={eventVersion}");
         }
 
         _ = deliveredAtUtc;
@@ -2627,14 +2652,19 @@ public class AffiliateService : IAffiliateService
 
         // Compute the actual payable amount (same logic as orchestrator's BuildExactPayoutPlan)
         // This filters out already-paid and reversed entries to get the true amount that can be paid
-        var reversedOrderItemIds = await _context.AffiliateCommissionLedger
+        var reversalAmountsByOrderItem = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
             .Where(e =>
                 e.AffiliateAccountId == affiliateAccountId &&
                 e.StoreTenantId == tenantId &&
                 e.EntryType == CommissionEntryType.Reversed)
-            .Select(e => e.OrderItemId)
-            .ToListAsync(ct);
+            .GroupBy(e => e.OrderItemId)
+            .Select(group => new
+            {
+                OrderItemId = group.Key,
+                CommissionAmount = group.Sum(entry => entry.CommissionAmount)
+            })
+            .ToDictionaryAsync(item => item.OrderItemId, item => item.CommissionAmount, ct);
 
         var alreadyPaidOrderItemIds = await _context.AffiliateCommissionLedger
             .IgnoreQueryFilters()
@@ -2647,9 +2677,10 @@ public class AffiliateService : IAffiliateService
 
         // Calculate the actual payable amount (after filtering)
         var payableAmount = approvedEntries
-            .Where(e => !alreadyPaidOrderItemIds.Contains(e.OrderItemId) &&
-                       !reversedOrderItemIds.Contains(e.OrderItemId))
-            .Sum(e => e.CommissionAmount);
+            .Where(e => !alreadyPaidOrderItemIds.Contains(e.OrderItemId))
+            .Sum(e => Math.Max(
+                e.CommissionAmount - reversalAmountsByOrderItem.GetValueOrDefault(e.OrderItemId),
+                0m));
 
         // Guard: Skip if nothing to pay (all items already paid or reversed)
         if (payableAmount <= 0)
@@ -2722,6 +2753,15 @@ public class AffiliateService : IAffiliateService
     {
         return ex.InnerException is PostgresException pg && pg.SqlState == "23505";
     }
+
+    private static bool IsAffiliatePolicyWriteConflict(Exception ex) =>
+        ex is PostgresException { SqlState: PostgresErrorCodes.SerializationFailure } ||
+        ex is DbUpdateException dbUpdateException &&
+        (IsUniqueViolation(dbUpdateException) ||
+         dbUpdateException.InnerException is PostgresException
+         {
+             SqlState: PostgresErrorCodes.SerializationFailure
+         });
 
     /// <summary>
     /// AF-36: Determines if a payment method requires admin verification before

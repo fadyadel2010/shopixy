@@ -10,9 +10,9 @@ public class OrderProjectionConsumerDefinition : ConsumerDefinition<OrderProject
 {
     public OrderProjectionConsumerDefinition()
     {
-        // v6: AF-35 hardening — add affiliate commission reversal binding and
-        // rebuild missing affiliate storefront projections from SQL authority.
-        EndpointName = "order-projection-v6";
+        // v7: project authoritative fulfillment lifecycle visibility, including
+        // returned and failed-delivery terminal states.
+        EndpointName = "order-projection-v7";
     }
 
     protected override void ConfigureConsumer(IReceiveEndpointConfigurator endpointConfigurator, IConsumerConfigurator<OrderProjectionConsumer> consumerConfigurator, IRegistrationContext context)

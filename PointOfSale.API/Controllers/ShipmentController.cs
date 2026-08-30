@@ -199,6 +199,10 @@ public class ShipmentController : ControllerBase
         {
             return Conflict(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (ShipmentCarrierStatusAuthorityException ex)
+        {
+            return Conflict(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error updating shipment status | ShipmentId: {ShipmentId} | TraceId: {TraceId}", shipmentId, traceId);

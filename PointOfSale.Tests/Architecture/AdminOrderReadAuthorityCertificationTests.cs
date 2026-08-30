@@ -14,7 +14,12 @@ public sealed class AdminOrderReadAuthorityCertificationTests
         Assert.Contains("ListOrdersAsync", controller, StringComparison.Ordinal);
         Assert.Contains("GetOrderDetailsAsync", controller, StringComparison.Ordinal);
         Assert.Contains("AsNoTracking()", service, StringComparison.Ordinal);
-        Assert.Contains("Order entity does NOT have TenantId column", service, StringComparison.Ordinal);
+        Assert.Contains("Order.TenantId is the canonical seller/store authority", service, StringComparison.Ordinal);
+        Assert.Contains("o.TenantId == tenantId &&", service, StringComparison.Ordinal);
+        Assert.Contains("o.Source == OrderSource.Ecommerce", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("o.Customer.TenantId == tenantId", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("s.OrderId == o.Id && s.TenantId == tenantId", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("pi.OrderId == o.Id && pi.TenantId == tenantId", service, StringComparison.Ordinal);
         Assert.Contains("VerifyOrderOwnershipAsync", service, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSubOrders", service, StringComparison.Ordinal);
         Assert.DoesNotContain("IOrderReadRepository", service, StringComparison.Ordinal);
@@ -44,11 +49,15 @@ public sealed class AdminOrderReadAuthorityCertificationTests
         Assert.Contains("SourceOrderId = row.SourceOrderId ?? row.MarketplaceOrderId?.ToString()", service, StringComparison.Ordinal);
         Assert.Contains("ApplyOrderListSorting", service, StringComparison.Ordinal);
         Assert.Contains("var totalCount = await combinedQuery.CountAsync", service, StringComparison.Ordinal);
+        Assert.Contains("query.Page = totalPages == 0 ? 1 : Math.Min(query.Page, totalPages)", service, StringComparison.Ordinal);
+        Assert.Contains("ThenBy(order => order.OrderId)", service, StringComparison.Ordinal);
         Assert.Contains("formatCurrency(order.totalAmount, order.currency)", frontendPage, StringComparison.Ordinal);
         Assert.DoesNotContain("formatCurrency(order.totalAmount, 'EGP')", frontendPage, StringComparison.Ordinal);
         Assert.Contains("params.set('search', filters.search)", frontendService, StringComparison.Ordinal);
         Assert.Contains("params.set('sortBy', filters.sortBy)", frontendService, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", frontendService, StringComparison.Ordinal);
+        Assert.Contains("queryFn: ({ signal }) => getAdminOrders(filters, signal)", frontendPage, StringComparison.Ordinal);
+        Assert.Contains("ordersQuery.isSuccess && !ordersQuery.isFetching && !orders.length", frontendPage, StringComparison.Ordinal);
     }
 
     [Fact]

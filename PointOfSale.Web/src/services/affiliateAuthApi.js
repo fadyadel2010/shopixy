@@ -3,6 +3,13 @@
  *
  * Uses HttpOnly cookies for session tokens. The browser handles token transport
  * automatically; JavaScript only keeps non-sensitive profile metadata.
+ *
+ * Per-request auth-failure policy (Axios config key `affiliateAuthFailurePolicy`):
+ * - `terminal-logout` (default): a terminal 401 clears local cache and navigates
+ *   to the login page once.
+ * - `caller-owned-passive`: the caller owns session settlement (e.g. passive
+ *   session probes); failures clear local cache and reject without navigating,
+ *   so public login/register pages settle unauthenticated instead of looping.
  */
 import axios from 'axios'
 import { appendCsrfHeader } from '../utils/csrf'
@@ -28,10 +35,46 @@ const STORAGE_KEYS = {
 }
 
 export const AFFILIATE_AUTH_STORAGE_KEYS = STORAGE_KEYS
+export const AFFILIATE_AUTH_SESSION_EVENT_KEY = 'affiliate_session_event'
+
+export const AFFILIATE_AUTH_FAILURE_POLICY = {
+    TERMINAL_LOGOUT: 'terminal-logout',
+    CALLER_OWNED_PASSIVE: 'caller-owned-passive',
+}
+
+const AFFILIATE_LOGIN_PATH = '/affiliate/login'
+const AFFILIATE_PORTAL_PATH = '/affiliate/portal'
+
+export const resolveAffiliatePortalReturnUrl = (candidate) => {
+    if (typeof candidate !== 'string') return AFFILIATE_PORTAL_PATH
+
+    const value = candidate.trim()
+    if (!/^\/affiliate\/portal(?:[?#]|$)/.test(value)) return AFFILIATE_PORTAL_PATH
+
+    return value
+}
+
+const affiliateLoginPathForCurrentLocation = () => {
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    const returnUrl = resolveAffiliatePortalReturnUrl(currentPath)
+
+    return returnUrl === AFFILIATE_PORTAL_PATH
+        ? AFFILIATE_LOGIN_PATH
+        : `${AFFILIATE_LOGIN_PATH}?returnUrl=${encodeURIComponent(returnUrl)}`
+}
+
+let navigateToAffiliateLoginPage = () => {
+    window.location.href = AFFILIATE_LOGIN_PATH
+}
+
+export const setAffiliateLoginNavigator = (navigator) => {
+    navigateToAffiliateLoginPage = navigator
+}
 
 const LEGACY_TOKEN_KEYS = ['affiliate_accessToken', 'affiliate_refreshToken']
 
 let refreshPromise = null
+let restorePromise = null
 let logoutPromise = null
 
 const isAffiliateAuthEndpoint = (url = '') => url.includes('/affiliate/auth/')
@@ -40,11 +83,24 @@ const clearAffiliateAuthStorage = () => {
     [...Object.values(STORAGE_KEYS), ...LEGACY_TOKEN_KEYS].forEach((key) => localStorage.removeItem(key))
 }
 
+const publishAffiliateSessionEvent = (state) => {
+    localStorage.setItem(
+        AFFILIATE_AUTH_SESSION_EVENT_KEY,
+        JSON.stringify({ state, at: Date.now(), nonce: Math.random().toString(36).slice(2) }),
+    )
+}
+
+const settleAffiliateUnauthenticated = () => {
+    clearAffiliateAuthStorage()
+    publishAffiliateSessionEvent('unauthenticated')
+}
+
 const affiliateAuthorityReadConfig = {
     headers: {
         'Cache-Control': 'no-store',
         Pragma: 'no-cache',
     },
+    affiliateAuthFailurePolicy: AFFILIATE_AUTH_FAILURE_POLICY.CALLER_OWNED_PASSIVE,
 }
 
 const cacheAffiliateProfile = (profile) => {
@@ -72,8 +128,8 @@ const forceAffiliateLogoutOnce = () => {
     if (!logoutPromise) {
         logoutPromise = Promise.resolve()
             .then(() => {
-                clearAffiliateAuthStorage()
-                window.location.href = '/affiliate/login'
+                settleAffiliateUnauthenticated()
+                navigateToAffiliateLoginPage(affiliateLoginPathForCurrentLocation())
             })
             .finally(() => {
                 logoutPromise = null
@@ -121,6 +177,20 @@ affiliateAxios.interceptors.request.use(
     (error) => Promise.reject(error),
 )
 
+const resolveAffiliateAuthFailurePolicy = (config) => (
+    config?.affiliateAuthFailurePolicy ?? AFFILIATE_AUTH_FAILURE_POLICY.TERMINAL_LOGOUT
+)
+
+const rejectTerminalAffiliateAuthFailure = async (error, requestConfig) => {
+    if (resolveAffiliateAuthFailurePolicy(requestConfig) === AFFILIATE_AUTH_FAILURE_POLICY.CALLER_OWNED_PASSIVE) {
+        settleAffiliateUnauthenticated()
+    } else {
+        await forceAffiliateLogoutOnce()
+    }
+
+    return Promise.reject(error)
+}
+
 affiliateAxios.interceptors.response.use(
     (response) => response,
     async (error) => {
@@ -130,19 +200,22 @@ affiliateAxios.interceptors.response.use(
             return Promise.reject(error)
         }
 
-        if (error.response?.status === 401 && !originalRequest._retry) {
-            originalRequest._retry = true
-
-            try {
-                await refreshAffiliateSession()
-                return affiliateAxios(originalRequest)
-            } catch {
-                await forceAffiliateLogoutOnce()
-                return Promise.reject(error)
-            }
+        if (error.response?.status !== 401) {
+            return Promise.reject(error)
         }
 
-        return Promise.reject(error)
+        if (originalRequest._retry) {
+            return rejectTerminalAffiliateAuthFailure(error, originalRequest)
+        }
+
+        originalRequest._retry = true
+
+        try {
+            await refreshAffiliateSession()
+            return affiliateAxios(originalRequest)
+        } catch {
+            return rejectTerminalAffiliateAuthFailure(error, originalRequest)
+        }
     },
 )
 
@@ -155,18 +228,43 @@ export const affiliateAuthApi = {
     login: async (data) => {
         const response = await affiliateAxios.post('/affiliate/auth/login', data)
         cacheAffiliateProfile(response.data)
+        publishAffiliateSessionEvent('authenticated')
         return response.data
     },
 
-    restoreSession: async () => {
-        try {
-            const response = await affiliateAxios.get('/affiliate/profile', affiliateAuthorityReadConfig)
-            cacheAffiliateProfile(response.data)
-            return response.data
-        } catch (error) {
-            clearAffiliateAuthStorage()
-            throw error
+    verifyEmail: async (token) => {
+        const response = await affiliateAxios.post('/affiliate/auth/verify-email', { token })
+        return response.data
+    },
+
+    resendVerification: async (email) => {
+        const response = await affiliateAxios.post('/affiliate/auth/resend-verification', { email })
+        return response.data
+    },
+
+    forgotPassword: async (email) => {
+        const response = await affiliateAxios.post('/affiliate/auth/forgot-password', { email })
+        return response.data
+    },
+
+    resetPassword: async (token, newPassword) => {
+        const response = await affiliateAxios.post('/affiliate/auth/reset-password', { token, newPassword })
+        return response.data
+    },
+
+    restoreSession: () => {
+        if (!restorePromise) {
+            restorePromise = affiliateAxios.get('/affiliate/profile', affiliateAuthorityReadConfig)
+                .then((response) => {
+                    cacheAffiliateProfile(response.data)
+                    return response.data
+                })
+                .finally(() => {
+                    restorePromise = null
+                })
         }
+
+        return restorePromise
     },
 
     logout: async () => {
@@ -175,13 +273,11 @@ export const affiliateAuthApi = {
         } catch {
             // Best effort: client-side cleanup still runs.
         } finally {
-            clearAffiliateAuthStorage()
+            settleAffiliateUnauthenticated()
             logoutPromise = null
-            window.location.href = '/affiliate/login'
+            navigateToAffiliateLoginPage(AFFILIATE_LOGIN_PATH)
         }
     },
-
-    isAuthenticated: () => !!localStorage.getItem(STORAGE_KEYS.ACCOUNT_ID),
 
     getStoredProfile: () => ({
         email: localStorage.getItem(STORAGE_KEYS.EMAIL),

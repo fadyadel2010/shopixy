@@ -35,8 +35,9 @@ public sealed class AdminOrderLifecycleAuthorityCertificationTests
         Assert.Contains("OrderStatusSaveChangesInterceptor.BeginAuthorizedContext", service, StringComparison.Ordinal);
         Assert.Contains("OrderStatusChangedEvent", service, StringComparison.Ordinal);
         Assert.Contains("getDirectOrderStatusMutationOptions", webPage, StringComparison.Ordinal);
-        Assert.Contains("GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES", webPage, StringComparison.Ordinal);
-        Assert.Contains("!GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES.has(status)", webPage, StringComparison.Ordinal);
+        Assert.Contains("order.availableOrderActions", webPage, StringComparison.Ordinal);
+        Assert.Contains("action?.targetStatus", webPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES", webPage, StringComparison.Ordinal);
         Assert.Contains("getAdminOrderFulfillmentActions", webPage, StringComparison.Ordinal);
         Assert.Contains("runAdminOrderFulfillmentAction", webPage, StringComparison.Ordinal);
         Assert.Contains("Submit candidate", webPage, StringComparison.Ordinal);
@@ -48,6 +49,53 @@ public sealed class AdminOrderLifecycleAuthorityCertificationTests
         Assert.Contains("missing status concurrency evidence", admission, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage", webPage, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sessionStorage", webPage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void FulfillmentActions_MustExposeEvidenceContractAndStableErrors()
+    {
+        var controller = ReadRepoFile("PointOfSale.API/Controllers/OrderFulfillmentController.cs");
+        var fulfillment = ReadRepoFile("PointOfSale.Infrastructure/Fulfillment/OrderFulfillmentService.cs");
+        var webPage = ReadRepoFile("PointOfSale.Web/src/pages/Orders.jsx");
+        var webService = ReadRepoFile("PointOfSale.Web/src/services/adminOrdersApi.js");
+
+        Assert.Contains("requiredFields = a.RequiredFields", controller, StringComparison.Ordinal);
+        Assert.Contains("MANUAL_DELIVERY_EVIDENCE_REQUIRED", controller, StringComparison.Ordinal);
+        Assert.Contains("FULFILLMENT_TRANSITION_INVALID", controller, StringComparison.Ordinal);
+        Assert.Contains("GetCompletionBlockReason", fulfillment, StringComparison.Ordinal);
+        Assert.Contains("deliveryReference", webPage, StringComparison.Ordinal);
+        Assert.Contains("proofOfDeliveryUrl", webPage, StringComparison.Ordinal);
+        Assert.Contains("'failed-delivery'", webService, StringComparison.Ordinal);
+        Assert.Contains("payload", webService, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PosAdminOrders_MustRenderBackendPaymentAndCancellationCapabilitiesWithoutShadowRules()
+    {
+        var dto = ReadRepoFile("PointOfSale.API/DTOs/Admin/AdminOrderDtos.cs");
+        var adminService = ReadRepoFile("PointOfSale.API/Services/Admin/AdminOrderService.cs");
+        var paymentService = ReadRepoFile("PointOfSale.Infrastructure/Payments/PaymentLifecycleService.cs");
+        var paymentController = ReadRepoFile("PointOfSale.API/Controllers/PaymentLifecycleController.cs");
+        var webPage = ReadRepoFile("PointOfSale.Web/src/pages/Orders.jsx");
+        var webService = ReadRepoFile("PointOfSale.Web/src/services/adminOrdersApi.js");
+
+        Assert.Contains("AvailableOrderActions", dto, StringComparison.Ordinal);
+        Assert.Contains("AvailableShipmentActions", dto, StringComparison.Ordinal);
+        Assert.Contains("TargetStatus", dto, StringComparison.Ordinal);
+        Assert.Contains("BuildAvailableOrderActions(order, paymentIntents)", adminService, StringComparison.Ordinal);
+        Assert.Contains("Code = \"place-on-hold\"", adminService, StringComparison.Ordinal);
+        Assert.Contains("Code = \"resume-pending\"", adminService, StringComparison.Ordinal);
+        Assert.Contains("BuildAvailableShipmentActions(shipment)", adminService, StringComparison.Ordinal);
+        Assert.Contains("order.FulfillmentStatus == FulfillmentStatus.Delivered", paymentService, StringComparison.Ordinal);
+        Assert.Contains("Record COD Collection", paymentController, StringComparison.Ordinal);
+        Assert.Contains("getAdminOrderPaymentActions", webPage, StringComparison.Ordinal);
+        Assert.Contains("paymentAuthority?.availableActions", webPage, StringComparison.Ordinal);
+        Assert.Contains("getAdminOrderPaymentActions", webService, StringComparison.Ordinal);
+        Assert.Contains("requireAdminOrderPaymentActionAuthority", webService, StringComparison.Ordinal);
+        Assert.Contains("action?.targetStatus", webPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("order.paymentStatus ===", webPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("order.fulfillmentStatus ===", webPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("order.status !== 'OnHold'", webPage, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

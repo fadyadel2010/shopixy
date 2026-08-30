@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
+using PointOfSale.Infrastructure.MongoDB.Serialization;
 
 namespace PointOfSale.Infrastructure.MongoDB.Documents;
 
@@ -247,7 +248,7 @@ public class OrderDocument
     /// <summary>
     /// The EventId that last updated this document (for debugging/tracing)
     /// </summary>
-    [BsonRepresentation(BsonType.String)]
+    [BsonSerializer(typeof(NullableGuidStringSerializer))]
     public Guid? LastEventId { get; set; }
 
     /// <summary>
@@ -340,7 +341,7 @@ public class OrderDocument
     [BsonDateTimeOptions(Kind = DateTimeKind.Utc)]
     public DateTime? LastAffiliateCommissionEventOccurredAtUtc { get; set; }
 
-    [BsonRepresentation(BsonType.String)]
+    [BsonSerializer(typeof(NullableGuidStringSerializer))]
     public Guid? LastAffiliateCommissionEventId { get; set; }
 
     public int LastAffiliateCommissionEventVersion { get; set; }

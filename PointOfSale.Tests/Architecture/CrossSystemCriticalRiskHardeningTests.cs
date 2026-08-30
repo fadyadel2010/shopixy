@@ -2272,7 +2272,9 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("BuildReversalFreshFilter", source, StringComparison.Ordinal);
         Assert.Contains("BuildApprovalFreshFilter", source, StringComparison.Ordinal);
         Assert.Contains("BuildPaidFreshFilter", source, StringComparison.Ordinal);
-        Assert.Contains("i.OrderItemId == orderItemId && !i.IsReversed", source, StringComparison.Ordinal);
+        Assert.Contains("i.OrderItemId == orderItemId", source, StringComparison.Ordinal);
+        Assert.Contains("i.ReversedAmount == expectedReversedAmount", source, StringComparison.Ordinal);
+        Assert.Contains("items.$.reversedAmount", source, StringComparison.Ordinal);
         Assert.Contains("i => !i.IsReversed && i.SettlementStatus == \"Earned\"", source, StringComparison.Ordinal);
         Assert.Contains("i => i.SettlementStatus == \"Approved\"", source, StringComparison.Ordinal);
         Assert.Contains("RecomputeAffiliateMoneyAggregatesAsync", source, StringComparison.Ordinal);

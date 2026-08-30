@@ -139,13 +139,16 @@ import { ServiceDetailsPage } from './marketplace/pages/ServiceDetailsPage'
 import { ChatPage } from './marketplace/pages/ChatPage'
 import { MarketplaceAuthorityBoundary } from './marketplace/components/MarketplaceAuthorityBoundary'
 // Affiliate (AF-4B Admin Management — POS-only, via module index)
-import { AdminAffiliatesList, AdminAffiliateDetail } from './modules/affiliate'
+import { AdminAffiliatesList, AdminAffiliateDetail, AffiliateProducts } from './modules/affiliate'
 // AF-10B: Public affiliate hub pages — NOT exported from module index (admin-only)
 // These are standalone pages outside the POS Layout, served from the same monolith.
 import AffiliateLanding from './modules/affiliate/pages/AffiliateLanding'
 import AffiliateLogin from './modules/affiliate/pages/AffiliateLogin'
 import AffiliateRegister from './modules/affiliate/pages/AffiliateRegister'
 import AffiliatePortal from './modules/affiliate/pages/AffiliatePortal'
+import AffiliateVerifyEmail from './modules/affiliate/pages/AffiliateVerifyEmail'
+import AffiliateForgotPassword from './modules/affiliate/pages/AffiliateForgotPassword'
+import AffiliateResetPassword from './modules/affiliate/pages/AffiliateResetPassword'
 import AffiliateProductDetail from './modules/affiliate/pages/AffiliateProductDetail'
 import AffiliateCategoryPage from './modules/affiliate/pages/AffiliateCategoryPage'
 import AffiliateProviders from './modules/affiliate/components/AffiliateProviders'
@@ -210,6 +213,9 @@ function App() {
                                     <Route index element={<AffiliateLanding />} />
                                     <Route path="login" element={<AffiliateLogin />} />
                                     <Route path="register" element={<AffiliateRegister />} />
+                                    <Route path="verify-email" element={<AffiliateVerifyEmail />} />
+                                    <Route path="forgot-password" element={<AffiliateForgotPassword />} />
+                                    <Route path="reset-password" element={<AffiliateResetPassword />} />
                                     <Route path="portal" element={<AffiliatePortal />} />
                                     <Route path="products/:slug" element={<AffiliateProductDetail />} />
                                     {/* AF-31: Category products page */}
@@ -413,6 +419,7 @@ function App() {
                                         {/* Admin Affiliate Management (AF-4B) */}
                                         <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
                                             <Route path="admin/affiliates" element={<AdminAffiliatesList />} />
+                                            <Route path="admin/affiliates/products" element={<AffiliateProducts />} />
                                             <Route path="admin/affiliates/:id" element={<AdminAffiliateDetail />} />
                                         </Route>
 

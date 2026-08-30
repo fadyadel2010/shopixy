@@ -354,13 +354,16 @@ public sealed class R2DependencyHealthCheck : IHealthCheck
     private static readonly TimeSpan DependencyTimeout = TimeSpan.FromSeconds(5);
 
     private readonly R2Options _options;
+    private readonly IHostEnvironment _environment;
     private readonly ILogger<R2DependencyHealthCheck> _logger;
 
     public R2DependencyHealthCheck(
         IOptions<R2Options> options,
+        IHostEnvironment environment,
         ILogger<R2DependencyHealthCheck> logger)
     {
         _options = options.Value;
+        _environment = environment;
         _logger = logger;
     }
 
@@ -370,6 +373,11 @@ public sealed class R2DependencyHealthCheck : IHealthCheck
     {
         if (!_options.IsConfigured)
         {
+            if (_environment.IsDevelopment())
+            {
+                return await CheckDevelopmentFileStorageAsync(cancellationToken);
+            }
+
             return HealthCheckResult.Unhealthy("Cloudflare R2 is not fully configured.");
         }
 
@@ -408,6 +416,58 @@ public sealed class R2DependencyHealthCheck : IHealthCheck
             return HealthCheckResult.Unhealthy(
                 "Cloudflare R2 is unavailable.",
                 exception: ex);
+        }
+    }
+
+    private async Task<HealthCheckResult> CheckDevelopmentFileStorageAsync(
+        CancellationToken cancellationToken)
+    {
+        var storageRoot = Path.GetFullPath(Path.Combine(
+            _environment.ContentRootPath,
+            "secure-uploads",
+            "development-object-storage"));
+        var healthRoot = Path.Combine(storageRoot, "_health");
+        var probePath = Path.Combine(healthRoot, $"{Guid.NewGuid():N}.probe");
+
+        try
+        {
+            Directory.CreateDirectory(healthRoot);
+            await File.WriteAllBytesAsync(probePath, new byte[] { 0x52, 0x34 }, cancellationToken);
+            File.Delete(probePath);
+
+            return HealthCheckResult.Healthy(
+                "Development file storage is active and writable; Cloudflare R2 is optional in Development.",
+                new Dictionary<string, object>
+                {
+                    ["storageMode"] = "development-file",
+                    ["r2Required"] = false,
+                });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Development file-storage dependency health check failed");
+            return HealthCheckResult.Unhealthy(
+                "Development file storage is unavailable.",
+                exception: ex,
+                data: new Dictionary<string, object>
+                {
+                    ["storageMode"] = "development-file",
+                    ["r2Required"] = false,
+                });
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probePath))
+                {
+                    File.Delete(probePath);
+                }
+            }
+            catch
+            {
+                // The primary result already captures storage availability.
+            }
         }
     }
 

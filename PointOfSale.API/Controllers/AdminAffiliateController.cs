@@ -444,6 +444,10 @@ public class AdminAffiliateController : ControllerBase
                     OrderId = d.OrderId,
                     OrderNumber = d.OrderNumber,
                     Status = ledger?.Status ?? d.Status, // Fallback: MongoDB document Status (display-only)
+                    OrderStatus = d.OrderStatus,
+                    FulfillmentStatus = d.FulfillmentStatus,
+                    PaymentMethod = d.PaymentMethod,
+                    PaidAmount = ledger?.PaidAmount ?? 0m, // Fallback: 0m (no commission base)
                     TotalCommission = ledger?.TotalCommission ?? 0m, // Fallback: 0m (no commission)
                     TotalApproved = ledger?.TotalApproved ?? 0m, // Fallback: 0m (no approved commission)
                     TotalPaid = ledger?.TotalPaid ?? 0m, // Fallback: 0m (no paid commission)
@@ -463,7 +467,10 @@ public class AdminAffiliateController : ControllerBase
                             VariantName = i.VariantName,
                             PaidAmount = itemLedger?.PaidAmount ?? 0m, // Fallback: 0m (no commission base)
                             CommissionAmount = itemLedger?.CommissionAmount ?? 0m, // Fallback: 0m (no commission)
+                            ReversedAmount = itemLedger?.ReversedAmount ?? 0m,
+                            NetCommissionAmount = itemLedger?.NetCommissionAmount ?? 0m,
                             IsReversed = itemLedger?.IsReversed ?? false, // Fallback: false (not reversed)
+                            IsPartiallyReversed = itemLedger?.IsPartiallyReversed ?? false,
                             SettlementStatus = itemLedger?.SettlementStatus ?? "Pending" // Fallback: "Pending" (no settlement)
                         };
                     }).ToList()
@@ -620,7 +627,8 @@ public class AdminAffiliateController : ControllerBase
             catch (Exception ex)
             {
                 failed++;
-                errors.Add($"Order {orderId}: {ex.Message}");
+                var error = AffiliateFinancialErrorContract.From(ex);
+                errors.Add($"{error.Code}: {error.Message}");
                 _logger.LogWarning(ex,
                     "ApproveCommission failed | AffiliateId: {AffiliateId} | OrderId: {OrderId}",
                     id, orderId);
@@ -799,11 +807,12 @@ public class AdminAffiliateController : ControllerBase
                 "RecordPayment Batch failed | TenantId: {TenantId} | AffiliateId: {AffiliateId}",
                 tenantId, id);
 
-            return BadRequest(new AdminSettlementActionResponse
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new AdminSettlementActionResponse
             {
                 ProcessedCount = 0,
                 FailedCount = orderIds.Count,
-                Errors = new List<string> { ex.Message }
+                Errors = new List<string> { $"{error.Code}: {error.Message}" }
             });
         }
     }
@@ -1023,10 +1032,11 @@ public class AdminAffiliateController : ControllerBase
                 "[AF-18:Backfill] Failed to record commission | OrderId: {OrderId} | TenantId: {TenantId}",
                 request.OrderId, tenantId);
 
-            return StatusCode(500, new
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new
             {
-                error = "Failed to record commission",
-                details = ex.Message
+                code = error.Code,
+                message = error.Message
             });
         }
     }
@@ -1099,12 +1109,14 @@ public class AdminAffiliateController : ControllerBase
             catch (Exception ex)
             {
                 failureCount++;
+                var error = AffiliateFinancialErrorContract.From(ex);
                 results.Add(new
                 {
                     orderId = order.Id,
                     orderNumber = order.OrderNumber,
                     status = "failed",
-                    error = ex.Message
+                    code = error.Code,
+                    error = error.Message
                 });
 
                 _logger.LogError(ex,
@@ -1460,11 +1472,13 @@ public class AdminAffiliateController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
     }
 
@@ -1490,11 +1504,13 @@ public class AdminAffiliateController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
     }
 
@@ -1529,11 +1545,11 @@ public class AdminAffiliateController : ControllerBase
                     r => r.Id == id && r.StoreTenantId == storeTenantId, ct);
 
             if (request == null)
-                return NotFound(new { message = $"Payout request {id} not found." });
+                return NotFound(new { code = "AFFILIATE_PAYOUT_REQUEST_NOT_FOUND", message = "The requested payout was not found." });
 
             // Guard: must be Approved
             if (request.Status != PayoutRequestStatus.Approved)
-                return BadRequest(new { message = $"Cannot mark payout {id} as Paid. Status is {request.Status}, expected Approved." });
+                return Conflict(new { code = "AFFILIATE_PAYOUT_REQUEST_STATUS_INVALID", message = "The payout must be approved before it can be marked paid." });
 
             var paymentReference = body?.PaymentReference?.Trim();
             if (string.IsNullOrWhiteSpace(paymentReference))
@@ -1588,7 +1604,8 @@ public class AdminAffiliateController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
     }
 
@@ -1647,15 +1664,31 @@ public class AdminAffiliateController : ControllerBase
             {
                 e.OrderId,
                 e.OrderItemId,
-                e.EntryType
+                e.EntryType,
+                e.CommissionAmount
             })
             .ToListAsync(ct);
 
         return entries
             .GroupBy(e => new { e.OrderId, e.OrderItemId })
-            .Where(g =>
-                g.Any(e => e.EntryType == eligibleEntryType) &&
-                !g.Any(e => blockingEntryTypes.Contains(e.EntryType)))
+            .Where(group =>
+            {
+                var earned = group.Where(entry => entry.EntryType == CommissionEntryType.Earned)
+                    .Sum(entry => entry.CommissionAmount);
+                var approved = group.Where(entry => entry.EntryType == CommissionEntryType.Approved)
+                    .Sum(entry => entry.CommissionAmount);
+                var reversed = group.Where(entry => entry.EntryType == CommissionEntryType.Reversed)
+                    .Sum(entry => entry.CommissionAmount);
+                var hasPaid = group.Any(entry => entry.EntryType == CommissionEntryType.Paid);
+
+                return eligibleEntryType switch
+                {
+                    CommissionEntryType.Earned => earned > reversed && approved == 0m && !hasPaid,
+                    CommissionEntryType.Approved => approved > reversed && !hasPaid,
+                    _ => group.Any(entry => entry.EntryType == eligibleEntryType) &&
+                         !group.Any(entry => blockingEntryTypes.Contains(entry.EntryType))
+                };
+            })
             .Select(g => g.Key.OrderId)
             .Distinct()
             .ToList();
@@ -1687,14 +1720,20 @@ public class AdminAffiliateController : ControllerBase
             })
             .ToListAsync(ct);
 
-        var settledOrderItemIds = entries
-            .Where(e => e.EntryType == CommissionEntryType.Paid || e.EntryType == CommissionEntryType.Reversed)
+        var paidOrderItemIds = entries
+            .Where(e => e.EntryType == CommissionEntryType.Paid)
             .Select(e => e.OrderItemId)
             .ToHashSet();
 
         return entries
-            .Where(e => e.EntryType == CommissionEntryType.Approved && !settledOrderItemIds.Contains(e.OrderItemId))
-            .Sum(e => e.CommissionAmount);
+            .GroupBy(e => e.OrderItemId)
+            .Where(group => !paidOrderItemIds.Contains(group.Key))
+            .Sum(group => Math.Max(
+                group.Where(entry => entry.EntryType == CommissionEntryType.Approved)
+                    .Sum(entry => entry.CommissionAmount) -
+                group.Where(entry => entry.EntryType == CommissionEntryType.Reversed)
+                    .Sum(entry => entry.CommissionAmount),
+                0m));
     }
 
     private async Task<HashSet<Guid>> BuildAffiliateOrderIdsForLedgerStatusAsync(
@@ -1717,7 +1756,8 @@ public class AdminAffiliateController : ControllerBase
             {
                 entry.OrderId,
                 entry.OrderItemId,
-                entry.EntryType
+                entry.EntryType,
+                entry.CommissionAmount
             })
             .ToListAsync(ct);
 
@@ -1727,7 +1767,12 @@ public class AdminAffiliateController : ControllerBase
             .Select(orderGroup => new
             {
                 OrderId = orderGroup.Key,
-                Status = ComputeOrderStatusFromEntries(orderGroup.Select(e => new { e.OrderItemId, e.EntryType }))
+                Status = ComputeOrderStatusFromEntries(orderGroup.Select(e => new
+                {
+                    e.OrderItemId,
+                    e.EntryType,
+                    e.CommissionAmount
+                }))
             })
             .Where(x => string.Equals(x.Status, normalizedStatus, StringComparison.OrdinalIgnoreCase))
             .Select(x => x.OrderId)
@@ -1744,9 +1789,15 @@ public class AdminAffiliateController : ControllerBase
             .Select(itemGroup =>
             {
                 var entryTypes = itemGroup.Select(e => (CommissionEntryType)e.EntryType).ToList();
-                var hasReversal = entryTypes.Contains(CommissionEntryType.Reversed);
-                
-                if (hasReversal) return "Reversed";
+                var earned = itemGroup
+                    .Where(e => (CommissionEntryType)e.EntryType == CommissionEntryType.Earned)
+                    .Sum(e => (decimal)e.CommissionAmount);
+                var reversed = itemGroup
+                    .Where(e => (CommissionEntryType)e.EntryType == CommissionEntryType.Reversed)
+                    .Sum(e => (decimal)e.CommissionAmount);
+
+                if (earned > 0m && reversed >= earned) return "Reversed";
+                if (reversed > 0m) return "PartiallyReversed";
                 if (entryTypes.Contains(CommissionEntryType.Paid)) return "Paid";
                 if (entryTypes.Contains(CommissionEntryType.Approved)) return "Approved";
                 if (entryTypes.Contains(CommissionEntryType.Earned)) return "Earned";
@@ -1757,7 +1808,7 @@ public class AdminAffiliateController : ControllerBase
         // Determine order-level status from item statuses
         if (itemStatuses.Count == 0) return "Pending";
         if (itemStatuses.All(s => s == "Reversed")) return "Reversed";
-        if (itemStatuses.Any(s => s == "Reversed")) return "PartiallyReversed";
+        if (itemStatuses.Any(s => s is "Reversed" or "PartiallyReversed")) return "PartiallyReversed";
         if (itemStatuses.All(s => s == "Paid")) return "Paid";
         if (itemStatuses.All(s => s is "Approved" or "Paid")) return "Approved";
         return "Earned";
@@ -1830,8 +1881,14 @@ public class AdminAffiliateController : ControllerBase
     {
         var rowList = rows.ToList();
         var earnedRows = rowList.Where(row => row.EntryType == CommissionEntryType.Earned).ToList();
-        var hasReversal = rowList.Any(row => row.EntryType == CommissionEntryType.Reversed);
-        var status = hasReversal ? "Reversed" :
+        var earnedCommission = earnedRows.Sum(row => row.CommissionAmount);
+        var reversedCommission = rowList
+            .Where(row => row.EntryType == CommissionEntryType.Reversed)
+            .Sum(row => row.CommissionAmount);
+        var isFullyReversed = earnedCommission > 0m && reversedCommission >= earnedCommission;
+        var isPartiallyReversed = reversedCommission > 0m && !isFullyReversed;
+        var status = isFullyReversed ? "Reversed" :
+            isPartiallyReversed ? "PartiallyReversed" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Paid) ? "Paid" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Approved) ? "Approved" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Earned) ? "Earned" :
@@ -1839,8 +1896,11 @@ public class AdminAffiliateController : ControllerBase
 
         return new AffiliateOrderItemLedgerSnapshot(
             PaidAmount: earnedRows.Sum(row => row.BaseAmount),
-            CommissionAmount: earnedRows.Sum(row => row.CommissionAmount),
-            IsReversed: hasReversal,
+            CommissionAmount: earnedCommission,
+            ReversedAmount: reversedCommission,
+            NetCommissionAmount: Math.Max(earnedCommission - reversedCommission, 0m),
+            IsReversed: isFullyReversed,
+            IsPartiallyReversed: isPartiallyReversed,
             SettlementStatus: status);
     }
 
@@ -1854,7 +1914,7 @@ public class AdminAffiliateController : ControllerBase
         
         // Check for partial reversals BEFORE checking mixed states that allow reversals
         // This ensures mixed reversed+paid/approved orders return "PartiallyReversed"
-        if (itemList.Any(item => item.IsReversed)) return "PartiallyReversed";
+        if (itemList.Any(item => item.IsReversed || item.IsPartiallyReversed)) return "PartiallyReversed";
         
         // Now check non-reversed item statuses (no reversals at this point)
         if (itemList.All(item => item.SettlementStatus == "Paid")) return "Paid";
@@ -2046,7 +2106,10 @@ public class AdminAffiliateController : ControllerBase
     private sealed record AffiliateOrderItemLedgerSnapshot(
         decimal PaidAmount,
         decimal CommissionAmount,
+        decimal ReversedAmount,
+        decimal NetCommissionAmount,
         bool IsReversed,
+        bool IsPartiallyReversed,
         string SettlementStatus);
 
     /// <summary>

@@ -25,13 +25,68 @@ const affiliateConfigurationReadOptions = (options = {}) => ({
     },
 })
 
+function readPaginationHeaders(headers) {
+    const parseHeaderCount = (name, fallback) => {
+        const raw = headers?.[name]
+        const normalized = Array.isArray(raw) ? raw[0] : raw
+        const parsed = Number.parseInt(normalized, 10)
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+    }
+
+    return {
+        totalCount: parseHeaderCount('x-total-count', 0),
+        page: parseHeaderCount('x-page', 1),
+        pageSize: parseHeaderCount('x-page-size', 20),
+        totalPages: parseHeaderCount('x-total-pages', 0),
+    }
+}
+
 const adminProductAffiliateApi = {
     // ─── READ ───────────────────────────────────
 
     /**
+     * Shopixy Affiliate Refactor A/C: bounded affiliate products list.
+     * Server-owned search + filters + pagination; tenant is never supplied by the browser.
+     *
+     * @param {number} page
+     * @param {number} pageSize
+     * @param {{search?: string, affiliateStatus?: 'all'|'enabled'|'disabled', productStatus?: 'all'|'active'|'inactive', categoryId?: string|null}} [params]
+     * @returns {Promise<{items: Array<object>, totalCount: number, page: number, pageSize: number, totalPages: number}>}
+     */
+    listProducts: async (page = 1, pageSize = 20, params = {}) => {
+        const {
+            search = '',
+            affiliateStatus = 'all',
+            productStatus = 'all',
+            categoryId = null,
+        } = params || {}
+
+        const response = await api.get('/admin/affiliate/products', affiliateConfigurationReadOptions({
+            params: {
+                page,
+                pageSize,
+                ...(search && { search }),
+                ...(affiliateStatus && affiliateStatus !== 'all' && { affiliateStatus }),
+                ...(productStatus && productStatus !== 'all' && { productStatus }),
+                ...(categoryId && { categoryId }),
+            },
+        }))
+
+        const pagination = readPaginationHeaders(response?.headers)
+
+        return {
+            items: Array.isArray(response?.data) ? response.data : [],
+            totalCount: pagination.totalCount,
+            page: pagination.page,
+            pageSize: pagination.pageSize,
+            totalPages: pagination.totalPages,
+        }
+    },
+
+    /**
      * Get affiliate settings for a product
      * @param {string} productId
-     * @returns {Promise<{productId: string, isEnabled: boolean, commissionRate: number|null, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
+     * @returns {Promise<{productId: string, isEnabled: boolean, isPolicyEnabled: boolean, commissionRate: number|null, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
      */
     getSettings: (productId) =>
         api.get(`/admin/products/${productId}/affiliate`, affiliateConfigurationReadOptions()).then(r => r.data),
@@ -56,7 +111,7 @@ const adminProductAffiliateApi = {
      * @param {number} commissionRate - Decimal fraction, e.g. 0.10 = 10%
      * @param {string} categoryId - GUID of the marketplace category (REQUIRED)
      * @param {number|null} maxCommissionPerItem - Optional cap
-     * @returns {Promise<{isEnabled: boolean, commissionRate: number, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string}>}
+     * @returns {Promise<{isEnabled: boolean, isPolicyEnabled: boolean, commissionRate: number, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string}>}
      */
     enableWithCategory: (productId, commissionRate, categoryId, maxCommissionPerItem = null) =>
         api.post(`/admin/products/${productId}/affiliate/enable-with-category`, {
@@ -79,7 +134,7 @@ const adminProductAffiliateApi = {
      * Disable affiliate for a product (soft disable).
      * Does NOT remove category assignment — re-enabling will restore it.
      * @param {string} productId
-     * @returns {Promise<{isEnabled: boolean, commissionRate: number|null, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
+     * @returns {Promise<{isEnabled: boolean, isPolicyEnabled: boolean, commissionRate: number|null, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
      */
     disable: (productId) =>
         api.post(`/admin/products/${productId}/affiliate/disable`).then(r => r.data),
@@ -90,7 +145,7 @@ const adminProductAffiliateApi = {
      *
      * @param {string} productId
      * @param {string|null} categoryId - GUID or null (only null when disabled)
-     * @returns {Promise<{isEnabled: boolean, commissionRate: number, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
+     * @returns {Promise<{isEnabled: boolean, isPolicyEnabled: boolean, commissionRate: number, maxCommissionPerItem: number|null, templateType: string, affiliateCategoryId: string|null}>}
      */
     updateCategory: (productId, categoryId) =>
         api.post(`/admin/products/${productId}/affiliate/category`, { categoryId }).then(r => r.data),

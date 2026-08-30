@@ -101,6 +101,7 @@ public interface IAffiliateService
     /// Idempotent — skips if reversal already exists.
     /// </summary>
     Task ReverseCommissionForOrderItemAsync(
+        Guid tenantId,
         Guid orderId,
         Guid orderItemId,
         CancellationToken ct = default,

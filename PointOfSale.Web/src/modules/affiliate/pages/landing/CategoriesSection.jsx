@@ -248,7 +248,6 @@ export default function CategoriesSection() {
             }
         } catch (err) {
             if (err.name === 'AbortError') return
-            console.error('[AF-31] Failed to fetch categories:', err)
             setState('error')
         }
     }

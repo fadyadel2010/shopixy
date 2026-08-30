@@ -14,9 +14,11 @@ public sealed class ShipmentCodCollectedConsumerTests
     public async Task Consume_RoutesCarrierCodCollectionToPaymentLifecycleAuthority()
     {
         var orderId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
         var paymentLifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         paymentLifecycle
             .Setup(service => service.MarkOfflineCollectionDeliveredAsync(
+                tenantId,
                 orderId,
                 "TRK-123",
                 "Carrier One",
@@ -28,7 +30,7 @@ public sealed class ShipmentCodCollectedConsumerTests
             NullLogger<ShipmentCodCollectedConsumer>.Instance);
         var context = ConsumeContext(new ShipmentCodCollectedEvent
         {
-            TenantId = Guid.NewGuid(),
+            TenantId = tenantId,
             OrderId = orderId,
             ShipmentId = Guid.NewGuid(),
             ShipmentNumber = "SHP-123",
@@ -49,9 +51,11 @@ public sealed class ShipmentCodCollectedConsumerTests
     public async Task Consume_ThrowsWhenPaymentLifecycleRejectsCodCollection()
     {
         var orderId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
         var paymentLifecycle = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
         paymentLifecycle
             .Setup(service => service.MarkOfflineCollectionDeliveredAsync(
+                tenantId,
                 orderId,
                 "SHP-456",
                 "carrier-two",
@@ -63,7 +67,7 @@ public sealed class ShipmentCodCollectedConsumerTests
             NullLogger<ShipmentCodCollectedConsumer>.Instance);
         var context = ConsumeContext(new ShipmentCodCollectedEvent
         {
-            TenantId = Guid.NewGuid(),
+            TenantId = tenantId,
             OrderId = orderId,
             ShipmentId = Guid.NewGuid(),
             ShipmentNumber = "SHP-456",

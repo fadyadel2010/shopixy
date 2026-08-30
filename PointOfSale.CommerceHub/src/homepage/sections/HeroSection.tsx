@@ -2,6 +2,7 @@ import { ArrowRight } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { HeroSectionData } from "@/homepage/types";
+import { resolveSafeNavigationTarget } from "@/security/safeNavigationTarget";
 import { Button } from "@/ui/button";
 
 type HeroSectionProps = {
@@ -31,7 +32,7 @@ export const HeroSection = ({ data }: HeroSectionProps) => {
 
           <div className="flex flex-wrap gap-3">
             <Button asChild size="lg" className="gap-2">
-              <Link to={data.ctaLink}>
+              <Link to={resolveSafeNavigationTarget(data.ctaLink)}>
                 {data.ctaText}
                 <ArrowRight className="h-4 w-4" />
               </Link>

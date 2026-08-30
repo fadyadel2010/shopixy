@@ -14,9 +14,6 @@ const showSuccessMock = vi.hoisted(() => vi.fn())
 const showErrorMock = vi.hoisted(() => vi.fn())
 const confirmMock = vi.hoisted(() => vi.fn().mockResolvedValue(true))
 const productAffiliateSettingsCardMock = vi.hoisted(() => vi.fn(() => <div>Affiliate Marketing Card</div>))
-const useAuthStoreMock = vi.hoisted(() => vi.fn((selector: (state: unknown) => unknown) => selector({
-    user: { role: 'Admin' },
-})))
 
 vi.mock('../services/api', () => ({
     default: {
@@ -25,10 +22,6 @@ vi.mock('../services/api', () => ({
         put: apiPutMock,
     },
     getSafeApiErrorMessage: (_error: unknown, fallback: string) => fallback,
-}))
-
-vi.mock('../store/authStore', () => ({
-    useAuthStore: useAuthStoreMock,
 }))
 
 vi.mock('../components/Toast', () => ({
@@ -41,10 +34,7 @@ vi.mock('../components/Toast', () => ({
 vi.mock('react-i18next', () => ({
     useTranslation: () => ({
         t: (key: string, fallback?: string) => {
-            const labels: Record<string, string> = {
-                'affiliate.title': 'Affiliate Marketing',
-                'products.marketplaceCategory': 'Commission and marketplace category settings.',
-            }
+            const labels: Record<string, string> = {}
 
             return labels[key] || fallback || key
         },
@@ -208,32 +198,47 @@ describe('product affiliate entry presentation', () => {
         confirmMock.mockReset()
         confirmMock.mockResolvedValue(true)
         productAffiliateSettingsCardMock.mockClear()
-        useAuthStoreMock.mockImplementation((selector: (state: unknown) => unknown) => selector({
-            user: { role: 'Admin' },
-        }))
         mockProductReads()
     })
 
-    it('shows the product affiliate entry panel for Owner/Admin presentation roles', async () => {
-        render(<ProductForm productId="product-1" mode="workspace" />)
-
-        expect(await screen.findByLabelText('Affiliate Marketing')).toBeInTheDocument()
-        expect(productAffiliateSettingsCardMock.mock.calls[0]?.[0]).toEqual(
-            expect.objectContaining({ productId: 'product-1' })
-        )
-    })
-
-    it('withholds the product affiliate entry panel for lower presentation roles', async () => {
-        useAuthStoreMock.mockImplementation((selector: (state: unknown) => unknown) => selector({
-            user: { role: 'Cashier' },
-        }))
-
+    it('never renders the standalone affiliate settings component for any role', async () => {
         render(<ProductForm productId="product-1" mode="workspace" />)
 
         await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
-        expect(screen.queryByLabelText('Affiliate Marketing')).not.toBeInTheDocument()
+        await screen.findByText('Product media')
+
         expect(screen.queryByText('Affiliate Marketing Card')).not.toBeInTheDocument()
         expect(productAffiliateSettingsCardMock).not.toHaveBeenCalled()
+    })
+
+    it('performs only product-authoring calls on an ordinary update with no affiliate mutation', async () => {
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: 'Affiliate-free update' },
+        })
+
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        await waitFor(() => {
+            expect(apiPutMock).toHaveBeenCalledTimes(1)
+            expect(apiPutMock).toHaveBeenCalledWith('/products/product-1', expect.objectContaining({
+                name: 'Affiliate-free update',
+            }), expect.anything())
+        })
+
+        expect(apiPostMock).not.toHaveBeenCalled()
+
+        const allRequestUrls = [
+            ...apiGetMock.mock.calls.map((call: unknown[]) => call[0]),
+            ...apiPostMock.mock.calls.map((call: unknown[]) => call[0]),
+            ...apiPutMock.mock.calls.map((call: unknown[]) => call[0]),
+        ].filter((url): url is string => typeof url === 'string')
+
+        expect(allRequestUrls.length).toBeGreaterThan(0)
+        expect(allRequestUrls.filter((url) => `${url}`.includes('/affiliate'))).toEqual([])
     })
 
     it('submits simple product authoring with base and default unit state', async () => {

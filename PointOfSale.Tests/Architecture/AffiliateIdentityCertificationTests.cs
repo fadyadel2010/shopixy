@@ -8,7 +8,9 @@ public sealed class AffiliateIdentityCertificationTests
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AffiliateAuthController.cs");
 
         var registration = Slice(controller, "[HttpPost(\"register\")]", "[HttpPost(\"login\")]");
-        Assert.Contains("await IssueVerificationEmailAsync(affiliateUser, ct)", registration, StringComparison.Ordinal);
+        Assert.Contains("await ReplaceVerificationTokenAsync(affiliateUser, ct)", registration, StringComparison.Ordinal);
+        Assert.Contains("await registrationTransaction.CommitAsync(ct)", registration, StringComparison.Ordinal);
+        Assert.Contains("await SendVerificationEmailAsync(affiliateUser, rawVerificationToken)", registration, StringComparison.Ordinal);
         Assert.DoesNotContain("SetSessionCookies", registration, StringComparison.Ordinal);
         Assert.DoesNotContain("GenerateTokens", registration, StringComparison.Ordinal);
         Assert.DoesNotContain("SetRefreshToken", registration, StringComparison.Ordinal);
@@ -18,8 +20,18 @@ public sealed class AffiliateIdentityCertificationTests
         Assert.Contains("token.CanConsume(now)", verification, StringComparison.Ordinal);
         Assert.Contains("token.Consume(now)", verification, StringComparison.Ordinal);
         Assert.Contains("token.AffiliateUser.VerifyEmail()", verification, StringComparison.Ordinal);
+        Assert.True(
+            verification.IndexOf("var eligibleUserRows", StringComparison.Ordinal) <
+            verification.IndexOf("var claimedRows", StringComparison.Ordinal),
+            "Verification must lock the user before claiming the token.");
         Assert.DoesNotContain("SetSessionCookies", verification, StringComparison.Ordinal);
         Assert.DoesNotContain("GenerateTokens", verification, StringComparison.Ordinal);
+
+        var replacement = Slice(controller, "private async Task<string?> ReplaceVerificationTokenAsync", "private async Task SendVerificationEmailAsync");
+        Assert.True(
+            replacement.IndexOf("var eligibleRows", StringComparison.Ordinal) <
+            replacement.IndexOf("ExecuteDeleteAsync", StringComparison.Ordinal),
+            "Resend must lock the user before replacing outstanding tokens.");
     }
 
     [Fact]

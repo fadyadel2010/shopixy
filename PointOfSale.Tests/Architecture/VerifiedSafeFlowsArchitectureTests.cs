@@ -196,7 +196,7 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         var productRepository = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "Marketplace", "MarketplaceProductReadRepository.cs"));
         var orderRepository = File.ReadAllText(InfrastructurePath("MongoDB", "Services", "Marketplace", "MarketplaceOrderReadRepository.cs"));
         var projectionService = File.ReadAllText(InfrastructurePath("ReadModels", "Marketplace", "MarketplaceReadModelProjectionServices.cs"));
-        var migration = File.ReadAllText(InfrastructurePath("Migrations", "20260424160000_S30_MarketplaceProjectionMutationVersions.sql"));
+        var modelSnapshot = File.ReadAllText(InfrastructurePath("Migrations", "ApplicationDbContextModelSnapshot.cs"));
 
         foreach (var source in new[] { productVariantConsumer, commerceHubConsumer })
         {
@@ -210,8 +210,8 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         {
             Assert.Contains("incomingEntityMutationVersion", source, StringComparison.Ordinal);
             Assert.Contains("LastEntityMutationVersion", source, StringComparison.Ordinal);
-            Assert.Contains("Filter.Lt(x => x.LastEntityMutationVersion, incomingEntityMutationVersion)", source, StringComparison.Ordinal);
-            Assert.Contains("Filter.Eq(x => x.LastEntityMutationVersion, incomingEntityMutationVersion)", source, StringComparison.Ordinal);
+            Assert.Contains("Lt(x => x.LastEntityMutationVersion, incomingEntityMutationVersion)", source, StringComparison.Ordinal);
+            Assert.Contains("Eq(x => x.LastEntityMutationVersion, incomingEntityMutationVersion)", source, StringComparison.Ordinal);
             Assert.Contains("ProjectionWriteResult.SkippedStale", source, StringComparison.Ordinal);
         }
 
@@ -222,7 +222,18 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         Assert.Contains("order.ProjectionMutationVersion", projectionService, StringComparison.Ordinal);
         Assert.Contains("LastEntityMutationVersion", projectionService, StringComparison.Ordinal);
 
-        Assert.Contains("ADD COLUMN IF NOT EXISTS \"ProjectionMutationVersion\"", migration, StringComparison.Ordinal);
+        foreach (var entityType in new[]
+                 {
+                     "PointOfSale.Core.Entities.Product",
+                     "PointOfSale.Core.Entities.ProductVariant",
+                     "PointOfSale.Core.Entities.ProductVariantStock",
+                     "PointOfSale.Core.Entities.Order"
+                 })
+        {
+            var entityModel = ExtractModelEntityBlock(modelSnapshot, entityType);
+            Assert.NotNull(entityModel);
+            Assert.Contains("b.Property<long>(\"ProjectionMutationVersion\")", entityModel!, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -251,7 +262,7 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         Assert.Contains("Math.Max(0m, earnedCommission - reversedCommission)", loader, StringComparison.Ordinal);
 
         Assert.Contains("StorefrontOrderProjectionAuthoritySnapshotLoader.LoadAsync", reconciliation, StringComparison.Ordinal);
-        Assert.Contains("order-projection-v6", definition, StringComparison.Ordinal);
+        Assert.Contains("order-projection-v7", definition, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -264,10 +275,12 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         var handleFailure = ExtractMethodBody(lifecycle, "HandleFailureAsync");
         var checkoutFlow = ExtractMethodBody(checkout, "ProcessCheckoutAsync");
         var createOrderFlow = ExtractMethodBody(checkout, "CreateOrderAsync");
+        var createPaymentSession = ExtractMethodBody(checkout, "CreateCheckoutPaymentSessionAsync");
         Assert.NotNull(handleSuccess);
         Assert.NotNull(handleFailure);
         Assert.NotNull(checkoutFlow);
         Assert.NotNull(createOrderFlow);
+        Assert.NotNull(createPaymentSession);
 
         AssertContainsInOrder(
             handleSuccess!,
@@ -302,7 +315,8 @@ public sealed class VerifiedSafeFlowsArchitectureTests
             "CreateOrderAsync",
             "orderCommitted = true",
             "POST-COMMIT OPERATIONS",
-            "CreatePaymentIntentAsync");
+            "CreateCheckoutPaymentSessionAsync");
+        Assert.Contains("_paymentGateway.CreateSessionAsync", createPaymentSession!, StringComparison.Ordinal);
         AssertContainsInOrder(
             createOrderFlow!,
             "ValidateAndReserveInventoryAsync",
@@ -319,8 +333,7 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         var message = File.ReadAllText(CorePath("Entities", "Accounting", "AccountingOutboxMessage.cs"));
         var configuration = File.ReadAllText(InfrastructurePath("Data", "Configurations", "AccountingOutboxMessageConfiguration.cs"));
         var processor = File.ReadAllText(InfrastructurePath("Accounting", "AccountingOutboxProcessor.cs"));
-        var leaseMigration = File.ReadAllText(InfrastructurePath("Migrations", "20260424170000_S32_AccountingOutboxProcessingLeases.sql"));
-        var orderingMigration = File.ReadAllText(InfrastructurePath("Migrations", "20260424183000_S35_EventOrderingBoundaryHardening.sql"));
+        var modelSnapshot = File.ReadAllText(InfrastructurePath("Migrations", "ApplicationDbContextModelSnapshot.cs"));
 
         Assert.Contains("ClaimedUntilUtc", message, StringComparison.Ordinal);
         Assert.Contains("TryClaim", message, StringComparison.Ordinal);
@@ -337,9 +350,11 @@ public sealed class VerifiedSafeFlowsArchitectureTests
             "SaveChangesAsync",
             "ProcessMessageAsync");
 
-        Assert.Contains("\"ClaimedUntilUtc\"", leaseMigration, StringComparison.Ordinal);
-        Assert.Contains("\"AggregateVersion\"", orderingMigration, StringComparison.Ordinal);
-        Assert.Contains("IX_AccountingOutbox_AggregateVersionOrdering", orderingMigration, StringComparison.Ordinal);
+        Assert.Contains("b.Property<DateTime?>(\"ClaimedUntilUtc\")", modelSnapshot, StringComparison.Ordinal);
+        Assert.Contains("b.Property<int?>(\"AggregateVersion\")", modelSnapshot, StringComparison.Ordinal);
+        Assert.Contains("IX_AccountingOutbox_ProcessingStatus", modelSnapshot, StringComparison.Ordinal);
+        Assert.Contains("IX_AccountingOutbox_AggregateVersionOrdering", modelSnapshot, StringComparison.Ordinal);
+        Assert.Contains("CK_AccountingOutbox_OrderFinancialEvents_AggregateVersion", modelSnapshot, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -367,10 +382,9 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         Assert.DoesNotContain("HttpClient", superAdminPayouts, StringComparison.Ordinal);
         Assert.DoesNotContain("Stripe", superAdminPayouts, StringComparison.Ordinal);
         Assert.DoesNotContain("TransferAsync(", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("BeginTransactionAsync(IsolationLevel.Serializable", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("IdempotencyKey", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("CaptureStateForUpdateAsync", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("VerifyStateTransitionAsync", superAdminPayouts, StringComparison.Ordinal);
+        Assert.DoesNotContain("BeginTransactionAsync", superAdminPayouts, StringComparison.Ordinal);
+        Assert.DoesNotContain("SaveChangesAsync", superAdminPayouts, StringComparison.Ordinal);
+        Assert.Contains("GetVendorQueueSnapshotsAsync", superAdminPayouts, StringComparison.Ordinal);
 
         var markCompleted = ExtractMethodBody(payoutService, "MarkCompletedAsync");
         Assert.NotNull(markCompleted);
@@ -415,9 +429,10 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         Assert.Contains("PAYOUT_PLATFORM_CASH_INSUFFICIENT", payoutService, StringComparison.Ordinal);
         Assert.Contains("PAYOUT_LEDGER_CONFIRMATION_REQUIRED", payoutService, StringComparison.Ordinal);
 
-        Assert.Contains("amount > snapshot.TotalPayable", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("amount > stateBefore.VendorPayable", superAdminPayouts, StringComparison.Ordinal);
-        Assert.Contains("Payout amount cannot exceed the ledger-backed vendor payable balance", superAdminPayouts, StringComparison.Ordinal);
+        Assert.Contains("snapshot.TotalPayable <= 0m", superAdminPayouts, StringComparison.Ordinal);
+        Assert.Contains("snapshot.EligibleAmount <= 0m", superAdminPayouts, StringComparison.Ordinal);
+        Assert.Contains("IsPayoutAuthorityBlockingRisk", superAdminPayouts, StringComparison.Ordinal);
+        Assert.Contains("PAYOUT_AUTHORITY_CONFLICT", superAdminPayouts, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -487,6 +502,19 @@ public sealed class VerifiedSafeFlowsArchitectureTests
         }
 
         return null;
+    }
+
+    private static string? ExtractModelEntityBlock(string source, string entityTypeName)
+    {
+        var marker = $"modelBuilder.Entity(\"{entityTypeName}\", b =>";
+        var start = source.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return null;
+        }
+
+        var end = source.IndexOf("modelBuilder.Entity(\"", start + marker.Length, StringComparison.Ordinal);
+        return end < 0 ? source[start..] : source[start..end];
     }
 
     private static string ApiPath(params string[] parts)

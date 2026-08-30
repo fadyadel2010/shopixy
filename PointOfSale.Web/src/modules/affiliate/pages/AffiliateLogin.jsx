@@ -1,15 +1,14 @@
 /**
  * AF-15: Premium Affiliate Login Page
  * 
- * Store-agnostic login — the store context is resolved silently in the background.
- * Affiliates just enter email + password. No store picking needed.
+ * Store-agnostic login. Affiliate identity is global and does not depend on
+ * storefront discovery.
  */
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
-import axios from 'axios'
-import { DollarSign, LogIn, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react'
+import { affiliateAuthApi, resolveAffiliatePortalReturnUrl } from '../../../services/affiliateAuthApi'
+import { DollarSign, LogIn, Mail, Lock, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import ThemeSwitcher from '../components/ThemeSwitcher'
@@ -24,12 +23,16 @@ const fadeUp = {
 
 const AffiliateLogin = () => {
     const navigate = useNavigate()
+    const [searchParams] = useSearchParams()
+    const registeredEmail = searchParams.get('email')?.trim() || ''
+    const registrationPending = searchParams.get('registered') === '1'
+    const returnUrl = resolveAffiliatePortalReturnUrl(searchParams.get('returnUrl'))
     const [form, setForm] = useState({ email: '', password: '' })
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
-    const [storeSlug, setStoreSlug] = useState(null)
-    const [storeReady, setStoreReady] = useState(false)
+    const [resendStatus, setResendStatus] = useState('idle')
     const loginInFlightRef = useRef(false)
+    const resendInFlightRef = useRef(false)
 
     useEffect(() => {
         let active = true
@@ -37,7 +40,7 @@ const AffiliateLogin = () => {
         affiliateAuthApi.restoreSession()
             .then(() => {
                 if (active) {
-                    navigate('/affiliate/portal', { replace: true })
+                    navigate(returnUrl, { replace: true })
                 }
             })
             .catch(() => {})
@@ -45,34 +48,7 @@ const AffiliateLogin = () => {
         return () => {
             active = false
         }
-    }, [navigate])
-
-    // Silently resolve store in background
-    useEffect(() => {
-        const resolveStore = async () => {
-            try {
-                // Priority 1: Saved from previous session
-                const saved = localStorage.getItem('affiliate_storeSlug')
-                if (saved) {
-                    setStoreSlug(saved)
-                    setStoreReady(true)
-                    return
-                }
-
-                // Priority 2: Fetch and auto-select
-                const response = await axios.get('/api/public/affiliate/stores')
-                const stores = response.data || []
-                if (stores.length >= 1) {
-                    setStoreSlug(stores[0].storeSlug)
-                }
-            } catch {
-                // Will show error when user tries to submit
-            } finally {
-                setStoreReady(true)
-            }
-        }
-        resolveStore()
-    }, [])
+    }, [navigate, returnUrl])
 
     const handleSubmit = async (e) => {
         e.preventDefault()
@@ -82,25 +58,39 @@ const AffiliateLogin = () => {
 
         setError('')
 
-        if (!storeSlug) {
-            setError('Unable to connect to store. Please try again.')
-            return
-        }
-
         loginInFlightRef.current = true
         setLoading(true)
         try {
             await affiliateAuthApi.login({
                 email: form.email,
                 password: form.password,
-                storeSlug
             })
-            navigate('/affiliate/portal')
+            navigate(returnUrl, { replace: true })
         } catch (err) {
-            setError(err.response?.data?.message || 'Login failed. Please check your credentials.')
+            const status = err.response?.status
+            const message = err.response?.data?.message
+            if (status === 400) setError(t('login.malformed'))
+            else if (message === 'Email verification is required before login') setError(t('login.verificationRequired'))
+            else if (message === 'Affiliate account is suspended') setError(t('login.suspended'))
+            else if (status === 401) setError(t('login.invalidCredentials'))
+            else setError(t('login.failed'))
         } finally {
             loginInFlightRef.current = false
             setLoading(false)
+        }
+    }
+
+    const handleResendVerification = async () => {
+        if (!registeredEmail || resendInFlightRef.current) return
+        resendInFlightRef.current = true
+        setResendStatus('submitting')
+        try {
+            await affiliateAuthApi.resendVerification(registeredEmail)
+            setResendStatus('success')
+        } catch {
+            setResendStatus('error')
+        } finally {
+            resendInFlightRef.current = false
         }
     }
 
@@ -136,6 +126,20 @@ const AffiliateLogin = () => {
 
                     {/* Form */}
                     <form onSubmit={handleSubmit} className="space-y-5">
+                        {registrationPending && (
+                            <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-sm">
+                                <div className="flex items-start gap-3">
+                                    <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                                    <span>{t('login.registrationPending')}</span>
+                                </div>
+                                {registeredEmail && (
+                                    <button type="button" onClick={handleResendVerification} disabled={resendStatus === 'submitting'} className="mt-2 text-xs font-semibold underline disabled:opacity-50">
+                                        {resendStatus === 'submitting' ? t('login.resending') : resendStatus === 'success' ? t('login.resendSent') : t('login.resendVerification')}
+                                    </button>
+                                )}
+                                {resendStatus === 'error' && <p className="mt-2 text-xs text-red-500">{t('login.resendFailed')}</p>}
+                            </div>
+                        )}
                         {error && (
                             <motion.div
                                 initial={{ opacity: 0, y: -10 }}
@@ -186,13 +190,18 @@ const AffiliateLogin = () => {
                                     autoComplete="current-password"
                                 />
                             </div>
+                            <div className="mt-2 text-right">
+                                <Link to="/affiliate/forgot-password" className="text-xs font-medium text-[#6C63FF] hover:text-[#8B5CF6]">
+                                    {t('login.forgotPassword')}
+                                </Link>
+                            </div>
                         </motion.div>
 
                         {/* Submit */}
                         <motion.div variants={fadeUp} initial="hidden" animate="visible" custom={3}>
                             <button
                                 type="submit"
-                                disabled={loading || !storeReady}
+                                disabled={loading}
                                 className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl bg-gradient-to-r from-[#6C63FF] to-[#8B5CF6] text-white font-semibold text-sm shadow-lg shadow-[#6C63FF]/20 hover:shadow-[#6C63FF]/30 hover:scale-[1.01] disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 mt-2"
                             >
                                 {loading ? (

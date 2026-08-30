@@ -253,6 +253,14 @@ public sealed class PaymobSuccessPathSimulationTests
         Assert.Equal(retry.IntentionId, attemptsAfterRetry[1].ProviderIntentId);
         Assert.Null(attemptsAfterRetry[1].ProviderPaymentId);
 
+        var orderAfterRetry = await context.Orders
+            .IgnoreQueryFilters()
+            .SingleAsync(entity => entity.Id == fixture.OrderId);
+        Assert.Equal(PaymentStatus.Pending, orderAfterRetry.PaymentStatus);
+        Assert.Equal(CheckoutState.PaymentPending, orderAfterRetry.CheckoutState);
+        Assert.False(orderAfterRetry.IsPaid);
+        Assert.Null(orderAfterRetry.PaidAt);
+
         var activeRetryStatus = await harness.PaymobService.GetPaymentStatusAsync(
             tenantId,
             fixture.OrderId,

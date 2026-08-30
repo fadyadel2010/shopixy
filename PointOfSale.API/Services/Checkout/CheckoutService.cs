@@ -4000,6 +4000,7 @@ public class CheckoutService : ICheckoutService
             "STRIPE" => HasStripeCheckoutHandoff(response),
             "PAYMOB" => HasPaymobCheckoutHandoff(response),
             "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.CheckoutToken) &&
                        !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
                        response.ExpiresAtUtc.HasValue,
             _ => true
@@ -4037,6 +4038,7 @@ public class CheckoutService : ICheckoutService
             "STRIPE" => HasStripeCheckoutHandoff(response),
             "PAYMOB" => HasPaymobCheckoutHandoff(response),
             "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.CheckoutToken) &&
                        !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
                        response.ExpiresAtUtc.HasValue,
             "MANUALWALLET" => response.PaymentIntentId.HasValue &&
@@ -4060,6 +4062,7 @@ public class CheckoutService : ICheckoutService
             "STRIPE" => HasStripeCheckoutHandoff(response),
             "PAYMOB" => HasPaymobCheckoutHandoff(response),
             "FAWRY" => response.PaymentIntentId.HasValue &&
+                       !string.IsNullOrWhiteSpace(response.CheckoutToken) &&
                        !string.IsNullOrWhiteSpace(response.ReferenceCode) &&
                        response.ExpiresAtUtc.HasValue,
             _ => true
@@ -7214,6 +7217,8 @@ public class CheckoutService : ICheckoutService
 
                 if (attempt < CheckoutAuthorityCommitMaxRetries)
                 {
+                    ResetOrderNavigationStateForRetry(order);
+
                     _logger.LogWarning(
                         originalException,
                         "Retrying storefront checkout authority commit after serializable race | TenantId: {TenantId} | CartId: {CartId} | OrderId: {OrderId} | Attempt: {Attempt}/{MaxAttempts} | CorrelationId: {CorrelationId}",
@@ -7307,6 +7312,27 @@ public class CheckoutService : ICheckoutService
             request.CartId,
             correlationId,
             CheckoutAuthorityCommitMaxRetries);
+    }
+
+    private static void ResetOrderNavigationStateForRetry(Order order)
+    {
+        // Clear can detach EF's identity map while leaving relationship-fixup references
+        // on this retained aggregate. A retry must reload those principals as new authority.
+        order.Customer = null;
+        order.OnlineCustomer = null;
+        order.ShippingMethod = null;
+        order.Coupon = null;
+        order.AppliedPromotion = null;
+        order.Warehouse = null;
+
+        foreach (var orderItem in order.Items)
+        {
+            orderItem.Order = order;
+            orderItem.Product = null!;
+            orderItem.Variant = null;
+            orderItem.Unit = null;
+            orderItem.Warehouse = null;
+        }
     }
 
     private static IReadOnlyList<decimal> AllocateAmountsByLineSubtotal(
@@ -9407,6 +9433,7 @@ public class CheckoutService : ICheckoutService
             Amount = amount,
             Currency = validatedCurrency,
             RedirectUrl = redirectUrl,
+            IsOfflineCollection = paymentMethod.Equals("COD", StringComparison.OrdinalIgnoreCase),
             PromotionCalculationFailed = promotionCalculationFailed,
             IdempotencyKey = requestId,
             CorrelationId = correlationId,

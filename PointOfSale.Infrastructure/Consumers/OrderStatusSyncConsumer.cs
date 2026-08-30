@@ -15,8 +15,8 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// - ShipmentStatusChangedEvent → Updates order status based on shipment lifecycle
 /// - ShipmentCreatedEvent → Sets order to Processing
 /// - ShipmentDeliveredEvent → Sets order to Delivered
-/// - ShipmentCancelledEvent → Sets order to Cancelled
-/// - ShipmentReturnedEvent → Sets order to Returned
+/// - ShipmentCancelledEvent → preserves Order.Status; cancellation has a dedicated authority
+/// - ShipmentReturnedEvent → preserves Order.Status; refund has a dedicated authority
 /// - OrderPaymentStatusChangedEvent → Confirms pending orders when paid
 /// 
 /// ARCHITECTURAL RULES:

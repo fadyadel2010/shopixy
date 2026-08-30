@@ -7,6 +7,7 @@ using PointOfSale.Core.DTOs.Affiliate;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Affiliate;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
@@ -70,7 +71,7 @@ public class AdminProductAffiliateController : ControllerBase
 
         // Verify product belongs to tenant
         var productExists = await _dbContext.Products
-            .Where(p => p.Id == productId && p.TenantId == tenantId)
+            .Where(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted)
             .AnyAsync(ct);
 
         if (!productExists)
@@ -95,6 +96,7 @@ public class AdminProductAffiliateController : ControllerBase
             {
                 ProductId = productId,
                 IsEnabled = false,
+                IsPolicyEnabled = false,
                 CommissionRate = null,
                 MaxCommissionPerItem = null,
                 TemplateType = PointOfSale.Core.Constants.LandingTemplates.ClassicV1,
@@ -113,6 +115,7 @@ public class AdminProductAffiliateController : ControllerBase
         {
             ProductId = productId,
             IsEnabled = isEffectivelyEnabled,
+            IsPolicyEnabled = policy.IsEnabled,
             CommissionRate = policy.CommissionRate,
             MaxCommissionPerItem = policy.MaxCommissionPerItem,
             TemplateType = policy.TemplateType,
@@ -138,25 +141,31 @@ public class AdminProductAffiliateController : ControllerBase
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
-        // ─── AF-23: READINESS GATE ──────────────────────────────────────
-        var readiness = await _affiliateReadiness.CheckAsync(tenantId, ct);
-        if (!readiness.IsReady)
-        {
-            return BadRequest(new
-            {
-                code = "AFFILIATE_NOT_READY",
-                message = "Affiliate system is not ready",
-                missing = readiness.MissingRequirements
-            });
-        }
-
-        // Verify product belongs to tenant
+        // Resolve tenant ownership before tenant readiness to avoid revealing
+        // tenant configuration through a foreign product identifier.
         var productExists = await _dbContext.Products
-            .Where(p => p.Id == productId && p.TenantId == tenantId)
-            .AnyAsync(ct);
+            .AnyAsync(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted, ct);
 
         if (!productExists)
             return NotFound(new { message = "Product not found" });
+
+        // Readiness gates entry/re-entry only. Preserve the same authority rule as
+        // the combined endpoint for legacy callers editing an enabled policy.
+        var policyIsAlreadyEnabled = await _dbContext.AffiliateProductPolicies
+            .AnyAsync(p => p.ProductId == productId && p.TenantId == tenantId && p.IsEnabled, ct);
+        if (!policyIsAlreadyEnabled)
+        {
+            var readiness = await _affiliateReadiness.CheckAsync(tenantId, ct);
+            if (!readiness.IsReady)
+            {
+                return BadRequest(new
+                {
+                    code = "AFFILIATE_NOT_READY",
+                    message = "Affiliate system is not ready",
+                    missing = readiness.MissingRequirements
+                });
+            }
+        }
 
         // Validate rate range
         if (request.CommissionRate < 0.0001m || request.CommissionRate > 0.50m)
@@ -172,22 +181,28 @@ public class AdminProductAffiliateController : ControllerBase
                 productId, request.CommissionRate, request.MaxCommissionPerItem, ct);
 
             _logger.LogInformation(
-                "Admin EnableAffiliate | TenantId: {TenantId} | ProductId: {ProductId} | IsEnabled: true | Rate: {Rate}",
-                tenantId, productId, policy.CommissionRate);
+                "Admin EnableAffiliate | TenantId: {TenantId} | ProductId: {ProductId} | IsEnabled: true",
+                tenantId, productId);
 
             return Ok(new ProductAffiliateSettingsResponse
             {
                 ProductId = productId,
-                IsEnabled = true,
+                IsEnabled = policy.IsEnabled && await IsProductEffectivelyAffiliateEligibleAsync(
+                    productId, tenantId, policy.AffiliateCategoryId, ct),
+                IsPolicyEnabled = true,
                 CommissionRate = policy.CommissionRate,
                 MaxCommissionPerItem = policy.MaxCommissionPerItem,
                 TemplateType = policy.TemplateType,
                 AffiliateCategoryId = policy.AffiliateCategoryId
             });
         }
-        catch (InvalidOperationException ex)
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
         {
-            return BadRequest(new { message = ex.Message });
+            // Domain rejections never leak internal exception text to clients.
+            _logger.LogWarning(
+                "Admin EnableAffiliate rejected | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return AffiliatePolicyRejected();
         }
     }
 
@@ -204,25 +219,31 @@ public class AdminProductAffiliateController : ControllerBase
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
-        // ─── AF-23: READINESS GATE ──────────────────────────────────────
-        var readiness = await _affiliateReadiness.CheckAsync(tenantId, ct);
-        if (!readiness.IsReady)
-        {
-            return BadRequest(new
-            {
-                code = "AFFILIATE_NOT_READY",
-                message = "Affiliate system is not ready",
-                missing = readiness.MissingRequirements
-            });
-        }
-
-        // Verify product belongs to tenant
+        // Resolve tenant ownership before tenant readiness to avoid revealing
+        // tenant configuration through a foreign product identifier.
         var productExists = await _dbContext.Products
-            .Where(p => p.Id == productId && p.TenantId == tenantId)
-            .AnyAsync(ct);
+            .AnyAsync(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted, ct);
 
         if (!productExists)
             return NotFound(new { message = "Product not found" });
+
+        // Readiness gates the transition into Affiliate participation. An already
+        // enabled policy remains editable even if tenant readiness later degrades.
+        var policyIsAlreadyEnabled = await _dbContext.AffiliateProductPolicies
+            .AnyAsync(p => p.ProductId == productId && p.TenantId == tenantId && p.IsEnabled, ct);
+        if (!policyIsAlreadyEnabled)
+        {
+            var readiness = await _affiliateReadiness.CheckAsync(tenantId, ct);
+            if (!readiness.IsReady)
+            {
+                return BadRequest(new
+                {
+                    code = "AFFILIATE_NOT_READY",
+                    message = "Affiliate system is not ready",
+                    missing = readiness.MissingRequirements
+                });
+            }
+        }
 
         // AF-30A: Validate category is provided
         if (request.CategoryId == Guid.Empty)
@@ -242,22 +263,39 @@ public class AdminProductAffiliateController : ControllerBase
                 productId, request.CommissionRate, request.CategoryId, request.MaxCommissionPerItem, ct);
 
             _logger.LogInformation(
-                "[AF-30A] Affiliate enabled with category | TenantId: {TenantId} | ProductId: {ProductId} | CategoryId: {CategoryId}",
-                tenantId, productId, result.CategoryDetails?.CategoryId);
+                "[AF-30A] Affiliate enabled with category | TenantId: {TenantId} | ProductId: {ProductId}",
+                tenantId, productId);
 
             return Ok(new ProductAffiliateSettingsResponse
             {
                 ProductId = productId,
-                IsEnabled = true,
+                IsEnabled = result.Policy.IsEnabled && await IsProductEffectivelyAffiliateEligibleAsync(
+                    productId, tenantId, result.Policy.AffiliateCategoryId, ct),
+                IsPolicyEnabled = true,
                 CommissionRate = result.Policy.CommissionRate,
                 MaxCommissionPerItem = result.Policy.MaxCommissionPerItem,
                 TemplateType = result.Policy.TemplateType,
                 AffiliateCategoryId = result.Policy.AffiliateCategoryId
             });
         }
-        catch (InvalidOperationException ex)
+        catch (DbUpdateConcurrencyException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            _logger.LogWarning(
+                "Admin EnableAffiliateWithCategory conflicted | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return Conflict(new
+            {
+                code = "AFFILIATE_POLICY_CONFLICT",
+                message = "The affiliate settings changed concurrently. Refresh and try again."
+            });
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            // Domain rejections never leak internal exception text to clients.
+            _logger.LogWarning(
+                "Admin EnableAffiliateWithCategory rejected | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return AffiliatePolicyRejected();
         }
     }
 
@@ -277,13 +315,24 @@ public class AdminProductAffiliateController : ControllerBase
 
         // Verify product belongs to tenant
         var productExists = await _dbContext.Products
-            .Where(p => p.Id == productId && p.TenantId == tenantId)
+            .Where(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted)
             .AnyAsync(ct);
 
         if (!productExists)
             return NotFound(new { message = "Product not found" });
 
-        var policy = await _affiliateService.DisableAffiliateForProductAsync(productId, ct);
+        AffiliateProductPolicy? policy;
+        try
+        {
+            policy = await _affiliateService.DisableAffiliateForProductAsync(productId, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(
+                "Admin DisableAffiliate rejected | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return NotFound(new { code = "AFFILIATE_POLICY_NOT_FOUND", message = "Product not found" });
+        }
 
         _logger.LogInformation(
             "Admin DisableAffiliate | TenantId: {TenantId} | ProductId: {ProductId}",
@@ -293,6 +342,7 @@ public class AdminProductAffiliateController : ControllerBase
         {
             ProductId = productId,
             IsEnabled = false,
+            IsPolicyEnabled = policy?.IsEnabled ?? false,
             // AF-30B GAP-4 FIX: Return actual values (not null) so UI shows
             // what's saved and what will be restored on re-enable.
             CommissionRate = policy?.CommissionRate,
@@ -319,7 +369,15 @@ public class AdminProductAffiliateController : ControllerBase
         var tenantId = _tenantContext.RequiredTenantId;
 
         if (!PointOfSale.Core.Constants.LandingTemplates.Allowed.Contains(request.TemplateType))
-            return BadRequest(new { message = $"Invalid TemplateType. Allowed values: {string.Join(", ", PointOfSale.Core.Constants.LandingTemplates.Allowed)}" });
+            return BadRequest(new { code = "AFFILIATE_TEMPLATE_INVALID", message = "Invalid template type" });
+
+        // Foreign products stay indistinguishable from missing products.
+        var productExists = await _dbContext.Products
+            .Where(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted)
+            .AnyAsync(ct);
+
+        if (!productExists)
+            return NotFound(new { message = "Product not found" });
 
         try
         {
@@ -332,15 +390,21 @@ public class AdminProductAffiliateController : ControllerBase
             return Ok(new ProductAffiliateSettingsResponse
             {
                 ProductId = productId,
-                IsEnabled = policy.IsEnabled,
+                IsEnabled = policy.IsEnabled && await IsProductEffectivelyAffiliateEligibleAsync(
+                    productId, tenantId, policy.AffiliateCategoryId, ct),
+                IsPolicyEnabled = policy.IsEnabled,
                 CommissionRate = policy.CommissionRate,
                 MaxCommissionPerItem = policy.MaxCommissionPerItem,
-                TemplateType = policy.TemplateType
+                TemplateType = policy.TemplateType,
+                AffiliateCategoryId = policy.AffiliateCategoryId
             });
         }
         catch (InvalidOperationException ex)
         {
-            return NotFound(new { message = ex.Message });
+            _logger.LogWarning(
+                "Admin UpdateTemplate rejected | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return NotFound(new { code = "AFFILIATE_POLICY_NOT_FOUND", message = "Affiliate policy not found" });
         }
     }
 
@@ -360,19 +424,29 @@ public class AdminProductAffiliateController : ControllerBase
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
+        // Foreign products stay indistinguishable from missing products.
+        var productExists = await _dbContext.Products
+            .Where(p => p.Id == productId && p.TenantId == tenantId && !p.IsDeleted)
+            .AnyAsync(ct);
+
+        if (!productExists)
+            return NotFound(new { message = "Product not found" });
+
         try
         {
             // AF-30 FIX: Service now returns enriched response with category details
             var result = await _affiliateService.UpdateCategoryForProductAsync(productId, request.CategoryId, ct);
 
             _logger.LogInformation(
-                "[AF-30] Admin UpdateCategory | TenantId: {TenantId} | ProductId: {ProductId} | CategoryId: {CategoryId}",
-                tenantId, productId, result.Policy.AffiliateCategoryId);
+                "[AF-30] Admin UpdateCategory | TenantId: {TenantId} | ProductId: {ProductId}",
+                tenantId, productId);
 
             return Ok(new ProductAffiliateSettingsResponse
             {
                 ProductId = productId,
-                IsEnabled = result.Policy.IsEnabled,
+                IsEnabled = result.Policy.IsEnabled && await IsProductEffectivelyAffiliateEligibleAsync(
+                    productId, tenantId, result.Policy.AffiliateCategoryId, ct),
+                IsPolicyEnabled = result.Policy.IsEnabled,
                 CommissionRate = result.Policy.CommissionRate,
                 MaxCommissionPerItem = result.Policy.MaxCommissionPerItem,
                 TemplateType = result.Policy.TemplateType,
@@ -381,9 +455,28 @@ public class AdminProductAffiliateController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return NotFound(new { message = ex.Message });
+            // Stale/malicious category IDs and policy violations return a stable safe
+            // error contract without exposing category lineage or internal details.
+            _logger.LogWarning(
+                "Admin UpdateCategory rejected | TenantId: {TenantId} | ProductId: {ProductId} | Reason: {Reason}",
+                tenantId, productId, ex.GetType().Name);
+            return BadRequest(new
+            {
+                code = "AFFILIATE_CATEGORY_REJECTED",
+                message = "The affiliate category could not be assigned. Refresh the categories and try again."
+            });
         }
     }
+
+    /// <summary>
+    /// Stable safe error contract for domain-rejected affiliate policy writes.
+    /// Never includes exception text, SQL, identifiers, or constraint names.
+    /// </summary>
+    private ActionResult AffiliatePolicyRejected() => BadRequest(new
+    {
+        code = "AFFILIATE_POLICY_REJECTED",
+        message = "The affiliate settings could not be saved. Review the values and try again."
+    });
 
     private async Task<bool> IsProductEffectivelyAffiliateEligibleAsync(
         Guid productId,
@@ -400,7 +493,17 @@ public class AdminProductAffiliateController : ControllerBase
             .AsNoTracking()
             .AnyAsync(category =>
                 category.Id == affiliateCategoryId.Value &&
-                category.IsActive,
+                !category.IsDeleted &&
+                category.IsActive &&
+                ((category.Level == 1 && category.ParentId == null) ||
+                 (category.Level == 2 &&
+                  category.ParentId.HasValue &&
+                  _dbContext.AffiliateCategories.Any(parent =>
+                      parent.Id == category.ParentId.Value &&
+                      !parent.IsDeleted &&
+                      parent.IsActive &&
+                      parent.Level == 1 &&
+                      parent.ParentId == null))),
                 ct);
 
         if (!categoryActive)
@@ -421,6 +524,7 @@ public class AdminProductAffiliateController : ControllerBase
                 item.TenantId,
                 item.IsActive,
                 item.IsOnlineVisible,
+                item.IsSearchable,
                 item.PublishStatus,
                 item.HasVariants,
                 item.TrackStock,
@@ -428,7 +532,13 @@ public class AdminProductAffiliateController : ControllerBase
             })
             .FirstOrDefaultAsync(ct);
 
-        if (product is not { IsActive: true, IsOnlineVisible: true, PublishStatus: PublishStatus.Published })
+        if (product is not
+            {
+                IsActive: true,
+                IsOnlineVisible: true,
+                IsSearchable: true,
+                PublishStatus: PublishStatus.Published
+            })
         {
             return false;
         }
@@ -503,7 +613,17 @@ public class AdminProductAffiliateController : ControllerBase
 public class ProductAffiliateSettingsResponse
 {
     public Guid ProductId { get; set; }
+    /// <summary>
+    /// Effective eligibility retained for backward compatibility with existing
+    /// consumers. This may be false when lifecycle/category gates suppress a
+    /// persisted enabled policy.
+    /// </summary>
     public bool IsEnabled { get; set; }
+    /// <summary>
+    /// Direct persisted AffiliateProductPolicy.IsEnabled state for Affiliate
+    /// management surfaces. Never inferred from Product lifecycle state.
+    /// </summary>
+    public bool IsPolicyEnabled { get; set; }
     public decimal? CommissionRate { get; set; }
     public decimal? MaxCommissionPerItem { get; set; }
     public string TemplateType { get; set; } = string.Empty;

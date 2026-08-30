@@ -173,6 +173,7 @@ export function requireStorefrontPaymentSessionAuthority(
         if (
             provider !== 'FAWRY' ||
             !isNonEmptyString(paymentIntentId) ||
+            !isNonEmptyString(checkoutToken) ||
             !isNonEmptyString(expiresAtUtc) ||
             !isFutureIsoDate(expiresAtUtc) ||
             !isNonEmptyString(response.referenceCode) ||

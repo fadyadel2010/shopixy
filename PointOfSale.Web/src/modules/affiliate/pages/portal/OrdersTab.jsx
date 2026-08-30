@@ -253,7 +253,7 @@ export default function OrdersTab({ formatCurrency }) {
                                                                     </div>
                                                                     <div className="flex items-center gap-4 text-xs">
                                                                         <span className="text-gray-500">{t('portal.ordersTab.paid')} {formatCurrency(item.paidAmount, order.currency)}</span>
-                                                                        <span className="font-medium text-gray-900 dark:text-white">{t('portal.ordersTab.commission')} {formatCurrency(item.commissionAmount, order.currency)}</span>
+                                                                        <span className="font-medium text-gray-900 dark:text-white">{t('portal.ordersTab.commission')} {formatCurrency(item.netCommissionAmount ?? item.commissionAmount, order.currency)}</span>
                                                                         <StatusBadge status={item.isReversed ? 'Reversed' : item.settlementStatus} t={t} />
                                                                     </div>
                                                                 </div>

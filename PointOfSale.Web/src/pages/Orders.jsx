@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, Package, RefreshCw, X } from 'lucide-react'
 import {
     downloadAdminOrderCheckoutAttachment,
+    cancelAdminOrder,
+    cancelAdminShipment,
     getAdminOrderDetails,
     getAdminOrderFulfillmentActions,
+    getAdminOrderPaymentActions,
     getAdminOrders,
     runAdminOrderFulfillmentAction,
+    runAdminOrderPaymentAction,
     updateAdminOrderStatus,
 } from '../services/adminOrdersApi'
 import { presentOrderCheckoutFields } from './orderCheckoutFieldPresentation'
@@ -35,20 +39,14 @@ const ORDER_STATUS_OPTIONS = [
     'Refunded',
     'OnHold',
 ]
-const GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES = new Set([
-    'Cancelled',
-    'Shipped',
-    'Delivered',
-    'Completed',
-    'Refunded',
-    'Confirmed',
-    'Processing',
-])
 const EXECUTABLE_FULFILLMENT_ACTION_CODES = new Set([
     'confirm',
     'pack',
     'out-for-delivery',
+    'delivered',
     'complete',
+    'returned',
+    'failed-delivery',
     'retry-delivery',
 ])
 const PAYMENT_STATUS_OPTIONS = [
@@ -57,12 +55,16 @@ const PAYMENT_STATUS_OPTIONS = [
     'Authorized',
     'Collected',
     'Paid',
+    'PartiallyPaid',
     'Failed',
     'Refunded',
+    'PartiallyRefunded',
     'AwaitingVerification',
     'Rejected',
     'Settled',
     'CashOnDelivery',
+    'Expired',
+    'AmountMismatch',
 ]
 const SORT_OPTIONS = [
     { value: 'createdAt:desc', label: 'Newest first' },
@@ -75,6 +77,12 @@ const SORT_OPTIONS = [
     { value: 'status:asc', label: 'Status A-Z' },
     { value: 'paymentStatus:asc', label: 'Payment A-Z' },
 ]
+const SORT_OPTION_VALUES = new Set(SORT_OPTIONS.map((option) => option.value))
+const MAX_DELIVERY_REFERENCE_LENGTH = 200
+const MAX_PROOF_URL_LENGTH = 2048
+const MAX_RECIPIENT_NAME_LENGTH = 200
+const MAX_LIFECYCLE_REASON_LENGTH = 1000
+const PAYMENT_ACTION_CODES = new Set(['cod-delivered', 'refund'])
 
 function parsePositiveInt(value, fallback) {
     const parsed = Number.parseInt(value ?? '', 10)
@@ -98,6 +106,10 @@ function getAffiliateAttributionPresentation(order) {
     return requireBackendAffiliateAttributionAuthority(order)
 }
 
+function getAffiliateAttributionWarning(order) {
+    return order?.affiliateAttributionWarning ?? null
+}
+
 function getMarketplaceLineagePresentation(order) {
     return order?.isMarketplaceOrder ? requireBackendMarketplaceLineageAuthority(order) : null
 }
@@ -115,17 +127,25 @@ function formatDateTime(value) {
     return parsed.toLocaleString()
 }
 
-function normalizeFilters(searchParams) {
+export function normalizeFilters(searchParams) {
+    const requestedPageSize = parsePositiveInt(searchParams.get('pageSize'), 20)
+    const requestedStatus = searchParams.get('status') || ''
+    const requestedPaymentStatus = searchParams.get('paymentStatus') || ''
+    const requestedSort = `${searchParams.get('sortBy') || 'createdAt'}:${searchParams.get('sortDirection') || 'desc'}`
+    const [sortBy, sortDirection] = SORT_OPTION_VALUES.has(requestedSort)
+        ? requestedSort.split(':')
+        : ['createdAt', 'desc']
+
     return {
         page: parsePositiveInt(searchParams.get('page'), 1),
-        pageSize: parsePositiveInt(searchParams.get('pageSize'), 20),
-        status: searchParams.get('status') || '',
-        paymentStatus: searchParams.get('paymentStatus') || '',
+        pageSize: PAGE_SIZE_OPTIONS.includes(requestedPageSize) ? requestedPageSize : 20,
+        status: ORDER_STATUS_OPTIONS.includes(requestedStatus) ? requestedStatus : '',
+        paymentStatus: PAYMENT_STATUS_OPTIONS.includes(requestedPaymentStatus) ? requestedPaymentStatus : '',
         fromDate: searchParams.get('fromDate') || '',
         toDate: searchParams.get('toDate') || '',
         search: searchParams.get('search') || '',
-        sortBy: searchParams.get('sortBy') || 'createdAt',
-        sortDirection: searchParams.get('sortDirection') || 'desc',
+        sortBy,
+        sortDirection,
     }
 }
 
@@ -199,27 +219,65 @@ export function getDirectOrderStatusMutationOptions(order) {
         return []
     }
 
-    const options = new Set([order.status])
+    const backendTargets = new Set(
+        (order.availableOrderActions || [])
+            .map((action) => action?.targetStatus)
+            .filter(Boolean),
+    )
 
-    if (order.status !== 'OnHold' &&
-        !['Cancelled', 'Refunded', 'Delivered', 'Completed'].includes(order.status)) {
-        options.add('OnHold')
-    }
-
-    if (order.status === 'OnHold') {
-        options.add('Pending')
-    }
-
-    return ORDER_STATUS_OPTIONS
-        .filter(Boolean)
-        .filter((status) => options.has(status) && (
-            status === order.status ||
-            !GENERIC_LIFECYCLE_CONTROLLED_ORDER_STATUSES.has(status)
-        ))
+    return [order.status, ...ORDER_STATUS_OPTIONS.filter((status) => backendTargets.has(status) && status !== order.status)]
 }
 
 export function isFulfillmentActionExecutableFromOrdersDrawer(action) {
     return EXECUTABLE_FULFILLMENT_ACTION_CODES.has(action?.code)
+}
+
+export function isPaymentActionExecutableFromOrdersDrawer(action) {
+    return PAYMENT_ACTION_CODES.has(action?.actionCode)
+}
+
+export function validateManualDeliveryEvidence(evidence) {
+    const deliveryReference = evidence?.deliveryReference?.trim() || ''
+    const proofOfDeliveryUrl = evidence?.proofOfDeliveryUrl?.trim() || ''
+    const recipientName = evidence?.recipientName?.trim() || ''
+
+    if (!deliveryReference) return 'Delivery reference is required.'
+    if (deliveryReference.length > MAX_DELIVERY_REFERENCE_LENGTH) return 'Delivery reference is too long.'
+    if (!proofOfDeliveryUrl) return 'Proof of delivery URL is required.'
+    if (proofOfDeliveryUrl.length > MAX_PROOF_URL_LENGTH) return 'Proof of delivery URL is too long.'
+    if (/\s/.test(proofOfDeliveryUrl)) return 'Proof of delivery URL cannot contain whitespace.'
+    if (recipientName.length > MAX_RECIPIENT_NAME_LENGTH) return 'Recipient name is too long.'
+
+    try {
+        const parsed = new URL(proofOfDeliveryUrl)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return 'Proof of delivery must be an absolute HTTP or HTTPS URL.'
+        }
+    } catch {
+        return 'Proof of delivery must be an absolute HTTP or HTTPS URL.'
+    }
+
+    return null
+}
+
+export function getLifecycleMutationErrorMessage(error) {
+    return error?.status === 409
+        ? 'The order changed. Canonical data was refreshed; review it before trying again.'
+        : error?.message || 'The lifecycle action could not be completed.'
+}
+
+function createActionReference(prefix) {
+    const randomId = globalThis.crypto?.randomUUID?.()
+    return randomId ? `${prefix}-${randomId}` : `${prefix}-${Date.now()}`
+}
+
+function isSafeTrackingUrl(value) {
+    try {
+        const parsed = new URL(value)
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    } catch {
+        return false
+    }
 }
 
 function SectionCard({ title, children }) {
@@ -238,6 +296,7 @@ function OrderDetailsPanel({
     error,
     onClose,
     onRetry,
+    isRetrying,
     onStatusChange,
     isStatusUpdating,
     statusUpdateError,
@@ -247,10 +306,39 @@ function OrderDetailsPanel({
     onFulfillmentAction,
     isFulfillmentActionUpdating,
     fulfillmentActionError,
+    paymentAuthority,
+    paymentAuthorityError,
+    isPaymentAuthorityLoading,
+    onPaymentAction,
+    isPaymentActionUpdating,
+    paymentActionError,
+    onAdministrativeAction,
+    isAdministrativeActionUpdating,
+    administrativeActionError,
 }) {
     const { t } = useTranslation()
+    const closeButtonRef = useRef(null)
     const [statusCandidate, setStatusCandidate] = useState(order?.status || '')
     const [statusReason, setStatusReason] = useState('')
+    const [pendingFulfillmentAction, setPendingFulfillmentAction] = useState(null)
+    const [fulfillmentEvidence, setFulfillmentEvidence] = useState({
+        deliveryReference: '',
+        proofOfDeliveryUrl: '',
+        recipientName: '',
+        reason: '',
+        attemptNumber: '1',
+        canRetry: true,
+        returnAuthorizationNumber: '',
+    })
+    const [pendingPaymentAction, setPendingPaymentAction] = useState(null)
+    const [paymentEvidence, setPaymentEvidence] = useState({
+        amount: '',
+        reason: '',
+        deliveryReference: '',
+        refundId: '',
+    })
+    const [pendingAdministrativeAction, setPendingAdministrativeAction] = useState(null)
+    const [administrativeReason, setAdministrativeReason] = useState('')
 
     const directStatusOptions = getDirectOrderStatusMutationOptions(order)
     const canSubmitStatusCandidate = Boolean(
@@ -260,6 +348,9 @@ function OrderDetailsPanel({
         directStatusOptions.includes(statusCandidate),
     )
     const fulfillmentActions = fulfillmentAuthority?.availableActions || []
+    const paymentActions = paymentAuthority?.availableActions || []
+    const orderActions = (order?.availableOrderActions || []).filter((action) => action?.code === 'cancel-order')
+    const shipmentActions = (order?.availableShipmentActions || []).filter((action) => action?.code === 'cancel-shipment')
     const checkoutFieldItems = presentOrderCheckoutFields(order?.checkoutFieldSnapshots)
     const downloadAttachmentMutation = useMutation({
         mutationFn: ({ attachmentId, fileName }) => downloadAdminOrderCheckoutAttachment(order.orderId, attachmentId, fileName),
@@ -278,22 +369,154 @@ function OrderDetailsPanel({
         })
     }
 
+    function resetFulfillmentEvidence() {
+        setPendingFulfillmentAction(null)
+        setFulfillmentEvidence({
+            deliveryReference: '',
+            proofOfDeliveryUrl: '',
+            recipientName: '',
+            reason: '',
+            attemptNumber: '1',
+            canRetry: true,
+            returnAuthorizationNumber: '',
+        })
+    }
+
+    function handleFulfillmentActionSelection(action) {
+        if (!isFulfillmentActionExecutableFromOrdersDrawer(action)) {
+            return
+        }
+
+        if ((action.requiredFields || []).length > 0 || ['delivered', 'failed-delivery', 'returned'].includes(action.code)) {
+            setPendingFulfillmentAction(action)
+            return
+        }
+
+        onFulfillmentAction({ actionCode: action.code, payload: {} })
+    }
+
+    function handleSubmitFulfillmentEvidence(event) {
+        event.preventDefault()
+        if (!pendingFulfillmentAction) {
+            return
+        }
+
+        const payload = pendingFulfillmentAction.code === 'delivered'
+            ? {
+                deliveryReference: fulfillmentEvidence.deliveryReference.trim(),
+                proofOfDeliveryUrl: fulfillmentEvidence.proofOfDeliveryUrl.trim(),
+                recipientName: fulfillmentEvidence.recipientName.trim() || null,
+            }
+            : pendingFulfillmentAction.code === 'failed-delivery'
+                ? {
+                    reason: fulfillmentEvidence.reason.trim(),
+                    attemptNumber: Math.max(1, Number.parseInt(fulfillmentEvidence.attemptNumber, 10) || 1),
+                    canRetry: fulfillmentEvidence.canRetry,
+                }
+                : {
+                    reason: fulfillmentEvidence.reason.trim(),
+                    shouldRefund: false,
+                    returnAuthorizationNumber: fulfillmentEvidence.returnAuthorizationNumber.trim() || null,
+                }
+
+        onFulfillmentAction({ actionCode: pendingFulfillmentAction.code, payload })
+    }
+
+    const deliveryEvidenceError = pendingFulfillmentAction?.code === 'delivered'
+        ? validateManualDeliveryEvidence(fulfillmentEvidence)
+        : null
+    const canSubmitFulfillmentEvidence = pendingFulfillmentAction?.code === 'delivered'
+        ? !deliveryEvidenceError
+        : Boolean(
+            fulfillmentEvidence.reason.trim() &&
+            fulfillmentEvidence.reason.trim().length <= MAX_LIFECYCLE_REASON_LENGTH,
+        )
+
+    function handlePaymentActionSelection(action) {
+        if (!isPaymentActionExecutableFromOrdersDrawer(action)) return
+        setPendingPaymentAction(action)
+        setPaymentEvidence({
+            amount: '',
+            reason: '',
+            deliveryReference: '',
+            refundId: action.actionCode === 'refund' ? createActionReference('refund') : '',
+        })
+    }
+
+    function handleSubmitPaymentAction(event) {
+        event.preventDefault()
+        if (!pendingPaymentAction) return
+
+        const payload = pendingPaymentAction.actionCode === 'refund'
+            ? {
+                amount: Number(paymentEvidence.amount),
+                refundId: paymentEvidence.refundId,
+                reason: paymentEvidence.reason.trim() || null,
+            }
+            : {
+                deliveryReference: paymentEvidence.deliveryReference.trim() || null,
+            }
+        onPaymentAction({ actionCode: pendingPaymentAction.actionCode, payload })
+    }
+
+    const canSubmitPaymentAction = pendingPaymentAction?.actionCode === 'refund'
+        ? Number.isFinite(Number(paymentEvidence.amount)) && Number(paymentEvidence.amount) > 0 && Boolean(paymentEvidence.refundId)
+        : Boolean(pendingPaymentAction)
+
+    function handleSubmitAdministrativeAction(event) {
+        event.preventDefault()
+        if (!pendingAdministrativeAction || !administrativeReason.trim()) return
+        onAdministrativeAction({
+            actionCode: pendingAdministrativeAction.code,
+            reason: administrativeReason.trim(),
+        })
+    }
+
     useEffect(() => {
         setStatusCandidate(order?.status || '')
         setStatusReason('')
-    }, [order?.orderId, order?.status])
+        setPendingFulfillmentAction(null)
+        setFulfillmentEvidence({
+            deliveryReference: '',
+            proofOfDeliveryUrl: '',
+            recipientName: '',
+            reason: '',
+            attemptNumber: '1',
+            canRetry: true,
+            returnAuthorizationNumber: '',
+        })
+        setPendingPaymentAction(null)
+        setPaymentEvidence({ amount: '', reason: '', deliveryReference: '', refundId: '' })
+        setPendingAdministrativeAction(null)
+        setAdministrativeReason('')
+    }, [order?.orderId, order?.status, order?.paymentStatus, order?.fulfillmentStatus, order?.shipmentStatus])
+
+    useEffect(() => {
+        closeButtonRef.current?.focus()
+        function handleKeyDown(event) {
+            if (event.key === 'Escape') onClose()
+        }
+        document.addEventListener('keydown', handleKeyDown)
+        return () => document.removeEventListener('keydown', handleKeyDown)
+    }, [onClose])
 
     return (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-2xl border-l border-slate-200 bg-white shadow-2xl">
+        <aside
+            className="fixed inset-y-0 end-0 z-40 w-full max-w-2xl border-s border-slate-200 bg-white shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-details-heading"
+        >
             <div className="flex h-full flex-col">
                 <div className="flex items-start justify-between border-b border-slate-200 px-6 py-5">
                     <div>
                         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Order details</p>
-                        <h2 className="mt-2 text-xl font-semibold text-slate-950">
+                        <h2 id="order-details-heading" className="mt-2 text-xl font-semibold text-slate-950">
                             {order?.orderNumber || 'Loading order'}
                         </h2>
                     </div>
                     <button
+                        ref={closeButtonRef}
                         type="button"
                         onClick={onClose}
                         className="rounded-full border border-slate-200 p-2 text-slate-500 transition hover:border-slate-300 hover:text-slate-900"
@@ -313,15 +536,16 @@ function OrderDetailsPanel({
                     ) : null}
 
                     {isError ? (
-                        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
+                        <div role="alert" className="rounded-3xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-700">
                             <p className="font-semibold">Unable to load the selected order.</p>
                             <p className="mt-2">{error?.message || 'Please try again.'}</p>
                             <button
                                 type="button"
                                 onClick={onRetry}
-                                className="mt-4 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300"
+                                disabled={isRetrying}
+                                className="mt-4 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                                <RefreshCw className="h-4 w-4" />
+                                <RefreshCw className={`h-4 w-4 ${isRetrying ? 'animate-spin' : ''}`} />
                                 Retry
                             </button>
                         </div>
@@ -419,10 +643,10 @@ function OrderDetailsPanel({
                                         </div>
                                     </div>
                                     {fulfillmentAuthorityError ? (
-                                        <p className="mt-3 text-sm text-rose-700">{fulfillmentAuthorityError}</p>
+                                        <p role="alert" className="mt-3 text-sm text-rose-700">{fulfillmentAuthorityError}</p>
                                     ) : null}
                                     {fulfillmentActionError ? (
-                                        <p className="mt-3 text-sm text-rose-700">{fulfillmentActionError}</p>
+                                        <p role="alert" className="mt-3 text-sm text-rose-700">{fulfillmentActionError}</p>
                                     ) : null}
                                     <div className="mt-4 flex flex-wrap gap-2">
                                         {fulfillmentActions.length ? fulfillmentActions.map((action) => {
@@ -431,10 +655,11 @@ function OrderDetailsPanel({
                                                 <button
                                                     key={action.code}
                                                     type="button"
-                                                    onClick={() => executable && onFulfillmentAction(action.code)}
+                                                    onClick={() => handleFulfillmentActionSelection(action)}
                                                     disabled={!executable || isFulfillmentActionUpdating}
-                                                    title={executable ? action.label : 'This action requires additional fulfillment evidence.'}
-                                                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+                                                    aria-pressed={pendingFulfillmentAction?.code === action.code}
+                                                    title={executable ? action.label : 'This action is not supported by the current admin control.'}
+                                                    className={`rounded-full border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${pendingFulfillmentAction?.code === action.code ? 'border-sky-300 bg-sky-50 text-sky-800' : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:text-slate-950'}`}
                                                 >
                                                     {isFulfillmentActionUpdating ? 'Working' : action.label}
                                                 </button>
@@ -445,8 +670,174 @@ function OrderDetailsPanel({
                                             </p>
                                         )}
                                     </div>
+
+                                    {pendingFulfillmentAction ? (
+                                        <form className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-4" onSubmit={handleSubmitFulfillmentEvidence}>
+                                            <p className="text-sm font-semibold text-sky-950">{pendingFulfillmentAction.label}</p>
+                                            <p className="mt-1 text-xs text-sky-800">
+                                                Submit the evidence required by the backend lifecycle contract.
+                                            </p>
+
+                                            {pendingFulfillmentAction.code === 'delivered' ? (
+                                                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                        <span className="font-medium">Delivery reference</span>
+                                                        <input autoFocus required maxLength={MAX_DELIVERY_REFERENCE_LENGTH} value={fulfillmentEvidence.deliveryReference} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, deliveryReference: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                    </label>
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                        <span className="font-medium">Proof of delivery URL</span>
+                                                        <input required type="url" inputMode="url" maxLength={MAX_PROOF_URL_LENGTH} aria-describedby="delivery-proof-error" value={fulfillmentEvidence.proofOfDeliveryUrl} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, proofOfDeliveryUrl: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                    </label>
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
+                                                        <span className="font-medium">Recipient name (optional)</span>
+                                                        <input maxLength={MAX_RECIPIENT_NAME_LENGTH} value={fulfillmentEvidence.recipientName} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, recipientName: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                    </label>
+                                                    {deliveryEvidenceError ? (
+                                                        <p id="delivery-proof-error" role="alert" className="text-sm text-rose-700 md:col-span-2">{deliveryEvidenceError}</p>
+                                                    ) : null}
+                                                </div>
+                                            ) : (
+                                                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
+                                                        <span className="font-medium">Reason</span>
+                                                        <textarea autoFocus required maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={fulfillmentEvidence.reason} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, reason: event.target.value }))} className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                    </label>
+                                                    {pendingFulfillmentAction.code === 'failed-delivery' ? (
+                                                        <>
+                                                            <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                                <span className="font-medium">Attempt number</span>
+                                                                <input type="number" min="1" value={fulfillmentEvidence.attemptNumber} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, attemptNumber: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                            </label>
+                                                            <label className="flex items-center gap-2 self-end rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+                                                                <input type="checkbox" checked={fulfillmentEvidence.canRetry} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, canRetry: event.target.checked }))} />
+                                                                Delivery can be retried
+                                                            </label>
+                                                        </>
+                                                    ) : (
+                                                        <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
+                                                            <span className="font-medium">Return authorization (optional)</span>
+                                                            <input value={fulfillmentEvidence.returnAuthorizationNumber} onChange={(event) => setFulfillmentEvidence((current) => ({ ...current, returnAuthorizationNumber: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100" />
+                                                        </label>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <div className="mt-4 flex flex-wrap gap-2">
+                                                <button type="submit" disabled={!canSubmitFulfillmentEvidence || isFulfillmentActionUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                                                    {isFulfillmentActionUpdating ? 'Submitting' : `Confirm ${pendingFulfillmentAction.label}`}
+                                                </button>
+                                                <button type="button" onClick={resetFulfillmentEvidence} disabled={isFulfillmentActionUpdating} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">
+                                                    Cancel
+                                                </button>
+                                            </div>
+                                        </form>
+                                    ) : null}
                                 </div>
                             </SectionCard>
+
+                            {!order.isMarketplaceOrder ? (
+                                <SectionCard title="Payment lifecycle">
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                        <div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Canonical payment status</p>
+                                            <div className="mt-2"><StatusBadge value={order.paymentStatus} tone={resolvePaymentTone(order.paymentStatus)} /></div>
+                                        </div>
+                                        <div>
+                                            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Payment method</p>
+                                            <p className="mt-2 text-sm font-medium text-slate-900">{paymentAuthority?.paymentMethodCode || 'Unavailable'}</p>
+                                        </div>
+                                    </div>
+                                    {paymentAuthority?.statusMessage ? <p className="mt-3 text-sm text-slate-600">{paymentAuthority.statusMessage}</p> : null}
+                                    {paymentAuthorityError ? <p role="alert" className="mt-3 text-sm text-rose-700">{paymentAuthorityError}</p> : null}
+                                    {paymentActionError ? <p role="alert" className="mt-3 text-sm text-rose-700">{paymentActionError}</p> : null}
+                                    <div className="mt-4 flex flex-wrap gap-2">
+                                        {isPaymentAuthorityLoading ? <p role="status" className="text-sm text-slate-500">Loading payment actions…</p> : null}
+                                        {!isPaymentAuthorityLoading && paymentActions.length ? paymentActions.map((action) => {
+                                            const executable = isPaymentActionExecutableFromOrdersDrawer(action)
+                                            return (
+                                                <button
+                                                    key={action.actionCode}
+                                                    type="button"
+                                                    onClick={() => handlePaymentActionSelection(action)}
+                                                    disabled={!executable || isPaymentActionUpdating}
+                                                    aria-pressed={pendingPaymentAction?.actionCode === action.actionCode}
+                                                    title={action.description}
+                                                    className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    {isPaymentActionUpdating ? 'Working' : action.label}
+                                                </button>
+                                            )
+                                        }) : null}
+                                        {!isPaymentAuthorityLoading && !paymentActions.length ? <p className="text-sm text-slate-500">No payment actions are currently available.</p> : null}
+                                    </div>
+
+                                    {pendingPaymentAction ? (
+                                        <form className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4" onSubmit={handleSubmitPaymentAction}>
+                                            <p className="text-sm font-semibold text-amber-950">{pendingPaymentAction.label}</p>
+                                            <p className="mt-1 text-xs text-amber-800">{pendingPaymentAction.description}</p>
+                                            {pendingPaymentAction.actionCode === 'refund' ? (
+                                                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                        <span className="font-medium">Refund amount</span>
+                                                        <input autoFocus required type="number" min="0.01" step="0.01" value={paymentEvidence.amount} onChange={(event) => setPaymentEvidence((current) => ({ ...current, amount: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                    </label>
+                                                    <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                        <span className="font-medium">Refund reason (optional)</span>
+                                                        <input maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={paymentEvidence.reason} onChange={(event) => setPaymentEvidence((current) => ({ ...current, reason: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                    </label>
+                                                    <p className="text-xs text-amber-800 md:col-span-2">A refund changes payment state only; it does not relabel the order or physical return.</p>
+                                                </div>
+                                            ) : (
+                                                <label className="mt-4 flex flex-col gap-2 text-sm text-slate-700">
+                                                    <span className="font-medium">Collection reference (optional)</span>
+                                                    <input autoFocus maxLength={MAX_DELIVERY_REFERENCE_LENGTH} value={paymentEvidence.deliveryReference} onChange={(event) => setPaymentEvidence((current) => ({ ...current, deliveryReference: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                </label>
+                                            )}
+                                            <div className="mt-4 flex flex-wrap gap-2">
+                                                <button type="submit" disabled={!canSubmitPaymentAction || isPaymentActionUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isPaymentActionUpdating ? 'Submitting' : `Confirm ${pendingPaymentAction.label}`}</button>
+                                                <button type="button" disabled={isPaymentActionUpdating} onClick={() => setPendingPaymentAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">Cancel</button>
+                                            </div>
+                                        </form>
+                                    ) : null}
+                                </SectionCard>
+                            ) : null}
+
+                            <SectionCard title="Shipment evidence">
+                                {order.shipment ? (
+                                    <div className="grid gap-4 md:grid-cols-2">
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipment status</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.status}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Carrier</p><p className="mt-2 text-sm font-medium text-slate-900">{order.shipment.carrierName || order.shipment.shippingMethodName || 'Manual / unavailable'}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Shipment number</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.shipmentNumber}</p></div>
+                                        <div><p className="text-xs uppercase tracking-[0.18em] text-slate-500">Tracking number</p><p className="mt-2 break-all text-sm font-medium text-slate-900">{order.shipment.trackingNumber || 'Unavailable'}</p></div>
+                                        {isSafeTrackingUrl(order.shipment.trackingUrl) ? <a className="text-sm font-semibold text-sky-700 underline md:col-span-2" href={order.shipment.trackingUrl} target="_blank" rel="noreferrer">Open carrier tracking</a> : null}
+                                    </div>
+                                ) : <p className="text-sm text-slate-500">No shipment exists for this order.</p>}
+                            </SectionCard>
+
+                            {(orderActions.length || shipmentActions.length) ? (
+                                <SectionCard title="Administrative lifecycle commands">
+                                    {administrativeActionError ? <p role="alert" className="mb-3 text-sm text-rose-700">{administrativeActionError}</p> : null}
+                                    <div className="flex flex-wrap gap-2">
+                                        {[...orderActions, ...shipmentActions].map((action) => (
+                                            <button key={action.code} type="button" disabled={isAdministrativeActionUpdating} onClick={() => { setPendingAdministrativeAction(action); setAdministrativeReason('') }} className="rounded-full border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 disabled:opacity-50">{action.label}</button>
+                                        ))}
+                                    </div>
+                                    {pendingAdministrativeAction ? (
+                                        <form className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4" onSubmit={handleSubmitAdministrativeAction}>
+                                            <p className="text-sm font-semibold text-rose-950">Confirm {pendingAdministrativeAction.label}</p>
+                                            <p className="mt-1 text-xs text-rose-800">This command is separate from payment refund and other lifecycle actions.</p>
+                                            <label className="mt-4 flex flex-col gap-2 text-sm text-slate-700">
+                                                <span className="font-medium">Reason</span>
+                                                <textarea autoFocus required maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={administrativeReason} onChange={(event) => setAdministrativeReason(event.target.value)} className="min-h-24 rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                            </label>
+                                            <div className="mt-4 flex gap-2">
+                                                <button type="submit" disabled={!administrativeReason.trim() || isAdministrativeActionUpdating} className="rounded-full bg-rose-700 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-300">{isAdministrativeActionUpdating ? 'Submitting' : `Confirm ${pendingAdministrativeAction.label}`}</button>
+                                                <button type="button" disabled={isAdministrativeActionUpdating} onClick={() => setPendingAdministrativeAction(null)} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700">Keep current state</button>
+                                            </div>
+                                        </form>
+                                    ) : null}
+                                </SectionCard>
+                            ) : null}
 
                             <SectionCard title="Customer">
                                 <div className="grid gap-4 md:grid-cols-2">
@@ -551,6 +942,12 @@ function OrderDetailsPanel({
                                         )
                                     })()}
                                 </SectionCard>
+                            ) : null}
+
+                            {getAffiliateAttributionWarning(order) ? (
+                                <section role="status" className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">
+                                    Affiliate attribution is unavailable for this order. Order details remain available.
+                                </section>
                             ) : null}
 
                             <SectionCard title="Totals">
@@ -727,30 +1124,37 @@ export default function Orders() {
 
     const ordersQuery = useQuery({
         queryKey: [...authorityScope, 'list', filters],
-        queryFn: () => getAdminOrders(filters),
+        queryFn: ({ signal }) => getAdminOrders(filters, signal),
         staleTime: 30_000,
     })
 
     const detailsQuery = useQuery({
         queryKey: [...authorityScope, 'details', selectedOrderId],
-        queryFn: () => getAdminOrderDetails(selectedOrderId),
+        queryFn: ({ signal }) => getAdminOrderDetails(selectedOrderId, signal),
         enabled: Boolean(selectedOrderId),
         staleTime: 30_000,
     })
 
     const fulfillmentAuthorityQuery = useQuery({
         queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId],
-        queryFn: async () => {
-            const authority = await getAdminOrderFulfillmentActions(selectedOrderId)
+        queryFn: async ({ signal }) => {
+            const authority = await getAdminOrderFulfillmentActions(selectedOrderId, signal)
             return requireShipmentActionAuthority(authority, selectedOrderId)
         },
-        enabled: Boolean(selectedOrderId),
+        enabled: Boolean(selectedOrderId && detailsQuery.data && detailsQuery.data.isMarketplaceOrder !== true),
+        staleTime: 15_000,
+    })
+
+    const paymentAuthorityQuery = useQuery({
+        queryKey: [...authorityScope, 'payment-actions', selectedOrderId],
+        queryFn: ({ signal }) => getAdminOrderPaymentActions(selectedOrderId, signal),
+        enabled: Boolean(selectedOrderId && detailsQuery.data && detailsQuery.data.isMarketplaceOrder !== true),
         staleTime: 15_000,
     })
 
     let admittedOrderList = null
     let orderListAuthorityError = null
-    if (!ordersQuery.isFetching && ordersQuery.data) {
+    if (ordersQuery.data) {
         try {
             admittedOrderList = requireCurrentVendorOrderVisibilityListAuthority(ordersQuery.data, user)
         } catch (error) {
@@ -761,37 +1165,76 @@ export default function Orders() {
     const orders = admittedOrderList?.items || []
     const totalCount = admittedOrderList?.totalCount || 0
     const totalPages = admittedOrderList?.totalPages || 0
+    const currentPage = admittedOrderList?.page || filters.page
+    const orderListError = ordersQuery.error || orderListAuthorityError
 
     let selectedOrder = null
     let selectedOrderAuthorityError = null
-    if (!detailsQuery.isFetching && detailsQuery.data && selectedOrderId) {
+    if (detailsQuery.data && selectedOrderId) {
         try {
             selectedOrder = requireCurrentVendorOrderVisibilityAuthority(detailsQuery.data, user, selectedOrderId)
         } catch (error) {
             selectedOrderAuthorityError = error
         }
     }
+
+    async function refreshCanonicalState() {
+        await Promise.all([
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'list'] }),
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
+            queryClient.invalidateQueries({ queryKey: [...authorityScope, 'payment-actions', selectedOrderId] }),
+        ])
+    }
+
+    function refreshAfterConflict(error) {
+        if (error?.status === 409) {
+            void refreshCanonicalState()
+        }
+    }
+
     const statusMutation = useMutation({
         mutationFn: (candidate) => updateAdminOrderStatus(selectedOrderId, candidate),
-        onSuccess: async () => {
-            await Promise.all([
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'list'] }),
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
-            ])
-        },
+        onSuccess: refreshCanonicalState,
+        onError: refreshAfterConflict,
     })
 
     const fulfillmentActionMutation = useMutation({
-        mutationFn: (actionCode) => runAdminOrderFulfillmentAction(selectedOrderId, actionCode),
-        onSuccess: async () => {
-            await Promise.all([
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'list'] }),
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'details', selectedOrderId] }),
-                queryClient.invalidateQueries({ queryKey: [...authorityScope, 'fulfillment-actions', selectedOrderId] }),
-            ])
-        },
+        mutationFn: ({ actionCode, payload }) => runAdminOrderFulfillmentAction(selectedOrderId, actionCode, payload),
+        onSuccess: refreshCanonicalState,
+        onError: refreshAfterConflict,
     })
+
+    const paymentActionMutation = useMutation({
+        mutationFn: ({ actionCode, payload }) => runAdminOrderPaymentAction(selectedOrderId, actionCode, payload),
+        onSuccess: refreshCanonicalState,
+        onError: refreshAfterConflict,
+    })
+
+    const administrativeActionMutation = useMutation({
+        mutationFn: ({ actionCode, reason }) => {
+            if (actionCode === 'cancel-order') return cancelAdminOrder(selectedOrderId, reason)
+            if (actionCode === 'cancel-shipment' && selectedOrder?.shipment?.shipmentId) {
+                return cancelAdminShipment(selectedOrder.shipment.shipmentId, reason)
+            }
+            throw new Error('The backend administrative action could not be matched to this order.')
+        },
+        onSuccess: refreshCanonicalState,
+        onError: refreshAfterConflict,
+    })
+
+    useEffect(() => {
+        const responsePage = ordersQuery.data?.page
+        if (!Number.isInteger(responsePage) || responsePage < 1 || responsePage === filters.page) {
+            return
+        }
+
+        setSearchParams((previous) => {
+            const next = new URLSearchParams(previous)
+            next.set('page', String(responsePage))
+            return next
+        }, { replace: true })
+    }, [filters.page, ordersQuery.data?.page, setSearchParams])
 
     function updateParams(updates) {
         setSearchParams((previous) => {
@@ -866,7 +1309,8 @@ export default function Orders() {
                     <button
                         type="button"
                         onClick={() => ordersQuery.refetch()}
-                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
+                        disabled={ordersQuery.isFetching}
+                        className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <RefreshCw className={`h-4 w-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
                         Refresh
@@ -961,14 +1405,30 @@ export default function Orders() {
             </section>
 
             {ordersQuery.isError || orderListAuthorityError ? (
-                <section className="rounded-[32px] border border-rose-200 bg-rose-50 px-6 py-8 shadow-sm">
+                <section role="alert" className="rounded-[32px] border border-rose-200 bg-rose-50 px-6 py-8 shadow-sm">
                     <div className="flex items-start gap-3">
                         <AlertCircle className="mt-0.5 h-5 w-5 text-rose-600" />
                         <div>
                             <h2 className="text-lg font-semibold text-rose-900">Unable to load orders</h2>
                             <p className="mt-2 text-sm text-rose-700">
-                                {ordersQuery.error?.message || orderListAuthorityError?.message || 'Please retry after the latest session and tenant state are restored.'}
+                                {orderListError?.message || 'Please retry after the latest session and tenant state are restored.'}
                             </p>
+                            {orderListError?.code || orderListError?.traceId ? (
+                                <p className="mt-2 text-xs font-medium text-rose-700">
+                                    {orderListError.code ? `Code: ${orderListError.code}` : null}
+                                    {orderListError.code && orderListError.traceId ? ' | ' : null}
+                                    {orderListError.traceId ? `Trace: ${orderListError.traceId}` : null}
+                                </p>
+                            ) : null}
+                            <button
+                                type="button"
+                                onClick={() => ordersQuery.refetch()}
+                                disabled={ordersQuery.isFetching}
+                                className="mt-4 inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                <RefreshCw className={`h-4 w-4 ${ordersQuery.isFetching ? 'animate-spin' : ''}`} />
+                                Retry
+                            </button>
                         </div>
                     </div>
                 </section>
@@ -980,6 +1440,9 @@ export default function Orders() {
                             <p className="mt-1 text-sm text-slate-500">
                                 SQL-backed tenant order list with storefront and marketplace rows combined.
                             </p>
+                            {ordersQuery.isFetching && !ordersQuery.isLoading ? (
+                                <p className="mt-1 text-xs font-medium text-sky-700" role="status">Refreshing orders…</p>
+                            ) : null}
                         </div>
                         {selectedOrderId ? (
                             <Link
@@ -992,16 +1455,17 @@ export default function Orders() {
                     </div>
 
                     <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-slate-200">
+                        <table className="min-w-full divide-y divide-slate-200" aria-busy={ordersQuery.isFetching}>
+                            <caption className="sr-only">Tenant-scoped orders returned by the admin Orders API</caption>
                             <thead className="bg-slate-50">
-                                <tr className="text-left text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                    <th className="px-6 py-4">Order</th>
-                                    <th className="px-6 py-4">Customer</th>
-                                    <th className="px-6 py-4">Source</th>
-                                    <th className="px-6 py-4">Total</th>
-                                    <th className="px-6 py-4">Order status</th>
-                                    <th className="px-6 py-4">Payment</th>
-                                    <th className="px-6 py-4">Created</th>
+                                <tr className="text-start text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                    <th scope="col" className="px-6 py-4">Order</th>
+                                    <th scope="col" className="px-6 py-4">Customer</th>
+                                    <th scope="col" className="px-6 py-4">Source</th>
+                                    <th scope="col" className="px-6 py-4">Total</th>
+                                    <th scope="col" className="px-6 py-4">Order status</th>
+                                    <th scope="col" className="px-6 py-4">Payment</th>
+                                    <th scope="col" className="px-6 py-4">Created</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100 bg-white">
@@ -1015,7 +1479,7 @@ export default function Orders() {
                                     ))
                                 ) : null}
 
-                                {!ordersQuery.isLoading && !orders.length ? (
+                                {ordersQuery.isSuccess && !ordersQuery.isFetching && !orders.length ? (
                                     <tr>
                                         <td colSpan={7} className="px-6 py-14 text-center text-sm text-slate-500">
                                             No orders matched the current tenant filters.
@@ -1027,14 +1491,21 @@ export default function Orders() {
                                     ? orders.map((order) => {
                                         const sourcePresentation = getOrderSourcePresentation(order)
                                         const affiliateAttribution = getAffiliateAttributionPresentation(order)
+                                        const affiliateAttributionWarning = getAffiliateAttributionWarning(order)
                                         return (
                                         <tr
                                             key={order.orderId}
-                                            className="cursor-pointer transition hover:bg-sky-50/60"
-                                            onClick={() => handleOpenOrder(order.orderId)}
+                                            className="transition hover:bg-sky-50/60"
                                         >
                                             <td className="px-6 py-5">
-                                                <div className="font-medium text-slate-950">{order.orderNumber}</div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleOpenOrder(order.orderId)}
+                                                    className="font-medium text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                                                    aria-label={`Open order ${order.orderNumber}`}
+                                                >
+                                                    {order.orderNumber}
+                                                </button>
                                                 <div className="mt-1 text-xs text-slate-500">{order.orderId}</div>
                                             </td>
                                             <td className="px-6 py-5 text-sm text-slate-700">{order.customerName || 'Guest checkout'}</td>
@@ -1048,6 +1519,12 @@ export default function Orders() {
                                                         <StatusBadge
                                                             value={`Affiliate ${affiliateAttribution.referralCode}`}
                                                             tone="emerald"
+                                                        />
+                                                    ) : null}
+                                                    {affiliateAttributionWarning ? (
+                                                        <StatusBadge
+                                                            value="Affiliate attribution unavailable"
+                                                            tone="amber"
                                                         />
                                                     ) : null}
                                                 </div>
@@ -1072,21 +1549,21 @@ export default function Orders() {
 
                     <div className="flex flex-col gap-3 border-t border-slate-200 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
                         <p className="text-sm text-slate-500">
-                            Page {ordersQuery.data?.page || filters.page} of {Math.max(totalPages, 1)}
+                            Page {currentPage} of {Math.max(totalPages, 1)}
                         </p>
                         <div className="flex items-center gap-2">
                             <button
                                 type="button"
-                                onClick={() => handlePageChange(Math.max(1, filters.page - 1))}
-                                disabled={filters.page <= 1}
+                                onClick={() => handlePageChange(Math.max(1, currentPage - 1))}
+                                disabled={currentPage <= 1 || ordersQuery.isFetching}
                                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 Previous
                             </button>
                             <button
                                 type="button"
-                                onClick={() => handlePageChange(filters.page + 1)}
-                                disabled={!ordersQuery.data?.hasNextPage}
+                                onClick={() => handlePageChange(currentPage + 1)}
+                                disabled={!admittedOrderList?.hasNextPage || ordersQuery.isFetching}
                                 className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                             >
                                 Next
@@ -1108,16 +1585,27 @@ export default function Orders() {
                         onRetry={() => {
                             detailsQuery.refetch()
                             fulfillmentAuthorityQuery.refetch()
+                            paymentAuthorityQuery.refetch()
                         }}
+                        isRetrying={detailsQuery.isFetching || fulfillmentAuthorityQuery.isFetching || paymentAuthorityQuery.isFetching}
                         onStatusChange={(candidate) => statusMutation.mutate(candidate)}
                         isStatusUpdating={statusMutation.isPending}
-                        statusUpdateError={statusMutation.error?.message || null}
+                        statusUpdateError={statusMutation.error ? getLifecycleMutationErrorMessage(statusMutation.error) : null}
                         fulfillmentAuthority={fulfillmentAuthorityQuery.data}
                         fulfillmentAuthorityError={fulfillmentAuthorityQuery.error?.message || null}
                         isFulfillmentAuthorityLoading={fulfillmentAuthorityQuery.isLoading}
                         onFulfillmentAction={(actionCode) => fulfillmentActionMutation.mutate(actionCode)}
                         isFulfillmentActionUpdating={fulfillmentActionMutation.isPending}
-                        fulfillmentActionError={fulfillmentActionMutation.error?.message || null}
+                        fulfillmentActionError={fulfillmentActionMutation.error ? getLifecycleMutationErrorMessage(fulfillmentActionMutation.error) : null}
+                        paymentAuthority={paymentAuthorityQuery.data}
+                        paymentAuthorityError={paymentAuthorityQuery.error?.message || null}
+                        isPaymentAuthorityLoading={paymentAuthorityQuery.isLoading}
+                        onPaymentAction={(action) => paymentActionMutation.mutate(action)}
+                        isPaymentActionUpdating={paymentActionMutation.isPending}
+                        paymentActionError={paymentActionMutation.error ? getLifecycleMutationErrorMessage(paymentActionMutation.error) : null}
+                        onAdministrativeAction={(action) => administrativeActionMutation.mutate(action)}
+                        isAdministrativeActionUpdating={administrativeActionMutation.isPending}
+                        administrativeActionError={administrativeActionMutation.error ? getLifecycleMutationErrorMessage(administrativeActionMutation.error) : null}
                     />
                 </>
             ) : null}

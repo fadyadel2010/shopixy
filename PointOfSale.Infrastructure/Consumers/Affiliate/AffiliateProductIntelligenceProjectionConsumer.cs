@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Events.Affiliate;
@@ -781,8 +782,8 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         var eventId = evt.EventId.ToString();
 
         _logger.LogInformation(
-            "[AF-22:PolicyChanged] ProductId: {ProductId} | TenantId: {TenantId} | IsEnabled: {IsEnabled} | CommissionRate: {CommissionRate}",
-            evt.ProductId, evt.TenantId, evt.IsEnabled, evt.CommissionRate);
+            "[AF-22:PolicyChanged] ProductId: {ProductId} | TenantId: {TenantId} | IsEnabled: {IsEnabled}",
+            evt.ProductId, evt.TenantId, evt.IsEnabled);
 
         if (!evt.TenantId.HasValue)
         {
@@ -812,8 +813,91 @@ public class AffiliateProductIntelligenceProjectionConsumer :
             throw new InvalidOperationException($"AF-22 tenant mismatch: Document tenant {existingDoc.TenantId} != Event tenant {tenantId}");
         }
 
-        // Recalculate estimated commission
-        var estimatedCommission = existingDoc != null ? existingDoc.BasePrice * evt.CommissionRate : 0m;
+        // Events are triggers only. Affiliate policy has independent SQL authority and
+        // intentionally does not advance Product projection versions, so re-read the
+        // current policy to prevent out-of-order events from regressing this projection.
+        var policy = await _dbContext.AffiliateProductPolicies
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(candidate =>
+                candidate.ProductId == evt.ProductId &&
+                candidate.TenantId == tenantId &&
+                !candidate.IsDeleted,
+                ct);
+
+        if (policy == null)
+        {
+            // A policy tombstone/missing row is authoritative. Retaining the prior
+            // commission/category values would leave Mongo visibly stale even though
+            // SQL admission correctly excludes the product. Clear only affiliate-owned
+            // intelligence and preserve the product/store/inventory projection.
+            var clearUpdate = Builders<AffiliateProductIntelligenceDocument>.Update
+                .Set(d => d.CommissionRate, 0m)
+                .Set(d => d.EstimatedCommission, 0m)
+                .Set(d => d.TemplateType, PointOfSale.Core.Constants.LandingTemplates.ClassicV1)
+                .Set(d => d.AffiliateCategoryId, null)
+                .Set(d => d.AffiliateCategoryName, null)
+                .Set(d => d.AffiliateCategorySlug, null)
+                .Set(d => d.AffiliateParentCategoryName, null)
+                .Set(d => d.AffiliateParentCategorySlug, null)
+                .Set(d => d.LastPolicyEventVersion, evt.EventVersion)
+                .Set(d => d.LastPolicyEventOccurredAtUtc, evt.OccurredAtUtc)
+                .Set(d => d.LastUpdatedUtc, DateTime.UtcNow)
+                .PushEach(d => d.ProcessedEventIds, new[] { eventId }, slice: -500);
+
+            var clearResult = await _mongoDbContext.AffiliateProductIntelligence.UpdateOneAsync(
+                BuildFreshPolicyEventFilter(
+                    evt.ProductId,
+                    tenantId,
+                    eventId,
+                    evt.EventVersion,
+                    evt.OccurredAtUtc),
+                clearUpdate,
+                new UpdateOptions { IsUpsert = false },
+                ct);
+
+            _logger.LogInformation(
+                "[AF-22:PolicyChanged] Missing SQL policy affiliate metadata clear {Result} | ProductId: {ProductId} | TenantId: {TenantId} | EventVersion: {EventVersion}",
+                clearResult.ModifiedCount > 0 ? "applied" : "skipped",
+                evt.ProductId,
+                tenantId,
+                evt.EventVersion);
+            return;
+        }
+
+        AffiliateCategory? category = null;
+        AffiliateCategory? parentCategory = null;
+        var categoryIsSelectable = false;
+        if (policy.IsEnabled && policy.AffiliateCategoryId.HasValue)
+        {
+            category = await _dbContext.AffiliateCategories
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(candidate =>
+                    candidate.Id == policy.AffiliateCategoryId.Value &&
+                    !candidate.IsDeleted &&
+                    candidate.IsActive,
+                    ct);
+
+            if (category?.ParentId is Guid parentId)
+            {
+                parentCategory = await _dbContext.AffiliateCategories
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .SingleOrDefaultAsync(candidate =>
+                        candidate.Id == parentId &&
+                        !candidate.IsDeleted &&
+                        candidate.IsActive &&
+                        candidate.Level == 1 &&
+                        candidate.ParentId == null,
+                        ct);
+            }
+
+            categoryIsSelectable = category is { Level: 1, ParentId: null } ||
+                category is { Level: 2, ParentId: not null } && parentCategory != null;
+        }
+
+        var estimatedCommission = existingDoc != null ? existingDoc.BasePrice * policy.CommissionRate : 0m;
 
         var filter = BuildFreshPolicyEventFilter(
             evt.ProductId,
@@ -823,14 +907,14 @@ public class AffiliateProductIntelligenceProjectionConsumer :
             evt.OccurredAtUtc);
 
         var update = Builders<AffiliateProductIntelligenceDocument>.Update
-            .Set(d => d.CommissionRate, evt.CommissionRate)
+            .Set(d => d.CommissionRate, policy.CommissionRate)
             .Set(d => d.EstimatedCommission, estimatedCommission)
-            .Set(d => d.TemplateType, evt.TemplateType)
-            .Set(d => d.AffiliateCategoryId, evt.AffiliateCategoryId)
-            .Set(d => d.AffiliateCategoryName, evt.AffiliateCategoryName)
-            .Set(d => d.AffiliateCategorySlug, evt.AffiliateCategorySlug)
-            .Set(d => d.AffiliateParentCategoryName, evt.AffiliateParentCategoryName)
-            .Set(d => d.AffiliateParentCategorySlug, evt.AffiliateParentCategorySlug)
+            .Set(d => d.TemplateType, policy.TemplateType)
+            .Set(d => d.AffiliateCategoryId, categoryIsSelectable ? policy.AffiliateCategoryId : null)
+            .Set(d => d.AffiliateCategoryName, categoryIsSelectable ? category?.Name : null)
+            .Set(d => d.AffiliateCategorySlug, categoryIsSelectable ? category?.Slug : null)
+            .Set(d => d.AffiliateParentCategoryName, categoryIsSelectable ? parentCategory?.Name : null)
+            .Set(d => d.AffiliateParentCategorySlug, categoryIsSelectable ? parentCategory?.Slug : null)
             .Set(d => d.LastPolicyEventVersion, evt.EventVersion)
             .Set(d => d.LastPolicyEventOccurredAtUtc, evt.OccurredAtUtc)
             .Set(d => d.LastUpdatedUtc, DateTime.UtcNow)
@@ -852,8 +936,8 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         }
 
         _logger.LogInformation(
-            "[AF-22:PolicyChanged] Updated commission | ProductId: {ProductId} | CommissionRate: {CommissionRate} | CategoryId: {CategoryId}",
-            evt.ProductId, evt.CommissionRate, evt.AffiliateCategoryId);
+            "[AF-22:PolicyChanged] Policy projection updated | ProductId: {ProductId}",
+            evt.ProductId);
     }
 
     // ═══════════════════════════════════════════════════════════════════

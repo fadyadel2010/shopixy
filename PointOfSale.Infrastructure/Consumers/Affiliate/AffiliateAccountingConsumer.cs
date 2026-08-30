@@ -149,7 +149,18 @@ public class AffiliateCommissionEarnedAccountingConsumer : IConsumer<AffiliateCo
                 }
             };
 
-            var journal = await _postingService.PostJournalAsync(request, ct);
+            // The business idempotency key is stable across broker redelivery, including
+            // retries on a later accounting date. Validate the immutable financial shape
+            // directly and accept an existing equivalent journal; JournalDate is processing
+            // metadata and must not turn a semantic replay into a poison message.
+            var existingJournal = await _postingService.GetJournalByIdempotencyKeyAsync(
+                tenantId,
+                idempotencyKey,
+                ct);
+
+            var journal = existingJournal == null
+                ? await _postingService.PostJournalAsync(request, ct)
+                : EnsureEquivalentEarnedJournal(existingJournal, request);
 
             sw.Stop();
             _telemetry.RecordProcessingDuration(tenantId, EventType, sw.Elapsed.TotalMilliseconds);
@@ -185,6 +196,30 @@ public class AffiliateCommissionEarnedAccountingConsumer : IConsumer<AffiliateCo
 
             throw; // Re-throw for MassTransit retry
         }
+    }
+
+    private static PointOfSale.Core.Entities.Accounting.JournalEntry EnsureEquivalentEarnedJournal(
+        PointOfSale.Core.Entities.Accounting.JournalEntry existingJournal,
+        PostingRequest request)
+    {
+        var existingLines = existingJournal.LedgerEntries
+            .OrderBy(line => line.LineNumber)
+            .Select(line => (line.AccountId, line.DebitAmount, line.CreditAmount))
+            .ToList();
+        var requestedLines = request.Lines
+            .Select(line => (line.AccountId, line.DebitAmount, line.CreditAmount))
+            .ToList();
+
+        if (existingJournal.TenantId != request.TenantId ||
+            existingJournal.SourceType != request.SourceType ||
+            existingJournal.SourceId != request.SourceId ||
+            !existingLines.SequenceEqual(requestedLines))
+        {
+            throw new PointOfSale.Core.Exceptions.Accounting.InvalidJournalException(
+                $"Idempotency key '{request.IdempotencyKey}' is already bound to a different affiliate commission posting.");
+        }
+
+        return existingJournal;
     }
 }
 

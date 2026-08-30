@@ -1,21 +1,23 @@
 /**
  * FE-1: Affiliate Landing Page Discover Component
  * AF-22: i18n support & currency formatting
- * 
+ *
  * Public-facing product discovery for non-authenticated users
- * 
+ *
  * Differences from portal version:
  * - Hides stock numbers
  * - Hides variants
- * - Shows commission %
+ * - AF-39: Uses the anonymous public-products contract; commission
+ *   intelligence is never rendered (public DTO carries none)
  * - CTA → Sign up to promote
  * - No promote buttons
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Search, Package, TrendingUp, ArrowRight } from 'lucide-react'
-import CommissionBadge from '../portal/badges/CommissionBadge'
+import { Search, Package, ArrowRight } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
+import { discoverPublicProducts } from '../../lib/publicDiscoverApi'
 
 const fadeUp = {
     hidden: { opacity: 0, y: 20 },
@@ -30,6 +32,8 @@ export default function AffiliateLandingDiscover({ onSignUpClick }) {
     const [debouncedQuery, setDebouncedQuery] = useState('')
     const [page, setPage] = useState(1)
     const pageSize = 12
+    const requestSeq = useRef(0)
+    const abortRef = useRef(null)
 
     // AF-22: Format currency properly (25 EGP instead of EGP 25.00)
     const formatPrice = (amount, currency = 'EGP') => {
@@ -45,16 +49,35 @@ export default function AffiliateLandingDiscover({ onSignUpClick }) {
     }, [searchQuery])
 
     const fetchProducts = useCallback(() => {
+        const currentRequest = ++requestSeq.current
+        abortRef.current?.abort()
+        const controller = new AbortController()
+        abortRef.current = controller
         setLoading(true)
-        // Use public API endpoint (no auth required)
-        fetch(`/api/affiliate/discover/products?page=${page}&pageSize=${pageSize}${debouncedQuery ? `&search=${encodeURIComponent(debouncedQuery)}` : ''}`)
-            .then(r => r.json())
-            .then(d => setData(d))
-            .catch(() => setData(null))
-            .finally(() => setLoading(false))
+        // AF-39: Anonymous public discovery endpoint (no auth required, no commission fields)
+        discoverPublicProducts({
+            page,
+            pageSize,
+            ...(debouncedQuery && { search: debouncedQuery }),
+            signal: controller.signal,
+        })
+            .then(d => {
+                if (currentRequest === requestSeq.current) setData(d)
+            })
+            .catch(err => {
+                if (err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return
+                if (currentRequest === requestSeq.current) setData(null)
+            })
+            .finally(() => {
+                if (currentRequest === requestSeq.current) setLoading(false)
+            })
     }, [debouncedQuery, page])
 
     useEffect(() => { fetchProducts() }, [fetchProducts])
+    useEffect(() => () => {
+        requestSeq.current += 1
+        abortRef.current?.abort()
+    }, [])
 
     return (
         <div className="space-y-8">
@@ -130,18 +153,16 @@ export default function AffiliateLandingDiscover({ onSignUpClick }) {
                                 ) : (
                                     <Package className="w-10 h-10 text-gray-700" />
                                 )}
-
-                                {/* Commission Badge */}
-                                <div className="absolute top-2 right-2">
-                                    <CommissionBadge commissionRate={product.commissionRate} />
-                                </div>
                             </div>
 
                             {/* Content */}
                             <div className="p-4 space-y-2">
-                                <h4 className="text-sm font-medium text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem]">
+                                <Link
+                                    to={`/affiliate/products/${product.productId}`}
+                                    className="block text-sm font-medium text-gray-900 dark:text-white line-clamp-2 leading-snug min-h-[2.5rem] hover:text-[#6C63FF]"
+                                >
                                     {product.name}
-                                </h4>
+                                </Link>
 
                                 <div className="flex items-center justify-between">
                                     <span className="text-base font-bold text-gray-900 dark:text-white">
@@ -149,14 +170,6 @@ export default function AffiliateLandingDiscover({ onSignUpClick }) {
                                     </span>
                                     <span className="text-xs text-gray-500 truncate max-w-[100px]">
                                         {product.storeName}
-                                    </span>
-                                </div>
-
-                                {/* Commission Highlight */}
-                                <div className="flex items-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-                                    <TrendingUp className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
-                                    <span className="text-xs text-emerald-400 font-medium">
-                                        {t('landing.youEarn')} {(product.commissionRate * 100).toFixed(0)}% {t('landing.commission')}
                                     </span>
                                 </div>
 

@@ -224,6 +224,7 @@ public class PaymentCancellationOutboxProcessor
 
             var lifecycleResult = await paymentLifecycleService.HandlePaymentResultAsync(new HandlePaymentResultRequest
             {
+                TenantId = message.TenantId,
                 OrderId = message.OrderId,
                 PaymentIntentId = message.PaymentIntentId,
                 Outcome = PaymentLifecycleOutcome.Cancelled,

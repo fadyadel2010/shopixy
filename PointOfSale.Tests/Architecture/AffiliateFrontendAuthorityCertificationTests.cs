@@ -74,7 +74,7 @@ public sealed class AffiliateFrontendAuthorityCertificationTests
         Assert.Contains("affiliateAxios.get('/affiliate/orders'", affiliateApi, StringComparison.Ordinal);
         Assert.Contains("affiliateAxios.get('/affiliate/earnings-summary', affiliateAuthorityReadConfig)", affiliateApi, StringComparison.Ordinal);
         Assert.Contains("affiliateAxios.get('/affiliate/payouts'", affiliateApi, StringComparison.Ordinal);
-        Assert.Contains("affiliateAxios.post('/affiliate/payouts/request', { amount })", affiliateApi, StringComparison.Ordinal);
+        Assert.Contains("affiliateAxios.post('/affiliate/payouts/request', { amount }, affiliateAuthorityReadConfig)", affiliateApi, StringComparison.Ordinal);
 
         Assert.Contains("await affiliateApi.requestPayout(numAmount)", payoutsTab, StringComparison.Ordinal);
         Assert.Contains("await loadPayouts(1)", payoutsTab, StringComparison.Ordinal);

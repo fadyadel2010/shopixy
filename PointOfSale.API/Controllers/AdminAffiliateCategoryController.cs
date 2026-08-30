@@ -25,11 +25,11 @@ namespace PointOfSale.API.Controllers;
 /// ENDPOINTS:
 /// GET    /api/admin/affiliate/categories/tree       → Get full category tree
 /// GET    /api/admin/affiliate/categories/{id}       → Get single category
-/// POST   /api/admin/affiliate/categories/main       → Create main category (Owner only)
-/// POST   /api/admin/affiliate/categories/sub        → Create subcategory (Owner only)
-/// PUT    /api/admin/affiliate/categories/{id}       → Update category (Owner only)
-/// POST   /api/admin/affiliate/categories/{id}/activate   → Activate category (Owner only)
-/// POST   /api/admin/affiliate/categories/{id}/deactivate → Deactivate category (Owner only)
+/// POST   /api/admin/affiliate/categories/main       → Create main category (Super Admin only)
+/// POST   /api/admin/affiliate/categories/sub        → Create subcategory (Super Admin only)
+/// PUT    /api/admin/affiliate/categories/{id}       → Update category (Super Admin only)
+/// POST   /api/admin/affiliate/categories/{id}/activate   → Activate category (Super Admin only)
+/// POST   /api/admin/affiliate/categories/{id}/deactivate → Deactivate category (Super Admin only)
 /// </summary>
 [ApiController]
 [Route("api/admin/affiliate/categories")]
@@ -63,7 +63,10 @@ public class AdminAffiliateCategoryController : ControllerBase
     {
         var allCategories = await _dbContext.AffiliateCategories
             .Where(c => !c.IsDeleted)
-            .OrderBy(c => c.DisplayOrder)
+            .OrderBy(c => c.Level)
+            .ThenBy(c => c.ParentId)
+            .ThenBy(c => c.DisplayOrder)
+            .ThenBy(c => c.Id)
             .Select(c => new
             {
                 c.Id,

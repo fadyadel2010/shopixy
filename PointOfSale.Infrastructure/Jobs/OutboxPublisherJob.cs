@@ -4,6 +4,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
@@ -21,9 +22,9 @@ namespace PointOfSale.Infrastructure.Jobs;
 /// - Retry on failure
 /// - Cleanup after processing
 /// 
-/// RUNS: Every 5 seconds via Hangfire recurring job
+/// RUNS: Continuously as a hosted service with a five-second interval.
 /// </summary>
-public class OutboxPublisherJob
+public class OutboxPublisherJob : BackgroundService
 {
     private readonly IServiceProvider _serviceProvider;
     private readonly ILogger<OutboxPublisherJob> _logger;
@@ -31,6 +32,7 @@ public class OutboxPublisherJob
     private const int BatchSize = 100;
     private const int RetentionDays = 7;
     private static readonly TimeSpan CriticalPoisonSlowReplayInterval = TimeSpan.FromMinutes(15);
+    private static readonly JsonSerializerOptions EventJsonOptions = new(JsonSerializerDefaults.Web);
 
     public OutboxPublisherJob(
         IServiceProvider serviceProvider,
@@ -40,8 +42,25 @@ public class OutboxPublisherJob
         _logger = logger;
     }
 
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            await ExecuteAsync();
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+        }
+    }
+
     /// <summary>
-    /// Main execution method called by Hangfire.
+    /// Executes one publisher cycle. Kept public for deterministic operations and tests.
     /// </summary>
     public async Task ExecuteAsync()
     {
@@ -291,7 +310,7 @@ public class OutboxPublisherJob
                 return new OutboxProcessResult(Attempted: true, Succeeded: false);
             }
 
-            var evt = JsonSerializer.Deserialize(message.EventPayload, eventType);
+            var evt = JsonSerializer.Deserialize(message.EventPayload, eventType, EventJsonOptions);
             if (evt == null)
             {
                 _logger.LogWarning(

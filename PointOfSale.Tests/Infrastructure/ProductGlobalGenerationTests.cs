@@ -189,9 +189,9 @@ public sealed class ProductGlobalGenerationTests
 
         previousGeneration = product.ProjectionMutationVersion;
         context.AffiliateProductPolicies.Add(
-            AffiliateProductPolicy.Create(tenantId, product.Id, 0.10m));
+            AffiliateProductPolicy.Create(tenantId, product.Id, 0.10m, categoryId: Guid.NewGuid()));
         await context.SaveChangesAsync();
-        Assert.True(product.ProjectionMutationVersion > previousGeneration);
+        Assert.Equal(previousGeneration, product.ProjectionMutationVersion);
     }
 
     private static ApplicationDbContext CreateContext()

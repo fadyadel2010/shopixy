@@ -102,7 +102,7 @@ public class AdminAffiliateApiTests
     // ═══════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void Controller_Has_Exactly_19_HttpEndpoints()
+    public void Controller_Has_Exactly_20_HttpEndpoints()
     {
         var methods = _controllerType
             .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
@@ -110,7 +110,7 @@ public class AdminAffiliateApiTests
             .Where(m => m.GetCustomAttributes().OfType<HttpMethodAttribute>().Any())
             .ToList();
 
-        Assert.Equal(19, methods.Count);
+        Assert.Equal(20, methods.Count);
     }
 
     // ═══════════════════════════════════════════════════════════════════

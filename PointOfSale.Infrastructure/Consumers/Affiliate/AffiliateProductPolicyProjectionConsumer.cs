@@ -1487,14 +1487,27 @@ public class AffiliateProductPolicyProjectionConsumer :
             return new AffiliatePolicyAuthoritySnapshot(false);
         }
 
-        var categoryActive = await _dbContext.AffiliateCategories
+        var categorySelectable = await _dbContext.AffiliateCategories
             .AsNoTracking()
+            .IgnoreQueryFilters()
             .AnyAsync(category =>
                 category.Id == policy.AffiliateCategoryId.Value &&
-                category.IsActive,
+                category.IsActive &&
+                !category.IsDeleted &&
+                ((category.Level == 1 && category.ParentId == null) ||
+                 (category.Level == 2 &&
+                  category.ParentId.HasValue &&
+                  _dbContext.AffiliateCategories
+                      .IgnoreQueryFilters()
+                      .Any(parent =>
+                          parent.Id == category.ParentId.Value &&
+                          parent.Level == 1 &&
+                          parent.ParentId == null &&
+                          parent.IsActive &&
+                          !parent.IsDeleted))),
                 ct);
 
-        return new AffiliatePolicyAuthoritySnapshot(categoryActive);
+        return new AffiliatePolicyAuthoritySnapshot(categorySelectable);
     }
 
     private async Task UpdateProductAffiliateVisibilityFromSqlAsync(

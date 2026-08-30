@@ -197,6 +197,7 @@ public sealed class InventoryReservationCleanupJob
                 if (currentAuthority.OrderState?.PaymentStatus is PaymentStatus.Pending or PaymentStatus.Authorized or PaymentStatus.AwaitingVerification)
                 {
                     var lifecycleResult = await _paymentLifecycleService.MarkPaymentExpiredAsync(
+                        candidate.TenantId,
                         candidate.OrderId,
                         "Inventory reservation expired and was released by cleanup.",
                         cancellationToken);
@@ -257,6 +258,7 @@ public sealed class InventoryReservationCleanupJob
                         await transaction.RollbackAsync(cancellationToken);
 
                         var lifecycleResult = await _paymentLifecycleService.MarkPaymentExpiredAsync(
+                            candidate.TenantId,
                             candidate.OrderId,
                             "Inventory reservation expired and was released by cleanup.",
                             cancellationToken);

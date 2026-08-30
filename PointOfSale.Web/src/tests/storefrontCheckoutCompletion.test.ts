@@ -6,6 +6,7 @@ const {
     clearPersistedCheckoutStateStorage,
     readActiveCheckoutOrderContext,
     clearActiveCheckoutOrderContextIfMatches,
+    clearCheckoutTokenForOrder,
     emitCartUnexpectedClearBlocked,
     emitCheckoutFinalizeFailure,
 } = vi.hoisted(() => ({
@@ -14,6 +15,7 @@ const {
     clearPersistedCheckoutStateStorage: vi.fn(),
     readActiveCheckoutOrderContext: vi.fn(),
     clearActiveCheckoutOrderContextIfMatches: vi.fn(),
+    clearCheckoutTokenForOrder: vi.fn(),
     emitCartUnexpectedClearBlocked: vi.fn(),
     emitCheckoutFinalizeFailure: vi.fn(),
 }));
@@ -38,6 +40,7 @@ vi.mock('@/store/checkoutStore', () => ({
 vi.mock('@/features/checkout/activeCheckoutOrderContext', () => ({
     readActiveCheckoutOrderContext,
     clearActiveCheckoutOrderContextIfMatches,
+    clearCheckoutTokenForOrder,
 }));
 
 vi.mock('@/features/checkout/checkoutTelemetry', () => ({
@@ -61,6 +64,7 @@ describe('finalizeSuccessfulCheckout', () => {
         expect(resetCheckoutState).not.toHaveBeenCalled();
         expect(clearPersistedCheckoutStateStorage).not.toHaveBeenCalled();
         expect(clearActiveCheckoutOrderContextIfMatches).toHaveBeenCalledWith('order-1');
+        expect(clearCheckoutTokenForOrder).not.toHaveBeenCalled();
         expect(emitCartUnexpectedClearBlocked).toHaveBeenCalledWith('order-1', 'missing_active_order_context');
         expect(emitCheckoutFinalizeFailure).not.toHaveBeenCalled();
     });
@@ -78,6 +82,7 @@ describe('finalizeSuccessfulCheckout', () => {
         expect(resetCheckoutState).toHaveBeenCalledOnce();
         expect(clearPersistedCheckoutStateStorage).toHaveBeenCalledOnce();
         expect(clearActiveCheckoutOrderContextIfMatches).toHaveBeenCalledWith('order-1');
+        expect(clearCheckoutTokenForOrder).toHaveBeenCalledWith('order-1');
         expect(emitCartUnexpectedClearBlocked).not.toHaveBeenCalled();
         expect(emitCheckoutFinalizeFailure).toHaveBeenCalledWith('order-1', 'clear_cart_failed');
     });

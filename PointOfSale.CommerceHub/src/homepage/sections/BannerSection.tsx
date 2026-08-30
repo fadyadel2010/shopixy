@@ -2,6 +2,7 @@ import { CheckCircle2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import type { BannerSectionData } from "@/homepage/types";
+import { resolveSafeNavigationTarget } from "@/security/safeNavigationTarget";
 import { Button } from "@/ui/button";
 
 type BannerSectionProps = {
@@ -38,7 +39,7 @@ export const BannerSection = ({ data }: BannerSectionProps) => {
 
         <div className="flex flex-col gap-3 xl:min-w-[15rem]">
           <Button asChild variant="secondary" size="lg" className="bg-white text-slate-950 hover:bg-white/92">
-            <Link to={data.ctaLink}>{data.ctaText}</Link>
+            <Link to={resolveSafeNavigationTarget(data.ctaLink)}>{data.ctaText}</Link>
           </Button>
           <img
             src={data.imageUrl}

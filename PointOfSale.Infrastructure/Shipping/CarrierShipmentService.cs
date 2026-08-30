@@ -1230,9 +1230,32 @@ public class CarrierShipmentService : ICarrierShipmentService
                     ErrorMessage = trackingResult.ErrorMessage
                 };
             }
+
+            await using var mutationTransaction = await BeginCarrierMutationTransactionAsync(cancellationToken);
+            await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
+
+            if (shipment.Status is ShipmentStatus.Failed or ShipmentStatus.Cancelled or ShipmentStatus.Returned)
+            {
+                if (mutationTransaction != null)
+                {
+                    await mutationTransaction.RollbackAsync(cancellationToken);
+                }
+
+                return new CarrierSyncResult
+                {
+                    Success = true,
+                    PreviousStatus = shipment.Status,
+                    CurrentStatus = shipment.Status,
+                    StatusChanged = false
+                };
+            }
             
             var previousStatus = shipment.Status;
             var statusChanged = shipment.Status != trackingResult.CurrentStatus;
+            var codCollectedApplied =
+                trackingResult.CodCollected &&
+                shipment.IsCashOnDelivery &&
+                !shipment.CodCollected;
             
             // CRITICAL: Status Regression Protection
             // Terminal statuses (Delivered, Cancelled, Returned, Failed) should NEVER regress
@@ -1247,7 +1270,19 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipment.CarrierTrackingResponse = trackingResult.RawResponse;
                 shipment.LastCarrierSyncAtUtc = DateTime.UtcNow;
                 shipment.UpdatedAt = DateTime.UtcNow;
+
+                if (codCollectedApplied)
+                {
+                    shipment.CodCollected = true;
+                    shipment.CodCollectedAtUtc = trackingResult.CodCollectedAt ?? DateTime.UtcNow;
+                    await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
+                }
+
                 await _dbContext.SaveChangesAsync(cancellationToken);
+                if (mutationTransaction != null)
+                {
+                    await mutationTransaction.CommitAsync(cancellationToken);
+                }
                 
                 return new CarrierSyncResult
                 {
@@ -1272,14 +1307,28 @@ public class CarrierShipmentService : ICarrierShipmentService
                 shipment.DeliveredAtUtc = trackingResult.ActualDeliveryDate;
             }
             
-            if (trackingResult.CodCollected)
+            if (codCollectedApplied)
             {
                 shipment.CodCollected = true;
                 shipment.CodCollectedAtUtc = trackingResult.CodCollectedAt ?? DateTime.UtcNow;
             }
+            else if (trackingResult.CodCollected && !shipment.IsCashOnDelivery)
+            {
+                _logger.LogWarning(
+                    "Ignored COD collection flag from tracking for non-COD shipment | CarrierCode: {CarrierCode} | ShipmentId: {ShipmentId}",
+                    shipment.CarrierCode,
+                    shipment.Id);
+            }
             
             // Update timestamps based on status
             UpdateStatusTimestamps(shipment, trackingResult.CurrentStatus);
+            if (statusChanged)
+            {
+                ApplyCarrierExceptionEvidence(
+                    shipment,
+                    trackingResult.CurrentStatus,
+                    trackingResult.CurrentStatusDescription);
+            }
             
             shipment.UpdatedAt = DateTime.UtcNow;
             
@@ -1300,10 +1349,6 @@ public class CarrierShipmentService : ICarrierShipmentService
                     cancellationToken);
             }
             
-            // Persist changes after authority preparation (which advances projection version)
-            // but before publishing events to ensure transactional integrity
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
             if (statusChanged)
             {
                 await EmitStatusChangeEventAsync(
@@ -1313,6 +1358,17 @@ public class CarrierShipmentService : ICarrierShipmentService
                     "tracking_sync",
                     authorityContext,
                     cancellationToken);
+            }
+
+            if (codCollectedApplied)
+            {
+                await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            if (mutationTransaction != null)
+            {
+                await mutationTransaction.CommitAsync(cancellationToken);
             }
             
             if (statusChanged)
@@ -1650,6 +1706,13 @@ public class CarrierShipmentService : ICarrierShipmentService
                 throw;
             }
 
+            await using var mutationTransaction = await BeginCarrierMutationTransactionAsync(cancellationToken);
+            await _dbContext.Entry(shipment).ReloadAsync(cancellationToken);
+            if (shipment.Order != null)
+            {
+                await _dbContext.Entry(shipment.Order).ReloadAsync(cancellationToken);
+            }
+
             if (!shipment.Order.AllowsCarrierWebhooks)
             {
                 _logger.LogError(
@@ -1664,6 +1727,10 @@ public class CarrierShipmentService : ICarrierShipmentService
                 webhookLog.ProcessedAt = DateTime.UtcNow;
                 webhookLog.ProcessingDurationMs = Math.Max(0, stopwatch.ElapsedMilliseconds);
                 await _dbContext.SaveChangesAsync(cancellationToken);
+                if (mutationTransaction != null)
+                {
+                    await mutationTransaction.CommitAsync(cancellationToken);
+                }
 
                 return RejectWebhook(
                     normalizedCarrierCode,
@@ -1713,11 +1780,15 @@ public class CarrierShipmentService : ICarrierShipmentService
                 webhookLog.ProcessingDurationMs = Math.Max(0, stopwatch.ElapsedMilliseconds);
                 webhookLog.ProcessingError = null;
 
-                await _dbContext.SaveChangesAsync(cancellationToken);
-
                 if (codCollectedApplied)
                 {
-                    await PublishCodCollectedEventSafelyAsync(shipment, cancellationToken);
+                    await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
+                }
+
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                if (mutationTransaction != null)
+                {
+                    await mutationTransaction.CommitAsync(cancellationToken);
                 }
 
                 return new WebhookProcessResult
@@ -1734,6 +1805,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             {
                 shipment.Status = parseResult.Status;
                 UpdateStatusTimestamps(shipment, parseResult.Status);
+                ApplyCarrierExceptionEvidence(shipment, parseResult.Status, parseResult.StatusDescription);
             }
 
             shipment.UpdatedAt = DateTime.UtcNow;
@@ -1759,10 +1831,6 @@ public class CarrierShipmentService : ICarrierShipmentService
                     cancellationToken);
             }
             
-            // Persist changes after authority preparation (which advances projection version)
-            // but before publishing events to ensure transactional integrity
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
             if (statusChanged)
             {
                 await EmitStatusChangeEventAsync(
@@ -1777,6 +1845,12 @@ public class CarrierShipmentService : ICarrierShipmentService
             if (codCollectedApplied)
             {
                 await PublishShipmentCodCollectedEventAsync(shipment, cancellationToken);
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            if (mutationTransaction != null)
+            {
+                await mutationTransaction.CommitAsync(cancellationToken);
             }
 
             if (statusChanged)
@@ -3700,6 +3774,26 @@ public class CarrierShipmentService : ICarrierShipmentService
                 break;
         }
     }
+
+    private static void ApplyCarrierExceptionEvidence(
+        Shipment shipment,
+        ShipmentStatus status,
+        string? statusDescription)
+    {
+        if (status == ShipmentStatus.Failed)
+        {
+            shipment.DeliveryAttempts++;
+            shipment.FailureReason = string.IsNullOrWhiteSpace(statusDescription)
+                ? "Carrier reported delivery failure"
+                : statusDescription.Trim();
+        }
+        else if (status == ShipmentStatus.Returned)
+        {
+            shipment.ReturnReason = string.IsNullOrWhiteSpace(statusDescription)
+                ? "Carrier reported shipment return"
+                : statusDescription.Trim();
+        }
+    }
     
     private sealed record ShippingWebhookValidationOutcome(
         bool Success,
@@ -4040,6 +4134,7 @@ public class CarrierShipmentService : ICarrierShipmentService
                     "Stored carrier geographic mapping evidence is malformed.",
                     cancellationToken);
             }
+
         }
 
         if (!shipment.DestinationCountryPlaceId.HasValue ||
@@ -4257,6 +4352,19 @@ public class CarrierShipmentService : ICarrierShipmentService
     private static bool IsValidStatusProgression(ShipmentStatus currentStatus, ShipmentStatus newStatus)
     {
         return ShipmentLifecycleTransitionPolicy.CanTransition(currentStatus, newStatus);
+    }
+
+    private async Task<IDbContextTransaction?> BeginCarrierMutationTransactionAsync(
+        CancellationToken cancellationToken)
+    {
+        if (!_dbContext.Database.IsRelational() || _dbContext.Database.CurrentTransaction != null)
+        {
+            return null;
+        }
+
+        return await _dbContext.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
     }
 
     private void EnsureNoActiveLocalTransactionForExternalCarrierCall(string carrierCode)
@@ -4651,29 +4759,141 @@ public class CarrierShipmentService : ICarrierShipmentService
         CancellationToken cancellationToken)
     {
         var targetStatus = MapShipmentStatusToFulfillmentStatus(requestedStatus);
-        if (!IsOutboundFulfillmentSynchronizationTarget(targetStatus))
-        {
-            return;
-        }
-
         var requestSource = ResolveFulfillmentRequestSource(source);
         var actor = $"system:{source}";
         var correlationId = authorityContext?.CorrelationId ?? source;
 
-        var result = await _fulfillmentService.SynchronizeFromShipmentAsync(
-            shipment.OrderId,
-            targetStatus,
-            requestSource,
-            shipment.Id,
-            shipment.TrackingNumber,
-            actor,
-            $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}",
-            cancellationToken);
+        OrderFulfillmentResult? result = null;
+        if (IsOutboundFulfillmentSynchronizationTarget(targetStatus))
+        {
+            result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                shipment.OrderId,
+                targetStatus,
+                requestSource,
+                shipment.Id,
+                shipment.TrackingNumber,
+                actor,
+                $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}",
+                cancellationToken);
+        }
+        else if (requestedStatus == ShipmentStatus.Failed)
+        {
+            if (shipment.Order.FulfillmentStatus != FulfillmentStatus.FailedDelivery)
+            {
+                if (shipment.Order.FulfillmentStatus != FulfillmentStatus.OutForDelivery)
+                {
+                    result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                        shipment.OrderId,
+                        FulfillmentStatus.OutForDelivery,
+                        requestSource,
+                        shipment.Id,
+                        shipment.TrackingNumber,
+                        actor,
+                        $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:delivery-attempt",
+                        cancellationToken);
+
+                    if (!result.Success)
+                    {
+                        ThrowFulfillmentSynchronizationFailure(
+                            shipment,
+                            requestedStatus,
+                            FulfillmentStatus.FailedDelivery,
+                            source,
+                            correlationId,
+                            result);
+                    }
+                }
+
+                result = await _fulfillmentService.MarkDeliveryFailedAsync(
+                    shipment.OrderId,
+                    requestSource,
+                    shipment.FailureReason ?? "Carrier reported delivery failure",
+                    Math.Max(1, shipment.DeliveryAttempts),
+                    canRetry: false,
+                    updatedBy: actor,
+                    idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:failed-delivery",
+                    ct: cancellationToken);
+            }
+        }
+        else if (requestedStatus == ShipmentStatus.Returned)
+        {
+            if (shipment.Order.FulfillmentStatus == FulfillmentStatus.Delivered)
+            {
+                result = await _fulfillmentService.MarkReturnedAsync(
+                    shipment.OrderId,
+                    requestSource,
+                    shipment.ReturnReason ?? "Carrier reported post-delivery return",
+                    returnAuthorizationNumber: shipment.TrackingNumber,
+                    returnedBy: actor,
+                    idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:returned",
+                    ct: cancellationToken);
+            }
+            else if (shipment.Order.FulfillmentStatus != FulfillmentStatus.FailedDelivery)
+            {
+                if (shipment.Order.FulfillmentStatus != FulfillmentStatus.OutForDelivery)
+                {
+                    result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                        shipment.OrderId,
+                        FulfillmentStatus.OutForDelivery,
+                        requestSource,
+                        shipment.Id,
+                        shipment.TrackingNumber,
+                        actor,
+                        $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:return-to-origin",
+                        cancellationToken);
+
+                    if (!result.Success)
+                    {
+                        ThrowFulfillmentSynchronizationFailure(
+                            shipment,
+                            requestedStatus,
+                            FulfillmentStatus.FailedDelivery,
+                            source,
+                            correlationId,
+                            result);
+                    }
+                }
+
+                result = await _fulfillmentService.MarkDeliveryFailedAsync(
+                    shipment.OrderId,
+                    requestSource,
+                    shipment.ReturnReason ?? "Carrier reported return to origin before delivery",
+                    Math.Max(1, shipment.DeliveryAttempts),
+                    canRetry: false,
+                    updatedBy: actor,
+                    idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:return-to-origin-failed-delivery",
+                    ct: cancellationToken);
+                targetStatus = FulfillmentStatus.FailedDelivery;
+            }
+        }
+
+        if (result == null)
+        {
+            return;
+        }
 
         if (result.Success)
         {
             return;
         }
+
+        ThrowFulfillmentSynchronizationFailure(
+            shipment,
+            requestedStatus,
+            targetStatus,
+            source,
+            correlationId,
+            result);
+    }
+
+    private void ThrowFulfillmentSynchronizationFailure(
+        Shipment shipment,
+        ShipmentStatus requestedStatus,
+        FulfillmentStatus targetStatus,
+        string source,
+        string correlationId,
+        OrderFulfillmentResult result)
+    {
 
         _logger.LogCritical(
             "Carrier shipment fulfillment authority synchronization failed | TenantId: {TenantId} | ShipmentId: {ShipmentId} | OrderId: {OrderId} | RequestedStatus: {RequestedStatus} | TargetFulfillmentStatus: {TargetFulfillmentStatus} | Source: {Source} | CorrelationId: {CorrelationId} | Error: {Error}",
@@ -4710,7 +4930,7 @@ public class CarrierShipmentService : ICarrierShipmentService
             ShipmentStatus.OutForDelivery => FulfillmentStatus.OutForDelivery,
             ShipmentStatus.Delivered => FulfillmentStatus.Delivered,
             ShipmentStatus.Cancelled => FulfillmentStatus.Cancelled,
-            ShipmentStatus.Failed => FulfillmentStatus.Cancelled,
+            ShipmentStatus.Failed => FulfillmentStatus.FailedDelivery,
             ShipmentStatus.Returned => FulfillmentStatus.Returned,
             _ => FulfillmentStatus.Confirmed
         };

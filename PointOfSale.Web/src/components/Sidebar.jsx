@@ -272,6 +272,14 @@ export default function Sidebar({ isOpen, onClose }) {
             path: '/admin/affiliates',
             requiredRoles: ['Owner', 'Admin'],
         },
+        // Affiliate Products (product participation management) — Owner/Admin only
+        {
+            key: 'admin-affiliate-products',
+            label: t('nav.affiliateProducts', 'Affiliate Products'),
+            icon: '📦',
+            path: '/admin/affiliates/products',
+            requiredRoles: ['Owner', 'Admin'],
+        },
 
         // 10) Reports
         {

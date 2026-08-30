@@ -5,6 +5,26 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class FinancialIntegrityRiskHardeningTests
 {
     [Fact]
+    public void RefundMutation_MustLoadPostgresConcurrencyTokenAndReturnSafeFailures()
+    {
+        var lifecycle = File.ReadAllText(InfrastructurePath("Payments", "PaymentLifecycleService.cs"));
+        var refundMethod = ExtractMethodBody(lifecycle, "RecordRefundAsync");
+        var refundLock = ExtractMethodBody(lifecycle, "LoadOrderForRefundMutationAsync");
+        var controller = File.ReadAllText(ApiPath("Controllers", "PaymentLifecycleController.cs"));
+        var refundEndpoint = ExtractMethodBody(controller, "RecordRefund");
+
+        Assert.NotNull(refundMethod);
+        Assert.NotNull(refundLock);
+        Assert.NotNull(refundEndpoint);
+        Assert.Contains("SELECT xmin, * FROM \"\"Orders\"\"", refundLock!, StringComparison.Ordinal);
+        Assert.Contains("REFUND_PROCESSING_FAILED", refundMethod!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Internal error: {ex.Message}", refundMethod!, StringComparison.Ordinal);
+        Assert.Contains("return SettlementFailure(result);", refundEndpoint!, StringComparison.Ordinal);
+        Assert.Contains("REFUND_AMOUNT_INVALID", refundEndpoint!, StringComparison.Ordinal);
+        Assert.Contains("REFUND_ID_REQUIRED", refundEndpoint!, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CommerceHubPaymentWebhook_MustRevalidateProviderMoneyInsideSerializableCommit()
     {
         var source = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentService.cs"));

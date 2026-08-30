@@ -52,8 +52,14 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
         Assert.DoesNotContain(".From(skip)", discovery, StringComparison.Ordinal);
         Assert.Contains("RecomposePublicAffiliateProductsFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("RecomposePublicAffiliateProductFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
+        Assert.Contains("ReadAllSearchCandidatesAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", publicController, StringComparison.Ordinal);
-        Assert.Contains("total = docs.Count", publicController, StringComparison.Ordinal);
+        Assert.Contains("var total = docs.Count", publicController, StringComparison.Ordinal);
+        Assert.Contains("pageDocs = docs.Skip(skip).Take(pageSize)", publicController, StringComparison.Ordinal);
+        Assert.DoesNotContain(".From(skip)", publicController, StringComparison.Ordinal);
+        Assert.Contains("seen.Add((candidate.TenantId, candidate.ProductId))", publicController, StringComparison.Ordinal);
+        Assert.Contains("Ascending(p => p.TenantId)", publicController, StringComparison.Ordinal);
+        Assert.Contains("Ascending(p => p.ProductId)", publicController, StringComparison.Ordinal);
         Assert.Contains("services.AddScoped<IAffiliateProductDiscoveryService, AffiliateProductDiscoveryService>()", registration, StringComparison.Ordinal);
     }
 

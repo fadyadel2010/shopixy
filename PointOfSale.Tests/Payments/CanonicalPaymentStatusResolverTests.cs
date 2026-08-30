@@ -27,7 +27,7 @@ public sealed class CanonicalPaymentStatusResolverTests
     [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Authorized, CanonicalPaymentStatusResolver.Processing)]
     [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Failed, CanonicalPaymentStatusResolver.Failed)]
     [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Cancelled, CanonicalPaymentStatusResolver.Failed)]
-    [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Paid, CanonicalPaymentStatusResolver.Paid)]
+    [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Paid, CanonicalPaymentStatusResolver.Pending)]
     [InlineData(PaymentStatus.Pending, PaymentIntentStatus.Suspicious, CanonicalPaymentStatusResolver.ManualReview)]
     [InlineData(PaymentStatus.Expired, PaymentIntentStatus.Suspicious, CanonicalPaymentStatusResolver.ManualReview)]
     [InlineData(PaymentStatus.Pending, PaymentIntentStatus.AmountMismatch, CanonicalPaymentStatusResolver.ManualReview)]

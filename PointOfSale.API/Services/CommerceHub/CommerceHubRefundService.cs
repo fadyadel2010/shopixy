@@ -106,7 +106,7 @@ public class CommerceHubRefundService : ICommerceHubRefundService
                 refund.Status == CommerceHubRefundStatus.Processing &&
                 refund.ProcessedAtUtc == null &&
                 ((refund.ProcessingStartedAtUtc ?? refund.CreatedAt) <= recoveryCutoffUtc ||
-                 string.Equals(refund.GatewayStatus, "execution_unknown", StringComparison.OrdinalIgnoreCase)))
+                 refund.GatewayStatus == "execution_unknown"))
             .OrderBy(refund => refund.ProcessingStartedAtUtc ?? refund.CreatedAt)
             .ThenBy(refund => refund.Id)
             .Take(RecoveryBatchSize)
@@ -438,10 +438,16 @@ public class CommerceHubRefundService : ICommerceHubRefundService
         {
             try
             {
-                await _financialReadinessGate.EnsureOutwardMoneyMovementAllowedAsync(
-                    tenantId,
-                    "CommerceHubRefund.GatewayExecute",
-                    cancellationToken);
+                // A recovery attempt is the operation that resolves this refund's existing
+                // uncertain external state. Applying the new-money readiness gate here would
+                // make the refund permanently self-blocking. New refund executions remain gated.
+                if (!(allowProcessingRecovery && refundSnapshot.Status == CommerceHubRefundStatus.Processing))
+                {
+                    await _financialReadinessGate.EnsureOutwardMoneyMovementAllowedAsync(
+                        tenantId,
+                        "CommerceHubRefund.GatewayExecute",
+                        cancellationToken);
+                }
 
                 // Read financial state before invoking the external refund gateway without taking
                 // FOR UPDATE locks. Serializable completion reacquires the locks after gateway response.
@@ -480,6 +486,7 @@ public class CommerceHubRefundService : ICommerceHubRefundService
                 {
                     trackedRefund = await _dbContext.CommerceHubRefunds
                         .Include(refund => refund.SubOrder)
+                        .ThenInclude(subOrder => subOrder.MarketplaceOrder)
                         .FirstOrDefaultAsync(
                             refund => refund.Id == refundId &&
                                       refund.TenantId == tenantId &&

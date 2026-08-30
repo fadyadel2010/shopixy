@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+    AFFILIATE_ATTRIBUTION_WARNING_CODE,
+    admitBackendAffiliateAttributionPresentation,
     deriveCurrentStoreIdentityPresentation,
     deriveCurrentVendorScopedArray,
     deriveCurrentVendorScopedDto,
@@ -297,6 +299,150 @@ describe('CommerceHub vendor identity authority', () => {
         })).toThrow(/incomplete attribution evidence/)
     })
 
+    it('accepts RFC 9562 UUIDv7 affiliate identifiers returned by the .NET Guid contract', () => {
+        const order = {
+            tenantId: currentUser.tenantId,
+            orderId: 'fc456d07-0cfe-4cc0-af0c-23862534d45a',
+            source: 'Ecommerce',
+            isMarketplaceOrder: false,
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: 'fc456d07-0cfe-4cc0-af0c-23862534d45a',
+                attributionId: '01a03efa-bb23-7dce-8c4c-b899d545f6f5',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-26T16:50:14.431971Z',
+            },
+        }
+
+        expect(requireBackendAffiliateAttributionAuthority(order)).toMatchObject({
+            attributionId: order.affiliateAttribution.attributionId,
+            affiliateAccountId: order.affiliateAttribution.affiliateAccountId,
+            promotionLinkId: order.affiliateAttribution.promotionLinkId,
+        })
+    })
+
+    it.each([
+        ['attribution ID', { attributionId: 'not-a-guid' }],
+        ['Affiliate account ID', { affiliateAccountId: 'not-a-guid' }],
+        ['referral code', { referralCode: '' }],
+        ['promotion link ID', { promotionLinkId: 'not-a-guid' }],
+        ['source', { source: 'Frontend' }],
+        ['timestamp', { attributedAtUtc: 'not-a-date' }],
+    ])('rejects invalid present %s evidence without admitting it', (_field, change) => {
+        const order = {
+            tenantId: currentUser.tenantId,
+            orderId: '33333333-3333-4333-8333-333333333333',
+            source: 'Ecommerce',
+            isMarketplaceOrder: false,
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '33333333-3333-4333-8333-333333333333',
+                attributionId: '0198ef41-fd7c-7a34-8c12-111111111111',
+                affiliateAccountId: '0198ef41-fd7c-7a34-8c12-222222222222',
+                referralCode: 'AFFCODE1',
+                promotionLinkId: '0198ef41-fd7c-7a34-8c12-333333333333',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-26T16:40:00Z',
+                ...change,
+            },
+        }
+
+        expect(() => requireBackendAffiliateAttributionAuthority(order)).toThrow(/incomplete attribution evidence/)
+        expect(admitBackendAffiliateAttributionPresentation(order)).toMatchObject({
+            affiliateAttribution: null,
+            affiliateAttributionWarning: {
+                code: AFFILIATE_ATTRIBUTION_WARNING_CODE,
+            },
+        })
+    })
+
+    it('accepts absent attribution and a missing optional promotion link without requiring detail-only evidence', () => {
+        const normalOrder = {
+            tenantId: currentUser.tenantId,
+            orderId: '33333333-3333-4333-8333-333333333333',
+            source: 'Ecommerce',
+            isMarketplaceOrder: false,
+            affiliateAttribution: null,
+        }
+        const legacyAffiliateOrder = {
+            ...normalOrder,
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: normalOrder.orderId,
+                attributionId: '0198ef41-fd7c-7a34-8c12-111111111111',
+                affiliateAccountId: '0198ef41-fd7c-7a34-8c12-222222222222',
+                referralCode: 'AFFCODE1',
+                promotionLinkId: null,
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-26T16:40:00Z',
+            },
+        }
+
+        expect(requireBackendAffiliateAttributionAuthority(normalOrder)).toBeNull()
+        expect(requireBackendAffiliateAttributionAuthority(legacyAffiliateOrder)).toMatchObject({ promotionLinkId: null })
+        expect(requireBackendAffiliateAttributionAuthority(legacyAffiliateOrder)).not.toHaveProperty('items')
+        expect(requireBackendAffiliateAttributionAuthority(legacyAffiliateOrder)).not.toHaveProperty('commission')
+    })
+
+    it('keeps malformed optional Affiliate evidence row-local while preserving canonical list and detail reads', () => {
+        const malformedOrder = {
+            tenantId: currentUser.tenantId,
+            orderId: '33333333-3333-4333-8333-333333333333',
+            source: 'Ecommerce',
+            isMarketplaceOrder: false,
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '33333333-3333-4333-8333-333333333333',
+                attributionId: 'not-a-guid',
+                affiliateAccountId: '55555555-5555-4555-8555-555555555555',
+                referralCode: 'AFFCODE1',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-07-01T10:00:00Z',
+            },
+        }
+        const normalOrder = {
+            tenantId: currentUser.tenantId,
+            orderId: '44444444-4444-4444-8444-444444444444',
+            source: 'Ecommerce',
+            isMarketplaceOrder: false,
+        }
+
+        const admittedList = requireCurrentVendorOrderVisibilityListAuthority({
+            items: [normalOrder, malformedOrder],
+        }, currentUser)
+        const admittedDetail = requireCurrentVendorOrderVisibilityAuthority(
+            malformedOrder,
+            currentUser,
+            malformedOrder.orderId,
+        )
+
+        expect(admittedList.items).toHaveLength(2)
+        expect(admittedList.items[0]).toEqual(normalOrder)
+        expect(admittedList.items[1]).toMatchObject({
+            orderId: malformedOrder.orderId,
+            affiliateAttribution: null,
+            affiliateAttributionWarning: { code: AFFILIATE_ATTRIBUTION_WARNING_CODE },
+        })
+        expect(admittedDetail).toMatchObject({
+            orderId: malformedOrder.orderId,
+            affiliateAttribution: null,
+            affiliateAttributionWarning: { code: AFFILIATE_ATTRIBUTION_WARNING_CODE },
+        })
+    })
+
+    it('does not apply Affiliate attribution presentation to CommerceHub Marketplace orders', () => {
+        expect(() => requireBackendOrderSourceAuthority({
+            ...marketplaceOrder,
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: marketplaceOrder.orderId,
+            },
+        })).toThrow(/affiliate evidence on a Marketplace order/)
+    })
+
     it('requires every vendor order list row to match the current tenant and rejects replayed identities', () => {
         const response = {
             items: [{ tenantId: currentUser.tenantId, orderId: 'order-1', source: 'Ecommerce', isMarketplaceOrder: false }],
@@ -315,7 +461,7 @@ describe('CommerceHub vendor identity authority', () => {
         expect(() => requireCurrentVendorOrderVisibilityListAuthority({
             items: [{ tenantId: currentUser.tenantId, orderId: 'order-1', isMarketplaceOrder: false }],
         }, currentUser)).toThrow(/order source evidence/)
-        expect(() => requireCurrentVendorOrderVisibilityListAuthority({
+        const admitted = requireCurrentVendorOrderVisibilityListAuthority({
             items: [{
                 tenantId: currentUser.tenantId,
                 orderId: '33333333-3333-4333-8333-333333333333',
@@ -331,6 +477,10 @@ describe('CommerceHub vendor identity authority', () => {
                     attributedAtUtc: '2026-07-01T10:00:00Z',
                 },
             }],
-        }, currentUser)).toThrow(/cross-order attribution evidence/)
+        }, currentUser)
+        expect(admitted.items[0]).toMatchObject({
+            affiliateAttribution: null,
+            affiliateAttributionWarning: { code: AFFILIATE_ATTRIBUTION_WARNING_CODE },
+        })
     })
 })

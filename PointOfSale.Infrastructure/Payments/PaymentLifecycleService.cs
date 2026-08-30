@@ -103,6 +103,20 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.IgnoreQueryFilters &&
+            (!request.TenantId.HasValue || request.TenantId.Value == Guid.Empty))
+        {
+            _logger.LogCritical(
+                "[PAYMENT-LIFECYCLE] Rejected system mutation without explicit tenant authority | OrderId: {OrderId} | PaymentIntentId: {PaymentIntentId} | Source: {Source}",
+                request.OrderId,
+                request.PaymentIntentId,
+                request.Source);
+
+            return Task.FromResult(PaymentTransitionResult.Failed(
+                "Tenant authority is required for system payment lifecycle mutations.",
+                "PAYMENT_TENANT_AUTHORITY_REQUIRED"));
+        }
+
         return request.Outcome switch
         {
             PaymentLifecycleOutcome.Authorized => HandleAuthorizedAsync(request, ct),
@@ -282,6 +296,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     }
 
     public Task<PaymentTransitionResult> MarkOfflineCollectionDeliveredAsync(
+        Guid tenantId,
         Guid orderId,
         string? deliveryReference = null,
         string? confirmedBy = null,
@@ -289,6 +304,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     {
         return HandlePaymentResultAsync(new HandlePaymentResultRequest
         {
+            TenantId = tenantId,
             OrderId = orderId,
             Outcome = PaymentLifecycleOutcome.Succeeded,
             Source = PaymentLifecycleSource.OfflineCollection,
@@ -861,14 +877,14 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             normalizedRefundId = NormalizeRefundId(refundId);
             if (normalizedRefundId == null)
             {
-                return PaymentTransitionResult.Failed("Refund ID is required");
+                return PaymentTransitionResult.Failed("Refund ID is required", "REFUND_ID_REQUIRED");
             }
 
             order = await LoadOrderForRefundMutationAsync(orderId, ct);
 
             if (order == null)
             {
-                return PaymentTransitionResult.Failed("Order not found");
+                return PaymentTransitionResult.Failed("Order not found", "ORDER_NOT_FOUND");
             }
 
             // Normalize amount and currency for validation
@@ -893,7 +909,8 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 order.PaymentStatus != PaymentStatus.PartiallyRefunded)
             {
                 return PaymentTransitionResult.Failed(
-                    $"Cannot refund: current status is {order.PaymentStatus}");
+                    $"Cannot refund: current status is {order.PaymentStatus}",
+                    "REFUND_INVALID_PAYMENT_STATE");
             }
 
             var collectionAccountingFailure = await EnsureCollectionAccountingPostedForRefundAsync(order, ct);
@@ -914,7 +931,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             // Amount already normalized above for validation
             if (normalizedRefundAmount <= 0m)
             {
-                return PaymentTransitionResult.Failed("Refund amount must be positive");
+                return PaymentTransitionResult.Failed("Refund amount must be positive", "REFUND_AMOUNT_INVALID");
             }
 
             var tolerance = CurrencyHelper.GetMonetaryTolerance(order.Currency);
@@ -924,13 +941,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             if (remainingRefundableAmount <= tolerance)
             {
-                return PaymentTransitionResult.Failed("Order has no remaining refundable amount");
+                return PaymentTransitionResult.Failed(
+                    "Order has no remaining refundable amount",
+                    "REFUND_AMOUNT_EXHAUSTED");
             }
 
             if (normalizedRefundAmount - remainingRefundableAmount > tolerance)
             {
                 return PaymentTransitionResult.Failed(
-                    $"Refund amount {normalizedRefundAmount} exceeds remaining refundable amount {remainingRefundableAmount}");
+                    $"Refund amount {normalizedRefundAmount} exceeds remaining refundable amount {remainingRefundableAmount}",
+                    "REFUND_AMOUNT_EXCEEDS_REMAINING");
             }
 
             var totalRefundedAfterThisRefund = NormalizeMoney(alreadyRefundedAmount + normalizedRefundAmount, order.Currency);
@@ -1065,7 +1085,9 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         {
             await transaction.RollbackAsync(ct);
             _logger.LogError(ex, "Failed to record refund for order {OrderId}", orderId);
-            return PaymentTransitionResult.Failed($"Internal error: {ex.Message}");
+            return PaymentTransitionResult.Failed(
+                "Refund could not be processed.",
+                "REFUND_PROCESSING_FAILED");
         }
 
         // Post to external accounting system AFTER local state is durable and committed.
@@ -1112,6 +1134,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     }
 
     public async Task<PaymentTransitionResult> MarkPaymentExpiredAsync(
+        Guid tenantId,
         Guid orderId,
         string reason,
         CancellationToken ct = default)
@@ -1119,6 +1142,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         var activePaymentIntentIds = await _db.PaymentIntents
             .IgnoreQueryFilters()
             .Where(intent =>
+                intent.TenantId == tenantId &&
                 intent.OrderId == orderId &&
                 !intent.IsDeleted &&
                 (intent.Status == PaymentIntentStatus.Pending ||
@@ -1133,6 +1157,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         var hasPaidIntent = await _db.PaymentIntents
             .IgnoreQueryFilters()
             .AnyAsync(intent =>
+                intent.TenantId == tenantId &&
                 intent.OrderId == orderId &&
                 !intent.IsDeleted &&
                 intent.Status == PaymentIntentStatus.Paid,
@@ -1144,6 +1169,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             var paidIntentId = await _db.PaymentIntents
                 .IgnoreQueryFilters()
                 .Where(intent =>
+                    intent.TenantId == tenantId &&
                     intent.OrderId == orderId &&
                     !intent.IsDeleted &&
                     intent.Status == PaymentIntentStatus.Paid)
@@ -1152,7 +1178,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 .FirstOrDefaultAsync(ct);
 
             return await HandlePaymentResultAsync(
-                CreateReservationExpiredRequest(orderId, paidIntentId, reason, skipPaymentIntentResolution: false),
+                CreateReservationExpiredRequest(tenantId, orderId, paidIntentId, reason, skipPaymentIntentResolution: false),
                 ct);
         }
 
@@ -1160,7 +1186,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         {
             // No active or paid intents - safe to skip intent resolution
             return await HandlePaymentResultAsync(
-                CreateReservationExpiredRequest(orderId, paymentIntentId: null, reason, skipPaymentIntentResolution: true),
+                CreateReservationExpiredRequest(tenantId, orderId, paymentIntentId: null, reason, skipPaymentIntentResolution: true),
                 ct);
         }
 
@@ -1168,7 +1194,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         foreach (var paymentIntentId in activePaymentIntentIds)
         {
             lastResult = await HandlePaymentResultAsync(
-                CreateReservationExpiredRequest(orderId, paymentIntentId, reason, skipPaymentIntentResolution: false),
+                CreateReservationExpiredRequest(tenantId, orderId, paymentIntentId, reason, skipPaymentIntentResolution: false),
                 ct);
 
             if (!lastResult.IsSuccess)
@@ -1180,10 +1206,161 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         return lastResult ?? PaymentTransitionResult.Succeeded(PaymentStatus.Expired, wasIdempotent: true, stateChanged: false);
     }
 
-    private HandlePaymentResultRequest CreateReservationExpiredRequest(Guid orderId, Guid? paymentIntentId, string reason, bool skipPaymentIntentResolution)
+    public async Task<PaymentTransitionResult> ResetFailedPaymentForRetryAsync(
+        Guid orderId,
+        Guid failedPaymentIntentId,
+        CancellationToken ct = default)
+    {
+        if (orderId == Guid.Empty || failedPaymentIntentId == Guid.Empty)
+        {
+            return PaymentTransitionResult.Failed(
+                "Payment retry authority requires an order and failed payment intent.",
+                "PAYMENT_RETRY_INVALID_REQUEST");
+        }
+
+        await using var transaction = await BeginLifecycleTransactionAsync(ct);
+
+        try
+        {
+            var order = await LoadOrderForPaymentLifecycleMutationAsync(
+                orderId,
+                ignoreQueryFilters: false,
+                ct);
+            if (order == null)
+            {
+                return PaymentTransitionResult.Failed("Order not found", "ORDER_NOT_FOUND");
+            }
+
+            var failedPaymentIntent = await _db.PaymentIntents
+                .FirstOrDefaultAsync(intent =>
+                    intent.Id == failedPaymentIntentId &&
+                    intent.OrderId == order.Id &&
+                    intent.TenantId == order.TenantId &&
+                    !intent.IsDeleted,
+                    ct);
+            if (failedPaymentIntent == null)
+            {
+                return PaymentTransitionResult.Failed(
+                    "Failed payment intent not found.",
+                    "PAYMENT_RETRY_INTENT_NOT_FOUND");
+            }
+
+            if (order.Status != OrderStatus.Pending)
+            {
+                return PaymentTransitionResult.Failed(
+                    $"Cannot retry payment for order status {order.Status}.",
+                    "PAYMENT_RETRY_ORDER_NOT_PENDING");
+            }
+
+            if (order.PaymentStatus == PaymentStatus.Pending &&
+                order.CheckoutState == CheckoutState.PaymentPending)
+            {
+                await transaction.CommitAsync(ct);
+                return PaymentTransitionResult.Succeeded(
+                    PaymentStatus.Pending,
+                    wasIdempotent: true,
+                    stateChanged: false);
+            }
+
+            if (order.PaymentStatus != PaymentStatus.Failed ||
+                order.CheckoutState is not (CheckoutState.Failed or CheckoutState.Expired))
+            {
+                return PaymentTransitionResult.Failed(
+                    $"Cannot retry payment from Payment:{order.PaymentStatus}/Checkout:{order.CheckoutState}.",
+                    "PAYMENT_RETRY_INVALID_STATE");
+            }
+
+            if (failedPaymentIntent.Status is not (
+                    PaymentIntentStatus.Failed or
+                    PaymentIntentStatus.Cancelled or
+                    PaymentIntentStatus.Rejected or
+                    PaymentIntentStatus.Expired))
+            {
+                return PaymentTransitionResult.Failed(
+                    $"Cannot retry from payment intent status {failedPaymentIntent.Status}.",
+                    "PAYMENT_RETRY_INTENT_NOT_TERMINAL");
+            }
+
+            var hasActiveSiblingAttempt = await _db.PaymentIntents.AnyAsync(intent =>
+                intent.OrderId == order.Id &&
+                intent.TenantId == order.TenantId &&
+                intent.Id != failedPaymentIntent.Id &&
+                !intent.IsDeleted &&
+                (intent.Status == PaymentIntentStatus.Pending ||
+                 intent.Status == PaymentIntentStatus.Authorized ||
+                 intent.Status == PaymentIntentStatus.AwaitingVerification),
+                ct);
+            if (hasActiveSiblingAttempt)
+            {
+                return PaymentTransitionResult.Failed(
+                    "Cannot reset payment while another attempt is active.",
+                    "PAYMENT_RETRY_ACTIVE_ATTEMPT_EXISTS");
+            }
+
+            var now = DateTime.UtcNow;
+            var oldPaymentStatus = order.PaymentStatus;
+            var retryRequest = new HandlePaymentResultRequest
+            {
+                OrderId = order.Id,
+                PaymentIntentId = failedPaymentIntent.Id,
+                Outcome = PaymentLifecycleOutcome.Authorized,
+                Source = PaymentLifecycleSource.PaymentRetry,
+                PaymentReference = failedPaymentIntent.PaymentReference,
+                ProcessedAtUtc = now
+            };
+
+            PaymentStatusSaveChangesInterceptor.EnableAuthorizedContext();
+            try
+            {
+                order.TransitionCheckoutState(CheckoutState.PendingPaymentIntent);
+                order.TransitionCheckoutState(CheckoutState.PaymentPending);
+                order.PaymentStatus = PaymentStatus.Pending;
+                order.AcceptPaymentStatusChange();
+                order.IsPaid = false;
+                order.PaidAt = null;
+
+                await PublishCompatibilityPaymentStatusChangedEventAsync(
+                    order,
+                    failedPaymentIntent,
+                    retryRequest,
+                    oldPaymentStatus,
+                    amountPaid: null,
+                    now,
+                    ct);
+                await _db.SaveChangesAsync(ct);
+            }
+            finally
+            {
+                PaymentStatusSaveChangesInterceptor.DisableAuthorizedContext();
+            }
+
+            await transaction.CommitAsync(ct);
+
+            return PaymentTransitionResult.Succeeded(PaymentStatus.Pending);
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync(ct);
+
+            if (IsPaymentConcurrencyException(ex))
+            {
+                return PaymentTransitionResult.Failed(
+                    "Payment retry authority changed concurrently. Refresh and try again.",
+                    "PAYMENT_CONCURRENCY_CONFLICT");
+            }
+
+            _logger.LogError(ex, "Failed to reset payment for retry on order {OrderId}", orderId);
+            return PaymentTransitionResult.Failed(
+                $"Internal error: {ex.Message}",
+                "PAYMENT_RETRY_FAILED");
+        }
+    }
+
+    private HandlePaymentResultRequest CreateReservationExpiredRequest(Guid tenantId, Guid orderId, Guid? paymentIntentId, string reason, bool skipPaymentIntentResolution)
     {
         return new HandlePaymentResultRequest
         {
+            TenantId = tenantId,
             OrderId = orderId,
             PaymentIntentId = paymentIntentId,
             Outcome = PaymentLifecycleOutcome.Expired,
@@ -1228,7 +1405,9 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             OrderId = orderId,
             CurrentStatus = order.PaymentStatus,
             PaymentMethodCode = order.PaymentMethodCode,
-            CanMarkOfflineCollectionDelivered = isCod && order.PaymentStatus == PaymentStatus.Pending,
+            CanMarkOfflineCollectionDelivered = isCod &&
+                order.PaymentStatus == PaymentStatus.Pending &&
+                order.FulfillmentStatus == FulfillmentStatus.Delivered,
             CanApproveReviewedPayment = isWallet && awaitingWalletVerification,
             CanRejectReviewedPayment = isWallet && awaitingWalletVerification,
             CanRefund = order.PaymentStatus == PaymentStatus.Collected ||
@@ -2580,6 +2759,22 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 request.OrderId,
                 request.IgnoreQueryFilters,
                 ct);
+        }
+
+        if (request.TenantId.HasValue &&
+            ((order != null && order.TenantId != request.TenantId.Value) ||
+             (paymentIntent != null && paymentIntent.TenantId != request.TenantId.Value)))
+        {
+            _logger.LogCritical(
+                "[PAYMENT-LIFECYCLE] Rejected cross-tenant payment mutation | ExpectedTenantId: {ExpectedTenantId} | OrderId: {OrderId} | OrderTenantId: {OrderTenantId} | PaymentIntentId: {PaymentIntentId} | PaymentIntentTenantId: {PaymentIntentTenantId} | Source: {Source}",
+                request.TenantId.Value,
+                request.OrderId,
+                order?.TenantId,
+                paymentIntent?.Id,
+                paymentIntent?.TenantId,
+                request.Source);
+
+            return new PaymentLifecycleAggregate(null, null);
         }
 
         return new PaymentLifecycleAggregate(order, paymentIntent);
@@ -4330,7 +4525,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         if (IsPostgresProvider())
         {
             query = _db.Orders.FromSqlInterpolated($@"
-                SELECT * FROM ""Orders""
+                SELECT xmin, * FROM ""Orders""
                 WHERE ""Id"" = {orderId}
                   AND ""IsDeleted"" = false
                 FOR UPDATE");
@@ -6762,6 +6957,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     {
         return request.Source switch
         {
+            PaymentLifecycleSource.PaymentRetry => "Payment reopened for a new provider attempt",
             PaymentLifecycleSource.PaymentReviewApproval => $"Payment review approved by {request.Actor ?? "system"}",
             PaymentLifecycleSource.PaymentReviewRejection => request.Reason ?? "Payment review rejected",
             PaymentLifecycleSource.OfflineCollection => "Offline payment collected on delivery",

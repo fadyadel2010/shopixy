@@ -35,8 +35,10 @@ public sealed class AffiliateOrderLineageAdminPresentationAuthorityCertification
         Assert.Contains("AFFILIATE_ATTRIBUTION_SOURCES", admission, StringComparison.Ordinal);
         Assert.Contains("cross-order attribution evidence", admission, StringComparison.Ordinal);
         Assert.Contains("incomplete attribution evidence", admission, StringComparison.Ordinal);
-        Assert.Contains("requireBackendAffiliateAttributionAuthority(scopedValue)", admission, StringComparison.Ordinal);
-        Assert.Contains("requireBackendAffiliateAttributionAuthority(scopedOrder)", admission, StringComparison.Ordinal);
+        Assert.Contains("admitBackendAffiliateAttributionPresentation(scopedValue)", admission, StringComparison.Ordinal);
+        Assert.Contains("acceptedOrders.push(admitBackendAffiliateAttributionPresentation(scopedOrder))", admission, StringComparison.Ordinal);
+        Assert.Contains("AFFILIATE_ATTRIBUTION_WARNING_CODE", admission, StringComparison.Ordinal);
+        Assert.Contains("Affiliate attribution is unavailable for this order.", admission, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage", page, StringComparison.Ordinal);
         Assert.DoesNotContain("sessionStorage", page, StringComparison.Ordinal);
     }

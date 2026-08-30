@@ -39,8 +39,6 @@ export function useAffiliateReadiness() {
                 setError(null)
             }
         } catch (err) {
-            console.error('[AF-23] Readiness check failed:', err)
-
             if (currentRequest === requestSeq.current) {
                 setError(err)
                 // Defensive: treat errors as NOT READY

@@ -34,7 +34,8 @@ public sealed class AdminOrderCrossChannelPresentationAuthorityCertificationTest
 
         Assert.Contains("requireBackendOrderSourceAuthority(scopedValue)", admission, StringComparison.Ordinal);
         Assert.Contains("requireBackendOrderSourceAuthority(scopedOrder)", admission, StringComparison.Ordinal);
-        Assert.Contains("requireBackendAffiliateAttributionAuthority(scopedValue)", admission, StringComparison.Ordinal);
+        Assert.Contains("admitBackendAffiliateAttributionPresentation(scopedValue)", admission, StringComparison.Ordinal);
+        Assert.Contains("acceptedOrders.push(admitBackendAffiliateAttributionPresentation(scopedOrder))", admission, StringComparison.Ordinal);
         Assert.Contains("requireBackendMarketplaceLineageAuthority(order)", admission, StringComparison.Ordinal);
         Assert.Contains("sourceOrderId.toLowerCase() !== marketplaceOrderId.toLowerCase()", admission, StringComparison.Ordinal);
         Assert.Contains("Marketplace order lineage authority rejected source identity evidence.", admission, StringComparison.Ordinal);

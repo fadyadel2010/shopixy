@@ -97,6 +97,34 @@ public sealed class OrderFulfillmentLineageAuthorityTests
         Assert.Equal("sql-carrier", document.CarrierName);
     }
 
+    [Theory]
+    [InlineData(FulfillmentStatus.FailedDelivery, "Failed")]
+    [InlineData(FulfillmentStatus.Returned, "Returned")]
+    public void ProjectionBuilder_TerminalFulfillmentOverridesStaleShipmentVisibility(
+        FulfillmentStatus fulfillmentStatus,
+        string expectedShippingStatus)
+    {
+        var order = CreateOrder(Guid.NewGuid(), Guid.NewGuid());
+        order.FulfillmentStatus = fulfillmentStatus;
+        order.AcceptFulfillmentStatusChange();
+        var shipmentSnapshot = new StorefrontOrderProjectionAuthoritySnapshot(
+            ShipmentShippingStatus: "Delivered",
+            ShipmentTrackingNumber: null,
+            ShipmentCarrierCode: null,
+            ShipmentDeliveredAtUtc: null,
+            AttributedAtUtc: null,
+            AffiliateCommissionAmount: null);
+
+        var document = StorefrontOrderProjectionBuilder.Build(
+            order,
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            aggregateVersion: 1,
+            authoritySnapshot: shipmentSnapshot);
+
+        Assert.Equal(expectedShippingStatus, document.ShippingStatus);
+    }
+
     private static void SeedOrderAndShipment(
         ApplicationDbContext dbContext,
         Guid tenantId,

@@ -315,7 +315,7 @@ public class OrderFulfillmentArchitectureTests
     }
 
     [Fact]
-    public void FulfillmentDeliveredEventConsumer_ShouldCallPaymentLifecycleService()
+    public void FulfillmentDeliveredEventConsumer_MustNotConvertDeliveryIntoCodCollection()
     {
         // Arrange
         var solutionDir = GetSolutionDirectory();
@@ -333,20 +333,9 @@ public class OrderFulfillmentArchitectureTests
 
         var sourceCode = File.ReadAllText(consumerPath);
 
-        // Act - Verify it has PaymentLifecycleService dependency
-        var hasPaymentLifecycleServiceField = 
-            sourceCode.Contains("IPaymentLifecycleService") &&
-            sourceCode.Contains("_paymentLifecycleService");
-        
-        // Verify it calls MarkOfflineCollectionDeliveredAsync for offline collection orders
-        var callsMarkCodDelivered = sourceCode.Contains("MarkOfflineCollectionDeliveredAsync");
-
-        // Assert
-        Assert.True(hasPaymentLifecycleServiceField,
-            "FulfillmentDeliveredEventConsumer must have IPaymentLifecycleService dependency");
-        
-        Assert.True(callsMarkCodDelivered,
-            "FulfillmentDeliveredEventConsumer must call MarkOfflineCollectionDeliveredAsync for offline collection orders to trigger ledger journal creation");
+        Assert.DoesNotContain("IPaymentLifecycleService", sourceCode, StringComparison.Ordinal);
+        Assert.DoesNotContain("MarkOfflineCollectionDeliveredAsync", sourceCode, StringComparison.Ordinal);
+        Assert.Contains("awaiting explicit collection evidence", sourceCode, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -378,15 +367,10 @@ public class OrderFulfillmentArchitectureTests
     }
 
     [Fact]
-    public void DeliveredState_MustTriggerPaymentLifecycle_ForCodOrders()
+    public void DeliveredState_MustRemainSeparateFromCodCollection()
     {
-        // This test verifies the integration path exists:
-        // OrderFulfillmentService.MarkDeliveredAsync 
-        //   → publishes FulfillmentDeliveredEvent
-        //     → FulfillmentDeliveredEventConsumer.Consume
-        //       -> PaymentLifecycleService.MarkOfflineCollectionDeliveredAsync
-        //         → Outbox.EnqueueCodDeliveredAsync
-        //           → Ledger Journal
+        // Delivery still publishes its event for projections and commission approval
+        // revalidation, but the event must not fabricate COD collection evidence.
 
         // Arrange
         var solutionDir = GetSolutionDirectory();
@@ -405,7 +389,7 @@ public class OrderFulfillmentArchitectureTests
         var publishesEvent = fulfillmentServiceCode.Contains("FulfillmentDeliveredEvent") &&
                             fulfillmentServiceCode.Contains("_eventPublisher.PublishAsync");
 
-        // 2. Check consumer calls PaymentLifecycle
+        // 2. Check consumer does not call PaymentLifecycle collection
         var consumerPath = Path.Combine(solutionDir, 
             "PointOfSale.Infrastructure", "Consumers", "OrderDeliveredEventConsumer.cs");
         
@@ -419,12 +403,9 @@ public class OrderFulfillmentArchitectureTests
         var callsPaymentLifecycle = consumerCode.Contains("MarkOfflineCollectionDeliveredAsync");
 
         // Assert
-        Assert.True(publishesEvent && callsPaymentLifecycle,
-            "LEDGER-FIRST INTEGRATION REQUIRED!\n\n" +
-            "The COD delivery → payment → ledger pipeline must be connected:\n" +
-            $"  OrderFulfillmentService publishes FulfillmentDeliveredEvent: {publishesEvent}\n" +
-            $"  FulfillmentDeliveredEventConsumer calls MarkOfflineCollectionDeliveredAsync: {callsPaymentLifecycle}\n\n" +
-            "Both must be true for COD revenue to be recognized in the ledger.");
+        Assert.True(publishesEvent && !callsPaymentLifecycle,
+            "Fulfillment delivery must publish its event without converting delivery into COD collection. " +
+            "Collection requires the payment lifecycle command or carrier collection evidence.");
     }
 
     [Fact]

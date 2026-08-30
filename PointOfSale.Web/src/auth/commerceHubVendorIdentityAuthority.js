@@ -1,4 +1,8 @@
-const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+// .NET Guid values in this contract include RFC 9562 UUIDv7 identifiers.
+// Keep the RFC variant check while accepting all currently assigned UUID versions.
+const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+export const AFFILIATE_ATTRIBUTION_WARNING_CODE = 'AFFILIATE_ATTRIBUTION_UNAVAILABLE'
 
 const normalizeString = (value) => (typeof value === 'string' ? value.trim() : '')
 
@@ -99,9 +103,8 @@ export const requireCurrentVendorOrderVisibilityAuthority = (value, currentUser,
     }
 
     requireBackendOrderSourceAuthority(scopedValue)
-    requireBackendAffiliateAttributionAuthority(scopedValue)
 
-    return scopedValue
+    return admitBackendAffiliateAttributionPresentation(scopedValue)
 }
 
 export const requireCurrentVendorOrderVisibilityListAuthority = (response, currentUser) => {
@@ -110,6 +113,7 @@ export const requireCurrentVendorOrderVisibilityListAuthority = (response, curre
     }
 
     const seenOrderIds = new Set()
+    const acceptedOrders = []
     for (const order of response.items) {
         const scopedOrder = deriveCurrentVendorScopedDto(order, currentUser)
         const orderId = normalizeString(scopedOrder?.orderId ?? scopedOrder?.OrderId)
@@ -119,11 +123,14 @@ export const requireCurrentVendorOrderVisibilityListAuthority = (response, curre
         }
 
         requireBackendOrderSourceAuthority(scopedOrder)
-        requireBackendAffiliateAttributionAuthority(scopedOrder)
+        acceptedOrders.push(admitBackendAffiliateAttributionPresentation(scopedOrder))
         seenOrderIds.add(orderId.toLowerCase())
     }
 
-    return response
+    return {
+        ...response,
+        items: acceptedOrders,
+    }
 }
 
 export const requireBackendOrderSourceAuthority = (order) => {
@@ -148,6 +155,9 @@ export const requireBackendOrderSourceAuthority = (order) => {
     }
 
     if (isMarketplaceOrder) {
+        if (order?.affiliateAttribution != null || order?.AffiliateAttribution != null) {
+            throw new Error('CommerceHub vendor order visibility authority rejected affiliate evidence on a Marketplace order.')
+        }
         requireBackendMarketplaceLineageAuthority(order)
     } else if (order?.marketplaceLineage != null || order?.MarketplaceLineage != null) {
         throw new Error('Marketplace order lineage authority rejected marketplace evidence on a non-marketplace order.')
@@ -304,6 +314,31 @@ export const requireBackendAffiliateAttributionAuthority = (order) => {
         promotionLinkId: promotionLinkId || null,
         source,
         attributedAtUtc,
+    }
+}
+
+export const admitBackendAffiliateAttributionPresentation = (order) => {
+    const attribution = order?.affiliateAttribution ?? order?.AffiliateAttribution
+    if (attribution == null) {
+        return order
+    }
+
+    try {
+        const admittedAttribution = requireBackendAffiliateAttributionAuthority(order)
+        return {
+            ...order,
+            affiliateAttribution: admittedAttribution,
+        }
+    } catch {
+        return {
+            ...order,
+            affiliateAttribution: null,
+            AffiliateAttribution: null,
+            affiliateAttributionWarning: {
+                code: AFFILIATE_ATTRIBUTION_WARNING_CODE,
+                message: 'Affiliate attribution is unavailable for this order.',
+            },
+        }
     }
 }
 

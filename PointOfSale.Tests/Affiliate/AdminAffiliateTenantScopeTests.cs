@@ -151,6 +151,7 @@ public sealed class AdminAffiliateTenantScopeTests
         {
             var affiliate = AffiliateAccount.Create(Guid.NewGuid(), Guid.NewGuid(), "AFF123", "Tenant Affiliate");
             affiliate.Id = affiliateAccountId;
+            affiliate.Activate();
             affiliate.Suspend("Abuse");
 
             context.AffiliateAccounts.Add(affiliate);

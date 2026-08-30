@@ -22,9 +22,10 @@ namespace PointOfSale.API.Services;
 /// - Pending/ReadyForPickup → Processing
 /// - PickedUp/InTransit/OutForDelivery → Shipped
 /// - Delivered → Delivered
-/// - Cancelled → Cancelled
-/// - Returned → Returned
-/// - Failed → (no change - order stays at current status)
+/// - Cancelled/Returned/Failed → no Order.Status change
+///
+/// Shipment cancellation and return are evidence for their own lifecycle. They must
+/// not impersonate the dedicated order-cancellation or payment-refund authorities.
 /// 
 /// PAYMENT STATUS → ORDER STATUS MAPPING:
 /// - Paid (when order is Pending) → Confirmed
@@ -396,9 +397,7 @@ public class OrderStatusSyncService : IOrderStatusSyncService
     /// - Pending/ReadyForPickup → Processing
     /// - PickedUp/InTransit/OutForDelivery → Shipped
     /// - Delivered → Delivered
-    /// - Cancelled → Cancelled
-    /// - Returned → Returned
-    /// - Failed → NO CHANGE (return current status)
+    /// - Cancelled/Returned/Failed → NO CHANGE (return current status)
     /// </summary>
     private static OrderStatus MapShipmentStatusToOrderStatus(ShipmentStatus shipmentStatus, OrderStatus currentOrderStatus)
     {
@@ -414,12 +413,11 @@ public class OrderStatusSyncService : IOrderStatusSyncService
 
             ShipmentStatus.Delivered => OrderStatus.Delivered,
 
-            ShipmentStatus.Cancelled => OrderStatus.Cancelled,
-
-            ShipmentStatus.Returned => OrderStatus.Refunded, // Map to Refunded as per enum
-
-            // CRITICAL: Failed shipment does NOT auto-cancel order
-            // Leave order in current state for admin intervention
+            // Cancellation and refund have dedicated transactional workflows. A carrier
+            // event may update shipment/fulfillment evidence, but cannot silently perform
+            // either business transition on the canonical Order.
+            ShipmentStatus.Cancelled => currentOrderStatus,
+            ShipmentStatus.Returned => currentOrderStatus,
             ShipmentStatus.Failed => currentOrderStatus,
 
             _ => currentOrderStatus
@@ -436,7 +434,7 @@ public class OrderStatusSyncService : IOrderStatusSyncService
         if (oldStatus == newStatus)
             return false;
 
-        if (shipmentStatus == ShipmentStatus.Failed)
+        if (shipmentStatus is ShipmentStatus.Cancelled or ShipmentStatus.Returned or ShipmentStatus.Failed)
             return false;
 
         return true;

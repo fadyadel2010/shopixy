@@ -273,7 +273,7 @@ public sealed class PaymentCancellationOutboxOperationalScalabilityTests : IDisp
             CancellationToken ct = default) =>
             throw new NotSupportedException();
 
-        public Task<PaymentTransitionResult> MarkOfflineCollectionDeliveredAsync(Guid orderId, string? deliveryReference = null, string? confirmedBy = null, CancellationToken ct = default) =>
+        public Task<PaymentTransitionResult> MarkOfflineCollectionDeliveredAsync(Guid tenantId, Guid orderId, string? deliveryReference = null, string? confirmedBy = null, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
         public Task<PaymentTransitionResult> RecordOfflineSettlementAsync(OfflineSettlementRequest request, CancellationToken ct = default) =>
@@ -297,7 +297,10 @@ public sealed class PaymentCancellationOutboxOperationalScalabilityTests : IDisp
         public Task<PaymentTransitionResult> MarkPaymentFailedAsync(Guid orderId, string reason, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
-        public Task<PaymentTransitionResult> MarkPaymentExpiredAsync(Guid orderId, string reason, CancellationToken ct = default) =>
+        public Task<PaymentTransitionResult> MarkPaymentExpiredAsync(Guid tenantId, Guid orderId, string reason, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task<PaymentTransitionResult> ResetFailedPaymentForRetryAsync(Guid orderId, Guid failedPaymentIntentId, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
         public Task<PaymentAllowedActions> GetAllowedActionsAsync(Guid orderId, CancellationToken ct = default) =>

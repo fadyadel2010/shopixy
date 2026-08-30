@@ -354,7 +354,7 @@ public class CommerceHubCustomerAuthService : ICommerceHubCustomerAuthService
 
         if (customer == null)
         {
-            _logger.LogInformation("Password reset requested for non-existent email | Email: {Email}", normalizedEmail);
+            _logger.LogInformation("Password reset requested for a non-existent CommerceHub customer identity.");
             return new CommerceHubCustomerAuthResult { Success = true, Message = "If that email is registered, a reset link has been sent." };
         }
 

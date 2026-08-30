@@ -644,6 +644,17 @@ public class Order : BaseEntity, ITenantOwned, IProjectionVersioned
     
     public DateTime? ShippedAt { get; set; }
     public DateTime? DeliveredAt { get; set; }
+    /// <summary>
+    /// Delivery reference captured by the authoritative fulfillment transition.
+    /// Required when a later financial event revalidates affiliate approval for manual fulfillment.
+    /// </summary>
+    public string? DeliveryReference { get; set; }
+
+    /// <summary>
+    /// Proof-of-delivery location captured by the authoritative fulfillment transition.
+    /// This evidence metadata does not make fulfillment or payment authoritative.
+    /// </summary>
+    public string? ProofOfDeliveryUrl { get; set; }
     public DateTime? CancelledAt { get; set; }
     public string? CancellationReason { get; set; }
     

@@ -4,23 +4,261 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.Core.Application.ProductAuthoring;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Instrumentation;
+using PointOfSale.Infrastructure.Services.Affiliate;
 using PointOfSale.Tests.Infrastructure;
 
 namespace PointOfSale.Tests.Integration;
 
 public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
 {
+    [Fact]
+    public async Task OrdinaryProductUpdate_PreservesPersistedAffiliateConfiguration()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var createResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            idempotencyKey: "affiliate-preservation-create"));
+        Assert.Equal(ProductAuthoringStatus.Accepted, createResult.Status);
+
+        var productId = Assert.IsType<Guid>(createResult.ProductId);
+        var affiliateCategory = AffiliateCategory.CreateMainCategory("Electronics", "electronics");
+        harness.Context.AffiliateCategories.Add(affiliateCategory);
+        await harness.Context.SaveChangesAsync();
+        var affiliatePolicy = AffiliateProductPolicy.Create(
+            harness.TenantContext.TenantId!.Value,
+            productId,
+            commissionRate: 0.10m,
+            maxPerItem: 25m,
+            categoryId: affiliateCategory.Id);
+        harness.Context.AffiliateProductPolicies.Add(affiliatePolicy);
+        await harness.Context.SaveChangesAsync();
+        harness.Context.ChangeTracker.Clear();
+
+        var updateResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            idempotencyKey: "affiliate-preservation-update",
+            productId: productId,
+            productUnitsSubmitted: false,
+            name: "Renamed product"));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, updateResult.Status);
+        harness.Context.ChangeTracker.Clear();
+
+        Assert.Equal(
+            "Renamed product",
+            await harness.Context.Products
+                .Where(product => product.Id == productId)
+                .Select(product => product.Name)
+                .SingleAsync());
+
+        var persistedPolicy = await harness.Context.AffiliateProductPolicies
+            .SingleAsync(policy => policy.ProductId == productId);
+        Assert.Equal(affiliatePolicy.Id, persistedPolicy.Id);
+        Assert.True(persistedPolicy.IsEnabled);
+        Assert.Equal(affiliateCategory.Id, persistedPolicy.AffiliateCategoryId);
+        Assert.Equal(0.10m, persistedPolicy.CommissionRate);
+        Assert.Equal(25m, persistedPolicy.MaxCommissionPerItem);
+    }
+
+    [Fact]
+    public async Task AffiliatePolicyMutations_PreserveEntireProductDomainSnapshot()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var createResult = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            idempotencyKey: "affiliate-isolation-create"));
+        Assert.Equal(ProductAuthoringStatus.Accepted, createResult.Status);
+
+        var productId = Assert.IsType<Guid>(createResult.ProductId);
+        var tenantId = harness.TenantContext.TenantId!.Value;
+        var variant = await harness.Context.ProductVariants.SingleAsync(item => item.ProductId == productId);
+        var warehouse = new Warehouse
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Affiliate isolation warehouse",
+            IsActive = true,
+            IsDefault = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        var stock = new ProductVariantStock
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            VariantId = variant.Id,
+            WarehouseId = warehouse.Id,
+            Quantity = 8m,
+            ReservedQuantity = 1m,
+            DamagedQuantity = 2m,
+            CreatedAt = DateTime.UtcNow
+        };
+        var media = new ProductMedia
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            ProductId = productId,
+            MediaType = "image",
+            Url = "https://example.invalid/product.jpg",
+            Position = 0,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        var firstCategory = AffiliateCategory.CreateMainCategory("Electronics", "affiliate-electronics");
+        var secondCategory = AffiliateCategory.CreateMainCategory("Books & Media", "affiliate-books-media");
+        harness.Context.Warehouses.Add(warehouse);
+        harness.Context.ProductVariantStocks.Add(stock);
+        harness.Context.ProductMedia.Add(media);
+        harness.Context.AffiliateCategories.AddRange(firstCategory, secondCategory);
+        await harness.Context.SaveChangesAsync();
+        harness.Context.ChangeTracker.Clear();
+
+        var productBefore = await harness.Context.Products
+            .Where(item => item.Id == productId)
+            .Select(item => new
+            {
+                item.IsActive,
+                item.PublishStatus,
+                item.IsOnlineVisible,
+                item.RowVersion,
+                item.ProjectionMutationVersion,
+                item.UpdatedAt,
+                item.PurchasePrice,
+                item.SalePrice,
+                item.OnlinePrice,
+                item.Images
+            })
+            .SingleAsync();
+        var variantsBefore = await harness.Context.ProductVariants
+            .Where(item => item.ProductId == productId)
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                item.Id,
+                item.IsActive,
+                item.RowVersion,
+                item.ProjectionMutationVersion,
+                item.Price,
+                item.OnlinePrice
+            })
+            .ToArrayAsync();
+        var stocksBefore = await harness.Context.ProductVariantStocks
+            .Where(item => item.Variant.ProductId == productId)
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                item.Id,
+                item.VariantId,
+                item.WarehouseId,
+                item.Quantity,
+                item.ReservedQuantity,
+                item.DamagedQuantity,
+                item.ProjectionMutationVersion
+            })
+            .ToArrayAsync();
+        var mediaBefore = await harness.Context.ProductMedia
+            .Where(item => item.ProductId == productId)
+            .OrderBy(item => item.Position)
+            .Select(item => item.Id)
+            .ToArrayAsync();
+        var outboxCountBefore = await harness.Context.OutboxMessages.CountAsync();
+
+        var service = new AffiliateService(
+            harness.Context,
+            harness.TenantContext,
+            new PersistedOutboxEventPublisher(harness.Context),
+            new AffiliateTelemetry(),
+            NullLogger<AffiliateService>.Instance,
+            new Mock<IAffiliatePayoutService>().Object,
+            new Mock<IAffiliateSettlementOrchestrator>().Object,
+            Options.Create(new AffiliateSettlementOptions()));
+
+        await service.EnableAffiliateWithCategoryAsync(productId, 0.10m, firstCategory.Id, 25m);
+        await service.UpdateCategoryForProductAsync(productId, secondCategory.Id);
+        await service.EnableAffiliateWithCategoryAsync(productId, 0.12m, secondCategory.Id, 25m);
+        await service.DisableAffiliateForProductAsync(productId);
+
+        Assert.DoesNotContain(
+            harness.Context.ChangeTracker.Entries<Product>(),
+            entry => entry.State == EntityState.Modified);
+        harness.Context.ChangeTracker.Clear();
+
+        var productAfter = await harness.Context.Products
+            .Where(item => item.Id == productId)
+            .Select(item => new
+            {
+                item.IsActive,
+                item.PublishStatus,
+                item.IsOnlineVisible,
+                item.RowVersion,
+                item.ProjectionMutationVersion,
+                item.UpdatedAt,
+                item.PurchasePrice,
+                item.SalePrice,
+                item.OnlinePrice,
+                item.Images
+            })
+            .SingleAsync();
+        var variantsAfter = await harness.Context.ProductVariants
+            .Where(item => item.ProductId == productId)
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                item.Id,
+                item.IsActive,
+                item.RowVersion,
+                item.ProjectionMutationVersion,
+                item.Price,
+                item.OnlinePrice
+            })
+            .ToArrayAsync();
+        var stocksAfter = await harness.Context.ProductVariantStocks
+            .Where(item => item.Variant.ProductId == productId)
+            .OrderBy(item => item.Id)
+            .Select(item => new
+            {
+                item.Id,
+                item.VariantId,
+                item.WarehouseId,
+                item.Quantity,
+                item.ReservedQuantity,
+                item.DamagedQuantity,
+                item.ProjectionMutationVersion
+            })
+            .ToArrayAsync();
+        var mediaAfter = await harness.Context.ProductMedia
+            .Where(item => item.ProductId == productId)
+            .OrderBy(item => item.Position)
+            .Select(item => item.Id)
+            .ToArrayAsync();
+
+        Assert.Equal(productBefore, productAfter);
+        Assert.Equal(variantsBefore, variantsAfter);
+        Assert.Equal(stocksBefore, stocksAfter);
+        Assert.Equal(mediaBefore, mediaAfter);
+
+        var policy = await harness.Context.AffiliateProductPolicies.SingleAsync(item => item.ProductId == productId);
+        Assert.False(policy.IsEnabled);
+        Assert.Equal(secondCategory.Id, policy.AffiliateCategoryId);
+        Assert.Equal(0.12m, policy.CommissionRate);
+        Assert.Equal(25m, policy.MaxCommissionPerItem);
+        Assert.Equal(outboxCountBefore + 4, await harness.Context.OutboxMessages.CountAsync());
+    }
+
     [Fact]
     public async Task SaveProduct_PersistsProductUnitsVariantsOutboxAndAuditAtomically()
     {
@@ -448,7 +686,8 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
             bool? variantsSubmitted = null,
             bool productUnitsSubmitted = true,
             PublishStatus publishStatus = PublishStatus.Published,
-            bool isOnlineVisible = true)
+            bool isOnlineVisible = true,
+            string name = "Complete product")
         {
             IReadOnlyList<ProductAuthoringUnit> units = productUnitsSubmitted
                 ? [new ProductAuthoringUnit(null, UnitId, 1m, 5m, 12m, null, true, true)]
@@ -457,7 +696,7 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
             return new ProductAuthoringCommand(
                 operation,
                 new ProductAuthoringIdentity(TenantContext.TenantId!.Value, productId, CategoryId, hasVariants ? null : "SKU-1", hasVariants ? null : "BAR-1"),
-                new ProductAuthoringContent("Complete product", null, null, null, "Brand", "Maker", [], [], []),
+                new ProductAuthoringContent(name, null, null, null, "Brand", "Maker", [], [], []),
                 new ProductAuthoringPricing(5m, 12m, 12m, false, 0m),
                 new ProductAuthoringPublication(publishStatus, true, isOnlineVisible, true, false),
                 new ProductAuthoringSeo(null, null, null, null),
@@ -509,6 +748,11 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                 typeof(ProductUnit),
                 typeof(ProductVariant),
                 typeof(ProductVariantAttribute),
+                typeof(ProductVariantStock),
+                typeof(ProductMedia),
+                typeof(Warehouse),
+                typeof(AffiliateCategory),
+                typeof(AffiliateProductPolicy),
                 typeof(AuditLog),
                 typeof(PointOfSale.Core.Entities.OutboxMessage),
                 typeof(ProductRequestIdempotency)
@@ -559,7 +803,6 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                     .WithMany()
                     .HasForeignKey(product => product.CategoryId)
                     .OnDelete(DeleteBehavior.Restrict);
-                entity.Ignore(product => product.Media);
                 entity.Ignore(product => product.WarehouseStocks);
             });
 
@@ -585,8 +828,44 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                     .WithMany(product => product.Variants)
                     .HasForeignKey(variant => variant.ProductId)
                     .OnDelete(DeleteBehavior.Cascade);
-                entity.Ignore(variant => variant.Stocks);
                 entity.Ignore(variant => variant.Media);
+            });
+
+            modelBuilder.Entity<Warehouse>(entity =>
+            {
+                entity.ToTable("Warehouses");
+                entity.HasKey(warehouse => warehouse.Id);
+                entity.Property(warehouse => warehouse.Name).IsRequired();
+                entity.Ignore(warehouse => warehouse.Stock);
+                entity.Ignore(warehouse => warehouse.StockMovements);
+            });
+
+            modelBuilder.Entity<ProductVariantStock>(entity =>
+            {
+                entity.ToTable("ProductVariantStocks");
+                entity.HasKey(stock => stock.Id);
+                entity.Ignore(stock => stock.AvailableQuantity);
+                entity.Ignore(stock => stock.TotalQuantity);
+                entity.HasOne(stock => stock.Variant)
+                    .WithMany(variant => variant.Stocks)
+                    .HasForeignKey(stock => stock.VariantId)
+                    .OnDelete(DeleteBehavior.Cascade);
+                entity.HasOne(stock => stock.Warehouse)
+                    .WithMany()
+                    .HasForeignKey(stock => stock.WarehouseId)
+                    .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<ProductMedia>(entity =>
+            {
+                entity.ToTable("ProductMedia");
+                entity.HasKey(media => media.Id);
+                entity.Property(media => media.MediaType).IsRequired();
+                entity.Property(media => media.Url).IsRequired();
+                entity.HasOne(media => media.Product)
+                    .WithMany(product => product.Media)
+                    .HasForeignKey(media => media.ProductId)
+                    .OnDelete(DeleteBehavior.Cascade);
             });
 
             modelBuilder.Entity<ProductVariantAttribute>(entity =>
@@ -597,6 +876,32 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
                     .WithMany(variant => variant.Attributes)
                     .HasForeignKey(attribute => attribute.VariantId)
                     .OnDelete(DeleteBehavior.Cascade);
+            });
+
+            modelBuilder.Entity<AffiliateCategory>(entity =>
+            {
+                entity.ToTable("AffiliateCategories");
+                entity.HasKey(category => category.Id);
+                entity.Property(category => category.Name).IsRequired();
+                entity.Property(category => category.Slug).IsRequired();
+            });
+
+            modelBuilder.Entity<AffiliateProductPolicy>(entity =>
+            {
+                entity.ToTable("AffiliateProductPolicies");
+                entity.HasKey(policy => policy.Id);
+                entity.HasIndex(policy => new { policy.TenantId, policy.ProductId }).IsUnique();
+                entity.Property(policy => policy.CommissionRate).HasPrecision(8, 6);
+                entity.Property(policy => policy.MaxCommissionPerItem).HasPrecision(18, 4);
+                entity.Property(policy => policy.TemplateType).IsRequired();
+                entity.HasOne<Product>()
+                    .WithMany()
+                    .HasForeignKey(policy => policy.ProductId)
+                    .OnDelete(DeleteBehavior.Restrict);
+                entity.HasOne<AffiliateCategory>()
+                    .WithMany()
+                    .HasForeignKey(policy => policy.AffiliateCategoryId)
+                    .OnDelete(DeleteBehavior.Restrict);
             });
 
             modelBuilder.Entity<AuditLog>(entity =>

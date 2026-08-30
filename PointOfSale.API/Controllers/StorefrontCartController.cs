@@ -318,6 +318,18 @@ public class StorefrontCartController : ControllerBase
                 validation.TenantId, ex.VariantId, ex.SKU, traceId);
             return Conflict(new ApiErrorResponse("VARIANT_OUT_OF_STOCK", ex.Message, traceId));
         }
+        catch (VariantInsufficientStockException ex)
+        {
+            _logger.LogWarning(
+                "AddItem failed - insufficient variant stock | TenantId: {TenantId} | VariantId: {VariantId} | SKU: {SKU} | RequestedQuantity: {RequestedQuantity} | AvailableStock: {AvailableStock} | TraceId: {TraceId}",
+                validation.TenantId,
+                ex.VariantId,
+                ex.SKU,
+                ex.RequestedQuantity,
+                ex.AvailableStock,
+                traceId);
+            return Conflict(new ApiErrorResponse("VARIANT_INSUFFICIENT_STOCK", ex.Message, traceId));
+        }
         catch (UnauthorizedAccessException ex) when (IsTenantMismatch(ex))
         {
             return TenantMismatchResult(traceId, validation.TenantId);

@@ -34,6 +34,7 @@ public static class ObservabilityServiceExtensions
         services.AddHealthChecks()
             .AddCheck<ProjectionDriftHealthCheck>("projection_drift", tags: new[] { "database", "mongodb", "postgresql" })
             .AddCheck<ProjectionOutboxHealthCheck>("projection_outbox", tags: new[] { "ready", "projection", "critical" })
+            .AddCheck<IntegrationOutboxReadinessHealthCheck>("integration_outbox_readiness", tags: new[] { "ready", "events", "critical" })
             .AddCheck<PaymentCancellationOutboxReadinessHealthCheck>("payment_cancellation_outbox_readiness", tags: new[] { "ready", "payments", "critical" })
             .AddCheck<ProviderDeliveryOutboxHealthCheck>("provider_delivery_outbox_readiness", tags: new[] { "ready", "analytics", "providers", "critical" })
             .AddCheck<MassTransitBusOutboxReadinessHealthCheck>("mass_transit_bus_outbox_readiness", tags: new[] { "ready", "events", "critical" })
@@ -83,6 +84,7 @@ public static class ObservabilityServiceExtensions
         return builder
             .AddCheck<ProjectionDriftHealthCheck>("projection_drift", tags: new[] { "database", "mongodb", "postgresql" })
             .AddCheck<ProjectionOutboxHealthCheck>("projection_outbox", tags: new[] { "ready", "projection", "critical" })
+            .AddCheck<IntegrationOutboxReadinessHealthCheck>("integration_outbox_readiness", tags: new[] { "ready", "events", "critical" })
             .AddCheck<PaymentCancellationOutboxReadinessHealthCheck>("payment_cancellation_outbox_readiness", tags: new[] { "ready", "payments", "critical" })
             .AddCheck<ProviderDeliveryOutboxHealthCheck>("provider_delivery_outbox_readiness", tags: new[] { "ready", "analytics", "providers", "critical" })
             .AddCheck<MassTransitBusOutboxReadinessHealthCheck>("mass_transit_bus_outbox_readiness", tags: new[] { "ready", "events", "critical" })

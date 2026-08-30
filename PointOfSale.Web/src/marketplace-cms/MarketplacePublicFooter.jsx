@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { prefixMarketplacePath } from './marketplaceLanguage'
+import { resolveSafeNavigationTarget } from '../security/safeNavigationTarget'
 
 export function MarketplacePublicFooter({ footer, language, followLabel }) {
     if (!footer?.sections?.length && !footer?.socialLinks?.length) {
@@ -50,7 +51,7 @@ export function MarketplacePublicFooter({ footer, language, followLabel }) {
 }
 
 function MarketplaceFooterLink({ link, language }) {
-    const href = prefixMarketplacePath(language, link.url)
+    const href = resolveSafeNavigationTarget(prefixMarketplacePath(language, link.url), '#')
     const className = 'block text-sm text-slate-600 transition hover:text-slate-950'
 
     if (shouldUseRouterLink(href, link.openInNewTab)) {

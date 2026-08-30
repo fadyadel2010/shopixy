@@ -21,7 +21,9 @@ public class DnsResolverHealthCheck : IHealthCheck
 {
     private readonly IDnsResolver _dnsResolver;
     private readonly ILogger<DnsResolverHealthCheck> _logger;
-    private const string TestHostname = "cloudflare.com";
+    // Probe a hostname that intentionally publishes TXT records. A valid domain
+    // with no TXT answer tests record existence, not resolver availability.
+    private const string TestHostname = "_dmarc.google.com";
     private const int HealthyLatencyThresholdMs = 2000;
 
     public DnsResolverHealthCheck(

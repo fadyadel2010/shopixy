@@ -243,7 +243,10 @@ public class AffiliatePortalController : ControllerBase
                             VariantName = i.VariantName,
                             PaidAmount = itemLedger?.PaidAmount ?? 0m, // Fallback: 0m (no commission base)
                             CommissionAmount = itemLedger?.CommissionAmount ?? 0m, // Fallback: 0m (no commission)
+                            ReversedAmount = itemLedger?.ReversedAmount ?? 0m,
+                            NetCommissionAmount = itemLedger?.NetCommissionAmount ?? 0m,
                             IsReversed = itemLedger?.IsReversed ?? false, // Fallback: false (not reversed)
+                            IsPartiallyReversed = itemLedger?.IsPartiallyReversed ?? false,
                             SettlementStatus = itemLedger?.SettlementStatus ?? "Pending" // Fallback: "Pending" (no settlement)
                         };
                     }).ToList()
@@ -386,7 +389,8 @@ public class AffiliatePortalController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
     }
 
@@ -501,6 +505,7 @@ public class AffiliatePortalController : ControllerBase
     /// Data source: PostgreSQL AffiliateCategories + MongoDB product count aggregation.
     /// </summary>
     [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [HttpGet("discover/categories")]
     public async Task<ActionResult<List<AffiliateCategoryDiscoveryItem>>> DiscoverCategories(
         CancellationToken ct)
@@ -526,7 +531,7 @@ public class AffiliatePortalController : ControllerBase
 
         var visibleDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
         var productCounts = visibleDocs
-            .Select(document => document.AffiliateParentCategorySlug ?? document.AffiliateCategorySlug)
+            .Select(ResolveAffiliateEffectiveCategorySlug)
             .Where(slug => !string.IsNullOrWhiteSpace(slug))
             .GroupBy(slug => slug!, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
@@ -687,6 +692,107 @@ public class AffiliatePortalController : ControllerBase
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    // AF-39: SANITIZED PUBLIC DISCOVERY BOUNDARY (ANONYMOUS)
+    //
+    // The public Hub cannot call the member discover/products actions
+    // (class-level AffiliateOnly policy). These actions are explicitly
+    // [AllowAnonymous] and share the SAME SQL-first admission path as
+    // DiscoverCategories (LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync)
+    // so category counts and category pages can never disagree.
+    //
+    // SANITIZATION CONTRACT:
+    // - Public DTOs expose presentation fields only: no TenantId, no
+    //   commission rate/estimate/cap, no policy or category IDs, no stock
+    //   internals, no variants, no projection/event metadata.
+    // - Anonymous sort allowlist excludes commission ordering entirely.
+    // ═══════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Public-safe sort values for anonymous discovery. Commission-based
+    /// sorts (commission_desc/commission_asc) and the internal ranking score
+    /// are deliberately excluded so relative commission intelligence never
+    /// leaks through an anonymous channel.
+    /// </summary>
+    internal static readonly HashSet<string> AffiliatePublicDiscoverySortAllowlist =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            "newest", "price_desc", "price_asc", "name_asc"
+        };
+
+    /// <summary>
+    /// GET /api/affiliate/discover/public-products?page=1&amp;pageSize=20&amp;search=&amp;categorySlug=&amp;sort=newest
+    /// Anonymous sanitized product list for the public Affiliate Hub.
+    /// Admission, search/pricing/stock gates, and category filtering all run
+    /// BEFORE totalCount, totalPages, Skip, and Take.
+    /// </summary>
+    [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [HttpGet("discover/public-products")]
+    public async Task<ActionResult<AffiliatePublicProductDiscoveryResponse>> DiscoverPublicProducts(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 20,
+        [FromQuery] string? search = null,
+        [FromQuery] string? categorySlug = null,
+        [FromQuery] string sort = "newest",
+        CancellationToken ct = default)
+    {
+        if (!AffiliatePublicDiscoverySortAllowlist.Contains(sort))
+        {
+            return BadRequest(new { error = "Invalid sort parameter", allowed = AffiliatePublicDiscoverySortAllowlist });
+        }
+
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 100);
+
+        var admittedDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
+        var filteredDocs = FilterPublicAffiliateDocuments(admittedDocs, search, categorySlug).ToList();
+        var totalCount = filteredDocs.Count;
+        var visibleDocs = OrderAffiliateDocumentsForPublicDiscovery(filteredDocs, sort)
+            .Skip(PaginationGuard.GetSkip(page, pageSize))
+            .Take(pageSize)
+            .ToList();
+
+        return Ok(new AffiliatePublicProductDiscoveryResponse
+        {
+            Items = visibleDocs.Select(MapAffiliatePublicProductItem).ToList(),
+            Page = page,
+            PageSize = pageSize,
+            TotalCount = totalCount,
+            TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize)
+        });
+    }
+
+    /// <summary>
+    /// GET /api/affiliate/discover/public-products/{productId}
+    /// Anonymous sanitized product detail for the public Affiliate Hub.
+    /// Resolves through the same SQL-admitted set as the public list (never
+    /// raw Mongo/Elasticsearch authority) and returns 404 for anything not
+    /// currently deliverable.
+    /// </summary>
+    [AllowAnonymous]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    [HttpGet("discover/public-products/{productId:guid}")]
+    public async Task<ActionResult<AffiliatePublicProductItem>> DiscoverPublicProductDetail(
+        Guid productId,
+        CancellationToken ct)
+    {
+        var admittedDocs = await LoadSqlAdmittedAffiliateIntelligenceDocumentsAsync(ct);
+
+        var doc = admittedDocs
+            .Where(item => item.BasePrice > 0m && !item.IsOutOfStock)
+            .Where(item => item.ProductId == productId)
+            .OrderBy(item => item.TenantId)
+            .FirstOrDefault();
+
+        if (doc == null)
+        {
+            return NotFound(new { message = "Product not found" });
+        }
+
+        return Ok(MapAffiliatePublicProductItem(doc));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     // AF-38: PAYOUTS / WITHDRAWALS
     // ═══════════════════════════════════════════════════════════════════
 
@@ -715,7 +821,8 @@ public class AffiliatePortalController : ControllerBase
         }
         catch (AffiliatePayoutAuthorityException ex)
         {
-            return Conflict(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
         
         var history = storeTenantId.HasValue && storeTenantId.Value != Guid.Empty
@@ -790,11 +897,13 @@ public class AffiliatePortalController : ControllerBase
         }
         catch (AffiliatePayoutAuthorityException ex)
         {
-            return Conflict(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            var error = AffiliateFinancialErrorContract.From(ex);
+            return StatusCode(error.StatusCode, new { code = error.Code, message = error.Message });
         }
     }
 
@@ -828,7 +937,8 @@ public class AffiliatePortalController : ControllerBase
             {
                 entry.OrderId,
                 entry.OrderItemId,
-                entry.EntryType
+                entry.EntryType,
+                entry.CommissionAmount
             })
             .ToListAsync(ct);
 
@@ -838,7 +948,12 @@ public class AffiliatePortalController : ControllerBase
             .Select(orderGroup => new
             {
                 OrderId = orderGroup.Key,
-                Status = ComputeOrderStatusFromEntries(orderGroup.Select(e => new { e.OrderItemId, e.EntryType }))
+                Status = ComputeOrderStatusFromEntries(orderGroup.Select(e => new
+                {
+                    e.OrderItemId,
+                    e.EntryType,
+                    e.CommissionAmount
+                }))
             })
             .Where(x => string.Equals(x.Status, normalizedStatus, StringComparison.OrdinalIgnoreCase))
             .Select(x => x.OrderId)
@@ -855,9 +970,15 @@ public class AffiliatePortalController : ControllerBase
             .Select(itemGroup =>
             {
                 var entryTypes = itemGroup.Select(e => (CommissionEntryType)e.EntryType).ToList();
-                var hasReversal = entryTypes.Contains(CommissionEntryType.Reversed);
-                
-                if (hasReversal) return "Reversed";
+                var earned = itemGroup
+                    .Where(e => (CommissionEntryType)e.EntryType == CommissionEntryType.Earned)
+                    .Sum(e => (decimal)e.CommissionAmount);
+                var reversed = itemGroup
+                    .Where(e => (CommissionEntryType)e.EntryType == CommissionEntryType.Reversed)
+                    .Sum(e => (decimal)e.CommissionAmount);
+
+                if (earned > 0m && reversed >= earned) return "Reversed";
+                if (reversed > 0m) return "PartiallyReversed";
                 if (entryTypes.Contains(CommissionEntryType.Paid)) return "Paid";
                 if (entryTypes.Contains(CommissionEntryType.Approved)) return "Approved";
                 if (entryTypes.Contains(CommissionEntryType.Earned)) return "Earned";
@@ -868,9 +989,9 @@ public class AffiliatePortalController : ControllerBase
         // Determine order-level status from item statuses
         if (itemStatuses.Count == 0) return "Pending";
         if (itemStatuses.All(s => s == "Reversed")) return "Reversed";
-        if (itemStatuses.Any(s => s == "Reversed")) return "PartiallyReversed";
-        if (itemStatuses.All(s => s is "Paid" or "Reversed")) return "Paid";
-        if (itemStatuses.All(s => s is "Approved" or "Paid" or "Reversed")) return "Approved";
+        if (itemStatuses.Any(s => s is "Reversed" or "PartiallyReversed")) return "PartiallyReversed";
+        if (itemStatuses.All(s => s == "Paid")) return "Paid";
+        if (itemStatuses.All(s => s is "Approved" or "Paid")) return "Approved";
         return "Earned";
     }
 
@@ -944,8 +1065,14 @@ public class AffiliatePortalController : ControllerBase
     {
         var rowList = rows.ToList();
         var earnedRows = rowList.Where(row => row.EntryType == CommissionEntryType.Earned).ToList();
-        var hasReversal = rowList.Any(row => row.EntryType == CommissionEntryType.Reversed);
-        var status = hasReversal ? "Reversed" :
+        var earnedCommission = earnedRows.Sum(row => row.CommissionAmount);
+        var reversedCommission = rowList
+            .Where(row => row.EntryType == CommissionEntryType.Reversed)
+            .Sum(row => row.CommissionAmount);
+        var isFullyReversed = earnedCommission > 0m && reversedCommission >= earnedCommission;
+        var isPartiallyReversed = reversedCommission > 0m && !isFullyReversed;
+        var status = isFullyReversed ? "Reversed" :
+            isPartiallyReversed ? "PartiallyReversed" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Paid) ? "Paid" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Approved) ? "Approved" :
             rowList.Any(row => row.EntryType == CommissionEntryType.Earned) ? "Earned" :
@@ -953,8 +1080,11 @@ public class AffiliatePortalController : ControllerBase
 
         return new AffiliateOrderItemLedgerSnapshot(
             PaidAmount: earnedRows.Sum(row => row.BaseAmount),
-            CommissionAmount: earnedRows.Sum(row => row.CommissionAmount),
-            IsReversed: hasReversal,
+            CommissionAmount: earnedCommission,
+            ReversedAmount: reversedCommission,
+            NetCommissionAmount: Math.Max(earnedCommission - reversedCommission, 0m),
+            IsReversed: isFullyReversed,
+            IsPartiallyReversed: isPartiallyReversed,
             SettlementStatus: status);
     }
 
@@ -968,7 +1098,7 @@ public class AffiliatePortalController : ControllerBase
         
         // Check for partial reversals BEFORE checking mixed states that allow reversals
         // This ensures mixed reversed+paid/approved orders return "PartiallyReversed"
-        if (itemList.Any(item => item.IsReversed)) return "PartiallyReversed";
+        if (itemList.Any(item => item.IsReversed || item.IsPartiallyReversed)) return "PartiallyReversed";
         
         // Now check non-reversed item statuses (no reversals at this point)
         if (itemList.All(item => item.SettlementStatus == "Paid")) return "Paid";
@@ -1139,6 +1269,23 @@ public class AffiliatePortalController : ControllerBase
                 .First())
             .ToList();
 
+        // A delayed or absent Mongo projection must not make a currently valid SQL
+        // affiliate policy unreachable. Seed only the missing authority identities;
+        // the recomposition below hydrates all public product/category/pricing data
+        // from current SQL and still rejects anything no longer deliverable.
+        var projectedKeys = candidates
+            .Select(candidate => (candidate.TenantId, candidate.ProductId))
+            .ToHashSet();
+        candidates.AddRange(authorityKeys
+            .Where(key => !projectedKeys.Contains((key.TenantId, key.ProductId)))
+            .Select(key => new AffiliateProductIntelligenceDocument
+            {
+                TenantId = key.TenantId,
+                ProductId = key.ProductId,
+                Images = [],
+                Variants = []
+            }));
+
         return await RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(candidates, ct);
     }
 
@@ -1178,6 +1325,90 @@ public class AffiliatePortalController : ControllerBase
         return ordered
             .ThenBy(document => document.TenantId)
             .ThenBy(document => document.ProductId);
+    }
+
+    /// <summary>
+    /// AF-39: Public list filtering = member discovery gates (positive public
+    /// price, in stock, name search) plus category attribution. Category
+    /// matching uses the SAME effective-slug attribution DiscoverCategories
+    /// counts with, so a main-category slug includes eligible directly
+    /// assigned products and eligible child-category products identically.
+    /// </summary>
+    internal static IEnumerable<AffiliateProductIntelligenceDocument> FilterPublicAffiliateDocuments(
+        IEnumerable<AffiliateProductIntelligenceDocument> documents,
+        string? search,
+        string? categorySlug)
+    {
+        var filtered = FilterAffiliateDocuments(
+            documents,
+            search,
+            minCommissionRate: null,
+            storeTenantId: null,
+            categoryProductKeys: null);
+
+        if (string.IsNullOrWhiteSpace(categorySlug))
+        {
+            return filtered;
+        }
+
+        var requestedSlug = categorySlug.Trim();
+        return filtered.Where(document =>
+            string.Equals(
+                ResolveAffiliateEffectiveCategorySlug(document),
+                requestedSlug,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// AF-39: Main-category attribution used for both category counts and
+    /// public category filtering (parent slug wins for child-assigned docs).
+    /// </summary>
+    internal static string? ResolveAffiliateEffectiveCategorySlug(AffiliateProductIntelligenceDocument document)
+    {
+        return !string.IsNullOrWhiteSpace(document.AffiliateParentCategorySlug)
+            ? document.AffiliateParentCategorySlug
+            : document.AffiliateCategorySlug;
+    }
+
+    /// <summary>
+    /// AF-39: Deterministic public ordering over the allowlisted sorts only.
+    /// Never references CommissionRate or RankingScore; ties broken by
+    /// authority key (TenantId, ProductId).
+    /// </summary>
+    internal static IOrderedEnumerable<AffiliateProductIntelligenceDocument> OrderAffiliateDocumentsForPublicDiscovery(
+        IEnumerable<AffiliateProductIntelligenceDocument> documents,
+        string sort)
+    {
+        var ordered = sort.ToLowerInvariant() switch
+        {
+            "price_desc" => documents.OrderByDescending(document => document.BasePrice),
+            "price_asc" => documents.OrderBy(document => document.BasePrice),
+            "name_asc" => documents.OrderBy(document => document.ProductName, StringComparer.OrdinalIgnoreCase),
+            _ => documents.OrderByDescending(document => document.LastUpdatedUtc)
+        };
+
+        return ordered
+            .ThenBy(document => document.TenantId)
+            .ThenBy(document => document.ProductId);
+    }
+
+    private static AffiliatePublicProductItem MapAffiliatePublicProductItem(
+        AffiliateProductIntelligenceDocument d)
+    {
+        return new AffiliatePublicProductItem
+        {
+            ProductId = d.ProductId,
+            Slug = !string.IsNullOrWhiteSpace(d.ProductSlug) ? d.ProductSlug : d.ProductId.ToString(),
+            Name = d.ProductName,
+            Description = d.Description ?? string.Empty,
+            Images = d.Images ?? new List<string>(),
+            Price = d.BasePrice,
+            Currency = d.Currency,
+            StoreName = d.StoreName,
+            StoreSlug = d.StoreSlug,
+            CategoryName = d.AffiliateParentCategoryName ?? d.AffiliateCategoryName,
+            CategorySlug = ResolveAffiliateEffectiveCategorySlug(d)
+        };
     }
 
     private async Task<List<AffiliateProductIntelligenceDocument>> RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync(
@@ -1436,7 +1667,10 @@ public class AffiliatePortalController : ControllerBase
     private sealed record AffiliateOrderItemLedgerSnapshot(
         decimal PaidAmount,
         decimal CommissionAmount,
+        decimal ReversedAmount,
+        decimal NetCommissionAmount,
         bool IsReversed,
+        bool IsPartiallyReversed,
         string SettlementStatus);
 }
 
@@ -1535,7 +1769,10 @@ public class AffiliateOrderItemDto
     public string? VariantName { get; set; }
     public decimal PaidAmount { get; set; }
     public decimal CommissionAmount { get; set; }
+    public decimal ReversedAmount { get; set; }
+    public decimal NetCommissionAmount { get; set; }
     public bool IsReversed { get; set; }
+    public bool IsPartiallyReversed { get; set; }
     public string SettlementStatus { get; set; } = "Earned";
 }
 
@@ -1702,6 +1939,37 @@ public class AffiliateCategoryDiscoveryItem
     public string Slug { get; set; } = string.Empty;
     public int ProductCount { get; set; }
     public bool IsActive { get; set; }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// AF-39: SANITIZED PUBLIC DISCOVERY DTOs (anonymous)
+// Presentation fields ONLY. Must never expose TenantId, commission
+// rate/estimate/cap, policy/category IDs, stock internals, variants,
+// or projection/event metadata.
+// ═══════════════════════════════════════════════════════════════════
+
+public class AffiliatePublicProductDiscoveryResponse
+{
+    public List<AffiliatePublicProductItem> Items { get; set; } = new();
+    public int Page { get; set; }
+    public int PageSize { get; set; }
+    public int TotalCount { get; set; }
+    public int TotalPages { get; set; }
+}
+
+public class AffiliatePublicProductItem
+{
+    public Guid ProductId { get; set; }
+    public string Slug { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public List<string> Images { get; set; } = new();
+    public decimal Price { get; set; }
+    public string Currency { get; set; } = string.Empty;
+    public string StoreName { get; set; } = string.Empty;
+    public string StoreSlug { get; set; } = string.Empty;
+    public string? CategoryName { get; set; }
+    public string? CategorySlug { get; set; }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -10,8 +10,8 @@ public sealed class AdminOrderManagementEndToEndAuthorityCertificationTests
         var lifecycleAdmission = CertificationSource.ReadRepoFile("PointOfSale.Web/src/auth/marketplaceOrderLifecycleAuthority.js");
         var vendorAdmission = CertificationSource.ReadRepoFile("PointOfSale.Web/src/auth/commerceHubVendorIdentityAuthority.js");
 
-        Assert.Contains("getAdminOrders(filters)", ordersPage, StringComparison.Ordinal);
-        Assert.Contains("getAdminOrderDetails(selectedOrderId)", ordersPage, StringComparison.Ordinal);
+        Assert.Contains("getAdminOrders(filters, signal)", ordersPage, StringComparison.Ordinal);
+        Assert.Contains("getAdminOrderDetails(selectedOrderId, signal)", ordersPage, StringComparison.Ordinal);
         Assert.Contains("updateAdminOrderStatus(selectedOrderId, candidate)", ordersPage, StringComparison.Ordinal);
         Assert.Contains("authorityScope = ['pos-admin-orders'", ordersPage, StringComparison.Ordinal);
         Assert.Contains("requireCurrentVendorOrderVisibilityListAuthority(ordersQuery.data, user)", ordersPage, StringComparison.Ordinal);

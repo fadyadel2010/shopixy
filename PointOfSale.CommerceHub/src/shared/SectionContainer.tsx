@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { SectionHeading } from "@/shared/SectionHeading";
+import { resolveSafeNavigationTarget } from "@/security/safeNavigationTarget";
 import { Button, type ButtonProps } from "@/ui/button";
 import { cn } from "@/utils/cn";
 
@@ -39,7 +40,7 @@ export const SectionContainer = ({
           <SectionHeading eyebrow={eyebrow} title={title ?? ""} description={description} />
           {action ? (
             <Button asChild variant={action.variant ?? "ghost"}>
-              <Link to={action.href}>{action.label}</Link>
+              <Link to={resolveSafeNavigationTarget(action.href)}>{action.label}</Link>
             </Button>
           ) : null}
         </div>

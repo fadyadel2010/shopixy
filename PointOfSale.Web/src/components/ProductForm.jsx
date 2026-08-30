@@ -6,11 +6,9 @@ import { useSettings } from '../contexts/SettingsContext'
 import ProductMediaManager from '../components/ProductMediaManager'
 import ProductVariantsTab from '../components/ProductVariantsTab'
 import ProductPixelOverrideTab from '../components/ProductPixelOverrideTab'
-import ProductAffiliateSettingsCard from '../components/ProductAffiliateSettingsCard'
 import SidebarPanel from './SidebarPanel'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 import { getProductTemplateOptions } from '@/storefront/products/ProductTemplateRegistry'
-import { useAuthStore } from '../store/authStore'
 import { useToast } from '../components/Toast'
 import { normalizeProductAuthoringVariants } from '../utils/productAuthoringVariants'
 import { normalizePublishStatus } from '../utils/productStatus'
@@ -530,8 +528,6 @@ const ProductForm = forwardRef(function ProductForm({
     const { confirm } = useConfirmDialog()
     const { formatCurrency } = useSettings()
     const { showError, showSuccess } = useToast()
-    const userRole = useAuthStore((state) => state.user?.role)
-    const canManageAffiliateProducts = userRole === 'Owner' || userRole === 'Admin'
     const [loading, setLoading] = useState(false)
     const variantsTabRef = useRef(null)
     const variantsSectionRef = useRef(null)
@@ -2012,14 +2008,6 @@ const ProductForm = forwardRef(function ProductForm({
         </div>
     )
 
-    const affiliateSection = productId && canManageAffiliateProducts ? (
-        <ProductAffiliateSettingsCard productId={productId} />
-    ) : canManageAffiliateProducts ? (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-500">
-            {t('variants.saveProductFirst') || 'Save the product first to configure affiliate marketing.'}
-        </div>
-    ) : null
-
     const handleClose = async () => {
         if (await requestDiscardPendingChanges()) {
             onClose?.()
@@ -2070,7 +2058,6 @@ const ProductForm = forwardRef(function ProductForm({
             </WorkspaceSection>
 
             {pixelOverrideSection}
-            {canManageAffiliateProducts && affiliateSection}
         </div>
     )
 
@@ -2119,17 +2106,6 @@ const ProductForm = forwardRef(function ProductForm({
                 >
                     {pixelOverrideSection}
                 </SidebarPanel>
-
-                {canManageAffiliateProducts && (
-                    <SidebarPanel
-                        title={t('affiliate.title') || 'Affiliate Marketing'}
-                        subtitle={t('products.marketplaceCategory') || 'Commission and marketplace category settings.'}
-                        defaultOpen={false}
-                        bodyClassName="p-0"
-                    >
-                        {affiliateSection}
-                    </SidebarPanel>
-                )}
             </div>
         </div>
     )

@@ -192,6 +192,33 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
     }
 
     [Fact]
+    public void CheckoutService_MustRemoveRelationshipFixupPrincipals_BeforeSerializableRetry()
+    {
+        var source = ReadRepoFile(
+            "PointOfSale.API",
+            "Services",
+            "Checkout",
+            "CheckoutService.cs");
+
+        var serializationFailureIndex = source.IndexOf(
+            "if (IsCheckoutTransactionSerializationFailure(originalException))",
+            StringComparison.Ordinal);
+        var clearIndex = source.IndexOf("_dbContext.ChangeTracker.Clear();", serializationFailureIndex, StringComparison.Ordinal);
+        var resetIndex = source.IndexOf("ResetOrderNavigationStateForRetry(order);", clearIndex, StringComparison.Ordinal);
+        var continueIndex = source.IndexOf("continue;", resetIndex, StringComparison.Ordinal);
+        var resetMethod = ExtractMethodBody(source, "ResetOrderNavigationStateForRetry");
+
+        Assert.True(clearIndex > serializationFailureIndex, "Serializable rollback must clear EF tracking before retrying.");
+        Assert.True(resetIndex > clearIndex, "Serializable retry must remove principal instances retained by relationship fixup after tracking is cleared.");
+        Assert.True(continueIndex > resetIndex, "The retained order graph must be reset before the next transaction attempt.");
+        Assert.Contains("order.Warehouse = null;", resetMethod, StringComparison.Ordinal);
+        Assert.Contains("orderItem.Product = null!;", resetMethod, StringComparison.Ordinal);
+        Assert.Contains("orderItem.Variant = null;", resetMethod, StringComparison.Ordinal);
+        Assert.Contains("orderItem.Unit = null;", resetMethod, StringComparison.Ordinal);
+        Assert.Contains("orderItem.Warehouse = null;", resetMethod, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CheckoutService_MustRefreshItemLevelMoneySnapshots_AfterFinalAuthorityRevalidation()
     {
         var source = ReadRepoFile(

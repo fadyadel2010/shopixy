@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -34,6 +35,13 @@ namespace PointOfSale.Infrastructure.Fulfillment;
 /// </summary>
 public class OrderFulfillmentService : IOrderFulfillmentService
 {
+    private const int FulfillmentCommitMaxAttempts = 3;
+    private const int MaxDeliveryReferenceLength = 200;
+    private const int MaxProofOfDeliveryUrlLength = 2048;
+    private const int MaxRecipientNameLength = 200;
+    private const int MaxLifecycleReasonLength = 1000;
+    private const int MaxReturnAuthorizationLength = 200;
+
     private readonly ApplicationDbContext _db;
     private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<OrderFulfillmentService> _logger;
@@ -162,9 +170,75 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 idempotencyKey);
         }
 
+        var normalizedDeliveryReference = deliveryReference?.Trim();
+        var normalizedProofOfDeliveryUrl = proofOfDeliveryUrl?.Trim();
+        var normalizedRecipientName = recipientName?.Trim();
+
+        if (source == FulfillmentRequestSource.Manual &&
+            (normalizedDeliveryReference!.Length > MaxDeliveryReferenceLength ||
+             normalizedProofOfDeliveryUrl!.Length > MaxProofOfDeliveryUrlLength ||
+             (normalizedRecipientName?.Length ?? 0) > MaxRecipientNameLength))
+        {
+            return OrderFulfillmentResult.Failed(
+                orderId,
+                "",
+                FulfillmentStatus.Created,
+                source,
+                "MANUAL_DELIVERY_EVIDENCE_INVALID: Delivery evidence exceeds the supported length.",
+                idempotencyKey);
+        }
+
+        if (source == FulfillmentRequestSource.Manual && !IsValidProofOfDeliveryUrl(normalizedProofOfDeliveryUrl))
+        {
+            return OrderFulfillmentResult.Failed(
+                orderId,
+                "",
+                FulfillmentStatus.Created,
+                source,
+                "MANUAL_DELIVERY_PROOF_URL_INVALID: Proof of delivery must be an absolute HTTP or HTTPS URL.",
+                idempotencyKey);
+        }
+
         var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == orderId, ct);
         if (order == null)
             return OrderFulfillmentResult.Failed(orderId, "", FulfillmentStatus.Created, source, "Order not found", idempotencyKey);
+
+        if (order.FulfillmentStatus == FulfillmentStatus.Delivered)
+        {
+            var referenceConflicts = !string.IsNullOrWhiteSpace(order.DeliveryReference) &&
+                                     !string.Equals(order.DeliveryReference, normalizedDeliveryReference, StringComparison.Ordinal);
+            var proofConflicts = !string.IsNullOrWhiteSpace(order.ProofOfDeliveryUrl) &&
+                                 !string.Equals(order.ProofOfDeliveryUrl, normalizedProofOfDeliveryUrl, StringComparison.Ordinal);
+
+            if (referenceConflicts || proofConflicts)
+            {
+                return OrderFulfillmentResult.Failed(
+                    order.Id,
+                    order.OrderNumber,
+                    order.FulfillmentStatus,
+                    source,
+                    "MANUAL_DELIVERY_EVIDENCE_CONFLICT: Delivery evidence is immutable once captured.",
+                    idempotencyKey);
+            }
+
+            // Recovery for orders delivered before canonical evidence columns existed.
+            // Only fill missing values; never overwrite previously captured evidence.
+            if (string.IsNullOrWhiteSpace(order.DeliveryReference) ||
+                string.IsNullOrWhiteSpace(order.ProofOfDeliveryUrl))
+            {
+                order.DeliveryReference ??= normalizedDeliveryReference;
+                order.ProofOfDeliveryUrl ??= normalizedProofOfDeliveryUrl;
+                await _db.SaveChangesAsync(ct);
+            }
+
+            return OrderFulfillmentResult.Succeeded(
+                order.Id,
+                order.OrderNumber,
+                FulfillmentStatus.Delivered,
+                FulfillmentStatus.Delivered,
+                source,
+                idempotencyKey);
+        }
 
         return await TransitionAsync<FulfillmentDeliveredEvent>(
             orderId,
@@ -172,23 +246,32 @@ public class OrderFulfillmentService : IOrderFulfillmentService
             FulfillmentStatus.Delivered,
             deliveredBy,
             idempotencyKey,
-            (order, oldStatus, newStatus) => new FulfillmentDeliveredEvent
+            (order, oldStatus, newStatus) =>
             {
-                TenantId = order.TenantId,
-                OrderId = order.Id,
-                OrderNumber = order.OrderNumber,
-                OldStatus = oldStatus,
-                NewStatus = newStatus,
-                TransitionedBy = deliveredBy,
-                TransitionedAt = DateTime.UtcNow,
-                DeliveryReference = deliveryReference,
-                ProofOfDeliveryUrl = proofOfDeliveryUrl,
-                RecipientName = recipientName,
-                PaymentMethod = order.PaymentMethodCode ?? "unknown",
-                PaymentStatus = order.PaymentStatus,
-                OrderTotal = order.Total,
-                Source = source,
-                IdempotencyKey = idempotencyKey
+                // Persist the same evidence carried by the event. Payment/accounting can
+                // qualify later than delivery (notably COD), so approval replay must read
+                // durable SQL truth rather than depend on a one-shot event payload.
+                order.DeliveryReference = normalizedDeliveryReference;
+                order.ProofOfDeliveryUrl = normalizedProofOfDeliveryUrl;
+
+                return new FulfillmentDeliveredEvent
+                {
+                    TenantId = order.TenantId,
+                    OrderId = order.Id,
+                    OrderNumber = order.OrderNumber,
+                    OldStatus = oldStatus,
+                    NewStatus = newStatus,
+                    TransitionedBy = deliveredBy,
+                    TransitionedAt = DateTime.UtcNow,
+                    DeliveryReference = normalizedDeliveryReference,
+                    ProofOfDeliveryUrl = normalizedProofOfDeliveryUrl,
+                    RecipientName = normalizedRecipientName,
+                    PaymentMethod = order.PaymentMethodCode ?? "unknown",
+                    PaymentStatus = order.PaymentStatus,
+                    OrderTotal = order.Total,
+                    Source = source,
+                    IdempotencyKey = idempotencyKey
+                };
             },
             ct);
     }
@@ -316,6 +399,21 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         string? idempotencyKey = null,
         CancellationToken ct = default)
     {
+        var normalizedReason = reason?.Trim() ?? string.Empty;
+        var normalizedReturnAuthorization = returnAuthorizationNumber?.Trim();
+        if (normalizedReason.Length == 0 ||
+            normalizedReason.Length > MaxLifecycleReasonLength ||
+            (normalizedReturnAuthorization?.Length ?? 0) > MaxReturnAuthorizationLength)
+        {
+            return OrderFulfillmentResult.Failed(
+                orderId,
+                "",
+                FulfillmentStatus.Created,
+                source,
+                "RETURN_EVIDENCE_INVALID: A supported return reason is required.",
+                idempotencyKey);
+        }
+
         if (shouldRefund || refundAmount.HasValue)
         {
             return OrderFulfillmentResult.Failed(
@@ -346,8 +444,8 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 NewStatus = newStatus,
                 TransitionedBy = returnedBy,
                 TransitionedAt = DateTime.UtcNow,
-                Reason = reason,
-                ReturnAuthorizationNumber = returnAuthorizationNumber,
+                Reason = normalizedReason,
+                ReturnAuthorizationNumber = normalizedReturnAuthorization,
                 ShouldRefund = shouldRefund,
                 RefundAmount = refundAmount ?? order.Total,
                 Source = source,
@@ -366,6 +464,18 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         string? idempotencyKey = null,
         CancellationToken ct = default)
     {
+        var normalizedReason = reason?.Trim() ?? string.Empty;
+        if (normalizedReason.Length == 0 || normalizedReason.Length > MaxLifecycleReasonLength)
+        {
+            return OrderFulfillmentResult.Failed(
+                orderId,
+                "",
+                FulfillmentStatus.Created,
+                source,
+                "FAILED_DELIVERY_EVIDENCE_INVALID: A supported failure reason is required.",
+                idempotencyKey);
+        }
+
         var order = await _db.Orders.FirstOrDefaultAsync(o => o.Id == orderId, ct);
         if (order == null)
             return OrderFulfillmentResult.Failed(orderId, "", FulfillmentStatus.Created, source, "Order not found", idempotencyKey);
@@ -385,7 +495,7 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 NewStatus = newStatus,
                 TransitionedBy = updatedBy,
                 TransitionedAt = DateTime.UtcNow,
-                Reason = reason,
+                Reason = normalizedReason,
                 AttemptNumber = attemptNumber,
                 CanRetry = canRetry,
                 Source = source,
@@ -507,13 +617,21 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 .ToList();
         }
 
+        if (OrderOperationalFinancialAuthority.GetCompletionBlockReason(order) != null)
+        {
+            allowedTransitions = allowedTransitions
+                .Where(target => target != FulfillmentStatus.Completed)
+                .ToList();
+        }
+
         var actions = allowedTransitions.Select(target => new FulfillmentAction
         {
-            Code = target.GetActionCode(),
-            Label = target.GetActionLabel(),
+            Code = GetActionCode(currentStatus, target),
+            Label = GetActionLabel(currentStatus, target),
             TargetStatus = target,
             RequiresConfirmation = target == FulfillmentStatus.Cancelled || 
                                    target == FulfillmentStatus.Returned,
+            RequiredFields = GetRequiredFields(target),
             IconHint = GetIconHint(target)
         }).ToList();
 
@@ -537,7 +655,8 @@ public class OrderFulfillmentService : IOrderFulfillmentService
         string? transitionedBy,
         string? idempotencyKey,
         Func<Order, FulfillmentStatus, FulfillmentStatus, TEvent> eventFactory,
-        CancellationToken ct)
+        CancellationToken ct,
+        int attempt = 1)
         where TEvent : OrderFulfillmentEventBase
     {
         var ownsTransaction = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null;
@@ -579,6 +698,25 @@ public class OrderFulfillmentService : IOrderFulfillmentService
 
         var oldStatus = order.FulfillmentStatus;
 
+        if (oldStatus == targetStatus)
+        {
+            _logger.LogInformation(
+                "[Fulfillment] Replay collapsed against current SQL fulfillment authority | OrderId: {OrderId} | OrderNumber: {OrderNumber} | CurrentStatus: {CurrentStatus} | RequestedStatus: {RequestedStatus} | Source: {Source}",
+                order.Id,
+                order.OrderNumber,
+                oldStatus,
+                targetStatus,
+                source);
+
+            return OrderFulfillmentResult.Succeeded(
+                order.Id,
+                order.OrderNumber,
+                oldStatus,
+                oldStatus,
+                source,
+                idempotencyKey);
+        }
+
         if (IsTerminalOrderLifecycle(order.Status) &&
             IsOutboundFulfillmentProgression(targetStatus))
         {
@@ -599,9 +737,8 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 idempotencyKey);
         }
 
-        if (oldStatus == targetStatus ||
-            (IsOutboundFulfillmentProgression(targetStatus) &&
-             IsAtOrBeyondOutboundTarget(oldStatus, targetStatus)))
+        if (IsOutboundFulfillmentProgression(targetStatus) &&
+            IsAtOrBeyondOutboundTarget(oldStatus, targetStatus))
         {
             _logger.LogInformation(
                 "[Fulfillment] Replay collapsed against current SQL fulfillment authority | OrderId: {OrderId} | OrderNumber: {OrderNumber} | CurrentStatus: {CurrentStatus} | RequestedStatus: {RequestedStatus} | Source: {Source}",
@@ -660,6 +797,28 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 idempotencyKey);
         }
 
+        if (targetStatus == FulfillmentStatus.Completed)
+        {
+            var completionBlockReason = OrderOperationalFinancialAuthority.GetCompletionBlockReason(order);
+            if (completionBlockReason != null)
+            {
+                _logger.LogWarning(
+                    "[Fulfillment] Blocked completion before financial obligations were satisfied | OrderId: {OrderId} | OrderNumber: {OrderNumber} | PaymentStatus: {PaymentStatus} | FinancialPostingStatus: {FinancialPostingStatus}",
+                    order.Id,
+                    order.OrderNumber,
+                    order.PaymentStatus,
+                    order.FinancialPostingStatus);
+
+                return OrderFulfillmentResult.Failed(
+                    orderId,
+                    order.OrderNumber,
+                    oldStatus,
+                    source,
+                    completionBlockReason,
+                    idempotencyKey);
+            }
+        }
+
         // Validate transition
         if (!oldStatus.CanTransitionTo(targetStatus))
         {
@@ -672,44 +831,78 @@ public class OrderFulfillmentService : IOrderFulfillmentService
                 $"Cannot transition from {oldStatus} to {targetStatus}", idempotencyKey);
         }
 
-        // Enable authorized context for interceptor
-        FulfillmentStatusSaveChangesInterceptor.EnableAuthorizedContext();
-        using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
         try
         {
-            order.FulfillmentStatus = targetStatus;
-            order.AcceptFulfillmentStatusChange();
-
-            var oldOrderStatus = order.Status;
-            var newOrderStatus = ResolveOrderStatus(order.Status, targetStatus);
-            if (newOrderStatus != oldOrderStatus)
+            // Enable authorized context for interceptor
+            FulfillmentStatusSaveChangesInterceptor.EnableAuthorizedContext();
+            using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
+            try
             {
-                order.Status = newOrderStatus;
-                ApplyOrderStatusTimestamp(order, newOrderStatus);
+                order.FulfillmentStatus = targetStatus;
+                order.AcceptFulfillmentStatusChange();
 
-                await _eventPublisher.PublishAsync(new OrderStatusChangedEvent
+                var oldOrderStatus = order.Status;
+                var newOrderStatus = ResolveOrderStatus(order.Status, targetStatus);
+                if (newOrderStatus != oldOrderStatus)
                 {
-                    TenantId = order.TenantId,
-                    OrderId = order.Id,
-                    OrderNumber = order.OrderNumber,
-                    OldStatus = oldOrderStatus,
-                    NewStatus = newOrderStatus,
-                    Reason = $"Converged from authoritative fulfillment transition {oldStatus} -> {targetStatus}"
-                }, ct);
+                    order.Status = newOrderStatus;
+                    ApplyOrderStatusTimestamp(order, newOrderStatus);
+
+                    await _eventPublisher.PublishAsync(new OrderStatusChangedEvent
+                    {
+                        TenantId = order.TenantId,
+                        OrderId = order.Id,
+                        OrderNumber = order.OrderNumber,
+                        OldStatus = oldOrderStatus,
+                        NewStatus = newOrderStatus,
+                        Reason = $"Converged from authoritative fulfillment transition {oldStatus} -> {targetStatus}"
+                    }, ct);
+                }
+
+                var domainEvent = eventFactory(order, oldStatus, targetStatus);
+                await _eventPublisher.PublishAsync(domainEvent, ct);
+
+                await _db.SaveChangesAsync(ct);
+                if (transaction != null)
+                {
+                    await transaction.CommitAsync(ct);
+                }
             }
-
-            var domainEvent = eventFactory(order, oldStatus, targetStatus);
-            await _eventPublisher.PublishAsync(domainEvent, ct);
-
-            await _db.SaveChangesAsync(ct);
-            if (transaction != null)
+            finally
             {
-                await transaction.CommitAsync(ct);
+                FulfillmentStatusSaveChangesInterceptor.DisableAuthorizedContext();
             }
         }
-        finally
+        catch (Exception ex) when (
+            ownsTransaction &&
+            attempt < FulfillmentCommitMaxAttempts &&
+            IsFulfillmentSerializationFailure(ex))
         {
-            FulfillmentStatusSaveChangesInterceptor.DisableAuthorizedContext();
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                await transaction.DisposeAsync();
+            }
+
+            _db.ChangeTracker.Clear();
+            _logger.LogWarning(
+                ex,
+                "Retrying fulfillment transition after serializable race | OrderId: {OrderId} | TargetStatus: {TargetStatus} | Attempt: {Attempt}/{MaxAttempts}",
+                orderId,
+                targetStatus,
+                attempt,
+                FulfillmentCommitMaxAttempts);
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50 * attempt), ct);
+            return await TransitionAsync(
+                orderId,
+                source,
+                targetStatus,
+                transitionedBy,
+                idempotencyKey,
+                eventFactory,
+                ct,
+                attempt + 1);
         }
 
         _logger.LogInformation(
@@ -718,6 +911,19 @@ public class OrderFulfillmentService : IOrderFulfillmentService
             order.Id, order.OrderNumber, oldStatus, targetStatus, source, transitionedBy ?? "system");
 
         return OrderFulfillmentResult.Succeeded(orderId, order.OrderNumber, oldStatus, targetStatus, source, idempotencyKey);
+    }
+
+    private static bool IsFulfillmentSerializationFailure(Exception exception)
+    {
+        for (var current = exception; current != null; current = current.InnerException)
+        {
+            if (current is PostgresException { SqlState: PostgresErrorCodes.SerializationFailure })
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<Order?> LoadOrderForFulfillmentMutationAsync(Guid orderId, CancellationToken ct)
@@ -927,6 +1133,40 @@ public class OrderFulfillmentService : IOrderFulfillmentService
             FulfillmentStatus.Cancelled => "x",
             _ => "circle"
         };
+    }
+
+    private static List<string> GetRequiredFields(FulfillmentStatus status)
+    {
+        return status switch
+        {
+            FulfillmentStatus.Delivered => new List<string> { "deliveryReference", "proofOfDeliveryUrl" },
+            FulfillmentStatus.FailedDelivery => new List<string> { "reason" },
+            FulfillmentStatus.Returned => new List<string> { "reason" },
+            _ => new List<string>()
+        };
+    }
+
+    private static bool IsValidProofOfDeliveryUrl(string? value)
+    {
+        return !string.IsNullOrWhiteSpace(value) &&
+               value.Length <= MaxProofOfDeliveryUrlLength &&
+               !value.Any(char.IsWhiteSpace) &&
+               Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    }
+
+    private static string GetActionCode(FulfillmentStatus currentStatus, FulfillmentStatus targetStatus)
+    {
+        return currentStatus == FulfillmentStatus.FailedDelivery && targetStatus == FulfillmentStatus.OutForDelivery
+            ? "retry-delivery"
+            : targetStatus.GetActionCode();
+    }
+
+    private static string GetActionLabel(FulfillmentStatus currentStatus, FulfillmentStatus targetStatus)
+    {
+        return currentStatus == FulfillmentStatus.FailedDelivery && targetStatus == FulfillmentStatus.OutForDelivery
+            ? "Retry Delivery"
+            : targetStatus.GetActionLabel();
     }
 
     #endregion

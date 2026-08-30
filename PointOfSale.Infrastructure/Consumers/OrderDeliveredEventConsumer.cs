@@ -4,7 +4,6 @@ using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
-using PointOfSale.Core.Interfaces.Payments;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.Infrastructure.Consumers;
@@ -12,29 +11,25 @@ namespace PointOfSale.Infrastructure.Consumers;
 /// <summary>
 /// PHASE OFL: Order Delivered Event Handler
 /// 
-/// This consumer integrates the Fulfillment Lifecycle with the Payment Lifecycle.
+/// This consumer observes delivery without treating delivery as payment evidence.
 /// 
 /// INTEGRATION RULES:
-/// - Offline collection orders: Triggers IPaymentLifecycleService.MarkOfflineCollectionDeliveredAsync()
-///   → Creates ledger journal: DEBIT COD Clearing, CREDIT Revenue
-/// - Wallet orders (AwaitingVerification): Triggers auto-approval workflow
-///   → Creates ledger journal: DEBIT Wallet Clearing, CREDIT Revenue
+/// - Offline collection orders: Remain Pending until explicit collection evidence enters the payment lifecycle
+///   and is recorded only by explicit admin/carrier collection authority
+/// - Wallet orders (AwaitingVerification): Fail closed until payment approval completes
 /// - Online orders: No action (already Collected via webhook)
 /// 
-/// This ensures that physical delivery → financial recognition is automatic and auditable.
+/// Physical delivery and financial recognition are deliberately separate authorities.
 /// </summary>
 public class FulfillmentDeliveredEventConsumer : IConsumer<FulfillmentDeliveredEvent>
 {
-    private readonly IPaymentLifecycleService _paymentLifecycleService;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<FulfillmentDeliveredEventConsumer> _logger;
 
     public FulfillmentDeliveredEventConsumer(
-        IPaymentLifecycleService paymentLifecycleService,
         ApplicationDbContext dbContext,
         ILogger<FulfillmentDeliveredEventConsumer> logger)
     {
-        _paymentLifecycleService = paymentLifecycleService;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -49,48 +44,24 @@ public class FulfillmentDeliveredEventConsumer : IConsumer<FulfillmentDeliveredE
             "PaymentMethod: {PaymentMethod} | PaymentStatus: {PaymentStatus}",
             evt.OrderId, evt.OrderNumber, evt.PaymentMethod, evt.PaymentStatus);
 
+        if (!evt.TenantId.HasValue || evt.TenantId.Value == Guid.Empty)
+        {
+            _logger.LogError(
+                "[FulfillmentDeliveredHandler] Rejected delivery event without tenant authority | OrderId: {OrderId} | EventId: {EventId}",
+                evt.OrderId,
+                evt.EventId);
+            return;
+        }
+
         // ═══════════════════════════════════════════════════════════════════════
-        // RULE 1: COD Orders - Delivery triggers cash collection recognition
+        // RULE 1: COD Orders - Delivery is not cash collection evidence
         // ═══════════════════════════════════════════════════════════════════════
         if (IsCodPaymentMethod(evt.PaymentMethod) && evt.PaymentStatus == PaymentStatus.Pending)
         {
             _logger.LogInformation(
-                "[OrderDeliveredHandler] COD order delivered - triggering payment collection | " +
-                "OrderId: {OrderId} | Amount: {Amount}",
-                evt.OrderId, evt.OrderTotal);
-
-            try
-            {
-                var result = await _paymentLifecycleService.MarkOfflineCollectionDeliveredAsync(
-                    evt.OrderId,
-                    evt.DeliveryReference,
-                    evt.TransitionedBy,
-                    ct);
-
-                if (result.IsSuccess)
-                {
-                    _logger.LogInformation(
-                        "[OrderDeliveredHandler] COD payment collected | OrderId: {OrderId} | " +
-                        "Amount: {Amount} | LedgerJournal: {Status}",
-                        evt.OrderId, evt.OrderTotal, result.OutboxStatus ?? "QUEUED");
-                }
-                else
-                {
-                    _logger.LogCritical(
-                        "[OrderDeliveredHandler] COD payment transition failed | OrderId: {OrderId} | Error: {Error}",
-                        evt.OrderId, result.ErrorMessage);
-
-                    throw new InvalidOperationException(
-                        $"COD payment transition failed for delivered order {evt.OrderId}: {result.ErrorMessage}");
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "[OrderDeliveredHandler] Failed to process COD payment | OrderId: {OrderId}",
-                    evt.OrderId);
-                throw; // Allow MassTransit to retry
-            }
+                "[OrderDeliveredHandler] COD order delivered with payment pending; awaiting explicit collection evidence | " +
+                "OrderId: {OrderId}",
+                evt.OrderId);
         }
         // ═══════════════════════════════════════════════════════════════════════
         // RULE 2: Wallet Orders - Delivery before payment recognition must fail closed

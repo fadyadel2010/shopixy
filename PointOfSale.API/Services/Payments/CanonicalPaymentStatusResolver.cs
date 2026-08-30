@@ -28,7 +28,7 @@ public static class CanonicalPaymentStatusResolver
             return Failed;
         }
 
-        if (IsPaid(paymentStatus, paymentIntentStatus))
+        if (IsPaid(paymentStatus))
         {
             return Paid;
         }
@@ -57,7 +57,7 @@ public static class CanonicalPaymentStatusResolver
             or PaymentIntentStatus.AmountMismatch;
     }
 
-    private static bool IsPaid(PaymentStatus paymentStatus, PaymentIntentStatus? paymentIntentStatus)
+    private static bool IsPaid(PaymentStatus paymentStatus)
     {
         // Don't treat as paid if in terminal failure/refund state
         if (paymentStatus is PaymentStatus.Failed 
@@ -69,23 +69,9 @@ public static class CanonicalPaymentStatusResolver
             return false;
         }
 
-        if (IsPaidState(paymentStatus))
-        {
-            return true;
-        }
-
-        // Only treat intent as paid if not in a terminal failure state
-        if (paymentIntentStatus is PaymentIntentStatus.Failed
-            or PaymentIntentStatus.Cancelled
-            or PaymentIntentStatus.Expired
-            or PaymentIntentStatus.AmountMismatch
-            or PaymentIntentStatus.Suspicious
-            or PaymentIntentStatus.Rejected)
-        {
-            return false;
-        }
-
-        return paymentIntentStatus == PaymentIntentStatus.Paid;
+        // PaymentIntent is provider-attempt evidence. Only canonical Order.PaymentStatus
+        // can authorize a paid response to storefront consumers.
+        return IsPaidState(paymentStatus);
     }
 
     private static bool IsFailed(PaymentStatus paymentStatus, PaymentIntentStatus? paymentIntentStatus)

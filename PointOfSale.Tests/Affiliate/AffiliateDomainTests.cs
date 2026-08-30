@@ -161,7 +161,8 @@ public class AffiliateDomainTests
     [Fact]
     public void AffiliateProductPolicy_Create_ValidRate_Succeeds()
     {
-        var policy = AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.10m);
+        var policy = AffiliateProductPolicy.Create(
+            _tenantId, Guid.NewGuid(), 0.10m, categoryId: Guid.NewGuid());
 
         Assert.Equal(0.10m, policy.CommissionRate);
         Assert.True(policy.IsEnabled);
@@ -176,16 +177,19 @@ public class AffiliateDomainTests
     public void AffiliateProductPolicy_Create_InvalidRate_Throws(decimal rate)
     {
         Assert.Throws<ArgumentException>(() =>
-            AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), rate));
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), rate, categoryId: Guid.NewGuid()));
     }
 
     [Fact]
     public void AffiliateProductPolicy_Create_BoundaryRates_Succeed()
     {
-        var policyMin = AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.0001m);
+        var policyMin = AffiliateProductPolicy.Create(
+            _tenantId, Guid.NewGuid(), 0.0001m, categoryId: Guid.NewGuid());
         Assert.Equal(0.0001m, policyMin.CommissionRate);
 
-        var policyMax = AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.50m);
+        var policyMax = AffiliateProductPolicy.Create(
+            _tenantId, Guid.NewGuid(), 0.50m, categoryId: Guid.NewGuid());
         Assert.Equal(0.50m, policyMax.CommissionRate);
     }
 
@@ -193,20 +197,49 @@ public class AffiliateDomainTests
     public void AffiliateProductPolicy_Create_ZeroMaxCap_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.10m, 0));
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.10m, 0, Guid.NewGuid()));
     }
 
     [Fact]
     public void AffiliateProductPolicy_Create_NegativeMaxCap_Throws()
     {
         Assert.Throws<ArgumentException>(() =>
-            AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.10m, -5m));
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.10m, -5m, Guid.NewGuid()));
+    }
+
+    [Fact]
+    public void AffiliateProductPolicy_Create_ExcessivePersistedPrecision_Throws()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.1234567m, categoryId: Guid.NewGuid()));
+        Assert.Throws<ArgumentException>(() =>
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.10m, 1.23456m, Guid.NewGuid()));
+        Assert.Throws<ArgumentException>(() =>
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.10m, 100_000_000_000_000m, Guid.NewGuid()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AffiliateProductPolicy_Create_WithoutCategory_Throws(bool useEmptyCategory)
+    {
+        Guid? categoryId = useEmptyCategory ? Guid.Empty : null;
+
+        Assert.Throws<ArgumentException>(() =>
+            AffiliateProductPolicy.Create(
+                _tenantId, Guid.NewGuid(), 0.10m, categoryId: categoryId));
     }
 
     [Fact]
     public void AffiliateProductPolicy_UpdateRate_Succeeds()
     {
-        var policy = AffiliateProductPolicy.Create(_tenantId, Guid.NewGuid(), 0.10m);
+        var policy = AffiliateProductPolicy.Create(
+            _tenantId, Guid.NewGuid(), 0.10m, categoryId: Guid.NewGuid());
         policy.UpdateRate(0.15m, 100m);
 
         Assert.Equal(0.15m, policy.CommissionRate);

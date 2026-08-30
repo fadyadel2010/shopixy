@@ -65,8 +65,8 @@ public class AffiliateAttributedProjectionConsumer : IConsumer<AffiliateAttribut
         }
 
         _logger.LogInformation(
-            "[Affiliate:Projection:Attributed] OrderId: {OrderId} | AffiliateId: {AffiliateId} | Code: {Code}",
-            evt.OrderId, evt.AffiliateAccountId, evt.ReferralCode);
+            "[Affiliate:Projection:Attributed] OrderId: {OrderId} | AffiliateId: {AffiliateId}",
+            evt.OrderId, evt.AffiliateAccountId);
 
         // ─── 1. UPSERT DASHBOARD ────────────────────────────────────────
         var dashFilter = Builders<AffiliateDashboardDocument>.Filter.And(
@@ -212,23 +212,7 @@ public class AffiliateCommissionEarnedProjectionConsumer : IConsumer<AffiliateCo
                 evt.OrderId,
                 evt.EventVersion);
 
-            var orderUpdate = Builders<AffiliateOrderDocument>.Update
-                .SetOnInsert(d => d.Id, Guid.NewGuid())
-                .SetOnInsert(d => d.OrderId, evt.OrderId)
-                .SetOnInsert(d => d.OrderNumber, evt.OrderNumber)
-                .SetOnInsert(d => d.AffiliateAccountId, evt.AffiliateAccountId)
-                .SetOnInsert(d => d.TenantId, tenantId)
-                .SetOnInsert(d => d.CreatedAtUtc, DateTime.UtcNow)
-                .Set(d => d.OrderNumber, evt.OrderNumber)
-                .Set(d => d.AffiliateAccountId, evt.AffiliateAccountId)
-                .Set(d => d.Currency, evt.Currency)
-                .Set(d => d.TotalCommission, evt.TotalCommission)
-                .Set(d => d.Status, "Earned")
-                .Set(d => d.Items, items)
-                .Set(d => d.UpdatedAtUtc, DateTime.UtcNow)
-                .Set(d => d.LastCommissionEarnedEventOccurredAtUtc, evt.OccurredAtUtc)
-                .Set(d => d.LastCommissionEarnedEventVersion, evt.EventVersion)
-                .AddToSet(d => d.ProcessedEventIds, eventId);
+            var orderUpdate = BuildOrderUpdate(evt, tenantId, eventId, items);
 
             var orderResult = await _orders.UpdateOneAsync(orderFilter, orderUpdate, new UpdateOptions { IsUpsert = true }, ct);
 
@@ -328,6 +312,29 @@ public class AffiliateCommissionEarnedProjectionConsumer : IConsumer<AffiliateCo
             "[Affiliate:Projection:Earned] All projections updated | OrderId: {OrderId} | AffiliateId: {AffiliateId}",
             evt.OrderId, evt.AffiliateAccountId);
     }
+
+    private static UpdateDefinition<AffiliateOrderDocument> BuildOrderUpdate(
+        AffiliateCommissionEarnedEvent evt,
+        Guid tenantId,
+        string eventId,
+        List<AffiliateOrderItemSubDocument> items)
+    {
+        return Builders<AffiliateOrderDocument>.Update
+            .SetOnInsert(d => d.Id, Guid.NewGuid())
+            .SetOnInsert(d => d.OrderId, evt.OrderId)
+            .SetOnInsert(d => d.TenantId, tenantId)
+            .SetOnInsert(d => d.CreatedAtUtc, DateTime.UtcNow)
+            .Set(d => d.OrderNumber, evt.OrderNumber)
+            .Set(d => d.AffiliateAccountId, evt.AffiliateAccountId)
+            .Set(d => d.Currency, evt.Currency)
+            .Set(d => d.TotalCommission, evt.TotalCommission)
+            .Set(d => d.Status, "Earned")
+            .Set(d => d.Items, items)
+            .Set(d => d.UpdatedAtUtc, DateTime.UtcNow)
+            .Set(d => d.LastCommissionEarnedEventOccurredAtUtc, evt.OccurredAtUtc)
+            .Set(d => d.LastCommissionEarnedEventVersion, evt.EventVersion)
+            .AddToSet(d => d.ProcessedEventIds, eventId);
+    }
 }
 
 /// <summary>
@@ -384,27 +391,47 @@ public class AffiliateCommissionReversedProjectionConsumer : IConsumer<Affiliate
         // ─── 1. UPDATE ORDER DOCUMENT ───────────────────────────────────
         // PATCH D: Per-document $nin filter instead of early-return
         {
+            var currentOrder = await _orders.Find(
+                    Builders<AffiliateOrderDocument>.Filter.And(
+                        Builders<AffiliateOrderDocument>.Filter.Eq(d => d.TenantId, tenantId),
+                        Builders<AffiliateOrderDocument>.Filter.Eq(d => d.OrderId, evt.OrderId)))
+                .FirstOrDefaultAsync(ct);
+            if (currentOrder == null)
+            {
+                throw new InvalidOperationException(
+                    $"AffiliateCommissionReversedEvent cannot be acknowledged before its earned order projection exists. OrderId={evt.OrderId}; EventId={evt.EventId}.");
+            }
 
-            // Mark the specific item as reversed
+            if (currentOrder.ProcessedEventIds.Contains(eventId))
+            {
+                await AffiliateMoneyProjectionConsistency.RecomputeAffiliateMoneyAggregatesAsync(
+                    _orders, _dashboards, _summaries, tenantId, evt.AffiliateAccountId, referralCode: null, ct);
+                return;
+            }
+
+            var currentItem = currentOrder.Items.SingleOrDefault(item => item.OrderItemId == evt.OrderItemId);
+            var nextState = CalculateReversalState(currentOrder, currentItem, evt.ReversedAmount, evt.OrderId, evt.OrderItemId);
+
             var itemFilter = AffiliateMoneyProjectionConsistency.BuildReversalFreshFilter(
                 tenantId,
                 evt.OrderId,
                 evt.OrderItemId,
-                evt.EventVersion,
-                eventId);
+                eventId,
+                currentItem!.ReversedAmount);
 
             var itemUpdate = Builders<AffiliateOrderDocument>.Update
-                .Set("items.$.isReversed", true)
-                .Inc(d => d.TotalReversed, evt.ReversedAmount)
+                .Set("items.$.reversedAmount", nextState.ItemReversedAmount)
+                .Set("items.$.isReversed", nextState.IsItemFullyReversed)
+                .Set(d => d.TotalReversed, nextState.OrderReversedAmount)
+                .Set(d => d.Status, nextState.OrderStatus)
                 .Set(d => d.UpdatedAtUtc, DateTime.UtcNow)
-                .Set(d => d.LastCommissionReversedEventOccurredAtUtc, evt.OccurredAtUtc)
-                .Set(d => d.LastCommissionReversedEventVersion, evt.EventVersion)
+                .Max(d => d.LastCommissionReversedEventOccurredAtUtc, evt.OccurredAtUtc)
+                .Max(d => d.LastCommissionReversedEventVersion, evt.EventVersion)
                 .AddToSet(d => d.ProcessedEventIds, eventId);
 
             var itemResult = await _orders.UpdateOneAsync(itemFilter, itemUpdate, cancellationToken: ct);
 
-            // Determine new status after reversal
-            if (itemResult.ModifiedCount > 0)
+            if (itemResult.ModifiedCount == 0)
             {
                 var order = await _orders.Find(
                     Builders<AffiliateOrderDocument>.Filter.And(
@@ -412,17 +439,17 @@ public class AffiliateCommissionReversedProjectionConsumer : IConsumer<Affiliate
                         Builders<AffiliateOrderDocument>.Filter.Eq(d => d.OrderId, evt.OrderId)
                     )).FirstOrDefaultAsync(ct);
 
-                if (order != null)
+                if (order == null)
                 {
-                    var allReversed = order.Items.All(i => i.IsReversed);
-                    var anyReversed = order.Items.Any(i => i.IsReversed);
-                    var newStatus = allReversed ? "Reversed" :
-                                    anyReversed ? "PartiallyReversed" : "Earned";
+                    throw new InvalidOperationException(
+                        $"AffiliateCommissionReversedEvent cannot be acknowledged before its earned order projection exists. OrderId={evt.OrderId}; EventId={evt.EventId}.");
+                }
 
-                    await _orders.UpdateOneAsync(
-                        Builders<AffiliateOrderDocument>.Filter.Eq(d => d.Id, order.Id),
-                        Builders<AffiliateOrderDocument>.Update.Set(d => d.Status, newStatus),
-                        cancellationToken: ct);
+                var isDuplicate = order.ProcessedEventIds.Contains(eventId);
+                if (!isDuplicate)
+                {
+                    throw new InvalidOperationException(
+                        $"AffiliateCommissionReversedEvent lost its optimistic projection fence and must be retried. OrderId={evt.OrderId}; OrderItemId={evt.OrderItemId}; EventId={evt.EventId}.");
                 }
             }
         }
@@ -512,6 +539,52 @@ public class AffiliateCommissionReversedProjectionConsumer : IConsumer<Affiliate
             "[Affiliate:Projection:Reversed] All projections updated | OrderId: {OrderId} | ItemId: {ItemId}",
             evt.OrderId, evt.OrderItemId);
     }
+
+    private static ReversalProjectionState CalculateReversalState(
+        AffiliateOrderDocument order,
+        AffiliateOrderItemSubDocument? item,
+        decimal reversedAmount,
+        Guid orderId,
+        Guid orderItemId)
+    {
+        if (item == null)
+        {
+            throw new InvalidOperationException(
+                $"AffiliateCommissionReversedEvent cannot be acknowledged before its earned item projection exists. OrderId={orderId}; OrderItemId={orderItemId}.");
+        }
+
+        if (reversedAmount <= 0m)
+        {
+            throw new InvalidOperationException(
+                $"AffiliateCommissionReversedEvent has a non-positive reversal amount. OrderId={orderId}; OrderItemId={orderItemId}; ReversedAmount={reversedAmount}.");
+        }
+
+        var itemReversedAmount = item.ReversedAmount + reversedAmount;
+        if (itemReversedAmount > item.CommissionAmount)
+        {
+            throw new InvalidOperationException(
+                $"AffiliateCommissionReversedEvent exceeds projected earned commission. OrderId={orderId}; OrderItemId={orderItemId}; ProjectedEarned={item.CommissionAmount}; AttemptedReversed={itemReversedAmount}.");
+        }
+
+        var orderReversedAmount = order.TotalReversed + reversedAmount;
+        if (orderReversedAmount > order.TotalCommission)
+        {
+            throw new InvalidOperationException(
+                $"AffiliateCommissionReversedEvent exceeds projected order commission. OrderId={orderId}; ProjectedEarned={order.TotalCommission}; AttemptedReversed={orderReversedAmount}.");
+        }
+
+        return new ReversalProjectionState(
+            itemReversedAmount,
+            itemReversedAmount >= item.CommissionAmount,
+            orderReversedAmount,
+            orderReversedAmount >= order.TotalCommission ? "Reversed" : "PartiallyReversed");
+    }
+
+    private sealed record ReversalProjectionState(
+        decimal ItemReversedAmount,
+        bool IsItemFullyReversed,
+        decimal OrderReversedAmount,
+        string OrderStatus);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1027,19 +1100,17 @@ internal static class AffiliateMoneyProjectionConsistency
         Guid tenantId,
         Guid orderId,
         Guid orderItemId,
-        int eventVersion,
-        string eventId) =>
+        string eventId,
+        decimal expectedReversedAmount) =>
         Builders<AffiliateOrderDocument>.Filter.And(
             Builders<AffiliateOrderDocument>.Filter.Eq(d => d.TenantId, tenantId),
             Builders<AffiliateOrderDocument>.Filter.Eq(d => d.OrderId, orderId),
             !Builders<AffiliateOrderDocument>.Filter.AnyEq(d => d.ProcessedEventIds, eventId),
             Builders<AffiliateOrderDocument>.Filter.ElemMatch(
                 d => d.Items,
-                i => i.OrderItemId == orderItemId && !i.IsReversed),
-            BuildFreshnessFilter(
-                "lastCommissionReversedEventVersion",
-                d => d.LastCommissionReversedEventVersion,
-                eventVersion));
+                i => i.OrderItemId == orderItemId &&
+                     !i.IsReversed &&
+                     i.ReversedAmount == expectedReversedAmount));
 
     public static FilterDefinition<AffiliateOrderDocument> BuildApprovalFreshFilter(
         Guid tenantId,
@@ -1213,6 +1284,8 @@ public class OrderLifecycleAffiliateProjectionConsumer :
     IConsumer<OrderPackedEvent>,
     IConsumer<OrderOutForDeliveryEvent>,
     IConsumer<FulfillmentDeliveredEvent>,
+    IConsumer<OrderReturnedEvent>,
+    IConsumer<OrderDeliveryFailedEvent>,
     IConsumer<OrderFulfillmentCancelledEvent>
 {
     private readonly IMongoCollection<AffiliateOrderDocument> _orders;
@@ -1763,6 +1836,56 @@ public class OrderLifecycleAffiliateProjectionConsumer :
                 "[Affiliate:Lifecycle:Delivered] No documents updated | OrderId: {OrderId} | TenantId: {TenantId}",
                 evt.OrderId, tenantId);
         }
+    }
+
+    public Task Consume(ConsumeContext<OrderReturnedEvent> context) =>
+        ConsumeTerminalFulfillmentEventAsync(context.Message, nameof(OrderReturnedEvent), context.CancellationToken);
+
+    public Task Consume(ConsumeContext<OrderDeliveryFailedEvent> context) =>
+        ConsumeTerminalFulfillmentEventAsync(context.Message, nameof(OrderDeliveryFailedEvent), context.CancellationToken);
+
+    private async Task ConsumeTerminalFulfillmentEventAsync(
+        OrderFulfillmentEventBase evt,
+        string eventName,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = evt.TenantId ?? Guid.Empty;
+        if (tenantId == Guid.Empty || evt.EventVersion <= 0)
+        {
+            throw new InvalidOperationException(
+                $"{eventName} requires tenant authority and a positive event version. OrderId={evt.OrderId}; EventId={evt.EventId}.");
+        }
+
+        var eventId = evt.EventId.ToString();
+        var existingDoc = await _orders.Find(d =>
+            d.TenantId == tenantId &&
+            d.OrderId == evt.OrderId).FirstOrDefaultAsync(cancellationToken);
+
+        if (existingDoc?.ProcessedEventIds.Contains(eventId) == true)
+        {
+            return;
+        }
+
+        var filter = BuildFulfillmentLifecycleFilter(
+            tenantId,
+            evt.OrderId,
+            evt.OccurredAtUtc,
+            evt.EventVersion);
+        var update = Builders<AffiliateOrderDocument>.Update
+            .Set(d => d.FulfillmentStatus, evt.NewStatus.ToString())
+            .Set(d => d.LastFulfillmentStatusEventOccurredAtUtc, evt.OccurredAtUtc)
+            .Set(d => d.LastFulfillmentStatusEventVersion, evt.EventVersion)
+            .Set(d => d.UpdatedAtUtc, DateTime.UtcNow)
+            .AddToSet(d => d.ProcessedEventIds, eventId);
+
+        var result = await _orders.UpdateManyAsync(filter, update, cancellationToken: cancellationToken);
+        _logger.LogInformation(
+            "[Affiliate:Lifecycle:{EventType}] Updated {Count} affiliate order docs | TenantId: {TenantId} | OrderId: {OrderId} | FulfillmentStatus: {Status}",
+            eventName,
+            result.ModifiedCount,
+            tenantId,
+            evt.OrderId,
+            evt.NewStatus);
     }
 
     /// <summary>

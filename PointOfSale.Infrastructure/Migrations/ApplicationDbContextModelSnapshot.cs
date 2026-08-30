@@ -12964,6 +12964,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("DeliveryReference")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.Property<decimal>("DiscountAmount")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
@@ -13073,6 +13077,10 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.Property<string>("PromotionWarningMessage")
                         .HasColumnType("text");
+
+                    b.Property<string>("ProofOfDeliveryUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)");
 
                     b.Property<string>("SessionId")
                         .HasMaxLength(100)

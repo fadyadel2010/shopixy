@@ -11,7 +11,6 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { affiliateAuthApi } from '../../../services/affiliateAuthApi'
-import axios from 'axios'
 import {
     Rocket, User, Mail, Lock, AlertCircle, Loader2, CheckCircle2,
     DollarSign, BarChart3, Link2
@@ -61,15 +60,15 @@ const AffiliateRegister = () => {
         setError('')
 
         if (form.displayName.trim().length < 2) {
-            setError('Display name is required')
+            setError(t('register.nameRequired'))
             return
         }
-        if (form.password.length < 8) {
-            setError('Password must be at least 8 characters')
+        if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/.test(form.password)) {
+            setError(t('register.passwordStrong'))
             return
         }
         if (form.password !== form.confirmPassword) {
-            setError('Passwords do not match')
+            setError(t('register.passwordMismatch'))
             return
         }
 
@@ -82,9 +81,10 @@ const AffiliateRegister = () => {
                 password: form.password,
                 displayName: form.displayName.trim(),
             })
-            navigate('/affiliate/login', { replace: true })
+            navigate(`/affiliate/login?registered=1&email=${encodeURIComponent(form.email.trim())}`, { replace: true })
         } catch (err) {
-            setError(err.response?.data?.message || 'Registration failed. Please try again.')
+            if (err.response?.status === 409) setError(t('register.duplicateEmail'))
+            else setError(t('register.failed'))
         } finally {
             registrationInFlightRef.current = false
             setLoading(false)

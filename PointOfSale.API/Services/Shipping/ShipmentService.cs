@@ -299,6 +299,11 @@ public class ShipmentService : IShipmentService
             throw new ShipmentNotFoundException(shipmentId);
         }
 
+        if (shipment.IsCarrierManaged)
+        {
+            throw new ShipmentCarrierStatusAuthorityException(shipment.Id, shipment.CarrierCode);
+        }
+
         // Step 3: Validate status transition
         var previousStatus = shipment.Status;
         if (previousStatus == request.NewStatus)
@@ -333,11 +338,17 @@ public class ShipmentService : IShipmentService
             case ShipmentStatus.ReadyForPickup:
                 shipment.ReadyForPickupAtUtc = now;
                 break;
+            case ShipmentStatus.PickedUp:
+                shipment.PickedUpAtUtc = now;
+                break;
             case ShipmentStatus.InTransit:
                 EnsureCarrierManagedTrackingMutationAllowed(shipment, request.TrackingNumber, correlationId);
                 shipment.ShippedAtUtc = now;
                 shipment.TrackingNumber = request.TrackingNumber?.Trim();
                 shipment.TrackingUrl = BuildTrackingUrl(shipment.ShippingMethod?.TrackingUrlTemplate, shipment.TrackingNumber);
+                break;
+            case ShipmentStatus.OutForDelivery:
+                shipment.OutForDeliveryAtUtc = now;
                 break;
             case ShipmentStatus.Delivered:
                 shipment.DeliveredAtUtc = now;
@@ -346,6 +357,15 @@ public class ShipmentService : IShipmentService
             case ShipmentStatus.Cancelled:
                 shipment.CancelledAtUtc = now;
                 shipment.CancellationReason = request.CancellationReason;
+                break;
+            case ShipmentStatus.Failed:
+                shipment.FailedAtUtc = now;
+                shipment.FailureReason = request.Notes ?? "Delivery failed";
+                shipment.DeliveryAttempts++;
+                break;
+            case ShipmentStatus.Returned:
+                shipment.ReturnedAtUtc = now;
+                shipment.ReturnReason = request.Notes ?? "Shipment returned";
                 break;
         }
 
@@ -1126,7 +1146,7 @@ public class ShipmentService : IShipmentService
             ShipmentStatus.OutForDelivery => FulfillmentStatus.OutForDelivery,
             ShipmentStatus.Delivered => FulfillmentStatus.Delivered,
             ShipmentStatus.Cancelled => FulfillmentStatus.Cancelled,
-            ShipmentStatus.Failed => FulfillmentStatus.Cancelled,
+            ShipmentStatus.Failed => FulfillmentStatus.FailedDelivery,
             ShipmentStatus.Returned => FulfillmentStatus.Returned,
             _ => FulfillmentStatus.Confirmed
         };
@@ -1141,25 +1161,125 @@ public class ShipmentService : IShipmentService
         CancellationToken cancellationToken)
     {
         var targetStatus = MapShipmentStatusToFulfillmentStatus(requestedStatus);
-        if (!IsOutboundFulfillmentSynchronizationTarget(targetStatus))
+        OrderFulfillmentResult? result = null;
+        if (IsOutboundFulfillmentSynchronizationTarget(targetStatus))
+        {
+            result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                shipment.OrderId,
+                targetStatus,
+                source,
+                shipment.Id,
+                shipment.TrackingNumber,
+                actor,
+                $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}",
+                cancellationToken);
+        }
+        else if (requestedStatus == ShipmentStatus.Failed)
+        {
+            if (shipment.Order.FulfillmentStatus == FulfillmentStatus.FailedDelivery)
+            {
+                return;
+            }
+
+            if (shipment.Order.FulfillmentStatus != FulfillmentStatus.OutForDelivery)
+            {
+                result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                    shipment.OrderId,
+                    FulfillmentStatus.OutForDelivery,
+                    source,
+                    shipment.Id,
+                    shipment.TrackingNumber,
+                    actor,
+                    $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:delivery-attempt",
+                    cancellationToken);
+
+                if (!result.Success)
+                {
+                    ThrowFulfillmentSynchronizationFailure(shipment, requestedStatus, targetStatus, correlationId, result);
+                }
+            }
+
+            result = await _fulfillmentService.MarkDeliveryFailedAsync(
+                shipment.OrderId,
+                source,
+                shipment.FailureReason ?? "Delivery failed",
+                Math.Max(1, shipment.DeliveryAttempts),
+                canRetry: true,
+                updatedBy: actor,
+                idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:failed-delivery",
+                ct: cancellationToken);
+        }
+        else if (requestedStatus == ShipmentStatus.Returned)
+        {
+            if (shipment.Order.FulfillmentStatus == FulfillmentStatus.Delivered)
+            {
+                result = await _fulfillmentService.MarkReturnedAsync(
+                    shipment.OrderId,
+                    source,
+                    shipment.ReturnReason ?? "Shipment returned",
+                    returnAuthorizationNumber: shipment.TrackingNumber,
+                    returnedBy: actor,
+                    idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:returned",
+                    ct: cancellationToken);
+            }
+            else if (shipment.Order.FulfillmentStatus != FulfillmentStatus.FailedDelivery)
+            {
+                if (shipment.Order.FulfillmentStatus != FulfillmentStatus.OutForDelivery)
+                {
+                    result = await _fulfillmentService.SynchronizeFromShipmentAsync(
+                        shipment.OrderId,
+                        FulfillmentStatus.OutForDelivery,
+                        source,
+                        shipment.Id,
+                        shipment.TrackingNumber,
+                        actor,
+                        $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:return-to-origin",
+                        cancellationToken);
+
+                    if (!result.Success)
+                    {
+                        ThrowFulfillmentSynchronizationFailure(
+                            shipment,
+                            requestedStatus,
+                            FulfillmentStatus.FailedDelivery,
+                            correlationId,
+                            result);
+                    }
+                }
+
+                result = await _fulfillmentService.MarkDeliveryFailedAsync(
+                    shipment.OrderId,
+                    source,
+                    shipment.ReturnReason ?? "Shipment returned to origin before delivery",
+                    Math.Max(1, shipment.DeliveryAttempts),
+                    canRetry: false,
+                    updatedBy: actor,
+                    idempotencyKey: $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}:return-to-origin-failed-delivery",
+                    ct: cancellationToken);
+                targetStatus = FulfillmentStatus.FailedDelivery;
+            }
+        }
+
+        if (result == null)
         {
             return;
         }
-
-        var result = await _fulfillmentService.SynchronizeFromShipmentAsync(
-            shipment.OrderId,
-            targetStatus,
-            source,
-            shipment.Id,
-            shipment.TrackingNumber,
-            actor,
-            $"shipment:{shipment.Id:N}:{requestedStatus}:{correlationId}",
-            cancellationToken);
 
         if (result.Success)
         {
             return;
         }
+
+        ThrowFulfillmentSynchronizationFailure(shipment, requestedStatus, targetStatus, correlationId, result);
+    }
+
+    private void ThrowFulfillmentSynchronizationFailure(
+        Shipment shipment,
+        ShipmentStatus requestedStatus,
+        FulfillmentStatus targetStatus,
+        string correlationId,
+        OrderFulfillmentResult result)
+    {
 
         _logger.LogCritical(
             "Shipment fulfillment authority synchronization failed | TenantId: {TenantId} | ShipmentId: {ShipmentId} | OrderId: {OrderId} | RequestedStatus: {RequestedStatus} | TargetFulfillmentStatus: {TargetFulfillmentStatus} | CorrelationId: {CorrelationId} | Error: {Error}",

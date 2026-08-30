@@ -12,6 +12,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Payments;
 using PointOfSale.Core.Pagination;
+using PointOfSale.Core.Policies;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
 
@@ -28,14 +29,10 @@ namespace PointOfSale.API.Services.Admin;
 /// - Events are reused from existing order/payment/shipment events
 /// - Prefer rejecting invalid actions over auto-fixing
 /// 
-/// ⚠️ TENANT ISOLATION - CRITICAL:
-/// The Order entity does NOT have TenantId column.
-/// Tenant isolation MUST be enforced via ownership joins:
-/// - Order → Customer → TenantId (for customer orders)
-/// - Order → Shipment → TenantId (for guest orders with shipment)
-/// - Order → PaymentIntent → TenantId (for guest orders with payment)
-/// 
-/// If ownership cannot be proven → treat as ORDER_NOT_FOUND.
+/// TENANT ISOLATION - CRITICAL:
+/// Order.TenantId is the canonical seller/store authority for standard orders.
+/// Customer, shipment, and payment records are optional related evidence and must
+/// never determine whether the owning tenant can see its order.
 /// </summary>
 public class AdminOrderService : IAdminOrderService
 {
@@ -81,15 +78,12 @@ public class AdminOrderService : IAdminOrderService
 
         query.Page = PaginationGuard.NormalizePage(query.Page);
         query.PageSize = PaginationGuard.NormalizePageSize(query.PageSize);
-        var skip = PaginationGuard.GetSkip(query.Page, query.PageSize);
 
         var standardOrdersQuery = _context.Orders
             .Include(o => o.Customer)
-            .Where(o => 
-                (o.CustomerId != null && o.Customer != null && o.Customer.TenantId == tenantId) ||
-                (o.CustomerId == null && _context.Shipments.Any(s => s.OrderId == o.Id && s.TenantId == tenantId)) ||
-                (o.CustomerId == null && _context.Set<PaymentIntent>().Any(pi => pi.OrderId == o.Id && pi.TenantId == tenantId))
-            )
+            .Where(o =>
+                o.TenantId == tenantId &&
+                o.Source == OrderSource.Ecommerce)
             .AsNoTracking();
 
         if (query.Status.HasValue)
@@ -215,6 +209,9 @@ public class AdminOrderService : IAdminOrderService
 
         var combinedQuery = standardRowsQuery.Concat(marketplaceRowsQuery);
         var totalCount = await combinedQuery.CountAsync(cancellationToken);
+        var totalPages = (int)Math.Ceiling(totalCount / (double)query.PageSize);
+        query.Page = totalPages == 0 ? 1 : Math.Min(query.Page, totalPages);
+        var skip = PaginationGuard.GetSkip(query.Page, query.PageSize);
         var orderedQuery = ApplyOrderListSorting(combinedQuery, query.SortBy, query.SortDirection);
         var rows = await orderedQuery
             .Skip(skip)
@@ -241,23 +238,23 @@ public class AdminOrderService : IAdminOrderService
         return sortBy.ToLowerInvariant() switch
         {
             "ordernumber" => descending
-                ? query.OrderByDescending(order => order.OrderNumber)
-                : query.OrderBy(order => order.OrderNumber),
+                ? query.OrderByDescending(order => order.OrderNumber).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.OrderNumber).ThenBy(order => order.OrderId),
             "customername" => descending
-                ? query.OrderByDescending(order => order.CustomerName)
-                : query.OrderBy(order => order.CustomerName),
+                ? query.OrderByDescending(order => order.CustomerName).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.CustomerName).ThenBy(order => order.OrderId),
             "totalamount" => descending
-                ? query.OrderByDescending(order => order.TotalAmount)
-                : query.OrderBy(order => order.TotalAmount),
+                ? query.OrderByDescending(order => order.TotalAmount).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.TotalAmount).ThenBy(order => order.OrderId),
             "status" => descending
-                ? query.OrderByDescending(order => order.Status)
-                : query.OrderBy(order => order.Status),
+                ? query.OrderByDescending(order => order.Status).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.Status).ThenBy(order => order.OrderId),
             "paymentstatus" => descending
-                ? query.OrderByDescending(order => order.PaymentStatus)
-                : query.OrderBy(order => order.PaymentStatus),
+                ? query.OrderByDescending(order => order.PaymentStatus).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.PaymentStatus).ThenBy(order => order.OrderId),
             _ => descending
-                ? query.OrderByDescending(order => order.CreatedAtUtc)
-                : query.OrderBy(order => order.CreatedAtUtc),
+                ? query.OrderByDescending(order => order.CreatedAtUtc).ThenBy(order => order.OrderId)
+                : query.OrderBy(order => order.CreatedAtUtc).ThenBy(order => order.OrderId),
         };
     }
 
@@ -340,7 +337,12 @@ public class AdminOrderService : IAdminOrderService
         }
 
         var order = await _context.Orders
-            .Where(o => o.Id == orderId)
+            .Where(o =>
+                o.Id == orderId &&
+                o.TenantId == tenantId &&
+                o.Source == OrderSource.Ecommerce)
+            .AsNoTracking()
+            .AsSplitQuery()
             .Include(o => o.Customer)
             .Include(o => o.Items)
             .Include(o => o.CheckoutFieldSnapshots)
@@ -356,6 +358,8 @@ public class AdminOrderService : IAdminOrderService
         var paymentIntents = await _context.Set<PaymentIntent>()
             .Where(pi => pi.OrderId == orderId && pi.TenantId == tenantId)
             .AsNoTracking()
+            .OrderBy(pi => pi.CreatedAt)
+            .ThenBy(pi => pi.Id)
             .ToListAsync(cancellationToken);
 
         // Load shipment (already tenant-filtered by ownership)
@@ -630,7 +634,7 @@ public class AdminOrderService : IAdminOrderService
 
         // Get order
         var order = await _context.Orders
-            .Where(o => o.Id == orderId)
+            .Where(o => o.Id == orderId && o.TenantId == tenantId)
             .Include(o => o.Items)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -953,41 +957,18 @@ public class AdminOrderService : IAdminOrderService
     #region Private Helpers
 
     /// <summary>
-    /// Verifies that an order belongs to the specified tenant via ownership joins.
-    /// 
-    /// Ownership is proven if:
-    /// - Customer order: Order.Customer.TenantId == tenantId
-    /// - Guest order with shipment: Shipment.TenantId == tenantId
-    /// - Guest order with payment: PaymentIntent.TenantId == tenantId
-    /// 
-    /// If ownership cannot be proven, the order is treated as non-existent.
+    /// Verifies canonical Order.TenantId ownership. Related customer, shipment,
+    /// and payment records are optional and cannot grant or remove order access.
     /// </summary>
     private async Task<bool> VerifyOrderOwnershipAsync(
         Guid tenantId,
         Guid orderId,
         CancellationToken cancellationToken)
     {
-        // Check 1: Order exists with Customer who belongs to tenant
-        var customerOwned = await _context.Orders
-            .Where(o => o.Id == orderId && o.CustomerId != null)
-            .Include(o => o.Customer)
-            .AnyAsync(o => o.Customer != null && o.Customer.TenantId == tenantId, cancellationToken);
-
-        if (customerOwned)
-            return true;
-
-        // Check 2: Order exists with Shipment that belongs to tenant
-        var shipmentOwned = await _context.Shipments
-            .AnyAsync(s => s.OrderId == orderId && s.TenantId == tenantId, cancellationToken);
-
-        if (shipmentOwned)
-            return true;
-
-        // Check 3: Order exists with PaymentIntent that belongs to tenant
-        var paymentOwned = await _context.Set<PaymentIntent>()
-            .AnyAsync(pi => pi.OrderId == orderId && pi.TenantId == tenantId, cancellationToken);
-
-        return paymentOwned;
+        return await _context.Orders
+            .AnyAsync(
+                order => order.Id == orderId && order.TenantId == tenantId,
+                cancellationToken);
     }
 
     private async Task EnsureCancellationDoesNotBypassRecognizedPaymentAsync(
@@ -1042,6 +1023,81 @@ public class AdminOrderService : IAdminOrderService
             or PaymentStatus.PartiallyRefunded
             or PaymentStatus.Refunded ||
         (int)status == LegacyPartiallyPaidValue;
+
+    private static List<AdminOrderActionCapabilityDto> BuildAvailableOrderActions(
+        Order order,
+        IReadOnlyCollection<PaymentIntent> paymentIntents)
+    {
+        var actions = new List<AdminOrderActionCapabilityDto>();
+
+        if (order.Status == OrderStatus.OnHold)
+        {
+            actions.Add(new AdminOrderActionCapabilityDto
+            {
+                Code = "resume-pending",
+                Label = "Resume as Pending",
+                TargetStatus = OrderStatus.Pending.ToString(),
+                RequiresConfirmation = false
+            });
+        }
+        else if (order.Status is not (
+                     OrderStatus.Delivered or
+                     OrderStatus.Completed or
+                     OrderStatus.Cancelled or
+                     OrderStatus.Refunded))
+        {
+            actions.Add(new AdminOrderActionCapabilityDto
+            {
+                Code = "place-on-hold",
+                Label = "Place On Hold",
+                TargetStatus = OrderStatus.OnHold.ToString(),
+                RequiresConfirmation = false
+            });
+        }
+
+        var hasCapturedPayment = paymentIntents.Any(intent =>
+            !intent.IsDeleted && intent.Status == PaymentIntentStatus.Paid);
+        var canCancel = order.Status is not (
+                OrderStatus.Delivered or
+                OrderStatus.Completed or
+                OrderStatus.Cancelled) &&
+            !IsAdminCancellationPending(order) &&
+            !PaymentStatusRecognizesMoney(order.PaymentStatus) &&
+            !hasCapturedPayment;
+
+        if (canCancel)
+        {
+            actions.Add(new AdminOrderActionCapabilityDto
+            {
+                Code = "cancel-order",
+                Label = "Cancel Order",
+                RequiresConfirmation = true,
+                RequiredFields = new List<string> { "reason" }
+            });
+        }
+
+        return actions;
+    }
+
+    private static List<AdminOrderActionCapabilityDto> BuildAvailableShipmentActions(Shipment? shipment)
+    {
+        if (shipment == null ||
+            !ShipmentLifecycleTransitionPolicy.CanTransition(shipment.Status, ShipmentStatus.Cancelled))
+        {
+            return new List<AdminOrderActionCapabilityDto>();
+        }
+
+        return new List<AdminOrderActionCapabilityDto>
+        {
+            new()
+            {
+                Code = "cancel-shipment",
+                Label = "Cancel Shipment",
+                RequiresConfirmation = true,
+                RequiredFields = new List<string> { "reason" }
+            }
+        };
+    }
 
     private void EnsureAdminStatusOverrideDoesNotAdvanceOperationalLifecycle(
         Order order,
@@ -1214,7 +1270,7 @@ public class AdminOrderService : IAdminOrderService
             PaymentStatus = order.PaymentStatus,
             FulfillmentStatus = order.FulfillmentStatus,
             ShipmentStatus = shipment?.Status,
-            Items = order.Items.Select(i => new AdminOrderItemDto
+            Items = order.Items.OrderBy(i => i.Id).Select(i => new AdminOrderItemDto
             {
                 ItemId = i.Id,
                 ProductId = i.ProductId,
@@ -1282,6 +1338,8 @@ public class AdminOrderService : IAdminOrderService
                 CancelledAt = shipment.CancelledAtUtc,
                 CancellationReason = shipment.CancellationReason
             },
+            AvailableOrderActions = BuildAvailableOrderActions(order, paymentIntents),
+            AvailableShipmentActions = BuildAvailableShipmentActions(shipment),
             Totals = new AdminOrderTotalsDto
             {
                 Subtotal = order.Subtotal,
@@ -1510,7 +1568,7 @@ public class AdminOrderService : IAdminOrderService
             PaymentStatus = subOrder.PaymentStatus,
             FulfillmentStatus = null,
             ShipmentStatus = null,
-            Items = subOrder.Items.Select(item => new AdminOrderItemDto
+            Items = subOrder.Items.OrderBy(item => item.Id).Select(item => new AdminOrderItemDto
             {
                 ItemId = item.Id,
                 ProductId = item.ProductId,

@@ -104,6 +104,8 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         Assert.Contains("OrderByDescending(pi => pi.CreatedAt)", paymobService, StringComparison.Ordinal);
         Assert.Contains("PAYMENT_INTENT_IN_PROGRESS", paymobService, StringComparison.Ordinal);
         Assert.Contains("concurrent_claim", paymobService, StringComparison.Ordinal);
+        Assert.Contains("_paymentLifecycleService.ResetFailedPaymentForRetryAsync", paymobService, StringComparison.Ordinal);
+        Assert.DoesNotContain("PaymentStatusSaveChangesInterceptor.EnableAuthorizedContext", paymobService, StringComparison.Ordinal);
         Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
 
         Assert.Contains("AuthorizeOrderAccessAsync", paymobController, StringComparison.Ordinal);

@@ -1,0 +1,29 @@
+export const resolveSafeNavigationTarget = (value: unknown, fallback = "/") => {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const candidate = value.trim();
+  if (!candidate || /[\u0000-\u001f\u007f\\]/.test(candidate) || candidate.startsWith("//")) {
+    return fallback;
+  }
+
+  if (candidate.startsWith("/") || candidate.startsWith("#") || candidate.startsWith("?")) {
+    return candidate;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !parsed.username &&
+      !parsed.password
+    ) {
+      return parsed.href;
+    }
+  } catch {
+    // Relative non-root targets are intentionally rejected at this public boundary.
+  }
+
+  return fallback;
+};

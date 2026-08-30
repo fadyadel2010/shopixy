@@ -27,6 +27,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
 
     private readonly ApplicationDbContext _db;
     private readonly CarrierShipmentService _service;
+    private readonly Mock<IOrderFulfillmentService> _fulfillmentService;
     private readonly TenantContext _tenantContext;
     private readonly Guid _tenantId = Guid.NewGuid();
     private readonly Guid _shipmentId = Guid.NewGuid();
@@ -48,8 +49,8 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
         registry.Setup(x => x.IsCarrierSupported(It.Is<string>(code => code == CarrierCode))).Returns(true);
         registry.Setup(x => x.GetAllAdapters()).Returns([adapter]);
         registry.Setup(x => x.GetSupportedCarrierCodes()).Returns([CarrierCode]);
-        var fulfillmentService = new Mock<IOrderFulfillmentService>(MockBehavior.Strict);
-        fulfillmentService
+        _fulfillmentService = new Mock<IOrderFulfillmentService>(MockBehavior.Strict);
+        _fulfillmentService
             .Setup(x => x.SynchronizeFromShipmentAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<FulfillmentStatus>(),
@@ -61,6 +62,18 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((Guid orderId, FulfillmentStatus targetStatus, FulfillmentRequestSource source, Guid? shipmentId, string? trackingNumber, string? actor, string? idempotencyKey, CancellationToken ct) =>
                 OrderFulfillmentResult.Succeeded(orderId, "TEST", targetStatus, targetStatus, source, idempotencyKey));
+        _fulfillmentService
+            .Setup(x => x.MarkDeliveryFailedAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<FulfillmentRequestSource>(),
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<bool>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid orderId, FulfillmentRequestSource source, string reason, int attemptNumber, bool canRetry, string? actor, string? idempotencyKey, CancellationToken ct) =>
+                OrderFulfillmentResult.Succeeded(orderId, "TEST", FulfillmentStatus.OutForDelivery, FulfillmentStatus.FailedDelivery, source, idempotencyKey));
 
         var encryption = new Mock<ICarrierCredentialEncryptionService>(MockBehavior.Strict);
         encryption.Setup(service => service.Decrypt(It.IsAny<string?>()))
@@ -77,7 +90,7 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             registry.Object,
             encryption.Object,
             new NoOpEventPublisher(),
-            fulfillmentService.Object,
+            _fulfillmentService.Object,
             new CommerceReliabilityTelemetry(),
             _tenantContext,
             Mock.Of<ICustomsEvidenceAdmissionService>(),
@@ -234,6 +247,87 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
         Assert.Equal(WebhookProcessingStatus.Completed, webhookLog.ProcessingStatus);
     }
 
+    [Fact]
+    public async Task ProcessWebhookAsync_CarrierFailure_ConvergesToFailedDeliveryWithEvidence()
+    {
+        var payload = BuildPayload("evt_failed", "failed");
+
+        var result = await _service.ProcessWebhookAsync(
+            CarrierCode,
+            payload,
+            ComputeSignature(payload, WebhookSecret),
+            sourceIp: "203.0.113.10",
+            userAgent: "test-suite",
+            CancellationToken.None);
+
+        Assert.True(result.Success, $"{result.ErrorCode}: {result.ErrorMessage}");
+        Assert.True(result.StatusChanged);
+
+        var shipment = await _db.Shipments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == _shipmentId);
+        Assert.Equal(ShipmentStatus.Failed, shipment.Status);
+        Assert.Equal(1, shipment.DeliveryAttempts);
+        Assert.Equal("failed", shipment.FailureReason);
+        Assert.NotNull(shipment.FailedAtUtc);
+
+        _fulfillmentService.Verify(x => x.MarkDeliveryFailedAsync(
+            shipment.OrderId,
+            FulfillmentRequestSource.Webhook,
+            "failed",
+            1,
+            false,
+            "system:webhook",
+            It.Is<string>(key => key.EndsWith(":failed-delivery", StringComparison.Ordinal)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ProcessWebhookAsync_PreDeliveryReturn_ConvergesToFailedDeliveryNotCustomerReturn()
+    {
+        var payload = BuildPayload("evt_returned_to_origin", "returned");
+
+        var result = await _service.ProcessWebhookAsync(
+            CarrierCode,
+            payload,
+            ComputeSignature(payload, WebhookSecret),
+            sourceIp: "203.0.113.10",
+            userAgent: "test-suite",
+            CancellationToken.None);
+
+        Assert.True(result.Success, $"{result.ErrorCode}: {result.ErrorMessage}");
+        Assert.True(result.StatusChanged);
+
+        var shipment = await _db.Shipments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == _shipmentId);
+        Assert.Equal(ShipmentStatus.Returned, shipment.Status);
+        Assert.Equal("returned", shipment.ReturnReason);
+        Assert.NotNull(shipment.ReturnedAtUtc);
+
+        _fulfillmentService.Verify(x => x.MarkDeliveryFailedAsync(
+            shipment.OrderId,
+            FulfillmentRequestSource.Webhook,
+            "returned",
+            1,
+            false,
+            "system:webhook",
+            It.Is<string>(key => key.EndsWith(":return-to-origin-failed-delivery", StringComparison.Ordinal)),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _fulfillmentService.Verify(x => x.MarkReturnedAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<FulfillmentRequestSource>(),
+            It.IsAny<string>(),
+            It.IsAny<bool>(),
+            It.IsAny<decimal?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     private void SeedShipment()
     {
         var orderId = Guid.NewGuid();
@@ -244,6 +338,8 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
             OrderNumber = "ORD-1001",
             FulfillmentMode = FulfillmentMode.Carrier,
             FulfillmentCarrierCode = CarrierCode,
+            FulfillmentStatus = FulfillmentStatus.OutForDelivery,
+            Status = OrderStatus.Shipped,
             ShippingAddress = "42 Test Street",
             ShippingCity = "Cairo",
             ShippingCountry = "EG",
@@ -374,6 +470,8 @@ public sealed class ShippingWebhookTrustPipelineTests : IDisposable, IAsyncDispo
                         "delivered" => ShipmentStatus.Delivered,
                         "out_for_delivery" => ShipmentStatus.OutForDelivery,
                         "in_transit" => ShipmentStatus.InTransit,
+                        "failed" => ShipmentStatus.Failed,
+                        "returned" => ShipmentStatus.Returned,
                         _ => ShipmentStatus.ReadyForPickup
                     },
                     StatusDescription = status,

@@ -1968,6 +1968,8 @@ public class ApplicationDbContext : DbContext
             entity.Property(o => o.Total).HasPrecision(18, 2);
             entity.Property(o => o.PricingSnapshotJson).HasColumnType("text");
             entity.Property(o => o.ShippingServiceLevel).HasMaxLength(50);
+            entity.Property(o => o.DeliveryReference).HasMaxLength(200);
+            entity.Property(o => o.ProofOfDeliveryUrl).HasMaxLength(2048);
             entity.Property(o => o.FinancialPostingStatus).HasConversion<int>();
             entity.Property(o => o.FinancialPostingFailureReason).HasMaxLength(1000);
             ConfigureOrderGeographicSnapshotProperties(entity);
@@ -6814,7 +6816,9 @@ public class ApplicationDbContext : DbContext
             }
         }
 
-        AddDirectProductDependents(ChangeTracker.Entries<AffiliateProductPolicy>(), affectedProducts, policy => (policy.TenantId, policy.ProductId));
+        // Affiliate policy has its own authority and event pipeline. Treating it as a
+        // Product search dependent changes Product.UpdatedAt/xmin for an Affiliate-only
+        // mutation and violates Product/Affiliate lifecycle separation.
 
         foreach (var entry in ChangeTracker.Entries<Promotion>()
                      .Where(entry => entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted))

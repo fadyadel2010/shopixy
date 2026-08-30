@@ -33,6 +33,9 @@ namespace PointOfSale.API.Controllers;
 [AllowAnonymous]
 public class PublicAffiliateProductsController : ControllerBase
 {
+    private const int CandidateBatchSize = 500;
+    private static readonly TimeSpan CandidateScrollTimeout = TimeSpan.FromMinutes(2);
+
     private readonly IElasticClient _elasticClient;
     private readonly ApplicationDbContext _dbContext;
     private readonly IConfiguration _configuration;
@@ -70,12 +73,10 @@ public class PublicAffiliateProductsController : ControllerBase
                 return StatusCode(503, new { message = "Search is currently unavailable." });
             }
 
-            var skip = (page - 1) * pageSize;
-
             var response = await _elasticClient.SearchAsync<PublicAffiliateProductSearchDocument>(s => s
                 .Index(_elasticSettings.PublicAffiliateProductsIndexName)
-                .From(skip)
-                .Size(pageSize)
+                .Size(CandidateBatchSize)
+                .Scroll(CandidateScrollTimeout)
                 .Query(queryDescriptor => queryDescriptor
                     .Bool(b =>
                     {
@@ -147,11 +148,19 @@ public class PublicAffiliateProductsController : ControllerBase
                 {
                     if (string.IsNullOrWhiteSpace(q))
                     {
-                        // Default search sort
-                        return sortDescriptor.Descending(p => p.AffiliateEnabledAtUtc);
+                        // Stable browse order. Authority keys break timestamp ties so
+                        // repeated page scans cannot reshuffle or duplicate products.
+                        return sortDescriptor
+                            .Descending(p => p.AffiliateEnabledAtUtc)
+                            .Ascending(p => p.TenantId)
+                            .Ascending(p => p.ProductId);
                     }
-                    // Relavance sorting takes over if q is provided
-                    return sortDescriptor.Descending(SortSpecialField.Score);
+                    // Relevance first, then stable authority-key tie breakers.
+                    return sortDescriptor
+                        .Descending(SortSpecialField.Score)
+                        .Descending(p => p.AffiliateEnabledAtUtc)
+                        .Ascending(p => p.TenantId)
+                        .Ascending(p => p.ProductId);
                 }), cancellationToken);
 
             if (!response.IsValid)
@@ -160,11 +169,19 @@ public class PublicAffiliateProductsController : ControllerBase
                 return StatusCode(500, new { message = "An error occurred while searching products." });
             }
 
+            var candidates = await ReadAllSearchCandidatesAsync(response, cancellationToken);
             var docs = await RecomposePublicAffiliateProductsFromSqlAuthorityAsync(
-                response.Documents.ToList(),
+                candidates,
                 cancellationToken);
 
-            var items = docs.Select(d => new
+            // SQL recomposition must happen before totals and page boundaries. A stale
+            // or invalid Elasticsearch document can no longer consume a visible slot
+            // or make a later valid candidate unreachable.
+            var total = docs.Count;
+            var skip = (page - 1) * pageSize;
+            var pageDocs = docs.Skip(skip).Take(pageSize).ToList();
+
+            var items = pageDocs.Select(d => new
             {
                 productId = d.ProductId,
                 name = d.ProductName,
@@ -191,7 +208,7 @@ public class PublicAffiliateProductsController : ControllerBase
             {
                 page,
                 pageSize,
-                total = docs.Count,
+                total,
                 items
             });
         }
@@ -268,6 +285,59 @@ public class PublicAffiliateProductsController : ControllerBase
         }
     }
 
+    private async Task<List<PublicAffiliateProductSearchDocument>> ReadAllSearchCandidatesAsync(
+        ISearchResponse<PublicAffiliateProductSearchDocument> initialResponse,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<PublicAffiliateProductSearchDocument>();
+        var response = initialResponse;
+        var scrollId = response.ScrollId;
+
+        try
+        {
+            while (response.Documents.Count > 0)
+            {
+                candidates.AddRange(response.Documents);
+
+                if (string.IsNullOrWhiteSpace(scrollId))
+                {
+                    break;
+                }
+
+                response = await _elasticClient.ScrollAsync<PublicAffiliateProductSearchDocument>(
+                    CandidateScrollTimeout,
+                    scrollId,
+                    ct: cancellationToken);
+
+                if (!response.IsValid)
+                {
+                    _logger.LogError(
+                        "Public affiliate product candidate scroll failed: {Error}",
+                        response.ServerError?.Error?.Reason ?? "Unknown");
+                    throw new InvalidOperationException("Public affiliate product candidate scan failed.");
+                }
+
+                scrollId = response.ScrollId;
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrWhiteSpace(scrollId))
+            {
+                await _elasticClient.ClearScrollAsync(
+                    clear => clear.ScrollId(scrollId),
+                    cancellationToken);
+            }
+        }
+
+        // Defensive duplicate fencing: a damaged/rebuilt index must not emit the
+        // same authority identity twice in totals or across public pages.
+        var seen = new HashSet<(Guid TenantId, Guid ProductId)>();
+        return candidates
+            .Where(candidate => seen.Add((candidate.TenantId, candidate.ProductId)))
+            .ToList();
+    }
+
     private async Task<List<PublicAffiliateProductSearchDocument>> RecomposePublicAffiliateProductsFromSqlAuthorityAsync(
         IReadOnlyList<PublicAffiliateProductSearchDocument> candidates,
         CancellationToken cancellationToken)
@@ -325,11 +395,12 @@ public class PublicAffiliateProductsController : ControllerBase
                   item.Category.ParentId != null &&
                   _dbContext.AffiliateCategories
                       .IgnoreQueryFilters()
-                      .Any(parent =>
-                          parent.Id == item.Category.ParentId.Value &&
-                          parent.Level == 1 &&
-                          parent.IsActive &&
-                          !parent.IsDeleted))),
+                          .Any(parent =>
+                              parent.Id == item.Category.ParentId.Value &&
+                              parent.Level == 1 &&
+                              parent.ParentId == null &&
+                              parent.IsActive &&
+                              !parent.IsDeleted))),
                 cancellationToken);
 
         if (!policyExists)
@@ -360,6 +431,7 @@ public class PublicAffiliateProductsController : ControllerBase
             .Where(item =>
                 item.Id == candidate.TenantId &&
                 item.IsActive &&
+                item.Status == PointOfSale.Core.Enums.TenantStatus.Active &&
                 item.DeletedAtUtc == null)
             .Select(item => new
             {

@@ -15,7 +15,7 @@ namespace PointOfSale.Tests.Services;
 public sealed class OrderStatusSyncShipmentLineageTests
 {
     [Fact]
-    public async Task SyncFromShipmentAsync_CollapsesReplayedDeliveredStatus_ToCurrentCancelledShipmentTruth()
+    public async Task SyncFromShipmentAsync_CurrentCancelledShipment_DoesNotImpersonateOrderCancellation()
     {
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
@@ -40,16 +40,50 @@ public sealed class OrderStatusSyncShipmentLineageTests
 
         var order = await dbContext.Orders.AsNoTracking().SingleAsync(candidate => candidate.Id == orderId);
         Assert.True(result.Success);
-        Assert.True(result.StatusChanged);
-        Assert.Equal(OrderStatus.Cancelled, result.NewStatus);
-        Assert.Equal(OrderStatus.Cancelled, order.Status);
+        Assert.False(result.StatusChanged);
+        Assert.Equal(OrderStatus.Confirmed, result.NewStatus);
+        Assert.Equal(OrderStatus.Confirmed, order.Status);
         publisher.Verify(
             candidate => candidate.PublishAsync(
-                It.Is<OrderStatusChangedEvent>(published =>
-                    published.NewStatus == OrderStatus.Cancelled &&
-                    published.Reason!.Contains("SQL shipment authority", StringComparison.Ordinal)),
+                It.IsAny<OrderStatusChangedEvent>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SyncFromShipmentAsync_ReturnedShipment_DoesNotImpersonatePaymentRefund()
+    {
+        var tenantId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        var shipmentId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(tenantId);
+        dbContext.Orders.Add(CreateOrder(tenantId, orderId));
+        dbContext.Shipments.Add(CreateShipment(tenantId, orderId, shipmentId, ShipmentStatus.Returned));
+        await dbContext.SaveChangesAsync();
+
+        var publisher = CreatePublisher();
+        var service = new OrderStatusSyncService(
+            dbContext,
+            publisher.Object,
+            NullLogger<OrderStatusSyncService>.Instance);
+
+        var result = await service.SyncFromShipmentAsync(
+            tenantId,
+            orderId,
+            shipmentId,
+            ShipmentStatus.Returned,
+            "carrier-return");
+
+        var order = await dbContext.Orders.AsNoTracking().SingleAsync(candidate => candidate.Id == orderId);
+        Assert.True(result.Success);
+        Assert.False(result.StatusChanged);
+        Assert.Equal(OrderStatus.Confirmed, order.Status);
+        Assert.NotEqual(OrderStatus.Refunded, order.Status);
+        publisher.Verify(
+            candidate => candidate.PublishAsync(
+                It.IsAny<OrderStatusChangedEvent>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]

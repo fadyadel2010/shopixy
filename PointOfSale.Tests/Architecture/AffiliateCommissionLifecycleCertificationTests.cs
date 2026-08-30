@@ -159,13 +159,13 @@ public sealed class AffiliateCommissionLifecycleCertificationTests
     }
 
     [Fact]
-    public void ReversalBehavior_MustBlockApprovalForReversedItems()
+    public void ReversalBehavior_MustBlockApprovalOnlyForFullyReversedItems()
     {
         var service = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Services/Affiliate/AffiliateService.cs");
 
-        // Approval must skip items that have been reversed (refunded)
-        Assert.Contains("reversedItemIds.Contains(earned.OrderItemId)", service, StringComparison.Ordinal);
-        Assert.Contains("OrderItem {OrderItemId} was reversed — skipping approval", service, StringComparison.Ordinal);
+        // A partial reversal leaves a payable remainder; only a full reversal blocks approval.
+        Assert.Contains("IsFullyReversed(earned, reversalTotalsByOriginalEntryId)", service, StringComparison.Ordinal);
+        Assert.Contains("OrderItem {OrderItemId} was fully reversed — skipping approval", service, StringComparison.Ordinal);
     }
 
     [Fact]

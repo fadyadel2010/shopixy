@@ -45,6 +45,7 @@ public sealed class ShipmentCodCollectedConsumer : IConsumer<ShipmentCodCollecte
             message.Currency);
 
         var result = await _paymentLifecycleService.MarkOfflineCollectionDeliveredAsync(
+            message.TenantId.Value,
             message.OrderId,
             ResolveDeliveryReference(message),
             ResolveConfirmedBy(message),

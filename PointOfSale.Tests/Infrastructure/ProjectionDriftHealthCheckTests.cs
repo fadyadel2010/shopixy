@@ -68,4 +68,52 @@ public sealed class ProjectionDriftHealthCheckTests
         Assert.Equal(1L, result.Data["MongoDBCount"]);
         Assert.Equal("Even", result.Data["Direction"]);
     }
+
+    [Fact]
+    public async Task Foreign_tenant_documents_are_reported_as_degraded_without_corrupting_current_scope_drift()
+    {
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        var tenantContext = new TenantContext();
+
+        await using var db = new ApplicationDbContext(options, tenantContext);
+        db.Products.Add(new Product
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Guid.NewGuid(),
+            Name = "Current product",
+            CategoryId = Guid.NewGuid(),
+            IsDeleted = false
+        });
+        await db.SaveChangesAsync();
+
+        var collection = new Mock<IMongoCollection<ProductDocument>>();
+        collection
+            .SetupSequence(value => value.CountDocumentsAsync(
+                It.IsAny<FilterDefinition<ProductDocument>>(),
+                It.IsAny<CountOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2)
+            .ReturnsAsync(1);
+
+        var mongo = new Mock<IMongoDatabase>();
+        mongo
+            .Setup(value => value.GetCollection<ProductDocument>(
+                "products",
+                It.IsAny<MongoCollectionSettings>()))
+            .Returns(collection.Object);
+
+        var sut = new ProjectionDriftHealthCheck(
+            db,
+            mongo.Object,
+            NullLogger<ProjectionDriftHealthCheck>.Instance);
+
+        var result = await sut.CheckHealthAsync(new HealthCheckContext());
+
+        Assert.Equal(HealthStatus.Degraded, result.Status);
+        Assert.Equal(0L, result.Data["Drift"]);
+        Assert.Equal(1L, result.Data["ForeignTenantDocumentCount"]);
+        Assert.Contains("foreign-tenant", result.Description, StringComparison.OrdinalIgnoreCase);
+    }
 }

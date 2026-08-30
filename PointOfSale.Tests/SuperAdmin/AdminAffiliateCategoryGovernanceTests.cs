@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Routing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.API.Controllers;
@@ -28,6 +29,42 @@ public sealed class AdminAffiliateCategoryGovernanceTests
         AssertMethodPolicy(nameof(AdminAffiliateCategoryController.UpdateCategory));
         AssertMethodPolicy(nameof(AdminAffiliateCategoryController.ActivateCategory));
         AssertMethodPolicy(nameof(AdminAffiliateCategoryController.DeactivateCategory));
+    }
+
+    [Fact]
+    public void EveryExposedCategoryMutation_MustRequireSuperAdmin_AndNoDeleteOrPatchRouteExists()
+    {
+        var actions = typeof(AdminAffiliateCategoryController)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Select(method => new
+            {
+                Method = method,
+                HttpAttributes = method.GetCustomAttributes<HttpMethodAttribute>(inherit: true).ToArray()
+            })
+            .Where(action => action.HttpAttributes.Length > 0)
+            .ToArray();
+
+        var mutationActions = actions
+            .Where(action => action.HttpAttributes
+                .SelectMany(attribute => attribute.HttpMethods)
+                .Any(verb => !string.Equals(verb, "GET", StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
+
+        Assert.NotEmpty(mutationActions);
+        Assert.All(mutationActions, action =>
+        {
+            var authorize = action.Method.GetCustomAttribute<AuthorizeAttribute>(inherit: true);
+            Assert.NotNull(authorize);
+            Assert.Equal(SuperAdminSecurityConstants.PolicyName, authorize!.Policy);
+        });
+
+        var exposedVerbs = actions
+            .SelectMany(action => action.HttpAttributes)
+            .SelectMany(attribute => attribute.HttpMethods)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Assert.DoesNotContain("PATCH", exposedVerbs);
+        Assert.DoesNotContain("DELETE", exposedVerbs);
     }
 
     [Fact]

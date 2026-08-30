@@ -65,6 +65,7 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
         var vendorId = Guid.NewGuid();
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
+        var commerceHubCategoryId = Guid.NewGuid();
 
         _dbContext.Tenants.Add(new Tenant
         {
@@ -104,9 +105,10 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
             vendorId,
             productId,
             variantId,
-            Guid.NewGuid(),
+            commerceHubCategoryId,
             null);
         _dbContext.CommerceHubListings.Add(listing);
+        _dbContext.CommerceHubCategories.Add(CreateActiveCommerceHubCategory(commerceHubCategoryId));
 
         _dbContext.CommerceHubFinancialTransactions.Add(
             CommerceHubFinancialTransaction.Create(
@@ -549,6 +551,8 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
 
     private async Task<Guid> SeedActiveVendorListingAsync(Guid vendorId, Guid productId, Guid variantId)
     {
+        var commerceHubCategoryId = Guid.NewGuid();
+
         _dbContext.Tenants.Add(new Tenant
         {
             Id = vendorId,
@@ -587,13 +591,24 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
             vendorId,
             productId,
             variantId,
-            Guid.NewGuid(),
+            commerceHubCategoryId,
             null);
         _dbContext.CommerceHubListings.Add(listing);
+        _dbContext.CommerceHubCategories.Add(CreateActiveCommerceHubCategory(commerceHubCategoryId));
 
         await _dbContext.SaveChangesAsync();
         return listing.Id;
     }
+
+    private static CommerceHubCategory CreateActiveCommerceHubCategory(Guid categoryId) => new()
+    {
+        Id = categoryId,
+        Name = "Checkout Test Category",
+        Slug = $"checkout-test-{categoryId:N}",
+        Level = 0,
+        IsActive = true,
+        CreatedAtUtc = DateTime.UtcNow
+    };
 
     private async Task SeedPaymentMethodAsync(
         Guid tenantId,

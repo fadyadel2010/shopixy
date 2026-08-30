@@ -36,6 +36,19 @@ public sealed class OrderFulfillmentLifecycleCertificationTests
     }
 
     [Fact]
+    public void FulfillmentService_MustRetryPostgresSerializableCommitRaces()
+    {
+        var source = ReadRepoFile("PointOfSale.Infrastructure/Fulfillment/OrderFulfillmentService.cs");
+
+        Assert.Contains("FulfillmentCommitMaxAttempts = 3", source, StringComparison.Ordinal);
+        Assert.Contains("IsFulfillmentSerializationFailure(ex)", source, StringComparison.Ordinal);
+        Assert.Contains("PostgresErrorCodes.SerializationFailure", source, StringComparison.Ordinal);
+        Assert.Contains("transaction.RollbackAsync(CancellationToken.None)", source, StringComparison.Ordinal);
+        Assert.Contains("_db.ChangeTracker.Clear()", source, StringComparison.Ordinal);
+        Assert.Contains("attempt + 1", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FulfillmentService_MustValidateSourceAgainstFulfillmentMode()
     {
         var source = ReadRepoFile("PointOfSale.Infrastructure/Fulfillment/OrderFulfillmentService.cs");
@@ -421,6 +434,22 @@ public sealed class OrderFulfillmentLifecycleCertificationTests
         Assert.Contains("string OrderNumber", source, StringComparison.Ordinal);
         Assert.Contains("FulfillmentStatus OldStatus", source, StringComparison.Ordinal);
         Assert.Contains("FulfillmentStatus NewStatus", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReturnAndFailedDelivery_MustProjectToStorefrontAndAffiliateReadModels()
+    {
+        var storefront = ReadRepoFile("PointOfSale.Infrastructure/Consumers/OrderProjectionConsumer.cs");
+        var affiliate = ReadRepoFile("PointOfSale.Infrastructure/Consumers/Affiliate/AffiliateProjectionConsumers.cs");
+        var builder = ReadRepoFile("PointOfSale.Infrastructure/MongoDB/Projection/StorefrontOrderProjectionBuilder.cs");
+
+        Assert.Contains("IConsumer<OrderReturnedEvent>", storefront, StringComparison.Ordinal);
+        Assert.Contains("IConsumer<OrderDeliveryFailedEvent>", storefront, StringComparison.Ordinal);
+        Assert.Contains("TryRehydrateOrderProjectionAsync", storefront, StringComparison.Ordinal);
+        Assert.Contains("IConsumer<OrderReturnedEvent>", affiliate, StringComparison.Ordinal);
+        Assert.Contains("IConsumer<OrderDeliveryFailedEvent>", affiliate, StringComparison.Ordinal);
+        Assert.Contains("FulfillmentStatus.Returned => \"Returned\"", builder, StringComparison.Ordinal);
+        Assert.Contains("FulfillmentStatus.FailedDelivery => \"Failed\"", builder, StringComparison.Ordinal);
     }
 
     // ═══════════════════════════════════════════════════════════════

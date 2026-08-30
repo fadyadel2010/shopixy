@@ -47,6 +47,41 @@ function createPaymobResponse(overrides: Partial<CheckoutResponse> = {}): Checko
     };
 }
 
+function createFawryResponse(overrides: Partial<CheckoutResponse> = {}): CheckoutResponse {
+    return {
+        orderId: '8bf8f86a-4a83-4520-a9bf-cdf6af7af0d7',
+        orderNumber: 'ORD-20260828-0001',
+        status: 'Pending',
+        cartId,
+        paymentIntentId: '3e9c8b38-7590-4d02-8df5-c9937d18b8c1',
+        total: 410,
+        totalAmount: 410,
+        currency: 'EGP',
+        checkoutToken: 'checkout-token',
+        paymentStatus: 'pending',
+        paymentMethodCode: 'FAWRY',
+        createdAt: '2026-08-28T19:44:00Z',
+        expiresAtUtc: '2099-01-01T00:00:00Z',
+        referenceCode: 'FWY-123456',
+        ...overrides,
+    };
+}
+
+describe('requireStorefrontPaymentSessionAuthority Fawry responses', () => {
+    it('accepts a complete server-issued handoff', () => {
+        const response = createFawryResponse();
+
+        expect(requireStorefrontPaymentSessionAuthority(response, 'FAWRY', cartId)).toBe(response);
+    });
+
+    it('rejects a handoff without its order-bound checkout token', () => {
+        const response = createFawryResponse({ checkoutToken: null });
+
+        expect(() => requireStorefrontPaymentSessionAuthority(response, 'FAWRY', cartId))
+            .toThrow('Backend checkout response did not prove a complete Fawry payment-session handoff.');
+    });
+});
+
 describe('requireStorefrontPaymentSessionAuthority Manual Wallet responses', () => {
     it.each([
         ['omitted', undefined],

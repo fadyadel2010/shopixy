@@ -144,7 +144,7 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.False(result.Success);
@@ -175,11 +175,41 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.False(result.Success);
         Assert.Contains("not delivered", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(FulfillmentStatus.Created)]
+    [InlineData(FulfillmentStatus.OutForDelivery)]
+    [InlineData(FulfillmentStatus.FailedDelivery)]
+    [InlineData(FulfillmentStatus.Returned)]
+    public async Task PaymentCapability_DoesNotAdvertiseCodCollectionBeforeOrAfterCanonicalDelivery(
+        FulfillmentStatus fulfillmentStatus)
+    {
+        var order = CreateCodOrder(fulfillmentStatus, PaymentStatus.Pending);
+        await _dbContext.Orders.AddAsync(order);
+        await _dbContext.SaveChangesAsync();
+
+        var actions = await _lifecycleService.GetAllowedActionsAsync(order.Id);
+
+        Assert.False(actions.CanMarkOfflineCollectionDelivered);
+    }
+
+    [Fact]
+    public async Task PaymentCapability_AdvertisesCodCollectionOnlyForDeliveredPendingCod()
+    {
+        var order = CreateCodOrder(FulfillmentStatus.Delivered, PaymentStatus.Pending);
+        await _dbContext.Orders.AddAsync(order);
+        await _dbContext.SaveChangesAsync();
+
+        var actions = await _lifecycleService.GetAllowedActionsAsync(order.Id);
+
+        Assert.True(actions.CanMarkOfflineCollectionDelivered);
+        Assert.False(actions.CanRefund);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -195,7 +225,7 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.True(result.Success, result.ErrorMessage);
@@ -242,7 +272,7 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.False(result.Success);
@@ -273,7 +303,7 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.True(result.Success); // Idempotent success
@@ -298,7 +328,7 @@ public class CodPaymentLifecycleTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         // Act
-        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(order.Id);
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(_tenantId, order.Id);
 
         // Assert
         Assert.True(result.Success, result.ErrorMessage);
@@ -314,6 +344,34 @@ public class CodPaymentLifecycleTests : IDisposable
         // Verify outbox status returned
         Assert.NotNull(result.OutboxStatus);
         Assert.Equal("CREATED", result.OutboxStatus);
+    }
+
+    [Fact]
+    public async Task MarkCodDelivered_WhenTenantAuthorityDoesNotMatch_ShouldNotMutate()
+    {
+        var order = CreateCodOrder(FulfillmentStatus.Delivered, PaymentStatus.Pending);
+        await _dbContext.Orders.AddAsync(order);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _lifecycleService.MarkOfflineCollectionDeliveredAsync(
+            Guid.NewGuid(),
+            order.Id,
+            deliveryReference: "FORGED-CROSS-TENANT");
+
+        Assert.False(result.Success);
+        Assert.Equal("Order not found", result.ErrorMessage);
+
+        _dbContext.ChangeTracker.Clear();
+        var persisted = await _dbContext.Orders
+            .IgnoreQueryFilters()
+            .SingleAsync(candidate => candidate.Id == order.Id);
+        Assert.Equal(PaymentStatus.Pending, persisted.PaymentStatus);
+        _mockOutbox.Verify(
+            outbox => outbox.EnqueueCodDeliveredAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

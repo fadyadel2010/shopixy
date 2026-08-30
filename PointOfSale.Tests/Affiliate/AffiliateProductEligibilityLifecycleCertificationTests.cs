@@ -33,6 +33,15 @@ public sealed class AffiliateProductEligibilityLifecycleCertificationTests
     }
 
     [Fact]
+    public void AdminSettings_AlsoExposesPersistedParticipationWithoutInferringFromProductLifecycle()
+    {
+        var source = ReadRepositoryFile("PointOfSale.API", "Controllers", "AdminProductAffiliateController.cs");
+
+        Assert.Contains("IsPolicyEnabled = policy.IsEnabled", source);
+        Assert.Contains("Direct persisted AffiliateProductPolicy.IsEnabled state", source);
+    }
+
+    [Fact]
     public void PublicAffiliateProjection_RequiresActiveCategoryAuthority()
     {
         var projectionConsumer = ReadRepositoryFile("PointOfSale.Infrastructure", "Consumers", "Affiliate", "AffiliateProductPolicyProjectionConsumer.cs");

@@ -64,6 +64,7 @@ public interface IPaymentLifecycleService
     /// JOURNAL: DEBIT offline clearing, CREDIT E-commerce Sales
     /// </summary>
     Task<PaymentTransitionResult> MarkOfflineCollectionDeliveredAsync(
+        Guid tenantId,
         Guid orderId,
         string? deliveryReference = null,
         string? confirmedBy = null,
@@ -164,8 +165,21 @@ public interface IPaymentLifecycleService
     /// NO JOURNAL (money never recognized)
     /// </summary>
     Task<PaymentTransitionResult> MarkPaymentExpiredAsync(
+        Guid tenantId,
         Guid orderId,
         string reason,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Reopens a failed payment aggregate for a new provider attempt.
+    /// The caller must restore inventory reservation authority before requesting the transition.
+    ///
+    /// TRANSITIONS: Failed -> Pending
+    /// NO JOURNAL (no money is recognized)
+    /// </summary>
+    Task<PaymentTransitionResult> ResetFailedPaymentForRetryAsync(
+        Guid orderId,
+        Guid failedPaymentIntentId,
         CancellationToken ct = default);
     
     /// <summary>
@@ -222,7 +236,12 @@ public enum PaymentLifecycleSource
     /// Internal SQL lifecycle fanout for accepted settlement mutations.
     /// Settlement/reconciliation retries must not reconstruct payment visibility locally.
     /// </summary>
-    SettlementAuthority = 9
+    SettlementAuthority = 9,
+
+    /// <summary>
+    /// Internal admission of a new attempt after a terminal failed payment.
+    /// </summary>
+    PaymentRetry = 10
 }
 
 public enum PaymentInventoryAction
@@ -262,6 +281,12 @@ public enum PaymentInventoryAction
 /// </summary>
 public sealed class HandlePaymentResultRequest
 {
+    /// <summary>
+    /// Explicit tenant authority for system/background flows that bypass global
+    /// query filters. Required whenever IgnoreQueryFilters is true.
+    /// </summary>
+    public Guid? TenantId { get; set; }
+
     public Guid OrderId { get; set; }
     public Guid? PaymentIntentId { get; set; }
     public PaymentLifecycleOutcome Outcome { get; set; }

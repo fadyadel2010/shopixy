@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Infrastructure.Instrumentation;
+using PointOfSale.Infrastructure.Services.Affiliate;
 
 namespace PointOfSale.Infrastructure.Consumers.Affiliate;
 
@@ -112,6 +113,20 @@ public class AffiliateOrderDeliveredConsumer :
             _logger.LogInformation(
                 "[Affiliate:Settlement:Delivered] Approval complete | OrderId: {OrderId} | Duration: {DurationMs}ms | SourceEvent: {SourceEvent}",
                 orderId, stopwatch.ElapsedMilliseconds, sourceEvent);
+        }
+        catch (AffiliateCommissionDeferredException ex)
+        {
+            stopwatch.Stop();
+            _telemetry.RecordSkipped(tenantId ?? Guid.Empty, "settlement_not_ready");
+            _telemetry.RecordProcessingDuration(tenantId ?? Guid.Empty, "settlement", stopwatch.ElapsedMilliseconds);
+
+            // Delivery can legitimately precede payment collection/accounting (notably COD).
+            // The authoritative payment/accounting consumers replay commission recording and
+            // reconcile approval once both durable SQL boundaries are satisfied.
+            _logger.LogInformation(
+                ex,
+                "[Affiliate:Settlement:Delivered] Deferred to payment/accounting reconciliation | OrderId: {OrderId} | Reason: {Reason} | SourceEvent: {SourceEvent}",
+                orderId, ex.Reason, sourceEvent);
         }
         catch (Exception ex)
         {
