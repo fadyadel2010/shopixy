@@ -28,7 +28,33 @@ public interface IRefundExecutionService
         string? actorEmail,
         string correlationId,
         CancellationToken cancellationToken = default);
+
+    Task<DevelopmentRefundSimulationResult> ExecuteDevelopmentCodDebtReductionAsync(
+        Guid refundRequestId,
+        string idempotencyKey,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default);
+
+    Task<DevelopmentRefundSimulationResult> ExecuteDevelopmentOnlineBeforePayoutAsync(
+        Guid refundRequestId,
+        string idempotencyKey,
+        string? reason,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default);
 }
+
+public sealed record DevelopmentRefundSimulationResult(
+    Guid RefundId,
+    string IdempotencyKey,
+    string ExecutionPath,
+    string EvidenceType,
+    bool IsDevelopmentSimulation,
+    bool ExternalMoneyMovementConfirmed,
+    string TransactionReference);
 
 public interface IRefundExecutionRecoveryService
 {
@@ -137,6 +163,151 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
         }
     }
 
+    public async Task<DevelopmentRefundSimulationResult> ExecuteDevelopmentCodDebtReductionAsync(
+        Guid refundRequestId,
+        string idempotencyKey,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!actorId.HasValue || actorId.Value == Guid.Empty)
+        {
+            throw new CommerceHubCheckoutException(
+                "SUPER_ADMIN_CONTEXT_REQUIRED",
+                "A valid Super Admin identity is required to execute a Development COD refund simulation.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var normalizedIdempotencyKey = NormalizeDevelopmentIdempotencyKey(idempotencyKey);
+
+        var payoutMethod = await _dbContext.CommerceHubRefundRequests
+            .AsNoTracking()
+            .Where(refund => refund.Id == refundRequestId && !refund.IsDeleted)
+            .Select(refund => refund.PayoutMethodSnapshot)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!payoutMethod.HasValue)
+        {
+            throw new CommerceHubCheckoutException(
+                "REFUND_PAYOUT_SNAPSHOT_REQUIRED",
+                "The Development COD simulation requires the existing locked payout snapshot.",
+                StatusCodes.Status409Conflict);
+        }
+
+        var command = new ManualRefundExecutionCommand(
+            payoutMethod.Value,
+            $"DEV-SIM:{normalizedIdempotencyKey}",
+            "Development-only simulated COD customer refund evidence. No external money movement occurred.",
+            ConfirmMoneySent: false,
+            ConfirmMethodOverride: false,
+            SimulationKind: DevelopmentRefundSimulationKind.CodDebtReduction,
+            RequestIdempotencyKey: normalizedIdempotencyKey);
+
+        for (var attempt = 1; attempt <= MaxExecutionRetries; attempt++)
+        {
+            try
+            {
+                await ExecuteCoreAsync(
+                    refundRequestId,
+                    command,
+                    actorId.Value,
+                    actorEmail,
+                    correlationId,
+                    cancellationToken);
+                return await LoadDevelopmentSimulationResultAsync(
+                    refundRequestId,
+                    normalizedIdempotencyKey,
+                    DevelopmentRefundSimulationKind.CodDebtReduction,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (IsSerializationFailure(ex) && attempt < MaxExecutionRetries)
+            {
+                _dbContext.ChangeTracker.Clear();
+                await Task.Delay(50 * attempt, cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException("Development COD refund simulation exhausted its retry policy.");
+    }
+
+    public async Task<DevelopmentRefundSimulationResult> ExecuteDevelopmentOnlineBeforePayoutAsync(
+        Guid refundRequestId,
+        string idempotencyKey,
+        string? reason,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!actorId.HasValue || actorId.Value == Guid.Empty)
+        {
+            throw new CommerceHubCheckoutException(
+                "SUPER_ADMIN_CONTEXT_REQUIRED",
+                "A valid Super Admin identity is required to execute a Development online refund simulation.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        var normalizedIdempotencyKey = NormalizeDevelopmentIdempotencyKey(idempotencyKey);
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
+            ? "Development certification"
+            : reason.Trim();
+        if (normalizedReason.Length > 500)
+        {
+            throw new CommerceHubCheckoutException(
+                "REFUND_EXECUTION_REASON_TOO_LONG",
+                "The Development simulation reason cannot exceed 500 characters.",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var payoutMethod = await _dbContext.CommerceHubRefundRequests
+            .AsNoTracking()
+            .Where(refund => refund.Id == refundRequestId && !refund.IsDeleted)
+            .Select(refund => refund.PayoutMethodSnapshot)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!payoutMethod.HasValue)
+        {
+            throw new CommerceHubCheckoutException(
+                "REFUND_PAYOUT_SNAPSHOT_REQUIRED",
+                "The Development online simulation requires the existing locked payout snapshot.",
+                StatusCodes.Status409Conflict);
+        }
+
+        var command = new ManualRefundExecutionCommand(
+            payoutMethod.Value,
+            $"DEV-SIM:ONLINE-REFUND:{normalizedIdempotencyKey}",
+            $"Development-only simulated online customer refund. No external money movement occurred. Reason: {normalizedReason}",
+            ConfirmMoneySent: false,
+            ConfirmMethodOverride: false,
+            SimulationKind: DevelopmentRefundSimulationKind.OnlineBeforePayout,
+            RequestIdempotencyKey: normalizedIdempotencyKey);
+
+        for (var attempt = 1; attempt <= MaxExecutionRetries; attempt++)
+        {
+            try
+            {
+                await ExecuteCoreAsync(
+                    refundRequestId,
+                    command,
+                    actorId.Value,
+                    actorEmail,
+                    correlationId,
+                    cancellationToken);
+                return await LoadDevelopmentSimulationResultAsync(
+                    refundRequestId,
+                    normalizedIdempotencyKey,
+                    DevelopmentRefundSimulationKind.OnlineBeforePayout,
+                    cancellationToken);
+            }
+            catch (Exception ex) when (IsSerializationFailure(ex) && attempt < MaxExecutionRetries)
+            {
+                _dbContext.ChangeTracker.Clear();
+                await Task.Delay(50 * attempt, cancellationToken);
+            }
+        }
+
+        throw new InvalidOperationException("Development online refund simulation exhausted its retry policy.");
+    }
+
     public async Task<int> RecoverReconciliationRequiredRefundsAsync(CancellationToken cancellationToken = default)
     {
         var candidates = await _dbContext.CommerceHubRefunds
@@ -225,6 +396,29 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
 
             if (CommerceHubRefundRequestWorkflowPolicy.IsExecuted(refundRequest.Status))
             {
+                marketplaceOrder = refundRequest.Order;
+                oldMarketplaceStatus = marketplaceOrder.Status;
+                oldMarketplacePaymentStatus = marketplaceOrder.PaymentStatus;
+                oldSubOrderStates = marketplaceOrder.SubOrders.ToDictionary(item => item.Id, item => item.Status);
+                oldSubOrderPaymentStates = marketplaceOrder.SubOrders.ToDictionary(item => item.Id, item => item.PaymentStatus);
+
+                marketplaceOrder.Status = CommerceHubOrderStateHelper.AggregateMarketplaceStatus(
+                    marketplaceOrder.SubOrders,
+                    marketplaceOrder.Status);
+
+                if (marketplaceOrder.Status != oldMarketplaceStatus)
+                {
+                    await PublishRefundStatusEventsAsync(
+                        marketplaceOrder,
+                        correlationId,
+                        oldMarketplaceStatus,
+                        oldMarketplacePaymentStatus,
+                        oldSubOrderStates,
+                        oldSubOrderPaymentStates,
+                        cancellationToken);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+
                 await transaction.CommitAsync(cancellationToken);
                 return;
             }
@@ -261,6 +455,24 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
             orderItem = refundRequest.OrderItem;
             subOrder = orderItem.SubOrder;
             marketplaceOrder = refundRequest.Order;
+
+            if (request.SimulationKind == DevelopmentRefundSimulationKind.CodDebtReduction &&
+                subOrder.PaymentMethod != CommerceHubPaymentMethod.CashOnDelivery)
+            {
+                throw new CommerceHubCheckoutException(
+                    "DEVELOPMENT_COD_REFUND_ONLY",
+                    "The Development certification mechanism can execute only cash-on-delivery debt-reduction refunds.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            if (request.SimulationKind == DevelopmentRefundSimulationKind.OnlineBeforePayout &&
+                subOrder.PaymentMethod != CommerceHubPaymentMethod.Online)
+            {
+                throw new CommerceHubCheckoutException(
+                    "DEVELOPMENT_ONLINE_REFUND_ONLY",
+                    "The Development online certification mechanism can execute only online refunds before payout.",
+                    StatusCodes.Status409Conflict);
+            }
 
             if (orderItem.IsDeleted || subOrder.IsDeleted || marketplaceOrder.IsDeleted)
             {
@@ -347,6 +559,14 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                 commissionReversalAmount,
                 grossCommissionReversalAmount,
                 marketplaceOrder.Currency);
+            if (request.SimulationKind == DevelopmentRefundSimulationKind.OnlineBeforePayout &&
+                decision.Scenario != RefundFinancialScenario.OnlineBeforePayout)
+            {
+                throw new CommerceHubCheckoutException(
+                    "DEVELOPMENT_ONLINE_BEFORE_PAYOUT_REFUND_ONLY",
+                    "The Development online certification mechanism cannot execute a refund after vendor payout.",
+                    StatusCodes.Status409Conflict);
+            }
             var stateBefore = await _financialSafetyGuardService.CaptureStateForUpdateAsync(
                 refundRequest.VendorId,
                 marketplaceOrder.Currency,
@@ -523,8 +743,8 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
             refundRequest.UpdatedBy = actorId;
 
             AppendExecutionAuditLog(
-                action: "REFUND_PAYOUT_INITIATED",
-                description: "CommerceHub manual refund payout confirmation started.",
+                action: GetInitiatedAuditAction(request.SimulationKind),
+                description: GetInitiatedAuditDescription(request.SimulationKind),
                 refundRequestId: refundRequest.Id,
                 orderNumber: marketplaceOrder.OrderNumber,
                 actorId: actorId,
@@ -539,8 +759,11 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                     MaskedAccount = refundRequest.PayoutAccountMaskedSnapshot,
                     ActorId = actorId,
                     TransactionReference = request.TransactionReference,
-                    ConfirmMoneySent = request.ConfirmMoneySent,
-                    ConfirmMethodOverride = request.ConfirmMethodOverride,
+                     ConfirmMoneySent = request.ConfirmMoneySent,
+                     ConfirmMethodOverride = request.ConfirmMethodOverride,
+                     request.IsDevelopmentSimulation,
+                     request.RequestIdempotencyKey,
+                     ExternalMoneyMovementConfirmed = request.ConfirmMoneySent && !request.IsDevelopmentSimulation,
                     FinancialEffect = BuildFinancialEffectAuditPayload(
                         decision,
                         stateBefore.PlatformCash,
@@ -566,8 +789,8 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                 cancellationToken);
 
             AppendExecutionAuditLog(
-                action: "REFUND_PAYOUT_CONFIRMED",
-                description: "CommerceHub manual refund payout was confirmed successfully.",
+                action: GetCompletedAuditAction(request.SimulationKind),
+                description: GetCompletedAuditDescription(request.SimulationKind),
                 refundRequestId: refundRequest.Id,
                 orderNumber: marketplaceOrder.OrderNumber,
                 actorId: actorId,
@@ -583,7 +806,10 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                     Method = request.Method,
                     MaskedAccount = refundRequest.PayoutAccountMaskedSnapshot,
                     ActorId = actorId,
-                    TransactionReference = request.TransactionReference,
+                     TransactionReference = request.TransactionReference,
+                     request.IsDevelopmentSimulation,
+                     request.RequestIdempotencyKey,
+                     ExternalMoneyMovementConfirmed = request.ConfirmMoneySent && !request.IsDevelopmentSimulation,
                     FinancialEffect = BuildFinancialEffectAuditPayload(
                         decision,
                         stateBefore.PlatformCash,
@@ -636,6 +862,15 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                     oldMarketplacePaymentStatus,
                     oldSubOrderStates,
                     oldSubOrderPaymentStates,
+                    cancellationToken);
+                await PublishRefundFinanciallyExecutedEventAsync(
+                    refundRequest,
+                    marketplaceOrder,
+                    subOrder,
+                    trackedRefund,
+                    request,
+                    decision,
+                    correlationId,
                     cancellationToken);
             }
 
@@ -756,12 +991,14 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
             var actorId = executionRecord.ExecutedBy != Guid.Empty
                 ? executionRecord.ExecutedBy
                 : executionRecord.CreatedBy ?? Guid.Empty;
-            var recoveryCommand = new ManualRefundExecutionCommand(
+        var recoveryCommand = new ManualRefundExecutionCommand(
                 executionRecord.Method,
                 executionRecord.TransactionReference,
                 executionRecord.Notes,
-                ConfirmMoneySent: true,
-                ConfirmMethodOverride: true);
+                 ConfirmMoneySent: true,
+                 ConfirmMethodOverride: true,
+                 SimulationKind: DevelopmentRefundSimulationKind.None,
+                 RequestIdempotencyKey: null);
 
             var shouldPublishEvents = await CompleteRefundAsync(
                 refundRequest,
@@ -1234,13 +1471,18 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
 
         trackedRefund.Status = CommerceHubRefundStatus.Completed;
         trackedRefund.Reference = request.TransactionReference;
-        trackedRefund.GatewayStatus = "manual-confirmed";
+        trackedRefund.GatewayStatus = request.SimulationKind switch
+        {
+            DevelopmentRefundSimulationKind.CodDebtReduction => "development-simulated-cod-refund",
+            DevelopmentRefundSimulationKind.OnlineBeforePayout => "development-simulated-online-refund",
+            _ => "manual-confirmed"
+        };
         trackedRefund.FailureReason = null;
         trackedRefund.ProcessedAtUtc = completedAtUtc;
 
         effectiveRefund.Status = CommerceHubRefundStatus.Completed;
         effectiveRefund.Reference = request.TransactionReference;
-        effectiveRefund.GatewayStatus = "manual-confirmed";
+        effectiveRefund.GatewayStatus = trackedRefund.GatewayStatus;
         effectiveRefund.FailureReason = null;
         effectiveRefund.ProcessedAtUtc = completedAtUtc;
 
@@ -1520,6 +1762,49 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
                 EventVersion = subOrderEventVersion
             }, cancellationToken);
         }
+    }
+
+    private async Task PublishRefundFinanciallyExecutedEventAsync(
+        CommerceHubRefundRequest refundRequest,
+        CommerceHubMarketplaceOrder marketplaceOrder,
+        CommerceHubSubOrder subOrder,
+        CommerceHubRefund trackedRefund,
+        ManualRefundExecutionCommand request,
+        RefundFinancialDecision decision,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var eventVersion = CommerceHubOrderEventMetadata.ResolveAggregateEventVersion(marketplaceOrder);
+        await _eventPublisher.PublishAsync(new CommerceHubRefundFinanciallyExecutedEvent
+        {
+            MarketplaceOrderId = marketplaceOrder.Id,
+            OrderNumber = marketplaceOrder.OrderNumber,
+            SubOrderId = subOrder.Id,
+            VendorId = refundRequest.VendorId,
+            RefundRequestId = refundRequest.Id,
+            FinancialRefundId = trackedRefund.Id,
+            ReturnId = refundRequest.ReturnRequestId,
+            Amount = trackedRefund.Amount,
+            VendorDebtDelta = decision.VendorDebtDelta,
+            VendorDebtIncreaseAmount = Math.Max(0m, decision.VendorDebtDelta),
+            VendorDebtReductionAmount = Math.Max(0m, -decision.VendorDebtDelta),
+            Currency = trackedRefund.Currency,
+            ExecutionPath = decision.ExecutionPath,
+            ExecutionEvidenceType = request.SimulationKind switch
+            {
+                DevelopmentRefundSimulationKind.CodDebtReduction => "DevelopmentSimulatedCodCustomerRefund",
+                DevelopmentRefundSimulationKind.OnlineBeforePayout => "DevelopmentSimulatedOnlineCustomerRefund",
+                _ => "ConfirmedExternalTransfer"
+            },
+            ExternalMoneyMovementConfirmed = request.ConfirmMoneySent && !request.IsDevelopmentSimulation,
+            IsDevelopmentSimulation = request.IsDevelopmentSimulation,
+            Producer = nameof(RefundExecutionService),
+            TenantId = refundRequest.VendorId,
+            CorrelationId = correlationId,
+            IdempotencyKey = request.RequestIdempotencyKey ?? trackedRefund.IdempotencyKey,
+            OccurredAtUtc = DateTime.UtcNow,
+            EventVersion = eventVersion
+        }, cancellationToken);
     }
 
     private async Task TryMarkFailedAsync(
@@ -2010,8 +2295,139 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
             transactionReference,
             notes,
             request.ConfirmMoneySent,
-            request.ConfirmMethodOverride);
+            request.ConfirmMethodOverride,
+            SimulationKind: DevelopmentRefundSimulationKind.None,
+            RequestIdempotencyKey: null);
     }
+
+    private static string NormalizeDevelopmentIdempotencyKey(string idempotencyKey)
+    {
+        var normalizedIdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey)
+            ? throw new CommerceHubCheckoutException(
+                "REFUND_EXECUTION_IDEMPOTENCY_REQUIRED",
+                "A certification idempotency key is required.",
+                StatusCodes.Status400BadRequest)
+            : idempotencyKey.Trim();
+        if (normalizedIdempotencyKey.Length > 150)
+        {
+            throw new CommerceHubCheckoutException(
+                "REFUND_EXECUTION_IDEMPOTENCY_TOO_LONG",
+                "The certification idempotency key cannot exceed 150 characters.",
+                StatusCodes.Status400BadRequest);
+        }
+
+        return normalizedIdempotencyKey;
+    }
+
+    private async Task<DevelopmentRefundSimulationResult> LoadDevelopmentSimulationResultAsync(
+        Guid refundRequestId,
+        string idempotencyKey,
+        DevelopmentRefundSimulationKind simulationKind,
+        CancellationToken cancellationToken)
+    {
+        var expectedReference = simulationKind switch
+        {
+            DevelopmentRefundSimulationKind.CodDebtReduction => $"DEV-SIM:{idempotencyKey}",
+            DevelopmentRefundSimulationKind.OnlineBeforePayout => $"DEV-SIM:ONLINE-REFUND:{idempotencyKey}",
+            _ => throw new InvalidOperationException("A Development simulation kind is required.")
+        };
+        var expectedGatewayStatus = simulationKind switch
+        {
+            DevelopmentRefundSimulationKind.CodDebtReduction => "development-simulated-cod-refund",
+            DevelopmentRefundSimulationKind.OnlineBeforePayout => "development-simulated-online-refund",
+            _ => throw new InvalidOperationException("A Development simulation kind is required.")
+        };
+
+        var evidence = await _dbContext.CommerceHubRefundRequests
+            .AsNoTracking()
+            .Where(request => request.Id == refundRequestId && !request.IsDeleted)
+            .Select(request => new
+            {
+                RequestStatus = request.Status,
+                PaymentMethod = request.OrderItem.SubOrder.PaymentMethod,
+                Refund = _dbContext.CommerceHubRefunds
+                    .Where(refund => refund.RefundRequestId == request.Id && !refund.IsDeleted)
+                    .Select(refund => new
+                    {
+                        refund.Status,
+                        refund.GatewayStatus,
+                        refund.Reference,
+                        refund.IsPostPayoutAdjustment
+                    })
+                    .FirstOrDefault(),
+                Execution = _dbContext.CommerceHubRefundExecutions
+                    .Where(execution => execution.RefundId == request.Id && !execution.IsDeleted)
+                    .Select(execution => new
+                    {
+                        execution.IsSuccessful,
+                        execution.TransactionReference
+                    })
+                    .FirstOrDefault()
+            })
+            .SingleOrDefaultAsync(cancellationToken);
+
+        var expectedPaymentMethod = simulationKind == DevelopmentRefundSimulationKind.CodDebtReduction
+            ? CommerceHubPaymentMethod.CashOnDelivery
+            : CommerceHubPaymentMethod.Online;
+        if (evidence == null ||
+            evidence.RequestStatus != CommerceHubRefundRequestStatus.Paid ||
+            evidence.PaymentMethod != expectedPaymentMethod ||
+            evidence.Refund == null ||
+            evidence.Refund.Status != CommerceHubRefundStatus.Completed ||
+            evidence.Refund.IsPostPayoutAdjustment ||
+            !string.Equals(evidence.Refund.GatewayStatus, expectedGatewayStatus, StringComparison.Ordinal) ||
+            !string.Equals(evidence.Refund.Reference, expectedReference, StringComparison.Ordinal) ||
+            evidence.Execution == null ||
+            !evidence.Execution.IsSuccessful ||
+            !string.Equals(evidence.Execution.TransactionReference, expectedReference, StringComparison.Ordinal))
+        {
+            throw new CommerceHubCheckoutException(
+                "DEVELOPMENT_REFUND_SIMULATION_EVIDENCE_MISMATCH",
+                "The persisted refund evidence does not match this Development simulation request.",
+                StatusCodes.Status409Conflict);
+        }
+
+        return new DevelopmentRefundSimulationResult(
+            refundRequestId,
+            idempotencyKey,
+            simulationKind == DevelopmentRefundSimulationKind.CodDebtReduction
+                ? "CashOnDeliveryDebtReduction"
+                : "OnlineBeforePayout",
+            simulationKind == DevelopmentRefundSimulationKind.CodDebtReduction
+                ? "DevelopmentSimulatedCodCustomerRefund"
+                : "DevelopmentSimulatedOnlineCustomerRefund",
+            IsDevelopmentSimulation: true,
+            ExternalMoneyMovementConfirmed: false,
+            expectedReference);
+    }
+
+    private static string GetInitiatedAuditAction(DevelopmentRefundSimulationKind simulationKind) => simulationKind switch
+    {
+        DevelopmentRefundSimulationKind.CodDebtReduction => "REFUND_COD_DEBT_REDUCTION_SIMULATION_INITIATED",
+        DevelopmentRefundSimulationKind.OnlineBeforePayout => "REFUND_ONLINE_BEFORE_PAYOUT_SIMULATION_INITIATED",
+        _ => "REFUND_PAYOUT_INITIATED"
+    };
+
+    private static string GetInitiatedAuditDescription(DevelopmentRefundSimulationKind simulationKind) => simulationKind switch
+    {
+        DevelopmentRefundSimulationKind.CodDebtReduction => "Development-only CommerceHub COD debt-reduction simulation started; no external money movement was confirmed.",
+        DevelopmentRefundSimulationKind.OnlineBeforePayout => "Development-only CommerceHub online before-payout refund simulation started; no external money movement was confirmed.",
+        _ => "CommerceHub manual refund payout confirmation started."
+    };
+
+    private static string GetCompletedAuditAction(DevelopmentRefundSimulationKind simulationKind) => simulationKind switch
+    {
+        DevelopmentRefundSimulationKind.CodDebtReduction => "REFUND_COD_DEBT_REDUCTION_SIMULATION_COMPLETED",
+        DevelopmentRefundSimulationKind.OnlineBeforePayout => "REFUND_ONLINE_BEFORE_PAYOUT_SIMULATION_COMPLETED",
+        _ => "REFUND_PAYOUT_CONFIRMED"
+    };
+
+    private static string GetCompletedAuditDescription(DevelopmentRefundSimulationKind simulationKind) => simulationKind switch
+    {
+        DevelopmentRefundSimulationKind.CodDebtReduction => "Development-only CommerceHub COD debt reduction and internal refund recognition completed; no external money movement was confirmed.",
+        DevelopmentRefundSimulationKind.OnlineBeforePayout => "Development-only CommerceHub online before-payout refund recognition completed; no external money movement was confirmed.",
+        _ => "CommerceHub manual refund payout was confirmed successfully."
+    };
 
     private static string NormalizeFailureReason(Exception exception)
     {
@@ -2059,5 +2475,17 @@ public class RefundExecutionService : IRefundExecutionService, IRefundExecutionR
         string TransactionReference,
         string? Notes,
         bool ConfirmMoneySent,
-        bool ConfirmMethodOverride);
+        bool ConfirmMethodOverride,
+        DevelopmentRefundSimulationKind SimulationKind,
+        string? RequestIdempotencyKey)
+    {
+        public bool IsDevelopmentSimulation => SimulationKind != DevelopmentRefundSimulationKind.None;
+    }
+
+    private enum DevelopmentRefundSimulationKind
+    {
+        None,
+        CodDebtReduction,
+        OnlineBeforePayout
+    }
 }

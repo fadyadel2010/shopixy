@@ -42,21 +42,24 @@ public sealed class ProductionSecurityHardeningTests
         "CommerceHubCartController", "CommerceHubCategoriesController", "CommerceHubController", "CommerceHubPaymentsController",
         "FawryWebhookController", "MarketplaceCmsPagesController", "MarketplaceFooterController",
         "PaymentWebhooksController", "PaymobWebhooksController", "PlatformController",
-        "PublicAffiliateController", "PublicAffiliateProductsController", "RobotsController", "SeoController",
+        "PublicAffiliateController", "PublicAffiliateProductsController", "PublicGoogleProductFeedController",
+        "PublicMetaProductFeedController", "PublicSnapchatProductFeedController", "PublicTikTokProductFeedController",
+        "RobotsController", "SeoController",
         "ShippingWebhooksController", "SitemapController", "SlugResolverController",
         "StorefrontCartRecoveryController", "StorefrontCategoriesController", "StorefrontChatController",
         "StorefrontCommerceAiController", "StorefrontFooterController", "StorefrontFunnelController",
-        "StorefrontHomeController", "StorefrontLandingPageController",
+        "StorefrontCheckoutFieldsController", "StorefrontHomeController", "StorefrontLandingPageController",
         "StorefrontNavigationController", "StorefrontPagesController", "StorefrontPaymentMethodsController",
         "StorefrontPaymobPaymentsController", "StorefrontProductsController", "StorefrontSearchController",
-        "StorefrontShippingMethodsController", "StorefrontSmartOffersController",
+        "StorefrontShippingMethodsController", "StorefrontSmartOffersController", "StorefrontThemePreviewController",
         "StorefrontStripePaymentsController", "StripeWebhooksController"
     };
 
     private static readonly HashSet<string> ApprovedAnonymousActions = new(StringComparer.Ordinal)
     {
         "SuperAdminAuthController.Login", "SuperAdminAuthController.Refresh", "AdminAbandonedCartRecoveryController.LogRecoveryResult",
-        "AffiliatePortalController.DiscoverCategories",
+        "AffiliatePortalController.DiscoverCategories", "AffiliatePortalController.DiscoverPublicProductDetail",
+        "AffiliatePortalController.DiscoverPublicProducts",
         "AuthController.Register", "AuthController.Login", "AuthController.RefreshToken", "AuthController.VerifyEmail",
         "CommerceHubOrdersController.GetOrder", "CustomersAuthController.Register", "CustomersAuthController.Login",
         "CustomersAuthController.Logout", "CustomersAuthController.ForgotPassword", "CustomersAuthController.ResetPassword",

@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -11,6 +12,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Mappers;
@@ -29,6 +31,10 @@ public class CustomersController : ControllerBase
         "^[A-Za-z0-9-]+$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly JsonSerializerOptions FinancialMutationJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions FinancialMutationResponseJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() },
+    };
 
     private readonly ApplicationDbContext _context;
     private readonly ITenantContext _tenantContext;
@@ -38,6 +44,8 @@ public class CustomersController : ControllerBase
     private readonly ILedgerService _ledgerService;
     private readonly IFinancialMutationIdempotencyService _financialMutationIdempotency;
     private readonly IAccountingOutboxService _accountingOutbox;
+    private readonly IAccountResolver _accountResolver;
+    private readonly ICashboxLedgerAccountService _cashboxLedgerAccountService;
 
     public CustomersController(
         ApplicationDbContext context,
@@ -47,7 +55,9 @@ public class CustomersController : ControllerBase
         PointOfSale.API.Services.Audit.IAuditService auditService,
         ILedgerService ledgerService,
         IFinancialMutationIdempotencyService financialMutationIdempotency,
-        IAccountingOutboxService accountingOutbox)
+        IAccountingOutboxService accountingOutbox,
+        IAccountResolver accountResolver,
+        ICashboxLedgerAccountService cashboxLedgerAccountService)
     {
         _context = context;
         _tenantContext = tenantContext;
@@ -57,6 +67,8 @@ public class CustomersController : ControllerBase
         _ledgerService = ledgerService;
         _financialMutationIdempotency = financialMutationIdempotency;
         _accountingOutbox = accountingOutbox;
+        _accountResolver = accountResolver;
+        _cashboxLedgerAccountService = cashboxLedgerAccountService;
     }
 
     /// <summary>
@@ -131,6 +143,201 @@ public class CustomersController : ControllerBase
             .SumAsync(entry => (decimal?)(entry.DebitAmount - entry.CreditAmount)) ?? 0m;
 
         return Ok(customer.ToResponseDto(balance));
+    }
+
+    [HttpGet("{id}/payments")]
+    public async Task<ActionResult<IReadOnlyList<CustomerPaymentResponse>>> GetCustomerPayments(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var customerExists = await _context.Customers
+            .AsNoTracking()
+            .AnyAsync(customer => customer.Id == id && !customer.IsDeleted, cancellationToken);
+        if (!customerExists)
+        {
+            return NotFound(new { message = "Customer not found." });
+        }
+
+        var payments = await _context.CustomerPayments
+            .AsNoTracking()
+            .Where(payment => payment.CustomerId == id)
+            .OrderByDescending(payment => payment.PaymentDate)
+            .ThenByDescending(payment => payment.CreatedAt)
+            .Select(payment => new CustomerPaymentResponse
+            {
+                Id = payment.Id,
+                CustomerId = payment.CustomerId,
+                TransactionDate = payment.PaymentDate,
+                Amount = payment.Amount,
+                PaymentMethod = payment.PaymentMethod,
+                CashAmount = payment.CashAmount,
+                CardAmount = payment.CardAmount,
+                BankTransferAmount = payment.BankTransferAmount,
+                ReferenceNumber = payment.ReferenceNumber,
+                Notes = payment.Notes,
+                BalanceAfter = _context.CustomerTransactions
+                    .Where(transaction =>
+                        transaction.CustomerId == payment.CustomerId &&
+                        transaction.ReferenceId == payment.Id &&
+                        transaction.TransactionType == TransactionType.PaymentReceived)
+                    .Select(transaction => transaction.BalanceAfter)
+                    .FirstOrDefault(),
+                IdempotencyKey = payment.IdempotencyKey,
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(payments);
+    }
+
+    [HttpPost("{id}/payments")]
+    [Authorize(Roles = "Owner,Admin,Manager,Cashier")]
+    public async Task<ActionResult<CustomerPaymentResponse>> CreateCustomerPayment(
+        Guid id,
+        CreateCustomerPaymentRequest request,
+        CancellationToken cancellationToken)
+    {
+        var operationId = ResolveFinancialIdempotencyKey();
+        if (operationId == null)
+        {
+            return BadRequest(new
+            {
+                message = $"{IdempotencyKeyHeader} header is required and must contain only letters, numbers, or hyphens.",
+            });
+        }
+
+        var normalization = NormalizeCustomerPayment(request);
+        if (normalization.ErrorResult != null)
+        {
+            return ToCustomerPaymentActionResult(normalization.ErrorResult);
+        }
+
+        var normalized = normalization.Payment!;
+        var requestHash = BuildCustomerPaymentRequestHash(id, normalized);
+        var scopedIdempotencyKey = BuildCustomerMutationIdempotencyKey(operationId);
+
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+        var claim = await _financialMutationIdempotency.TryClaimAsync(
+            operation: "CUSTOMER_PAYMENT_CREATE",
+            key: scopedIdempotencyKey,
+            requestHash: requestHash,
+            cancellationToken: cancellationToken);
+
+        if (claim.ShortCircuitResult != null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return ToCustomerPaymentActionResult(claim.ShortCircuitResult);
+        }
+
+        var idempotencyRecord = claim.Record!;
+
+        try
+        {
+            var customer = await _context.Customers
+                .FirstOrDefaultAsync(item => item.Id == id && !item.IsDeleted, cancellationToken);
+            if (customer == null)
+            {
+                return await CompleteCustomerPaymentMutationAsync(
+                    transaction,
+                    idempotencyRecord,
+                    NotFound(new { message = "Customer not found." }),
+                    cancellationToken);
+            }
+
+            await ValidateCustomerReceivingAccountsAsync(normalized, cancellationToken);
+
+            var paymentTimestamp = normalized.PaymentDate ?? DateTime.UtcNow;
+            var referenceNumber = string.IsNullOrWhiteSpace(normalized.ReferenceNumber)
+                ? $"CPAY-{DateTime.UtcNow:yyyyMMddHHmmss}"
+                : normalized.ReferenceNumber;
+            var payment = new CustomerPayment
+            {
+                Id = Guid.NewGuid(),
+                TenantId = _tenantContext.RequiredTenantId,
+                CustomerId = customer.Id,
+                PaymentDate = paymentTimestamp,
+                Amount = normalized.Amount,
+                PaymentMethod = normalized.PaymentMethod,
+                CashAmount = normalized.CashAmount,
+                CardAmount = normalized.CardAmount,
+                BankTransferAmount = normalized.BankTransferAmount,
+                IdempotencyKey = operationId,
+                ReferenceNumber = referenceNumber,
+                Notes = normalized.Notes,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            };
+            _context.CustomerPayments.Add(payment);
+
+            var balanceAfter = await _ledgerService.ApplyCustomerTransaction(
+                customer.Id,
+                paymentTimestamp,
+                TransactionType.PaymentReceived,
+                referenceNumber,
+                debitAmount: 0m,
+                creditAmount: payment.Amount,
+                referenceId: payment.Id,
+                notes: payment.Notes ?? $"Customer payment {referenceNumber}");
+
+            _context.CustomerTransactions.Add(new CustomerTransaction
+            {
+                Id = Guid.NewGuid(),
+                TenantId = payment.TenantId,
+                CustomerId = customer.Id,
+                TransactionDate = paymentTimestamp,
+                TransactionType = TransactionType.PaymentReceived,
+                DebitAmount = 0m,
+                CreditAmount = payment.Amount,
+                BalanceAfter = balanceAfter,
+                ReferenceId = payment.Id,
+                ReferenceNumber = referenceNumber,
+                Notes = payment.Notes,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow,
+            });
+            balanceAfter = await _ledgerService.RebuildPartyTransactionBalancesAsync(
+                PartyType.Customer,
+                customer.Id,
+                cancellationToken);
+
+            await _accountingOutbox.EnqueueCustomerPaymentAsync(payment.TenantId, payment.Id, cancellationToken);
+            await _context.SaveChangesAsync(cancellationToken);
+
+            var response = ToCustomerPaymentResponse(payment, balanceAfter);
+            await _auditService.LogCreate(
+                "CustomerPayment",
+                payment.Id.ToString(),
+                $"Recorded customer payment {referenceNumber} for customer {customer.Name}",
+                response,
+                referenceNumber);
+
+            return await CompleteCustomerPaymentMutationAsync(
+                transaction,
+                idempotencyRecord,
+                CreatedAtAction(nameof(GetCustomerPayments), new { id = customer.Id }, response),
+                cancellationToken);
+        }
+        catch (NoCashboxAccountException ex)
+        {
+            _logger.LogWarning(ex, "No active cashbox configured for customer payment in tenant {TenantId}", ex.TenantId);
+            return await CompleteCustomerPaymentMutationAsync(
+                transaction,
+                idempotencyRecord,
+                BadRequest(new
+                {
+                    message = "No active cashbox configured for tenant. Please configure a cashbox before receiving cash payments.",
+                    code = "NO_CASHBOX_CONFIGURED"
+                }),
+                cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _logger.LogError(ex, "Error creating customer payment for customer {CustomerId}", id);
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "An error occurred while creating the customer payment.",
+            });
+        }
     }
 
     /// <summary>
@@ -511,6 +718,174 @@ public class CustomersController : ControllerBase
             cancellationToken);
     }
 
+    private async Task<ActionResult<CustomerPaymentResponse>> CompleteCustomerPaymentMutationAsync(
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction,
+        SalesRequestIdempotency record,
+        IActionResult result,
+        CancellationToken cancellationToken)
+    {
+        var completedResult = await _financialMutationIdempotency.CompleteAsync(
+            transaction,
+            record,
+            result,
+            SnapshotFinancialMutationResult,
+            cancellationToken);
+
+        return ToCustomerPaymentActionResult(completedResult);
+    }
+
+    private static ActionResult<CustomerPaymentResponse> ToCustomerPaymentActionResult(IActionResult result) =>
+        result as ActionResult ?? new StatusCodeResult(StatusCodes.Status500InternalServerError);
+
+    private string? ResolveFinancialIdempotencyKey() =>
+        ValidateFinancialIdempotencyKey(Request.Headers[IdempotencyKeyHeader].FirstOrDefault());
+
+    private async Task ValidateCustomerReceivingAccountsAsync(
+        NormalizedCustomerPayment payment,
+        CancellationToken cancellationToken)
+    {
+        var accountCodes = new HashSet<string>(StringComparer.Ordinal);
+        if (payment.CashAmount > 0m)
+        {
+            var cashbox = await _cashboxLedgerAccountService.ResolveDefaultCashboxAccountAsync(
+                _tenantContext.RequiredTenantId,
+                cancellationToken);
+            accountCodes.Add(cashbox.AccountCode);
+        }
+        if (payment.CardAmount > 0m)
+        {
+            accountCodes.Add(AccountCodes.VisaClearing);
+        }
+        if (payment.BankTransferAmount > 0m)
+        {
+            accountCodes.Add(AccountCodes.BankAccount);
+        }
+
+        foreach (var accountCode in accountCodes)
+        {
+            var account = await _accountResolver.GetByCodeAsync(
+                _tenantContext.RequiredTenantId,
+                accountCode,
+                cancellationToken);
+            if (!account.IsActive)
+            {
+                throw new InvalidOperationException($"Receiving account '{accountCode}' is inactive.");
+            }
+        }
+    }
+
+    private static (NormalizedCustomerPayment? Payment, IActionResult? ErrorResult) NormalizeCustomerPayment(
+        CreateCustomerPaymentRequest request)
+    {
+        var amount = RoundCurrency(request.Amount);
+        if (amount <= 0m)
+        {
+            return (null, new BadRequestObjectResult(new { message = "Payment amount must be greater than zero." }));
+        }
+
+        if (request.ReferenceNumber?.Trim().Length > 100)
+        {
+            return (null, new BadRequestObjectResult(new { message = "Reference number cannot exceed 100 characters." }));
+        }
+        if (request.Notes?.Trim().Length > 1000)
+        {
+            return (null, new BadRequestObjectResult(new { message = "Notes cannot exceed 1000 characters." }));
+        }
+
+        var paymentDate = request.PaymentDate.HasValue
+            ? NormalizeUtc(request.PaymentDate.Value)
+            : (DateTime?)null;
+        if (paymentDate > DateTime.UtcNow.AddMinutes(5))
+        {
+            return (null, new BadRequestObjectResult(new { message = "Payment date cannot be in the future." }));
+        }
+
+        decimal cashAmount;
+        decimal cardAmount;
+        decimal bankTransferAmount;
+        switch (request.PaymentMethod)
+        {
+            case PaymentMethod.Cash:
+                cashAmount = amount;
+                cardAmount = 0m;
+                bankTransferAmount = 0m;
+                break;
+            case PaymentMethod.Card:
+                cashAmount = 0m;
+                cardAmount = amount;
+                bankTransferAmount = 0m;
+                break;
+            case PaymentMethod.BankTransfer:
+                cashAmount = 0m;
+                cardAmount = 0m;
+                bankTransferAmount = amount;
+                break;
+            case PaymentMethod.Mixed:
+                cashAmount = RoundCurrency(request.CashAmount ?? 0m);
+                if (cashAmount <= 0m || cashAmount >= amount)
+                {
+                    return (null, new BadRequestObjectResult(new
+                    {
+                        message = "Mixed payments require a positive cash amount smaller than the total amount."
+                    }));
+                }
+                cardAmount = amount - cashAmount;
+                bankTransferAmount = 0m;
+                break;
+            default:
+                return (null, new BadRequestObjectResult(new
+                {
+                    message = "Customer payments must use cash, card, bank transfer, or a cash/card mix."
+                }));
+        }
+
+        return (new NormalizedCustomerPayment(
+            amount,
+            request.PaymentMethod,
+            cashAmount,
+            cardAmount,
+            bankTransferAmount,
+            paymentDate,
+            NormalizeNotes(request.ReferenceNumber),
+            NormalizeNotes(request.Notes)), null);
+    }
+
+    private static string BuildCustomerPaymentRequestHash(Guid customerId, NormalizedCustomerPayment payment)
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            customerId,
+            payment.Amount,
+            payment.PaymentMethod,
+            payment.CashAmount,
+            payment.CardAmount,
+            payment.BankTransferAmount,
+            payment.PaymentDate,
+            payment.ReferenceNumber,
+            payment.Notes,
+        }, FinancialMutationJsonOptions);
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+        return Convert.ToHexString(hash);
+    }
+
+    private static CustomerPaymentResponse ToCustomerPaymentResponse(CustomerPayment payment, decimal balanceAfter) =>
+        new()
+        {
+            Id = payment.Id,
+            CustomerId = payment.CustomerId,
+            TransactionDate = payment.PaymentDate,
+            Amount = payment.Amount,
+            PaymentMethod = payment.PaymentMethod,
+            CashAmount = payment.CashAmount,
+            CardAmount = payment.CardAmount,
+            BankTransferAmount = payment.BankTransferAmount,
+            ReferenceNumber = payment.ReferenceNumber,
+            Notes = payment.Notes,
+            BalanceAfter = balanceAfter,
+            IdempotencyKey = payment.IdempotencyKey,
+        };
+
     private (IReadOnlyList<NormalizedCustomerOpeningBalanceItem>? Items, IActionResult? ErrorResult) NormalizeCustomerOpeningBalanceRequest(
         SaveCustomerOpeningBalancesRequest request)
     {
@@ -683,7 +1058,7 @@ public class CustomersController : ControllerBase
     private static string? SerializeFinancialPayload(object? payload) =>
         payload == null
             ? null
-            : JsonSerializer.Serialize(payload, FinancialMutationJsonOptions);
+            : JsonSerializer.Serialize(payload, FinancialMutationResponseJsonOptions);
 
     private static decimal RoundCurrency(decimal amount) =>
         Math.Round(amount, 2, MidpointRounding.AwayFromZero);
@@ -693,6 +1068,16 @@ public class CustomersController : ControllerBase
         decimal Amount,
         string BalanceType,
         DateTime EffectiveDateUtc,
+        string? Notes);
+
+    private sealed record NormalizedCustomerPayment(
+        decimal Amount,
+        PaymentMethod PaymentMethod,
+        decimal CashAmount,
+        decimal CardAmount,
+        decimal BankTransferAmount,
+        DateTime? PaymentDate,
+        string? ReferenceNumber,
         string? Notes);
 }
 
@@ -714,6 +1099,32 @@ public record UpdateCustomerRequest(
     string? TaxNumber,
     string? Notes
 );
+
+public record CreateCustomerPaymentRequest
+{
+    public decimal Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; }
+    public decimal? CashAmount { get; set; }
+    public DateTime? PaymentDate { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public string? Notes { get; set; }
+}
+
+public record CustomerPaymentResponse
+{
+    public Guid Id { get; set; }
+    public Guid CustomerId { get; set; }
+    public DateTime TransactionDate { get; set; }
+    public decimal Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; }
+    public decimal CashAmount { get; set; }
+    public decimal CardAmount { get; set; }
+    public decimal BankTransferAmount { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public string? Notes { get; set; }
+    public decimal BalanceAfter { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
 
 // Opening Balance DTOs
 public record CustomerOpeningBalanceResponse

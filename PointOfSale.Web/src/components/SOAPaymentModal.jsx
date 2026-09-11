@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import { useRTL } from '../hooks/useRTL'
+import { getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
 
 const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, balanceType, type, loading }) => {
     const { t } = useTranslation()
@@ -39,12 +40,6 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
 
 
 
-    const getBalanceColor = (balanceType) => {
-        if (balanceType === 'Debit' || balanceType === t('accounts.debit')) return 'text-red-600'
-        if (balanceType === 'Credit' || balanceType === t('accounts.credit')) return 'text-green-600'
-        return 'text-gray-600'
-    }
-
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" dir={dir}>
             <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
@@ -76,7 +71,7 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
                         <p className={`text-lg font-semibold text-gray-900 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>{partyName}</p>
                         <div className={`flex justify-between items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                             <span className="text-sm text-gray-600">{t('accounts.currentBalance')}:</span>
-                            <span className={`text-lg font-bold ${getBalanceColor(balanceType)}`}>
+                            <span className={`text-lg font-bold ${getPartyBalanceColorClass(type === 'make' ? 'Supplier' : 'Customer', balanceType)}`}>
                                 {formatCurrency(currentBalance)} ({balanceType === 'Debit' ? t('accounts.debit') : t('accounts.credit')})
                             </span>
                         </div>
@@ -130,7 +125,7 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
                                 <option value="Cash">{t('accounts.cash')}</option>
                                 <option value="Card">{t('accounts.card')}</option>
                                 <option value="BankTransfer">{t('accounts.bankTransfer')}</option>
-                                <option value="Mixed">{t('accounts.mixed')}</option>
+                                {type === 'receive' && <option value="Mixed">{t('accounts.mixed')}</option>}
                             </select>
                         </div>
 

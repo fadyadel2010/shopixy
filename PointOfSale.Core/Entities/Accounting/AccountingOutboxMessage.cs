@@ -203,6 +203,8 @@ public class AccountingOutboxMessage : BaseEntity, ITenantOwned
         JournalId = journalId;
         LastError = null;
         ClaimedUntilUtc = null;
+        NextRetryAtUtc = null;
+        IsFailed = false;
     }
 
     /// <summary>
@@ -258,5 +260,20 @@ public class AccountingOutboxMessage : BaseEntity, ITenantOwned
 
         var delayMinutes = Math.Min(60d, Math.Pow(2, Math.Min(AttemptCount - 1, 6)));
         NextRetryAtUtc = DateTime.UtcNow.AddMinutes(delayMinutes);
+    }
+
+    public void ResetForRetry()
+    {
+        if (ProcessedAtUtc != null)
+        {
+            return;
+        }
+
+        IsFailed = false;
+        AttemptCount = 0;
+        ClaimedUntilUtc = null;
+        LastError = null;
+        NextRetryAtUtc = null;
+        UpdatedAt = DateTime.UtcNow;
     }
 }

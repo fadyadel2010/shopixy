@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api, { isRequestCanceled } from '../services/api'
 import { useToast } from '../components/Toast'
-import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import InvoiceSearchModal from '../components/InvoiceSearchModal'
@@ -22,14 +21,32 @@ import { buildIdempotencyHeaders, stableStringify } from '../utils/requestSafety
 
 const buildRequestId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
+const resolvePurchaseUnitCost = (product, productUnit) => {
+    const conversionFactor = Math.max(0, toSafeNumber(productUnit?.conversionFactor, 1)) || 1
+    const baseVariantCost = Math.max(0, toSafeNumber(product?.canonicalCostPrice))
+
+    if (product?.hasVariants) {
+        return roundCurrency(baseVariantCost * conversionFactor)
+    }
+
+    if (productUnit?.purchasePrice != null) {
+        return roundCurrency(productUnit.purchasePrice)
+    }
+
+    return roundCurrency(baseVariantCost > 0
+        ? baseVariantCost * conversionFactor
+        : product?.purchasePrice)
+}
+
 export default function PurchaseInvoice() {
     const { t } = useTranslation()
     const { isRTL, dir } = useRTL()
     const { formatCurrency, settings } = useSettings()
-    const navigate = useNavigate()
     const { showSuccess, showError } = useToast()
 
     const [warehouses, setWarehouses] = useState([])
+    const [warehousesLoading, setWarehousesLoading] = useState(true)
+    const [warehousesError, setWarehousesError] = useState('')
     const [loading, setLoading] = useState(false)
 
     // Form State
@@ -44,15 +61,21 @@ export default function PurchaseInvoice() {
     const [paidAmount, setPaidAmount] = useState(0)
     const [paymentMethod, setPaymentMethod] = useState('Cash')
     const [initialPaymentMethod, setInitialPaymentMethod] = useState('Cash')
+    const [cashAmount, setCashAmount] = useState(0)
+    const [cardAmount, setCardAmount] = useState(0)
     const [dueDate, setDueDate] = useState('')
 
     // Search State (Product)
     const [searchTerm, setSearchTerm] = useState('')
     const [searchResults, setSearchResults] = useState([])
+    const [searchLoading, setSearchLoading] = useState(false)
+    const [searchError, setSearchError] = useState('')
+    const [searchRetryKey, setSearchRetryKey] = useState(0)
+    const [preparingProductId, setPreparingProductId] = useState(null)
     const searchRef = useRef(null)
-    const lifetimeControllerRef = useRef(new AbortController())
     const initialDataRequestControllerRef = useRef(null)
     const productSearchRequestControllerRef = useRef(null)
+    const productPreparationControllersRef = useRef(new Set())
     const invoiceLoadRequestControllerRef = useRef(null)
     const printRequestControllerRef = useRef(null)
     const debouncedSearchTerm = useDebounce(searchTerm, 400)
@@ -78,6 +101,8 @@ export default function PurchaseInvoice() {
     }
 
     const fetchInitialData = useCallback(async (signal) => {
+        setWarehousesLoading(true)
+        setWarehousesError('')
         try {
             const warehousesRes = await api.get('/warehouses', { signal })
 
@@ -85,18 +110,29 @@ export default function PurchaseInvoice() {
                 return
             }
 
-            setWarehouses(warehousesRes.data)
+            const warehouseOptions = Array.isArray(warehousesRes.data) ? warehousesRes.data : []
+            setWarehouses(warehouseOptions)
 
-            if (warehousesRes.data.length > 0) {
-                setWarehouseId(warehousesRes.data[0].id)
-            }
+            setWarehouseId(currentWarehouseId => {
+                if (currentWarehouseId && warehouseOptions.some(warehouse => warehouse.id === currentWarehouseId)) {
+                    return currentWarehouseId
+                }
+
+                return warehouseOptions.find(warehouse => warehouse.isDefault)?.id || warehouseOptions[0]?.id || ''
+            })
         } catch (error) {
             if (signal.aborted || isRequestCanceled(error)) {
                 return
             }
 
             console.error('Error loading initial data:', error)
-            showError(t('purchases.failedToLoad'))
+            const message = error.response?.data?.message || t('purchases.failedToLoad')
+            setWarehousesError(message)
+            showError(message)
+        } finally {
+            if (!signal.aborted) {
+                setWarehousesLoading(false)
+            }
         }
     }, [showError, t])
 
@@ -107,9 +143,10 @@ export default function PurchaseInvoice() {
         return () => {
             initialDataRequestControllerRef.current?.abort()
             productSearchRequestControllerRef.current?.abort()
+            productPreparationControllersRef.current.forEach(controller => controller.abort())
+            productPreparationControllersRef.current.clear()
             invoiceLoadRequestControllerRef.current?.abort()
             printRequestControllerRef.current?.abort()
-            lifetimeControllerRef.current.abort()
         }
     }, [fetchInitialData])
 
@@ -119,16 +156,20 @@ export default function PurchaseInvoice() {
         const normalizedSearchTerm = debouncedSearchTerm.trim()
         if (normalizedSearchTerm.length < 2) {
             setSearchResults([])
+            setSearchLoading(false)
+            setSearchError('')
             return
         }
 
         const controller = new AbortController()
         productSearchRequestControllerRef.current = controller
+        setSearchLoading(true)
+        setSearchError('')
 
         const loadSearchResults = async () => {
             try {
                 const response = await api.get('/products/search', {
-                    params: { q: normalizedSearchTerm },
+                    params: { q: normalizedSearchTerm, warehouseId: warehouseId || undefined },
                     signal: controller.signal,
                 })
 
@@ -136,13 +177,20 @@ export default function PurchaseInvoice() {
                     return
                 }
 
-                setSearchResults(response.data)
+                setSearchResults(Array.isArray(response.data) ? response.data : [])
             } catch (error) {
                 if (controller.signal.aborted || isRequestCanceled(error)) {
                     return
                 }
 
                 console.error('Error searching products:', error)
+                setSearchResults([])
+                setSearchError(error.response?.data?.message || t('purchases.productSearchFailed'))
+            } finally {
+                if (!controller.signal.aborted && productSearchRequestControllerRef.current === controller) {
+                    productSearchRequestControllerRef.current = null
+                    setSearchLoading(false)
+                }
             }
         }
 
@@ -151,7 +199,7 @@ export default function PurchaseInvoice() {
         return () => {
             controller.abort()
         }
-    }, [debouncedSearchTerm])
+    }, [debouncedSearchTerm, searchRetryKey, t, warehouseId])
 
     // PHASE 11.6: Handle product selection - check for variants
     const addItem = async (product) => {
@@ -200,58 +248,73 @@ export default function PurchaseInvoice() {
 
     // Add item with variant information
     const addItemWithVariant = async (product, variantId, variantAttributes = []) => {
-        // Check for existing item with same product AND variant
-        const existingItem = items.find(i =>
-            i.productId === product.id &&
-            i.productVariantId === variantId
-        )
+        if (!warehouseId) {
+            showError(t('purchases.selectWarehouseError'))
+            return
+        }
 
-        if (existingItem) {
-            setItems(currentItems => currentItems.map(i =>
-                (i.productId === product.id && i.productVariantId === variantId)
-                    ? { ...i, quantity: toSafeNumber(i.quantity) + 1 }
-                    : i
-            ))
-        } else {
-            // Fetch product units
-            let productUnits = []
-            let defaultUnit = null
-            const lifetimeSignal = lifetimeControllerRef.current.signal
-            try {
-                const response = await api.get(`/products/${product.id}/units`, { signal: lifetimeSignal })
-                productUnits = response.data
-                defaultUnit = productUnits.find(u => u.isDefault) || productUnits[0]
-            } catch (error) {
-                if (!lifetimeSignal.aborted && !isRequestCanceled(error)) {
-                    console.error('Error fetching product units:', error)
-                }
-            }
+        const controller = new AbortController()
+        productPreparationControllersRef.current.add(controller)
+        setPreparingProductId(product.id)
 
-            if (lifetimeSignal.aborted) {
+        let productUnits
+        try {
+            const response = await api.get(`/products/${product.id}/units`, { signal: controller.signal })
+            productUnits = Array.isArray(response.data) ? response.data : []
+        } catch (error) {
+            if (controller.signal.aborted || isRequestCanceled(error)) {
                 return
             }
 
-            // Build display name
-            const displayName = variantAttributes && variantAttributes.length > 0
-                ? `${product.name} - ${variantAttributes.map(a => a.value).join(' / ')}`
-                : product.name
-
-            setItems(currentItems => [...currentItems, {
-                productId: product.id,
-                productVariantId: variantId,
-                name: displayName,
-                variantAttributes: variantAttributes,
-                quantity: 1,
-                unitId: defaultUnit?.unitId || null,
-                unitName: defaultUnit?.unitName || product.unit || t('common.unit'),
-                conversionFactor: defaultUnit?.conversionFactor || 1,
-                unitCost: roundCurrency(product.canonicalCostPrice || defaultUnit?.purchasePrice || 0),
-                taxRate: toSafeNumber(product.taxRate),
-                productUnits: productUnits
-            }])
+            console.error('Error fetching product units:', error)
+            showError(error.response?.data?.message || t('purchases.productUnitsFailed'))
+            return
+        } finally {
+            productPreparationControllersRef.current.delete(controller)
+            setPreparingProductId(currentProductId => currentProductId === product.id ? null : currentProductId)
         }
+
+        if (controller.signal.aborted) return
+
+        const defaultUnit = productUnits.find(unit => unit.isDefault) || productUnits[0] || null
+        const displayName = variantAttributes.length > 0
+            ? `${product.name} - ${variantAttributes.map(attribute => attribute.value).join(' / ')}`
+            : product.name
+        const nextItem = {
+            productId: product.id,
+            productVariantId: variantId,
+            name: displayName,
+            sku: product.sku || '',
+            hasVariants: Boolean(product.hasVariants),
+            baseUnitCost: Math.max(0, toSafeNumber(product.canonicalCostPrice)),
+            variantAttributes,
+            quantity: 1,
+            unitId: defaultUnit?.unitId || null,
+            unitName: defaultUnit?.unitName || product.unit || t('common.unit'),
+            conversionFactor: Math.max(0, toSafeNumber(defaultUnit?.conversionFactor, 1)) || 1,
+            unitCost: resolvePurchaseUnitCost(product, defaultUnit),
+            taxRate: Math.max(0, toSafeNumber(product.taxRate)),
+            productUnits,
+        }
+
+        setItems(currentItems => {
+            const existingItem = currentItems.find(item =>
+                item.productId === product.id && item.productVariantId === variantId
+            )
+
+            if (existingItem) {
+                return currentItems.map(item =>
+                    item.productId === product.id && item.productVariantId === variantId
+                        ? { ...item, quantity: toSafeNumber(item.quantity) + 1 }
+                        : item
+                )
+            }
+
+            return [...currentItems, nextItem]
+        })
         setSearchTerm('')
         setSearchResults([])
+        setSearchError('')
         searchRef.current?.focus()
     }
 
@@ -280,7 +343,11 @@ export default function PurchaseInvoice() {
                     unitId: selectedUnit.unitId,
                     unitName: selectedUnit.unitName,
                     conversionFactor: selectedUnit.conversionFactor,
-                    unitCost: roundCurrency(selectedUnit.purchasePrice || newItems[index].unitCost)
+                    unitCost: resolvePurchaseUnitCost({
+                        hasVariants: item.hasVariants,
+                        canonicalCostPrice: item.baseUnitCost,
+                        purchasePrice: item.baseUnitCost,
+                    }, selectedUnit)
                 }
                 return newItems
             }
@@ -333,7 +400,7 @@ export default function PurchaseInvoice() {
     const totals = calculateTotals()
 
     const calculateBalanceDue = () => fromCurrencyMinorUnits(
-        toCurrencyMinorUnits(totals.total) - toCurrencyMinorUnits(paidAmount),
+        toCurrencyMinorUnits(totals.total) - toCurrencyMinorUnits(resolvedPaidAmount),
     )
 
     const resetForm = () => {
@@ -348,6 +415,8 @@ export default function PurchaseInvoice() {
         setPaidAmount(0)
         setPaymentMethod('Cash')
         setInitialPaymentMethod('Cash')
+        setCashAmount(0)
+        setCardAmount(0)
         setDueDate('')
         setSearchTerm('')
         setSearchResults([])
@@ -385,13 +454,28 @@ export default function PurchaseInvoice() {
             setWarehouseId(fullInvoice.warehouse?.id || fullInvoice.warehouseId || '')
             setInvoiceDate(fullInvoice.invoiceDate.split('T')[0])
             setNotes(fullInvoice.notes || '')
-            const restoredInitialPaymentMethod = ['Cash', 'Card', 'BankTransfer'].includes(fullInvoice.initialPaymentMethod)
+            const restoredInitialPaymentMethod = ['Cash', 'Card', 'Mixed'].includes(fullInvoice.initialPaymentMethod)
                 ? fullInvoice.initialPaymentMethod
-                : ['Cash', 'Card', 'BankTransfer'].includes(fullInvoice.paymentMethod)
+                : ['Cash', 'Card', 'Mixed'].includes(fullInvoice.paymentMethod)
                     ? fullInvoice.paymentMethod
                     : 'Cash'
             setPaymentMethod(fullInvoice.paymentMethod)
-            setInitialPaymentMethod(restoredInitialPaymentMethod)
+            const restoredCashAmount = roundCurrency((fullInvoice.payments || [])
+                .filter(payment => payment.paymentMethod === 'Cash')
+                .reduce((sum, payment) => sum + toSafeNumber(payment.amount), 0))
+            const restoredCardAmount = roundCurrency((fullInvoice.payments || [])
+                .filter(payment => payment.paymentMethod === 'Card')
+                .reduce((sum, payment) => sum + toSafeNumber(payment.amount), 0))
+            const paymentAllocationMethod = restoredCashAmount > 0 && restoredCardAmount > 0
+                ? 'Mixed'
+                : restoredCardAmount > 0
+                    ? 'Card'
+                    : restoredCashAmount > 0
+                        ? 'Cash'
+                        : restoredInitialPaymentMethod
+            setInitialPaymentMethod(paymentAllocationMethod)
+            setCashAmount(restoredCashAmount)
+            setCardAmount(restoredCardAmount)
             setPaidAmount(roundCurrency(fullInvoice.paidAmount))
             if (fullInvoice.paymentMethod === 'Credit' && fullInvoice.dueDate) {
                 setDueDate(fullInvoice.dueDate.split('T')[0])
@@ -432,6 +516,9 @@ export default function PurchaseInvoice() {
                     productId: i.productId,
                     productVariantId: i.productVariantId,
                     name: displayName,
+                    sku: i.productVariant?.sku || '',
+                    hasVariants: Boolean(i.productVariant?.attributes?.length),
+                    baseUnitCost: i.conversionFactor > 0 ? roundCurrency(i.unitPrice / i.conversionFactor) : roundCurrency(i.unitPrice),
                     variantAttributes: i.productVariant?.attributes || [],
                     quantity: i.quantity,
                     unitId: i.unitId,
@@ -496,6 +583,10 @@ export default function PurchaseInvoice() {
             showError(t('purchases.selectSupplierError'))
             return
         }
+        if (!warehouseId) {
+            showError(t('purchases.selectWarehouseError'))
+            return
+        }
         if (items.length === 0) {
             showError(t('purchases.addOneItemError'))
             return
@@ -519,6 +610,33 @@ export default function PurchaseInvoice() {
             return
         }
 
+        const invalidCostItem = items.find(item => toSafeNumber(item.unitCost) <= 0)
+        if (invalidCostItem) {
+            showError(t('purchases.invalidCostError', { product: invalidCostItem.name }))
+            return
+        }
+
+        const usesMixedSplit = paymentMethod === 'Mixed'
+            || (paymentMethod === 'Credit' && paidAmount > 0 && initialPaymentMethod === 'Mixed')
+        const resolvedPaidAmount = usesMixedSplit
+            ? roundCurrency(toSafeNumber(cashAmount) + toSafeNumber(cardAmount))
+            : paymentMethod === 'Credit'
+                ? roundCurrency(paidAmount)
+                : totals.total
+
+        if (resolvedPaidAmount < 0 || resolvedPaidAmount > totals.total) {
+            showError(t('purchases.invalidPaidAmount'))
+            return
+        }
+        if (paymentMethod === 'Mixed' && resolvedPaidAmount !== totals.total) {
+            showError(t('purchases.mixedMustMatchTotal'))
+            return
+        }
+        if (usesMixedSplit && (toSafeNumber(cashAmount) <= 0 || toSafeNumber(cardAmount) <= 0)) {
+            showError(t('purchases.mixedRequiresBoth'))
+            return
+        }
+
         setLoading(true)
         try {
             const payload = {
@@ -534,8 +652,10 @@ export default function PurchaseInvoice() {
                     taxRate: toSafeNumber(i.taxRate)
                 })),
                 paymentMethod,
-                initialPaymentMethod: paymentMethod === 'Credit' && paidAmount > 0 ? initialPaymentMethod : null,
-                paidAmount: roundCurrency(paidAmount),
+                initialPaymentMethod: paymentMethod === 'Credit' && resolvedPaidAmount > 0 ? initialPaymentMethod : null,
+                paidAmount: resolvedPaidAmount,
+                cashAmount: usesMixedSplit ? roundCurrency(cashAmount) : null,
+                cardAmount: usesMixedSplit ? roundCurrency(cardAmount) : null,
                 expectedMutationVersion: editingId ? editingMutationVersion : null,
                 dueDate: paymentMethod === 'Credit' ? dueDate : null,
                 notes
@@ -560,11 +680,18 @@ export default function PurchaseInvoice() {
                 })
                 showSuccess(t('common.updatedSuccessfully'))
             } else {
-                await api.post('/purchases', payload, {
+                const createResponse = await api.post('/purchases', payload, {
                     headers: buildIdempotencyHeaders(idempotencyKey, purchaseAttemptId),
                 })
                 showSuccess(t('purchases.created'))
-                navigate('/suppliers')
+                try {
+                    const createdInvoice = await api.get(`/purchases/${createResponse.data.invoiceId}`)
+                    setPrintData(createdInvoice.data)
+                    setShowPrintModal(true)
+                } catch (receiptError) {
+                    console.error('Purchase was created but its receipt could not be loaded:', receiptError)
+                    showError(t('purchases.receiptLoadFailed'))
+                }
             }
             if (!editingId) resetForm() // Clear only if created new, else stay or what? usually clear.
             else {
@@ -583,11 +710,18 @@ export default function PurchaseInvoice() {
     }
 
     const isBusy = loading || isSubmitting
+    const usesMixedSplit = paymentMethod === 'Mixed'
+        || (paymentMethod === 'Credit' && paidAmount > 0 && initialPaymentMethod === 'Mixed')
+    const resolvedPaidAmount = usesMixedSplit
+        ? roundCurrency(toSafeNumber(cashAmount) + toSafeNumber(cardAmount))
+        : paymentMethod === 'Credit'
+            ? roundCurrency(paidAmount)
+            : totals.total
     const currencyIndicator = settings?.currencyCode || settings?.currencySymbol || ''
 
     return (
         <div className="h-full flex flex-col gap-6" dir={dir}>
-            <div className={`flex items-center justify-between gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <div className={`flex flex-wrap items-center justify-between gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                 <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                     <h1 className="text-2xl font-bold text-gray-800">
                         {editingId ? `${t('common.edit')} ${t('purchases.invoice')} #${invoiceNumber}` : t('purchases.newPurchaseInvoice')}
@@ -618,11 +752,11 @@ export default function PurchaseInvoice() {
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-hidden">
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6 lg:h-full lg:grid-cols-3 lg:overflow-hidden">
                 {/* Left Panel: Form & Items */}
-                <div className={`lg:col-span-2 flex flex-col gap-6 overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
+                <div className={`flex flex-col gap-6 lg:col-span-2 lg:overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
                     {/* Header Info */}
-                    <div className="bg-white p-4 rounded-lg shadow grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 rounded-lg bg-white p-4 shadow sm:grid-cols-2">
                         <div>
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.supplier')}</label>
                             <AsyncEntitySelect
@@ -646,12 +780,29 @@ export default function PurchaseInvoice() {
                                 value={warehouseId}
                                 onChange={(e) => setWarehouseId(e.target.value)}
                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
-                                disabled={isBusy}
+                                disabled={isBusy || warehousesLoading || warehouses.length === 0}
                             >
+                                {warehousesLoading ? <option value="">{t('common.loading')}</option> : null}
+                                {!warehousesLoading && warehouses.length === 0 ? <option value="">{t('purchases.noWarehouses')}</option> : null}
                                 {warehouses.map(w => (
                                     <option key={w.id} value={w.id}>{w.name}</option>
                                 ))}
                             </select>
+                            {warehousesError ? (
+                                <div className="mt-2 flex items-center justify-between gap-3 text-sm text-red-600" role="alert">
+                                    <span>{warehousesError}</span>
+                                    <button
+                                        type="button"
+                                        className="font-medium text-primary-700 hover:text-primary-800"
+                                        onClick={() => {
+                                            const controller = startAbortableRequest(initialDataRequestControllerRef)
+                                            void fetchInitialData(controller.signal)
+                                        }}
+                                    >
+                                        {t('common.retry')}
+                                    </button>
+                                </div>
+                            ) : null}
                         </div>
                         <div>
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.date')}</label>
@@ -683,27 +834,50 @@ export default function PurchaseInvoice() {
                             ref={searchRef}
                             type="text"
                             value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
+                            onChange={(e) => {
+                                setSearchTerm(e.target.value)
+                                setSearchError('')
+                            }}
                             onKeyDown={(e) => {
                                 if (e.key === 'Enter') {
                                     e.preventDefault()
                                 }
                             }}
                             className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
-                            disabled={isBusy}
+                            disabled={isBusy || preparingProductId != null || !warehouseId}
                             placeholder={t('purchases.scanPlaceholder')}
                         />
-                        {searchResults.length > 0 && (
+                        {debouncedSearchTerm.trim().length >= 2 && (
                             <div className="absolute top-full left-0 right-0 bg-white shadow-xl rounded-b-lg z-10 max-h-60 overflow-y-auto border border-gray-200">
-                                {searchResults.map(product => (
-                                    <div
+                                {searchLoading && searchResults.length === 0 ? (
+                                    <div className="p-3 text-sm text-gray-500">{t('common.loading')}</div>
+                                ) : null}
+                                {!searchLoading && searchError ? (
+                                    <div className="flex items-center justify-between gap-3 p-3 text-sm text-red-600" role="alert">
+                                        <span>{searchError}</span>
+                                        <button
+                                            type="button"
+                                            className="font-medium text-primary-700 hover:text-primary-800"
+                                            onClick={() => setSearchRetryKey(value => value + 1)}
+                                        >
+                                            {t('common.retry')}
+                                        </button>
+                                    </div>
+                                ) : null}
+                                {!searchLoading && !searchError && searchResults.length === 0 ? (
+                                    <div className="p-3 text-sm text-gray-500">{t('purchases.noProductsFound')}</div>
+                                ) : null}
+                                {!searchError && searchResults.map(product => (
+                                    <button
+                                        type="button"
                                         key={product.id}
                                         onClick={() => {
-                                            if (!isBusy) {
+                                            if (!isBusy && preparingProductId == null) {
                                                 void addItem(product)
                                             }
                                         }}
-                                        className={`p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 flex justify-between items-center ${isRTL ? 'flex-row-reverse' : ''}`}
+                                        data-purchase-search-result={product.id}
+                                        className={`flex w-full cursor-pointer items-center justify-between border-b border-gray-100 p-3 hover:bg-gray-50 ${isRTL ? 'flex-row-reverse text-right' : 'text-left'}`}
                                     >
                                         <div className={isRTL ? 'text-right' : 'text-left'}>
                                             <div className="font-medium">{product.name}</div>
@@ -715,16 +889,22 @@ export default function PurchaseInvoice() {
                                                 return warehouseStock?.quantity || 0
                                             })()}
                                         </div>
-                                    </div>
+                                    </button>
                                 ))}
                             </div>
                         )}
+                        {!warehouseId && !warehousesLoading ? (
+                            <p className="mt-2 text-sm text-amber-700">{t('purchases.selectWarehouseFirst')}</p>
+                        ) : null}
+                        {preparingProductId ? (
+                            <p className="mt-2 text-sm text-gray-500" role="status">{t('purchases.preparingProduct')}</p>
+                        ) : null}
                     </div>
 
                     {/* Items Table */}
                     <div className="bg-white rounded-lg shadow flex-1 overflow-hidden flex flex-col">
                         <div className="overflow-x-auto">
-                            <table className="w-full">
+                            <table className="w-full min-w-[760px]">
                                 <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
                                         <th className={`px-4 py-2 text-xs font-medium text-gray-500 uppercase ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.product')}</th>
@@ -745,12 +925,13 @@ export default function PurchaseInvoice() {
                                         </tr>
                                     ) : (
                                         items.map((item, index) => (
-                                            <tr key={index}>
+                                            <tr key={`${item.productId}:${item.productVariantId || 'default'}`}>
                                                 <td className={`px-4 py-2 ${isRTL ? 'text-right' : 'text-left'}`}>
                                                     <div className="text-sm font-medium">{item.name}</div>
+                                                    {item.sku ? <div className="text-xs text-gray-500">{item.sku}</div> : null}
                                                 </td>
                                                 <td className="px-4 py-2">
-                                                    {item.productUnits && item.productUnits.length > 0 ? (
+                                                    {item.productUnits && item.productUnits.length > 1 ? (
                                                         <select
                                                             value={item.unitId || ''}
                                                             onChange={(e) => handleUnitChange(index, e.target.value)}
@@ -777,7 +958,8 @@ export default function PurchaseInvoice() {
                                                         value={item.quantity ?? ''}
                                                         onChange={(e) => updateItem(index, 'quantity', e.target.value)}
                                                         className="input w-full text-center p-1"
-                                                        min="1"
+                                                        min="0.01"
+                                                        step="0.01"
                                                         disabled={isBusy}
                                                     />
                                                 </td>
@@ -856,11 +1038,14 @@ export default function PurchaseInvoice() {
                                     ) : null}
                                     <input
                                         type="number"
-                                        value={paidAmount}
+                                        value={resolvedPaidAmount}
                                         onChange={(e) => setPaidAmount(e.target.value)}
                                         onBlur={() => setPaidAmount(roundCurrency(paidAmount))}
                                         className={`input w-full text-lg font-bold ${currencyIndicator ? (isRTL ? 'pr-16 text-right' : 'pl-16 text-left') : (isRTL ? 'text-right' : 'text-left')}`}
-                                        disabled={isBusy}
+                                        min="0"
+                                        max={totals.total}
+                                        step="0.01"
+                                        disabled={isBusy || paymentMethod !== 'Credit' || usesMixedSplit}
                                     />
                                 </div>
                             </div>
@@ -870,9 +1055,17 @@ export default function PurchaseInvoice() {
                                 <select
                                     value={paymentMethod}
                                     onChange={(e) => {
-                                        setPaymentMethod(e.target.value)
-                                        if (e.target.value === 'Credit') {
+                                        const nextMethod = e.target.value
+                                        setPaymentMethod(nextMethod)
+                                        setCashAmount(0)
+                                        setCardAmount(0)
+                                        if (nextMethod === 'Credit') {
                                             setPaidAmount(0)
+                                        } else if (nextMethod === 'Mixed') {
+                                            const nextCashAmount = roundCurrency(totals.total / 2)
+                                            setPaidAmount(totals.total)
+                                            setCashAmount(nextCashAmount)
+                                            setCardAmount(roundCurrency(totals.total - nextCashAmount))
                                         } else {
                                             setPaidAmount(totals.total)
                                         }
@@ -882,7 +1075,7 @@ export default function PurchaseInvoice() {
                                 >
                                     <option value="Cash">{t('purchases.cash')}</option>
                                     <option value="Card">{t('purchases.card')}</option>
-                                    <option value="BankTransfer">{t('purchases.bankTransfer')}</option>
+                                    <option value="Mixed">{t('purchases.mixed')}</option>
                                     <option value="Credit">{t('purchases.credit')}</option>
                                 </select>
                             </div>
@@ -906,18 +1099,62 @@ export default function PurchaseInvoice() {
                                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.payInitialAmountVia')}</label>
                                             <select
                                                 value={initialPaymentMethod}
-                                                onChange={(e) => setInitialPaymentMethod(e.target.value)}
+                                                onChange={(e) => {
+                                                    const nextInitialMethod = e.target.value
+                                                    setInitialPaymentMethod(nextInitialMethod)
+                                                    if (nextInitialMethod === 'Mixed') {
+                                                        const nextCashAmount = roundCurrency(toSafeNumber(paidAmount) / 2)
+                                                        setCashAmount(nextCashAmount)
+                                                        setCardAmount(roundCurrency(toSafeNumber(paidAmount) - nextCashAmount))
+                                                    } else {
+                                                        setCashAmount(0)
+                                                        setCardAmount(0)
+                                                    }
+                                                }}
                                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
                                                 disabled={isBusy}
                                             >
                                                 <option value="Cash">{t('purchases.cash')}</option>
                                                 <option value="Card">{t('purchases.card')}</option>
-                                                <option value="BankTransfer">{t('purchases.bankTransfer')}</option>
+                                                <option value="Mixed">{t('purchases.mixed')}</option>
                                             </select>
                                         </div>
                                     )}
                                 </>
                             )}
+
+                            {usesMixedSplit ? (
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div>
+                                        <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.cashAmount')}</label>
+                                        <input
+                                            type="number"
+                                            value={cashAmount}
+                                            onChange={(event) => setCashAmount(event.target.value)}
+                                            onBlur={() => setCashAmount(roundCurrency(cashAmount))}
+                                            min="0"
+                                            max={totals.total}
+                                            step="0.01"
+                                            className="input w-full"
+                                            disabled={isBusy}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.cardAmount')}</label>
+                                        <input
+                                            type="number"
+                                            value={cardAmount}
+                                            onChange={(event) => setCardAmount(event.target.value)}
+                                            onBlur={() => setCardAmount(roundCurrency(cardAmount))}
+                                            min="0"
+                                            max={totals.total}
+                                            step="0.01"
+                                            className="input w-full"
+                                            disabled={isBusy}
+                                        />
+                                    </div>
+                                </div>
+                            ) : null}
 
                             <div className="pt-2">
                                 <div className={`flex justify-between text-sm mb-2 ${isRTL ? 'flex-row-reverse' : ''}`}>

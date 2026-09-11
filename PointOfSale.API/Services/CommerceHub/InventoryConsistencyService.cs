@@ -3,6 +3,7 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -90,6 +91,11 @@ public interface IInventoryConsistencyService
         Guid marketplaceOrderId,
         CancellationToken cancellationToken = default);
 
+    Task ReacquireMarketplaceOrderReservationsForPaymentAsync(
+        Guid marketplaceOrderId,
+        string? correlationId,
+        CancellationToken cancellationToken = default);
+
     Task<int> FinalizeMarketplaceOrderReservationsForPaymentAsync(
         Guid marketplaceOrderId,
         Guid paymentId,
@@ -114,10 +120,13 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
 
     private sealed record MarketplaceReservationAuthorityItem(
         Guid TenantId,
+        Guid SubOrderId,
         Guid OrderItemId,
         Guid ProductId,
         Guid VariantId,
         decimal RequiredQuantity);
+
+    private static readonly TimeSpan MarketplacePaymentReservationTtl = TimeSpan.FromMinutes(30);
 
     public InventoryConsistencyService(
         ApplicationDbContext dbContext,
@@ -331,7 +340,7 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
             }
 
             var inbox = start.Inbox!;
-            var reservation = await LoadReservationForUpdateAsync(reservationId, cancellationToken)
+            var reservation = await LoadReservationForUpdateAsync(tenantId, reservationId, cancellationToken)
                 ?? throw BuildInvariantException(
                     "INVENTORY_RESERVATION_NOT_FOUND",
                     "Inventory reservation was not found.");
@@ -704,6 +713,7 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
                     item.Quantity > 0)
                 .Select(item => new MarketplaceReservationAuthorityItem(
                     item.SubOrder.StoreId,
+                    item.SubOrderId,
                     item.Id,
                     item.ProductId,
                     item.VariantId,
@@ -842,6 +852,238 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
                 activeReservations,
                 cancellationToken);
 
+            return 0;
+        }, cancellationToken);
+    }
+
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync(
+        Guid marketplaceOrderId,
+        string? correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        await ExecuteInTransactionAsync(async () =>
+        {
+            var nowUtc = DateTime.UtcNow;
+            var reservations = await LoadMarketplaceOrderReservationHistoryForUpdateAsync(
+                marketplaceOrderId,
+                cancellationToken);
+            var marketplaceOrder = await LoadMarketplaceOrderForReservationReacquisitionAsync(
+                marketplaceOrderId,
+                cancellationToken);
+
+            if (marketplaceOrder == null ||
+                marketplaceOrder.Status is not (OrderStatus.Pending or OrderStatus.OnHold) ||
+                marketplaceOrder.PaymentStatus != PaymentStatus.Pending ||
+                !CommerceHubPaymentMethods.IsOnline(marketplaceOrder.PaymentMethodCode))
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_RESERVATION_REACQUISITION_NOT_ALLOWED",
+                    "Marketplace inventory can only be reacquired for an existing pending online-payment order.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            var expectedItems = await _dbContext.CommerceHubSubOrderItems
+                .IgnoreQueryFilters()
+                .Where(item =>
+                    item.SubOrder.MarketplaceOrderId == marketplaceOrderId &&
+                    !item.IsDeleted &&
+                    !item.SubOrder.IsDeleted &&
+                    item.SubOrder.Status != OrderStatus.Cancelled &&
+                    item.SubOrder.Status != OrderStatus.Refunded &&
+                    item.SubOrder.PaymentMethod == CommerceHubPaymentMethod.Online &&
+                    item.Status != CommerceHubOrderItemStatus.Cancelled &&
+                    item.Quantity > 0)
+                .Select(item => new MarketplaceReservationAuthorityItem(
+                    item.SubOrder.StoreId,
+                    item.SubOrderId,
+                    item.Id,
+                    item.ProductId,
+                    item.VariantId,
+                    (decimal)item.Quantity))
+                .ToListAsync(cancellationToken);
+
+            if (expectedItems.Count == 0)
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_ORDER_HAS_NO_RESERVABLE_ITEMS",
+                    "Marketplace inventory cannot be reacquired because the order has no reservable online items.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            await EnsureMarketplaceReservationItemsMatchSqlCatalogAuthorityAsync(
+                marketplaceOrderId,
+                expectedItems,
+                cancellationToken);
+            await EnsureMarketplaceOrderShippingAuthorityActiveAsync(
+                marketplaceOrderId,
+                cancellationToken);
+            EnsureHistoricalReservationsMatchCurrentOrderAuthority(
+                marketplaceOrderId,
+                expectedItems,
+                reservations);
+
+            var rawActiveReservations = reservations
+                .Where(reservation =>
+                    reservation.Status == InventoryReservationStatus.Active &&
+                    reservation.RemainingReservedQuantity > 0m &&
+                    (reservation.ExpiresAtUtc is null || reservation.ExpiresAtUtc.Value > nowUtc))
+                .ToList();
+            var activeReservations = await ProductVariantInventoryLineageAuthority.FilterCurrentConsumableReservationsAcrossTenantsAsync(
+                _dbContext,
+                rawActiveReservations,
+                nowUtc,
+                cancellationToken);
+            var expectedKeys = expectedItems
+                .Select(item => (item.TenantId, item.OrderItemId, item.VariantId))
+                .ToHashSet();
+
+            if (activeReservations.Any(reservation =>
+                    !expectedKeys.Contains((reservation.TenantId, reservation.OrderItemId, reservation.VariantId))))
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_ORDER_RESERVATION_OWNERSHIP_CONFLICT",
+                    "Marketplace inventory cannot be reacquired because active reservation ownership no longer matches the order.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            var activeByItem = activeReservations
+                .GroupBy(reservation => (reservation.TenantId, reservation.OrderItemId, reservation.VariantId))
+                .ToDictionary(group => group.Key, group => group.Sum(reservation => reservation.RemainingReservedQuantity));
+            var rawActiveByItem = rawActiveReservations
+                .GroupBy(reservation => (reservation.TenantId, reservation.OrderItemId, reservation.VariantId))
+                .ToDictionary(group => group.Key, group => group.Sum(reservation => reservation.RemainingReservedQuantity));
+
+            foreach (var item in expectedItems)
+            {
+                var key = (item.TenantId, item.OrderItemId, item.VariantId);
+                var activeQuantity = activeByItem.GetValueOrDefault(key);
+                if (activeQuantity > item.RequiredQuantity)
+                {
+                    throw new CommerceHubCheckoutException(
+                        "MARKETPLACE_ORDER_RESERVATION_OVER_RESERVED",
+                        "Marketplace inventory cannot be reacquired because active reservations exceed current order quantity authority.",
+                        StatusCodes.Status409Conflict);
+                }
+
+                if (rawActiveByItem.GetValueOrDefault(key) > activeQuantity)
+                {
+                    throw new CommerceHubCheckoutException(
+                        "MARKETPLACE_ORDER_STOCK_AUTHORITY_LOST",
+                        "Marketplace inventory cannot be reacquired because an active reservation is no longer backed by current stock lineage authority.",
+                        StatusCodes.Status409Conflict);
+                }
+            }
+
+            if (expectedItems.All(item =>
+                    activeByItem.GetValueOrDefault((item.TenantId, item.OrderItemId, item.VariantId)) == item.RequiredQuantity))
+            {
+                await EnsureReservedStockRowsCoverMarketplaceReservationsAsync(
+                    marketplaceOrderId,
+                    activeReservations,
+                    cancellationToken);
+                return 0;
+            }
+
+            var paymentHistory = await _dbContext.CommerceHubPayments
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Include(payment => payment.Attempts)
+                .Include(payment => payment.Logs)
+                .AsSplitQuery()
+                .Where(payment => payment.OrderId == marketplaceOrderId)
+                .ToListAsync(cancellationToken);
+            var hasPaymentAuthorityEvidence = paymentHistory.Any(
+                    CommerceHubPaymentSessionRecoveryAuthority.HasReservationReacquisitionBlockingEvidence) ||
+                await _dbContext.CommerceHubUnresolvedPaymentWebhooks
+                    .IgnoreQueryFilters()
+                    .AnyAsync(webhook => webhook.OrderId == marketplaceOrderId, cancellationToken);
+
+            if (hasPaymentAuthorityEvidence)
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_RESERVATION_REACQUISITION_REQUIRES_NO_PAYMENT_EVIDENCE",
+                    "Marketplace inventory cannot be reacquired because payment or provider evidence already exists for this order.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            var staleOpenReservations = reservations
+                .Where(reservation =>
+                    reservation.RemainingReservedQuantity > 0m &&
+                    !activeReservations.Contains(reservation))
+                .ToList();
+
+            if (staleOpenReservations.Any(reservation =>
+                    reservation.CommittedQuantity > 0m ||
+                    (reservation.Status != InventoryReservationStatus.Expired &&
+                     (!reservation.ExpiresAtUtc.HasValue || reservation.ExpiresAtUtc.Value > nowUtc))))
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_RESERVATION_REACQUISITION_STATE_CONFLICT",
+                    "Marketplace inventory cannot be reacquired because historical reservation state requires reconciliation.",
+                    StatusCodes.Status409Conflict);
+            }
+
+            foreach (var reservation in staleOpenReservations)
+            {
+                await ReleaseReservationAsync(
+                    reservation.TenantId,
+                    reservation.Id,
+                    reservation.RemainingReservedQuantity,
+                    Guid.NewGuid(),
+                    correlationId,
+                    "CommerceHubPaymentReservationReacquisition",
+                    cancellationToken);
+            }
+
+            var expiresAtUtc = nowUtc.Add(MarketplacePaymentReservationTtl);
+            foreach (var item in expectedItems.OrderBy(item => item.TenantId).ThenBy(item => item.OrderItemId))
+            {
+                var alreadyReserved = activeByItem.GetValueOrDefault((item.TenantId, item.OrderItemId, item.VariantId));
+                var quantityToReserve = item.RequiredQuantity - alreadyReserved;
+                if (quantityToReserve <= 0m)
+                {
+                    continue;
+                }
+
+                var reserved = await ReserveOrderItemAsync(
+                    new InventoryReservationRequest(
+                        item.TenantId,
+                        marketplaceOrderId,
+                        item.SubOrderId,
+                        item.OrderItemId,
+                        item.ProductId,
+                        item.VariantId,
+                        quantityToReserve,
+                        null,
+                        expiresAtUtc,
+                        Guid.NewGuid(),
+                        correlationId,
+                        "CommerceHubPaymentReservationReacquisition"),
+                    cancellationToken);
+
+                if (!reserved)
+                {
+                    throw new CommerceHubCheckoutException(
+                        "OUT_OF_STOCK",
+                        "Stock changed before payment could resume. Review current availability before trying again.",
+                        StatusCodes.Status409Conflict,
+                        new
+                        {
+                            MarketplaceOrderId = marketplaceOrderId,
+                            item.OrderItemId,
+                            item.VariantId,
+                            Requested = quantityToReserve
+                        });
+                }
+            }
+
+            await EnsureMarketplaceOrderReservationsActiveAsync(marketplaceOrderId, cancellationToken);
+            _logger.LogInformation(
+                "CommerceHub payment reservation authority reacquired | MarketplaceOrderId: {MarketplaceOrderId} | ItemCount: {ItemCount} | ExpiresAtUtc: {ExpiresAtUtc} | CorrelationId: {CorrelationId}",
+                marketplaceOrderId,
+                expectedItems.Count,
+                expiresAtUtc,
+                correlationId);
             return 0;
         }, cancellationToken);
     }
@@ -1505,6 +1747,72 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
         }
     }
 
+    private static void EnsureHistoricalReservationsMatchCurrentOrderAuthority(
+        Guid marketplaceOrderId,
+        IReadOnlyCollection<MarketplaceReservationAuthorityItem> expectedItems,
+        IReadOnlyCollection<InventoryReservation> reservations)
+    {
+        var expectedByOrderItem = expectedItems.ToDictionary(item => item.OrderItemId);
+        if (reservations.Count == 0 || expectedItems.Any(item => reservations.All(reservation => reservation.OrderItemId != item.OrderItemId)))
+        {
+            throw new CommerceHubCheckoutException(
+                "MARKETPLACE_RESERVATION_HISTORY_MISSING",
+                "Marketplace inventory cannot be reacquired because the original SQL reservation evidence is unavailable.",
+                StatusCodes.Status409Conflict,
+                new { MarketplaceOrderId = marketplaceOrderId });
+        }
+
+        foreach (var reservation in reservations)
+        {
+            if (!expectedByOrderItem.TryGetValue(reservation.OrderItemId, out var item) ||
+                reservation.TenantId != item.TenantId ||
+                reservation.SubOrderId != item.SubOrderId ||
+                reservation.ProductId != item.ProductId ||
+                reservation.VariantId != item.VariantId)
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_RESERVATION_HISTORY_CHANGED",
+                    "Marketplace inventory cannot be reacquired because current order product or variant identity differs from original reservation authority.",
+                    StatusCodes.Status409Conflict,
+                    new
+                    {
+                        MarketplaceOrderId = marketplaceOrderId,
+                        reservation.OrderItemId,
+                        reservation.ProductId,
+                        reservation.VariantId
+                    });
+            }
+        }
+
+        foreach (var item in expectedItems)
+        {
+            var itemReservations = reservations
+                .Where(reservation => reservation.OrderItemId == item.OrderItemId)
+                .OrderBy(reservation => reservation.CreatedAt)
+                .ThenBy(reservation => reservation.Id)
+                .ToList();
+            var originalEventId = itemReservations[0].ReservationEventId;
+            var originalQuantity = itemReservations
+                .Where(reservation => reservation.ReservationEventId == originalEventId)
+                .Sum(reservation => reservation.ReservedQuantity);
+
+            if (originalEventId == Guid.Empty || originalQuantity != item.RequiredQuantity)
+            {
+                throw new CommerceHubCheckoutException(
+                    "MARKETPLACE_RESERVATION_QUANTITY_CHANGED",
+                    "Marketplace inventory cannot be reacquired because current order quantity differs from original reservation authority.",
+                    StatusCodes.Status409Conflict,
+                    new
+                    {
+                        MarketplaceOrderId = marketplaceOrderId,
+                        item.OrderItemId,
+                        OriginalQuantity = originalQuantity,
+                        CurrentQuantity = item.RequiredQuantity
+                    });
+            }
+        }
+    }
+
     private async Task EnsureMarketplaceOrderShippingAuthorityActiveAsync(
         Guid marketplaceOrderId,
         CancellationToken cancellationToken)
@@ -1771,18 +2079,23 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
     }
 
     private async Task<InventoryReservation?> LoadReservationForUpdateAsync(
+        Guid tenantId,
         Guid reservationId,
         CancellationToken cancellationToken)
     {
         IQueryable<InventoryReservation> query = _dbContext.Database.IsRelational()
             ? _dbContext.InventoryReservations.FromSqlInterpolated($@"
                 SELECT * FROM ""InventoryReservations""
-                WHERE ""Id"" = {reservationId}
+                WHERE ""TenantId"" = {tenantId}
+                  AND ""Id"" = {reservationId}
                   AND ""IsDeleted"" = FALSE
                 FOR UPDATE").IgnoreQueryFilters()
             : _dbContext.InventoryReservations
                 .IgnoreQueryFilters()
-                .Where(item => item.Id == reservationId && !item.IsDeleted);
+                .Where(item =>
+                    item.TenantId == tenantId &&
+                    item.Id == reservationId &&
+                    !item.IsDeleted);
 
         return await query.FirstOrDefaultAsync(cancellationToken);
     }
@@ -1825,6 +2138,73 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
             .ThenBy(item => item.OrderItemId)
             .ThenBy(item => item.CreatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    private async Task<List<InventoryReservation>> LoadMarketplaceOrderReservationHistoryForUpdateAsync(
+        Guid marketplaceOrderId,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<InventoryReservation> query;
+
+        if (_dbContext.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            query = _dbContext.InventoryReservations.FromSqlInterpolated($@"
+                SELECT * FROM ""InventoryReservations""
+                WHERE ""OrderId"" = {marketplaceOrderId}
+                  AND ""IsDeleted"" = FALSE
+                FOR UPDATE").IgnoreQueryFilters();
+        }
+        else if (_dbContext.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            query = _dbContext.InventoryReservations.FromSqlInterpolated($@"
+                SELECT * FROM [InventoryReservations] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                WHERE [OrderId] = {marketplaceOrderId}
+                  AND [IsDeleted] = 0").IgnoreQueryFilters();
+        }
+        else
+        {
+            query = _dbContext.InventoryReservations
+                .IgnoreQueryFilters()
+                .Where(item => item.OrderId == marketplaceOrderId && !item.IsDeleted);
+        }
+
+        return await query
+            .OrderBy(item => item.TenantId)
+            .ThenBy(item => item.OrderItemId)
+            .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+    }
+
+    private async Task<CommerceHubMarketplaceOrder?> LoadMarketplaceOrderForReservationReacquisitionAsync(
+        Guid marketplaceOrderId,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<CommerceHubMarketplaceOrder> query;
+
+        if (_dbContext.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            query = _dbContext.CommerceHubMarketplaceOrders.FromSqlInterpolated($@"
+                SELECT * FROM ""CommerceHubMarketplaceOrders""
+                WHERE ""Id"" = {marketplaceOrderId}
+                  AND ""IsDeleted"" = FALSE
+                FOR UPDATE").IgnoreQueryFilters();
+        }
+        else if (_dbContext.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            query = _dbContext.CommerceHubMarketplaceOrders.FromSqlInterpolated($@"
+                SELECT * FROM [CommerceHubMarketplaceOrders] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                WHERE [Id] = {marketplaceOrderId}
+                  AND [IsDeleted] = 0").IgnoreQueryFilters();
+        }
+        else
+        {
+            query = _dbContext.CommerceHubMarketplaceOrders
+                .IgnoreQueryFilters()
+                .Where(order => order.Id == marketplaceOrderId && !order.IsDeleted);
+        }
+
+        return await query.AsNoTracking().FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<CommerceHubReturnRequest?> LoadReturnRequestForUpdateAsync(

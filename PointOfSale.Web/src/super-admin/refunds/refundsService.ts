@@ -7,6 +7,14 @@ import {
     requireSuperAdminReturnPresentation,
 } from './refundLifecycleAuthority'
 
+export const GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID = '01a08680-3cff-7ef1-a6ff-58fa723f30f1'
+
+export interface DevelopmentAccountingOutboxRequeueResult {
+    messageId: string
+    wasRequeued: boolean
+    timestamp: string
+}
+
 export type SuperAdminRefundStatus =
     | 'Requested'
     | 'UnderReview'
@@ -39,14 +47,6 @@ export type SuperAdminReturnStatus =
     | 'DeliveredToVendor'
     | 'Confirmed'
     | 'Failed'
-
-export type SuperAdminOverrideReturnStatus =
-    | 'Pending'
-    | 'PickupScheduled'
-    | 'PickedUp'
-    | 'InTransit'
-    | 'DeliveredToVendor'
-    | 'Confirmed'
 
 export type RefundExecutionTrigger = 'OnPickup' | 'OnDelivery' | 'OnVendorConfirmation'
 
@@ -168,8 +168,6 @@ export interface SuperAdminReturnDetails {
     canMarkDelivered: boolean
     canMarkFailed: boolean
     canConfirmReceipt: boolean
-    canOverrideStatus: boolean
-    allowedOverrideStatuses: SuperAdminOverrideReturnStatus[]
     isExecutionTriggerReached: boolean
 }
 
@@ -188,6 +186,8 @@ export interface SuperAdminRefundExecution {
     paymentId?: string | null
     gatewayStatus?: string | null
     gatewayReference?: string | null
+    isDevelopmentSimulation: boolean
+    externalMoneyMovementConfirmed: boolean
     commissionReversalAmount: number
     vendorEarningReversalAmount: number
     isPostPayoutAdjustment: boolean
@@ -357,37 +357,98 @@ export async function executeSuperAdminRefund(
     return requireSuperAdminRefundDetailsPresentation(response.data, refundId)
 }
 
-export async function markSuperAdminReturnFailed(
-    returnId: string,
-    payload: {
-        timestampUtc?: string
-        trackingNumber?: string
-        courierName?: string
-        notes?: string
-    },
-): Promise<SuperAdminReturnDetails> {
-    const response = await superAdminApiClient.post<SuperAdminReturnDetails, typeof payload>(
-        `/returns/${returnId}/mark-failed`,
-        payload,
+export async function executeDevelopmentCodRefundSimulation(refundId: string): Promise<SuperAdminRefundDetails> {
+    if (!import.meta.env.DEV) {
+        throw new Error('Development refund simulation is unavailable outside Development.')
+    }
+
+    const idempotencyKey = `M1D-${refundId.replaceAll('-', '')}`
+    const result = await superAdminApiClient.postRaw<{
+        refundId: string
+        idempotencyKey: string
+        executionPath: string
+        evidenceType: string
+        isDevelopmentSimulation: boolean
+        externalMoneyMovementConfirmed: boolean
+        transactionReference: string
+    }, { idempotencyKey: string }>(
+        `/api/dev/commercehub/m1d/refunds/${refundId}/execute-cod-debt-reduction`,
+        { idempotencyKey },
     )
 
-    return requireSuperAdminReturnPresentation(response.data, returnId)
+    if (
+        result.refundId.toLowerCase() !== refundId.toLowerCase()
+        || result.idempotencyKey !== idempotencyKey
+        || result.executionPath !== 'CashOnDeliveryDebtReduction'
+        || result.evidenceType !== 'DevelopmentSimulatedCodCustomerRefund'
+        || result.isDevelopmentSimulation !== true
+        || result.externalMoneyMovementConfirmed !== false
+    ) {
+        throw new Error('Development refund simulation evidence was rejected.')
+    }
+
+    return getSuperAdminRefundDetails(refundId)
 }
 
-export async function overrideSuperAdminReturnStatus(
-    returnId: string,
-    payload: {
-        status: SuperAdminOverrideReturnStatus
-        timestampUtc?: string
-        trackingNumber?: string
-        courierName?: string
-        notes?: string
-    },
-): Promise<SuperAdminReturnDetails> {
-    const response = await superAdminApiClient.post<SuperAdminReturnDetails, typeof payload>(
-        `/returns/${returnId}/override-status`,
-        payload,
+export async function executeDevelopmentOnlineRefundSimulation(refundId: string): Promise<SuperAdminRefundDetails> {
+    if (!import.meta.env.DEV) {
+        throw new Error('Development refund simulation is unavailable outside Development.')
+    }
+
+    const idempotencyKey = `GATE3R-${refundId.replaceAll('-', '')}`
+    const result = await superAdminApiClient.postRaw<{
+        refundId: string
+        idempotencyKey: string
+        executionPath: string
+        evidenceType: string
+        isDevelopmentSimulation: boolean
+        externalMoneyMovementConfirmed: boolean
+        transactionReference: string
+    }, { idempotencyKey: string; reason: string; administratorConfirmation: boolean }>(
+        `/api/dev/commercehub/m1d/refunds/${refundId}/execute-online-before-payout`,
+        {
+            idempotencyKey,
+            reason: 'Gate 3R online before-payout refund certification',
+            administratorConfirmation: true,
+        },
     )
 
-    return requireSuperAdminReturnPresentation(response.data, returnId)
+    if (
+        result.refundId.toLowerCase() !== refundId.toLowerCase()
+        || result.idempotencyKey !== idempotencyKey
+        || result.executionPath !== 'OnlineBeforePayout'
+        || result.evidenceType !== 'DevelopmentSimulatedOnlineCustomerRefund'
+        || result.isDevelopmentSimulation !== true
+        || result.externalMoneyMovementConfirmed !== false
+        || result.transactionReference !== `DEV-SIM:ONLINE-REFUND:${idempotencyKey}`
+    ) {
+        throw new Error('Development online refund simulation evidence was rejected.')
+    }
+
+    return getSuperAdminRefundDetails(refundId)
+}
+
+export async function requeueGate3RAccountingOutbox(): Promise<DevelopmentAccountingOutboxRequeueResult> {
+    if (!import.meta.env.DEV) {
+        throw new Error('Development accounting outbox requeue is unavailable outside Development.')
+    }
+
+    const result = await superAdminApiClient.postRaw<DevelopmentAccountingOutboxRequeueResult, undefined>(
+        `/api/debug/outbox/requeue/${GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID}`,
+    )
+
+    if (
+        result.messageId?.toLowerCase() !== GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID
+        || typeof result.wasRequeued !== 'boolean'
+        || !result.timestamp
+        || Number.isNaN(Date.parse(result.timestamp))
+    ) {
+        throw new Error('Development accounting outbox requeue response was rejected.')
+    }
+
+    return {
+        messageId: result.messageId,
+        wasRequeued: result.wasRequeued,
+        timestamp: result.timestamp,
+    }
 }

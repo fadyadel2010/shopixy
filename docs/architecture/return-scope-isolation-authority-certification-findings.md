@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: Return Scope Isolation Authority is production-certifiable for the inspected frontend runtime after current-refund return-mutation response binding and POS purchase stale-response suppression.
+Status: Updated 2026-09-03. Return mutation scope is now bound to the owning POS vendor; Super Admin return scope is read-only.
 
 ## Scope Artifacts
 
@@ -12,13 +12,13 @@ Actual implemented scope artifacts inspected: `returnId`, `refundId`, `orderId`,
 
 - Backend owns Return Scope Authority, Customer Return Scope, Vendor Return Scope, Admin Return Scope, Tenant Scope, Refund Scope, Order Scope, Payment Scope, SQL lineage, locks, idempotency, and endpoint authorization.
 - Frontend owns display, selection, filtering, navigation, presentation, validation, withholding, refetching, and backend-bound intent only.
-- Runtime hardening was required to bind Super Admin return mutation responses to the current refund lineage and suppress stale POS purchase invoice/supplier reads.
+- Runtime hardening binds POS vendor return mutations to the current vendor/order/return lineage and suppresses stale POS purchase invoice/supplier reads.
 
 ## Domain Findings
 
 - Customer findings: Customer refund history, order detail refund rows, evidence dialogs, and refund creation paths derive from current backend refund/order evidence. Refund creation and evidence upload re-enter current backend order-item authority. Customer A cannot access Customer B returns through inspected frontend paths without backend authorization.
-- Vendor findings: Vendor finance refund impacts are current vendor/session scoped and read-only. `recentRefundImpacts` carries refund impact evidence, not return ownership or mutation scope. Vendor A cannot access Vendor B returns through inspected frontend paths.
-- Admin findings: Super Admin monitoring is visibility only. Selected rows are re-derived from the current list; details and dialogs require current accepted detail. Return mutation responses are now rebound to the current refund detail's `refundId`, `orderItemId`, `customerId`, and `vendorId` before success handling.
+- Vendor findings: Vendor finance refund impacts remain read-only. The separate vendor order return surface requires current vendor/session scope, exact return identity, coherent backend grants, and current order re-entry. Vendor A cannot access or mutate Vendor B returns.
+- Admin findings: Super Admin monitoring is visibility only. Selected rows are re-derived from the current list and embedded return details require current accepted detail; no Super Admin return mutation response exists.
 - Customer-Vendor findings: Customer refund/order scope cannot become vendor scope. Vendor refund-impact scope cannot become customer scope. Frontend has no merge surface.
 - Vendor-Admin findings: Vendor scope cannot become admin scope. Admin visibility cannot become vendor ownership. Frontend cannot transfer scope between roles.
 - Refund consistency findings: Refund scope cannot create return scope. Return scope cannot exceed current refund/detail lineage, and contradictions fail closed.
@@ -32,12 +32,16 @@ Actual implemented scope artifacts inspected: `returnId`, `refundId`, `orderId`,
 
 ## Runtime Hardening Performed
 
-- Bound Super Admin return override and mark-failed mutation responses to the current backend-backed refund detail via `requireSuperAdminReturnForCurrentRefund`.
+- Bound POS vendor return actions and responses to current tenant, order, return identity, backend action grant, and expected status.
 - Added POS purchase return request-id guards for initial data, purchase invoice lists, and invoice detail reads.
 - Invalidated outstanding POS purchase invoice reads when supplier selection changes.
 
 ## Exact Runtime Files Modified
 
+- `PointOfSale.API/Controllers/PosAdminReturnsController.cs`
+- `PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs`
+- `PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js`
+- `PointOfSale.Web/src/pages/CommerceHubOrders.jsx`
 - `PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx`
 - `PointOfSale.Web/src/pages/PurchaseReturns.jsx`
 
@@ -60,7 +64,7 @@ Actual implemented scope artifacts inspected: `returnId`, `refundId`, `orderId`,
 - Who owns return scope authority? Backend.
 - Can frontend fabricate scope? No.
 - Can Customer A access Customer B returns? No inspected frontend path bypasses backend customer/refund/order authorization.
-- Can Vendor A access Vendor B returns? No; vendor refund-impact evidence is current vendor/session scoped and read-only.
+- Can Vendor A access Vendor B returns? No; vendor return reads/actions require current tenant scope and foreign returns fail as not found.
 - Can customer scope become vendor scope? No.
 - Can vendor scope become admin scope? No.
 - Can monitoring widen scope? No; monitoring is visibility only.

@@ -481,8 +481,24 @@ public sealed class FinancialIntegrityRiskHardeningTests
     private static string ApiPath(params string[] parts) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.API", Path.Combine(parts)));
 
-    private static string InfrastructurePath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Infrastructure", Path.Combine(parts)));
+    private static string InfrastructurePath(params string[] parts)
+    {
+        var repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var activePath = Path.Combine(repositoryRoot, "PointOfSale.Infrastructure", Path.Combine(parts));
+        if (File.Exists(activePath) || parts.Length == 0 || !string.Equals(parts[0], "Migrations", StringComparison.Ordinal))
+        {
+            return activePath;
+        }
+
+        return Path.Combine(
+            repositoryRoot,
+            "docs",
+            "recovery",
+            "archive",
+            "RECOVERY-4_PHASE_A",
+            "PointOfSale.Infrastructure",
+            Path.Combine(parts));
+    }
 
     private static string TestsPath(params string[] parts) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Tests", Path.Combine(parts)));

@@ -18,7 +18,7 @@ public sealed class CommerceHubRecoverySecurityCertificationTests
         Assert.DoesNotContain("SetCustomerAccessCookie", verifyEmail, StringComparison.Ordinal);
         Assert.DoesNotContain("SetCustomerAccessCookie", register, StringComparison.Ordinal);
 
-        Assert.Contains("Response.Cookies.Delete", resetPassword, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", resetPassword, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", resetPassword, StringComparison.Ordinal);
         Assert.Contains("return Ok(new { message = result.Message });", resetPassword, StringComparison.Ordinal);
         Assert.Contains("return Ok(new { message = result.Message });", verifyEmail, StringComparison.Ordinal);
@@ -98,8 +98,7 @@ public sealed class CommerceHubRecoverySecurityCertificationTests
         var changeEmailAction = Slice(controller, "[HttpPost(\"change-email\")]", "private Guid? ResolveCustomerId()");
         AssertContains(changeEmailAction,
             "[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]",
-            "Response.Cookies.Delete",
-            "CreateExpiredOptions(\"/api/customers\")",
+            "ClearCustomerAccessCookies()",
             "ClearCommerceHubRecoveryCookie()");
         Assert.DoesNotContain("SetCustomerAccessCookie", changeEmailAction, StringComparison.Ordinal);
     }

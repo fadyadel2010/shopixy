@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.CommerceHub.Finance;
 using PointOfSale.API.SuperAdmin.DTOs;
 using PointOfSale.API.SuperAdmin.Services;
@@ -37,6 +38,10 @@ public sealed class SuperAdminPayoutsController : SuperAdminBaseController
             result = await _payoutsService.GetQueueAsync(page, pageSize, cancellationToken);
         }
         catch (CommerceHubVendorFinancialControlException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
+        }
+        catch (CommerceHubCheckoutException exception)
         {
             return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
         }
@@ -77,19 +82,19 @@ public sealed class SuperAdminPayoutsController : SuperAdminBaseController
             });
     }
 
-    [HttpPost("{vendorId:guid}/execute")]
+    [HttpPost("{vendorId:guid}/prepare")]
     [ProducesResponseType(typeof(CommerceHubPayoutDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> Execute(
+    public async Task<IActionResult> Prepare(
         Guid vendorId,
-        [FromBody] SuperAdminExecuteVendorPayoutRequestDto request,
+        [FromBody] SuperAdminPrepareVendorPayoutRequestDto request,
         CancellationToken cancellationToken = default)
     {
         try
         {
-            var payout = await _payoutOrchestrationService.ExecuteAsync(
+            var payout = await _payoutOrchestrationService.PrepareAsync(
                 vendorId,
                 request,
                 CurrentSuperAdminId,
@@ -97,10 +102,10 @@ public sealed class SuperAdminPayoutsController : SuperAdminBaseController
                 cancellationToken);
 
             await _auditService.LogActionAsync(
-                action: "VENDOR_PAYOUT_EXECUTED",
+                action: "VENDOR_PAYOUT_HANDOFF_COMMITTED",
                 entityType: "CommerceHubPayout",
                 entityId: payout.PayoutId.ToString(),
-                description: "Super Admin executed a vendor payout.",
+                description: "Super Admin committed a vendor payout handoff before external transfer.",
                 success: true,
                 details: payout,
                 reference: payout.PayoutId.ToString(),
@@ -111,6 +116,55 @@ public sealed class SuperAdminPayoutsController : SuperAdminBaseController
             return OkResponse(payout);
         }
         catch (CommerceHubVendorFinancialControlException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
+        }
+        catch (CommerceHubCheckoutException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
+        }
+    }
+
+    [HttpPost("{vendorId:guid}/{payoutId:guid}/complete")]
+    [ProducesResponseType(typeof(CommerceHubPayoutDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Complete(
+        Guid vendorId,
+        Guid payoutId,
+        [FromBody] SuperAdminCompleteVendorPayoutRequestDto request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var payout = await _payoutOrchestrationService.CompleteAsync(
+                vendorId,
+                payoutId,
+                request,
+                CurrentSuperAdminId,
+                CurrentSuperAdminEmail,
+                cancellationToken);
+
+            await _auditService.LogActionAsync(
+                action: "VENDOR_PAYOUT_COMPLETED",
+                entityType: "CommerceHubPayout",
+                entityId: payout.PayoutId.ToString(),
+                description: "Super Admin reconciled an externally executed vendor payout.",
+                success: true,
+                details: payout,
+                reference: payout.PayoutId.ToString(),
+                actorId: CurrentSuperAdminId,
+                actorEmail: CurrentSuperAdminEmail,
+                cancellationToken: cancellationToken);
+
+            return OkResponse(payout);
+        }
+        catch (CommerceHubVendorFinancialControlException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
+        }
+        catch (CommerceHubCheckoutException exception)
         {
             return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
         }

@@ -18,7 +18,10 @@ public sealed class CommerceHubVendorEarningsActionAuthorityCertificationTests
         Assert.DoesNotContain("retryPayout", earningsPage, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("completePayout", earningsPage, StringComparison.OrdinalIgnoreCase);
 
-        Assert.Contains("api.post('/api/vendors/payout-methods', payload)", earningsApi, StringComparison.Ordinal);
+        Assert.Contains("api.get('/commercehub/earnings')", earningsApi, StringComparison.Ordinal);
+        Assert.Contains("api.get('/vendors/payout-methods')", earningsApi, StringComparison.Ordinal);
+        Assert.Contains("api.post('/vendors/payout-methods', payload)", earningsApi, StringComparison.Ordinal);
+        Assert.DoesNotContain("'/api/", earningsApi, StringComparison.Ordinal);
         Assert.DoesNotContain("/api/commercehub/payouts", earningsApi, StringComparison.Ordinal);
 
         Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", payoutMethodsController, StringComparison.Ordinal);

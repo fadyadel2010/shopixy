@@ -130,7 +130,7 @@ public sealed class PurchaseFinancialIntegrityService : IPurchaseFinancialIntegr
         {
             return await _context.JournalEntries
                 .FromSqlInterpolated($@"
-                    SELECT * FROM ""JournalEntries""
+                    SELECT * FROM ""LedgerJournalEntries""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""SourceId"" = {invoiceId}
                       AND ""Status"" = {(int)JournalStatus.Posted}
@@ -142,7 +142,7 @@ public sealed class PurchaseFinancialIntegrityService : IPurchaseFinancialIntegr
 
         return await _context.JournalEntries
             .FromSqlInterpolated($@"
-                SELECT * FROM [JournalEntries] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                SELECT * FROM [LedgerJournalEntries] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
                 WHERE [TenantId] = {tenantId}
                   AND [SourceId] = {invoiceId}
                   AND [Status] = {(int)JournalStatus.Posted}
@@ -160,7 +160,7 @@ public sealed class PurchaseFinancialIntegrityService : IPurchaseFinancialIntegr
         {
             return await _context.AccountingOutboxMessages
                 .FromSqlInterpolated($@"
-                    SELECT * FROM ""AccountingOutboxMessages""
+                    SELECT *, xmin FROM ""AccountingOutboxMessages""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""BusinessEntityId"" = {invoiceId}
                       AND ""ProcessedAtUtc"" IS NULL

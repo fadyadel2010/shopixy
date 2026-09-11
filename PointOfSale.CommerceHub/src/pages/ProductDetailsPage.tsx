@@ -203,7 +203,7 @@ export const ProductDetailsPage = () => {
   }, [maxSelectableQuantity]);
 
   const lowStockLabel =
-    selectedVariant && selectedVariant.inStock && selectedVariant.totalStock < 5
+    selectedVariant && selectedVariant.inStock && selectedVariant.totalStock > 0 && selectedVariant.totalStock < 5
       ? `Only ${selectedVariant.totalStock} left in stock`
       : undefined;
 
@@ -217,12 +217,18 @@ export const ProductDetailsPage = () => {
 
   const stockState = selectedVariant
     ? selectedVariant.inStock
-      ? { label: `In stock (${selectedVariant.totalStock})`, variant: "success" as const }
+      ? {
+          label: selectedVariant.totalStock > 0 ? `In stock (${selectedVariant.totalStock})` : "Available",
+          variant: "success" as const
+        }
       : { label: "Out of stock", variant: "muted" as const }
     : product?.hasVariants
       ? { label: "Select options to confirm stock", variant: "accent" as const }
       : product?.inStock
-        ? { label: `In stock (${product.stockQuantity})`, variant: "success" as const }
+        ? {
+            label: product.stockQuantity > 0 ? `In stock (${product.stockQuantity})` : "Available",
+            variant: "success" as const
+          }
         : { label: "Out of stock", variant: "muted" as const };
 
   const hasAuthorityCurrency = isCommerceHubAuthorityCurrency(product?.currency);

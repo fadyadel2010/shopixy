@@ -42,7 +42,8 @@ public sealed class CommerceHubPayoutIdentityCertificationTests
     public void SuperAdminPayoutIdentityVisibility_MustRemainReadOnlyPlatformExecutionInput()
     {
         var readService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/Finance/CommerceHubVendorPayoutReadService.cs");
-        var superAdminService = ReadRepoFile("PointOfSale.API/SuperAdmin/Services/SuperAdminPayoutsService.cs");
+        var orchestration = ReadRepoFile("PointOfSale.API/SuperAdmin/Services/SuperAdminPayoutOrchestrationService.cs");
+        var payoutService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubPayoutService.cs");
         var superAdminDto = ReadRepoFile("PointOfSale.API/SuperAdmin/DTOs/SuperAdminPayoutDtos.cs");
 
         Assert.Contains("GetVendorQueueSnapshotsAsync", readService, StringComparison.Ordinal);
@@ -51,17 +52,21 @@ public sealed class CommerceHubPayoutIdentityCertificationTests
         Assert.Contains("NoDefaultPayoutMethod", readService, StringComparison.Ordinal);
         Assert.Contains("PayoutBlockedByAuthorityConflict", readService, StringComparison.Ordinal);
 
-        Assert.Contains("var payoutMethods = await _dbContext.CommerceHubVendorPayoutMethods", superAdminService, StringComparison.Ordinal);
-        Assert.Contains("vendorIds.Contains(method.VendorId)", superAdminService, StringComparison.Ordinal);
-        Assert.Contains("method.Id == request.PayoutMethodId", superAdminService, StringComparison.Ordinal);
-        Assert.Contains("method.VendorId == vendorId", superAdminService, StringComparison.Ordinal);
-        Assert.Contains("DestinationValueSnapshot = payoutMethod.DestinationValue", superAdminService, StringComparison.Ordinal);
-        Assert.Contains("PAYOUT_METHOD_NOT_FOUND", superAdminService, StringComparison.Ordinal);
-        Assert.DoesNotContain("CommerceHubVendorPayoutMethods.Add", superAdminService, StringComparison.Ordinal);
+        Assert.Contains("method.Id == request.PayoutMethodId", orchestration, StringComparison.Ordinal);
+        Assert.Contains("method.VendorId == vendorId", orchestration, StringComparison.Ordinal);
+        Assert.Contains("PayoutMethodId = payoutMethod.Id", orchestration, StringComparison.Ordinal);
+        Assert.Contains("EnsurePayoutMethodMatchesRequest", orchestration, StringComparison.Ordinal);
+        Assert.Contains("method.Id == request.PayoutMethodId.Value", payoutService, StringComparison.Ordinal);
+        Assert.Contains("method.VendorId == tenantId", payoutService, StringComparison.Ordinal);
+        Assert.Contains("PayoutMethodId = payoutMethod?.Id", payoutService, StringComparison.Ordinal);
+        Assert.Contains("DestinationValueSnapshot = payoutMethod?.DestinationValue", payoutService, StringComparison.Ordinal);
+        Assert.Contains("PAYOUT_METHOD_NOT_FOUND", payoutService, StringComparison.Ordinal);
+        Assert.DoesNotContain("CommerceHubVendorPayoutMethods.Add", orchestration, StringComparison.Ordinal);
 
         Assert.Contains("PayoutMethods", superAdminDto, StringComparison.Ordinal);
         Assert.Contains("DestinationValue", superAdminDto, StringComparison.Ordinal);
-        Assert.Contains("SuperAdminExecuteVendorPayoutRequestDto", superAdminDto, StringComparison.Ordinal);
+        Assert.Contains("SuperAdminPrepareVendorPayoutRequestDto", superAdminDto, StringComparison.Ordinal);
+        Assert.Contains("SuperAdminCompleteVendorPayoutRequestDto", superAdminDto, StringComparison.Ordinal);
         Assert.Contains("PayoutMethodId", superAdminDto, StringComparison.Ordinal);
     }
 

@@ -15,9 +15,17 @@ namespace PointOfSale.API.SuperAdmin.Services;
 
 public interface ISuperAdminPayoutOrchestrationService
 {
-    Task<CommerceHubPayoutDto> ExecuteAsync(
+    Task<CommerceHubPayoutDto> PrepareAsync(
         Guid vendorId,
-        SuperAdminExecuteVendorPayoutRequestDto request,
+        SuperAdminPrepareVendorPayoutRequestDto request,
+        Guid? actorId,
+        string? actorEmail,
+        CancellationToken cancellationToken = default);
+
+    Task<CommerceHubPayoutDto> CompleteAsync(
+        Guid vendorId,
+        Guid payoutId,
+        SuperAdminCompleteVendorPayoutRequestDto request,
         Guid? actorId,
         string? actorEmail,
         CancellationToken cancellationToken = default);
@@ -44,9 +52,9 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
         _logger = logger;
     }
 
-    public async Task<CommerceHubPayoutDto> ExecuteAsync(
+    public async Task<CommerceHubPayoutDto> PrepareAsync(
         Guid vendorId,
-        SuperAdminExecuteVendorPayoutRequestDto request,
+        SuperAdminPrepareVendorPayoutRequestDto request,
         Guid? actorId,
         string? actorEmail,
         CancellationToken cancellationToken = default)
@@ -55,7 +63,7 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
 
         _telemetry.RecordExecutionStarted();
         _logger.LogInformation(
-            "Super Admin payout orchestration started for vendor {VendorId}. Event={EventName}; Boundary={Boundary}; CanonicalService={CanonicalService}",
+            "Super Admin payout handoff preparation started for vendor {VendorId}. Event={EventName}; Boundary={Boundary}; CanonicalService={CanonicalService}",
             vendorId,
             SuperAdminPayoutOrchestrationTelemetry.PayoutExecutionStarted,
             CanonicalExecutionBoundary,
@@ -66,35 +74,34 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
             var amount = NormalizeAmount(request.Amount);
             var idempotencyKey = NormalizeIdempotencyKey(request.IdempotencyKey);
             var processedBy = NormalizeProcessedBy(actorEmail, NormalizeActorId(actorId));
-            var transferReference = NormalizeOptional(request.TransferReference, 200);
-            var externalReferenceId = NormalizeOptional(request.ExternalReferenceId, 200);
-            var bankTransactionId = NormalizeOptional(request.BankTransactionId, 200);
-            var payoutMethod = await LoadPayoutMethodAsync(
-                vendorId,
-                request,
-                cancellationToken);
-            var earningIds = await SelectCanonicalPayoutEarningsAsync(vendorId, amount, cancellationToken);
             var correlationId = $"SuperAdminPayout:{vendorId:N}:{idempotencyKey}";
-
-            var created = await _canonicalPayoutService.CreatePayoutAsync(
-                vendorId,
-                new CommerceHubCreatePayoutRequestDto
-                {
-                    EarningIds = earningIds,
-                    Method = payoutMethod.MethodType,
-                    IdempotencyKey = idempotencyKey,
-                    Reference = transferReference
-                },
-                correlationId,
-                cancellationToken);
+            var created = await FindPayoutByIdempotencyAsync(vendorId, idempotencyKey, cancellationToken);
+            if (created == null)
+            {
+                var payoutMethod = await LoadPayoutMethodAsync(
+                    vendorId,
+                    request,
+                    cancellationToken);
+                var earningIds = await SelectCanonicalPayoutEarningsAsync(vendorId, amount, cancellationToken);
+                created = await _canonicalPayoutService.CreatePayoutAsync(
+                    vendorId,
+                    new CommerceHubCreatePayoutRequestDto
+                    {
+                        EarningIds = earningIds,
+                        PayoutMethodId = payoutMethod.Id,
+                        Method = payoutMethod.MethodType,
+                        IdempotencyKey = idempotencyKey
+                    },
+                    correlationId,
+                    cancellationToken);
+            }
 
             EnsurePayoutAmountMatchesRequest(created, amount);
+            EnsurePayoutMethodMatchesRequest(created, request.PayoutMethodId);
 
             var processingRequest = new CommerceHubUpdatePayoutRequestDto
             {
-                Reference = transferReference,
-                ExternalReferenceId = externalReferenceId,
-                BankTransactionId = bankTransactionId,
+                Reference = $"SUPER-ADMIN-HANDOFF:{created.PayoutId:N}",
                 ExternalTransferIdempotencyKey = created.ExternalTransferIdempotencyKey
             };
             var processing = await _canonicalPayoutService.MarkProcessingAsync(
@@ -106,31 +113,83 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
                 processedBy);
 
             EnsureCommittedExternalHandoff(processing);
-
-            var payout = await _canonicalPayoutService.MarkCompletedAsync(
+            _telemetry.RecordExecutionSucceeded(processing.Status);
+            _logger.LogInformation(
+                "Super Admin payout handoff committed for vendor {VendorId} and payout {PayoutId}. Event={EventName}; Status={Status}",
                 vendorId,
                 processing.PayoutId,
+                SuperAdminPayoutOrchestrationTelemetry.PayoutExecutionSucceeded,
+                processing.Status);
+
+            return processing;
+        }
+        catch (CommerceHubVendorFinancialControlException exception)
+        {
+            RecordBusinessFailure(vendorId, exception.Code, exception);
+            throw;
+        }
+        catch (CommerceHubCheckoutException exception)
+        {
+            RecordBusinessFailure(vendorId, exception.Code, exception);
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            _telemetry.RecordExecutionFailed("OPERATION_CANCELLED");
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _telemetry.RecordExecutionFailed("UNEXPECTED_INFRASTRUCTURE_FAILURE");
+            _logger.LogError(
+                exception,
+                "Super Admin payout handoff preparation failed unexpectedly for vendor {VendorId}. Event={EventName}",
+                vendorId,
+                SuperAdminPayoutOrchestrationTelemetry.PayoutExecutionFailed);
+
+            throw new SuperAdminPayoutOrchestrationException(
+                "Unexpected infrastructure failure during Super Admin payout orchestration.",
+                exception);
+        }
+    }
+
+    public async Task<CommerceHubPayoutDto> CompleteAsync(
+        Guid vendorId,
+        Guid payoutId,
+        SuperAdminCompleteVendorPayoutRequestDto request,
+        Guid? actorId,
+        string? actorEmail,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        _telemetry.RecordExecutionStarted();
+
+        try
+        {
+            if (!request.ExternalTransferConfirmedExecuted)
+            {
+                throw new CommerceHubVendorFinancialControlException(
+                    "PAYOUT_EXTERNAL_TRANSFER_EXECUTION_CONFIRMATION_REQUIRED",
+                    "Explicit confirmation that the external transfer executed is required.",
+                    StatusCodes.Status400BadRequest);
+            }
+
+            var processedBy = NormalizeProcessedBy(actorEmail, NormalizeActorId(actorId));
+            var payout = await _canonicalPayoutService.MarkCompletedAsync(
+                vendorId,
+                payoutId,
                 new CommerceHubUpdatePayoutRequestDto
                 {
-                    Reference = transferReference,
-                    ExternalReferenceId = externalReferenceId,
-                    BankTransactionId = bankTransactionId,
-                    ExternalTransferIdempotencyKey = processing.ExternalTransferIdempotencyKey,
-                    ExternalTransferHandoffToken = processing.ExternalTransferHandoffToken,
+                    ExternalReferenceId = NormalizeOptional(request.ExternalReferenceId, 200),
+                    BankTransactionId = NormalizeOptional(request.BankTransactionId, 200),
+                    ExternalTransferHandoffToken = NormalizeRequiredHandoffToken(request.ExternalTransferHandoffToken),
                     ExternalTransferConfirmedExecuted = true
                 },
-                correlationId,
+                $"SuperAdminPayoutCompletion:{vendorId:N}:{payoutId:N}",
                 cancellationToken,
                 processedBy);
 
             _telemetry.RecordExecutionSucceeded(payout.Status);
-            _logger.LogInformation(
-                "Super Admin payout orchestration succeeded for vendor {VendorId} and payout {PayoutId}. Event={EventName}; Status={Status}",
-                vendorId,
-                payout.PayoutId,
-                SuperAdminPayoutOrchestrationTelemetry.PayoutExecutionSucceeded,
-                payout.Status);
-
             return payout;
         }
         catch (CommerceHubVendorFinancialControlException exception)
@@ -153,12 +212,13 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
             _telemetry.RecordExecutionFailed("UNEXPECTED_INFRASTRUCTURE_FAILURE");
             _logger.LogError(
                 exception,
-                "Super Admin payout orchestration failed unexpectedly for vendor {VendorId}. Event={EventName}",
+                "Super Admin payout completion failed unexpectedly for vendor {VendorId} and payout {PayoutId}. Event={EventName}",
                 vendorId,
+                payoutId,
                 SuperAdminPayoutOrchestrationTelemetry.PayoutExecutionFailed);
 
             throw new SuperAdminPayoutOrchestrationException(
-                "Unexpected infrastructure failure during Super Admin payout orchestration.",
+                "Unexpected infrastructure failure during Super Admin payout completion.",
                 exception);
         }
     }
@@ -176,7 +236,7 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
 
     private async Task<PayoutMethodSelection> LoadPayoutMethodAsync(
         Guid vendorId,
-        SuperAdminExecuteVendorPayoutRequestDto request,
+        SuperAdminPrepareVendorPayoutRequestDto request,
         CancellationToken cancellationToken)
     {
         var payoutMethod = await _dbContext.CommerceHubVendorPayoutMethods
@@ -201,6 +261,47 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
             "PAYOUT_METHOD_NOT_FOUND",
             "Payout method was not found for this vendor.",
             StatusCodes.Status404NotFound);
+    }
+
+    private async Task<CommerceHubPayoutDto?> FindPayoutByIdempotencyAsync(
+        Guid vendorId,
+        string idempotencyKey,
+        CancellationToken cancellationToken)
+    {
+        var payout = await _dbContext.CommerceHubPayouts
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item =>
+                item.TenantId == vendorId &&
+                item.IdempotencyKey == idempotencyKey &&
+                !item.IsDeleted,
+                cancellationToken);
+        if (payout == null)
+        {
+            return null;
+        }
+
+        return new CommerceHubPayoutDto
+        {
+            PayoutId = payout.Id,
+            TenantId = payout.TenantId,
+            PayoutMethodId = payout.PayoutMethodId,
+            Amount = payout.Amount,
+            Currency = payout.Currency,
+            Status = payout.Status.ToString(),
+            Method = payout.Method.ToString(),
+            DestinationValueSnapshot = payout.DestinationValueSnapshot,
+            Reference = payout.Reference,
+            ExternalReferenceId = payout.ExternalReferenceId,
+            BankTransactionId = payout.BankTransactionId,
+            ExternalTransferIdempotencyKey = payout.ExternalTransferIdempotencyKey,
+            ExternalTransferHandoffToken = payout.ExternalTransferHandoffToken,
+            ExternalTransferHandoffCommittedAtUtc = payout.ExternalTransferHandoffCommittedAtUtc,
+            ProcessedBy = payout.ProcessedBy,
+            FailureReason = payout.FailureReason,
+            IdempotencyKey = payout.IdempotencyKey,
+            CreatedAtUtc = payout.CreatedAt,
+            ProcessedAtUtc = payout.ProcessedAtUtc
+        };
     }
 
     private async Task<List<Guid>> SelectCanonicalPayoutEarningsAsync(
@@ -292,6 +393,19 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
             StatusCodes.Status409Conflict);
     }
 
+    private static void EnsurePayoutMethodMatchesRequest(CommerceHubPayoutDto payout, Guid payoutMethodId)
+    {
+        if (payout.PayoutMethodId == payoutMethodId)
+        {
+            return;
+        }
+
+        throw new CommerceHubVendorFinancialControlException(
+            "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PAYLOAD",
+            "This idempotency key was already used with a different payout method.",
+            StatusCodes.Status409Conflict);
+    }
+
     private static Guid NormalizeActorId(Guid? actorId)
     {
         if (actorId.HasValue && actorId.Value != Guid.Empty)
@@ -356,6 +470,20 @@ public sealed class SuperAdminPayoutOrchestrationService : ISuperAdminPayoutOrch
         throw new CommerceHubVendorFinancialControlException(
             "TRANSFER_REFERENCE_INVALID",
             $"Transfer reference must not exceed {maxLength} characters.",
+            StatusCodes.Status400BadRequest);
+    }
+
+    private static string NormalizeRequiredHandoffToken(string? value)
+    {
+        var normalized = NormalizeOptional(value, 200);
+        if (normalized != null)
+        {
+            return normalized;
+        }
+
+        throw new CommerceHubVendorFinancialControlException(
+            "PAYOUT_EXTERNAL_HANDOFF_TOKEN_REQUIRED",
+            "The committed payout handoff token is required.",
             StatusCodes.Status400BadRequest);
     }
 

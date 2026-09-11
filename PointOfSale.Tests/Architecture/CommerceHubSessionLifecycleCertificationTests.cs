@@ -52,12 +52,12 @@ public sealed class CommerceHubSessionLifecycleCertificationTests
         var changeEmailMethod = Slice(service, "public async Task<CommerceHubCustomerAuthResult> ChangeEmailAsync", "private async Task InvalidateEmailVerificationTokensAsync");
 
         Assert.Contains("RevokeTokenAsync(accessToken, \"logout\"", logoutAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", logoutAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", logoutAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", logoutAction, StringComparison.Ordinal);
         Assert.Contains("LoggedOut", logoutAction, StringComparison.Ordinal);
 
         Assert.Contains("RevokeAllTokensAsync", revokeAllAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", revokeAllAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", revokeAllAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", revokeAllAction, StringComparison.Ordinal);
         Assert.Contains("AllSessionsRevoked", revokeAllAction, StringComparison.Ordinal);
 
@@ -65,11 +65,11 @@ public sealed class CommerceHubSessionLifecycleCertificationTests
         Assert.Contains("customer.RevokeAllSessions(now)", resetPasswordMethod, StringComparison.Ordinal);
         Assert.Contains("customer.RevokeAllSessions(DateTime.UtcNow)", changePasswordMethod, StringComparison.Ordinal);
         Assert.Contains("customer.RevokeAllSessions(now)", changeEmailMethod, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", resetPasswordAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", resetPasswordAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", resetPasswordAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", changePasswordAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", changePasswordAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", changePasswordAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", changeEmailAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", changeEmailAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", changeEmailAction, StringComparison.Ordinal);
     }
 

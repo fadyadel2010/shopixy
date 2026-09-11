@@ -17,11 +17,15 @@ import { Link, useParams } from "react-router-dom";
 
 import { normalizeApiError } from "@/api";
 import { EmbeddedStripePaymentForm } from "@/payments/EmbeddedStripePaymentForm";
-import { formatRefundPayoutMethodLabel } from "@/features/customer/payout-details";
+import {
+  formatRefundPayoutMethodLabel,
+  isDevelopmentRefundSimulation
+} from "@/features/customer/payout-details";
 import { RefundRequestModal } from "@/features/customer/components/RefundRequestModal";
 import { RefundEvidenceDialog, formatRefundReasonLabel } from "@/features/customer/refund-evidence";
 import { customerOrderDetailsQueryOptions } from "@/features/customer/queries";
 import { ItemStatusBadge, OrderStatusBadge, PaymentStatusBadge, RefundStatusBadge, formatCustomerDate } from "@/features/customer/status";
+import { beginPaymentInitiationTrace } from "@/features/checkout/paymentInitiationTrace";
 import { checkoutService } from "@/services";
 import { InlineErrorState } from "@/shared/InlineErrorState";
 import { SectionHeading } from "@/shared/SectionHeading";
@@ -31,7 +35,11 @@ import { Button } from "@/ui/button";
 import { Card, CardContent } from "@/ui/card";
 import { formatCurrency, useDocumentTitle } from "@/utils";
 
-const getRefundStatusMessage = (status: string) => {
+const getRefundStatusMessage = (
+  status: string,
+  isDevelopmentSimulation: boolean,
+  externalMoneyMovementConfirmed: boolean
+) => {
   if (status === "AwaitingPayout" || status === "ReadyForExecution") {
     return {
       tone: "border-amber-200 bg-amber-50 text-amber-950",
@@ -41,8 +49,16 @@ const getRefundStatusMessage = (status: string) => {
 
   if (status === "Paid" || status === "Executed" || status === "Completed") {
     return {
-      tone: "border-emerald-200 bg-emerald-50 text-emerald-950",
-      message: "Your refund has been sent successfully."
+      tone: isDevelopmentSimulation
+        ? "border-blue-200 bg-blue-50 text-blue-950"
+        : externalMoneyMovementConfirmed
+          ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+          : "border-amber-200 bg-amber-50 text-amber-950",
+      message: isDevelopmentSimulation
+        ? "Development simulation recorded successfully. No external money movement occurred."
+        : externalMoneyMovementConfirmed
+          ? "Your refund has been sent successfully."
+          : "Your refund was recorded, but external money movement has not been confirmed."
     };
   }
 
@@ -123,7 +139,7 @@ export const CustomerOrderDetailsPage = () => {
     return <InlineErrorState title="Invalid order" message="This customer order link is incomplete." />;
   }
 
-  if (orderQuery.isLoading || orderQuery.isFetching) {
+  if (orderQuery.isLoading) {
     return (
       <div className="space-y-4">
         {[0, 1, 2].map((item) => (
@@ -164,23 +180,44 @@ export const CustomerOrderDetailsPage = () => {
     !!paymentInitiationResult.publishableKey;
 
   const handleContinuePayment = async () => {
+    const trace = beginPaymentInitiationTrace("customer-order-details", order.orderId);
     setIsInitiatingPayment(true);
     setPaymentInitiationError(null);
 
     try {
       // A rendered query result is presentation only. Re-enter the current backend
       // order authority at execution time so a stale tab cannot retain retry power.
+      trace.mark("order-refetch-started");
       const refreshedOrder = await orderQuery.refetch();
       const currentOrder = refreshedOrder.data;
+      trace.mark("order-refetch-completed", {
+        isError: refreshedOrder.isError,
+        hasOrder: Boolean(currentOrder),
+        canRetryPayment: currentOrder?.canRetryPayment ?? null,
+        currentOrderId: currentOrder?.orderId ?? null
+      });
       if (refreshedOrder.isError || !currentOrder?.canRetryPayment) {
+        trace.mark("retry-authority-rejected");
         throw new Error("Payment retry is no longer authorized for this order.");
       }
 
       const provider = currentOrder.paymentMethodCode as Exclude<CheckoutPaymentMethod, "COD">;
+      trace.mark("checkout-service-entered", {
+        orderId: currentOrder.orderId,
+        provider,
+        amount: currentOrder.totalAmount,
+        currency: currentOrder.currency
+      });
       const initiationResponse = await checkoutService.initiatePayment({
         orderId: currentOrder.orderId,
         provider
       }, currentOrder.totalAmount, currentOrder.currency);
+      trace.mark("initiation-authority-accepted", {
+        paymentId: initiationResponse.paymentId,
+        handoffType: initiationResponse.handoffType,
+        provider: initiationResponse.provider,
+        isReusable: initiationResponse.isReusable
+      });
 
       setPaymentInitiationResult(initiationResponse);
 
@@ -216,6 +253,11 @@ export const CustomerOrderDetailsPage = () => {
       });
     } catch (error) {
       const api = normalizeApiError(error);
+      trace.mark("handler-failed", {
+        status: api.status,
+        code: api.code ?? null,
+        message: api.message
+      });
       setPaymentInitiationError(api.message);
       showToast({
         title: "Payment initiation failed",
@@ -223,6 +265,7 @@ export const CustomerOrderDetailsPage = () => {
         tone: "error"
       });
     } finally {
+      trace.finish();
       setIsInitiatingPayment(false);
     }
   };
@@ -324,8 +367,8 @@ export const CustomerOrderDetailsPage = () => {
       {!isRetryableOnlinePayment && order.paymentRecoveryMessage ? (
         <Card className="border-amber-200 bg-amber-50/80 shadow-card">
           <CardContent className="space-y-3 p-5 md:p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Payment Under Review</p>
-            <h2 className="text-2xl font-black tracking-tight text-foreground">Do not retry this payment yet</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Payment Action Unavailable</p>
+            <h2 className="text-2xl font-black tracking-tight text-foreground">Payment cannot continue yet</h2>
             <p className="max-w-3xl text-sm leading-6 text-amber-950/85">{order.paymentRecoveryMessage}</p>
           </CardContent>
         </Card>
@@ -404,7 +447,12 @@ export const CustomerOrderDetailsPage = () => {
                           <div className="mt-4 space-y-2 border-t border-border/70 pt-4">
                             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Existing refund requests</p>
                             {item.existingRefunds.map((refund) => {
-                              const refundStatusMessage = getRefundStatusMessage(refund.status);
+                              const isDevelopmentSimulation = isDevelopmentRefundSimulation(refund.payout);
+                               const refundStatusMessage = getRefundStatusMessage(
+                                 refund.status,
+                                 isDevelopmentSimulation,
+                                 refund.payout?.externalMoneyMovementConfirmed === true
+                               );
 
                               return (
                                 <div key={refund.refundId} className="rounded-[1rem] border border-border/70 bg-slate-50/80 px-3 py-3">
@@ -422,6 +470,16 @@ export const CustomerOrderDetailsPage = () => {
                                       ) : null}
                                       {refund.payout ? (
                                         <div className="rounded-[1rem] border border-white/70 bg-white px-3 py-3 text-sm">
+                                          {isDevelopmentSimulation ? (
+                                            <>
+                                              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700">
+                                                Development refund simulation
+                                              </p>
+                                              <p className="mt-1 text-xs font-semibold text-blue-900">
+                                                Internal refund recognition only. No external money movement occurred.
+                                              </p>
+                                            </>
+                                          ) : null}
                                           <p className="font-semibold text-foreground">
                                             {formatRefundPayoutMethodLabel(refund.payout.method)}
                                           </p>
@@ -429,13 +487,20 @@ export const CustomerOrderDetailsPage = () => {
                                           {refund.payout.transactionReference ? (
                                             <>
                                               <p className="mt-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                                Transaction Ref
+                                                {isDevelopmentSimulation ? "Simulation reference" : "Transaction Ref"}
                                               </p>
-                                              <p className="mt-1 text-sm font-medium text-foreground">{refund.payout.transactionReference}</p>
+                                              <p className="mt-1 break-all text-sm font-medium text-foreground">{refund.payout.transactionReference}</p>
                                             </>
                                           ) : null}
                                           {refund.payout.paidAt ? (
-                                            <p className="mt-2 text-xs text-muted-foreground">Paid at {formatCustomerDate(refund.payout.paidAt)}</p>
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                               {isDevelopmentSimulation
+                                                 ? "Simulation recorded at"
+                                                 : refund.payout.externalMoneyMovementConfirmed
+                                                   ? "Paid at"
+                                                   : "Recorded at"}{" "}
+                                              {formatCustomerDate(refund.payout.paidAt)}
+                                            </p>
                                           ) : null}
                                         </div>
                                       ) : null}

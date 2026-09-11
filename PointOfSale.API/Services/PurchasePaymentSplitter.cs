@@ -45,6 +45,11 @@ internal static class PurchasePaymentSplitter
             {
                 return (false, 0m, 0m, 0m, "Paid amount cannot exceed total amount.");
             }
+
+            if (request.PaymentMethod != PaymentMethod.Credit && normalizedPaidAmount != normalizedTotalAmount)
+            {
+                return (false, 0m, 0m, 0m, "Cash, card, and mixed purchases must be paid in full. Use Credit for an unpaid balance.");
+            }
         }
 
         if (normalizedPaidAmount == 0)

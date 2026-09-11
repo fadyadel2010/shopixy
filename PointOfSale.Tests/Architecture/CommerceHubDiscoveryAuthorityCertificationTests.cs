@@ -31,7 +31,9 @@ public sealed class CommerceHubDiscoveryAuthorityCertificationTests
         Assert.Contains("GetProductByIdAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("GetPublishedProductByIdAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("IsVendorSuppressedAsync(listing.TenantId", queryService, StringComparison.Ordinal);
-        Assert.Contains("EnsureTenantOwnedEntity(listing.TenantId", queryService, StringComparison.Ordinal);
+        Assert.DoesNotContain("ITenantContext", queryService, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureTenantOwnedEntity", queryService, StringComparison.Ordinal);
+        Assert.Contains("private static Guid? ResolveTenantScope(Guid? requestedTenantId) => requestedTenantId;", queryService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("return null;", queryService, StringComparison.Ordinal);
         Assert.Contains("Current SQL listing/product/variant authority does not permit CommerceHub search visibility.", overlay, StringComparison.Ordinal);
@@ -51,7 +53,9 @@ public sealed class CommerceHubDiscoveryAuthorityCertificationTests
         Assert.Contains("document.PriceSource = priceResolution.PriceSource.ToString()", overlay, StringComparison.Ordinal);
         Assert.Contains("document.InStock", overlay, StringComparison.Ordinal);
         Assert.Contains("document.AvailableStock", overlay, StringComparison.Ordinal);
-        Assert.Contains("product.inStock ? \"In stock\" : \"Out of stock\"", productCard, StringComparison.Ordinal);
+        Assert.Contains("product.availableStock > 0", productCard, StringComparison.Ordinal);
+        Assert.Contains("? \"In stock\"", productCard, StringComparison.Ordinal);
+        Assert.Contains(": \"Out of stock\"", productCard, StringComparison.Ordinal);
         Assert.Contains("formatCurrency(product.price, product.currency)", productCard, StringComparison.Ordinal);
         Assert.Contains("inStock: boolean", variantSelector, StringComparison.Ordinal);
         Assert.Contains("getOptionState", variantSelector, StringComparison.Ordinal);
@@ -81,25 +85,5 @@ public sealed class CommerceHubDiscoveryAuthorityCertificationTests
         Assert.Contains("CommerceHubSearchSyncHealthCheck", health, StringComparison.Ordinal);
     }
 
-    private static string ReadRepoFile(string relativePath)
-    {
-        var root = FindRepoRoot(AppContext.BaseDirectory);
-        return File.ReadAllText(Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar)));
-    }
-
-    private static string FindRepoRoot(string startDirectory)
-    {
-        var directory = new DirectoryInfo(startDirectory);
-        while (directory != null)
-        {
-            if (File.Exists(Path.Combine(directory.FullName, "PointOfSale.sln")))
-            {
-                return directory.FullName;
-            }
-
-            directory = directory.Parent;
-        }
-
-        throw new InvalidOperationException("Repository root could not be found.");
-    }
+    private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);
 }

@@ -38,10 +38,11 @@ public sealed class TenantLifecycleAuthorityCertificationTests
         Assert.DoesNotContain("tenant.IsActive", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("[IsActive] = CAST(1 AS bit)", checkout, StringComparison.Ordinal);
         Assert.DoesNotContain("tenant.IsActive", cart, StringComparison.Ordinal);
-        Assert.DoesNotContain("tenant.IsActive", query, StringComparison.Ordinal);
+        Assert.Contains("tenant.IsActive", query, StringComparison.Ordinal);
+        Assert.Contains("tenant.Status == TenantStatus.Active", query, StringComparison.Ordinal);
         Assert.DoesNotContain("tenant.IsActive", homepage, StringComparison.Ordinal);
 
-        Assert.Contains("tenant.SetLifecycleStatus(", governance, StringComparison.Ordinal);
+        Assert.DoesNotContain("tenant.SetLifecycleStatus(", governance, StringComparison.Ordinal);
         Assert.DoesNotContain("tenant.Status = targetStatus", governance, StringComparison.Ordinal);
         Assert.DoesNotContain("tenant.IsActive = targetStatus", governance, StringComparison.Ordinal);
     }

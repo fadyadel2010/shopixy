@@ -2,7 +2,7 @@
 
 Date: 2026-06-21
 
-Status: Refund Lifecycle Authority is production-certifiable for inspected frontend runtime paths after Super Admin mutation-time lifecycle revalidation hardening.
+Status: Updated 2026-09-03. Super Admin refund actions retain current-authority revalidation; return logistics mutations belong to the owning POS vendor.
 
 ## Lifecycle Vocabulary
 
@@ -29,7 +29,7 @@ Inspected POS vendor refund-impact evidence is financial presentation under curr
 
 ## Admin Findings
 
-Super Admin refund monitoring validates lifecycle vocabulary and duplicate rows before presentation. URL-selected refund IDs are candidates only and are re-derived from the current accepted monitoring list. Details validate refund status, payment status, payment-record status, execution status, return status, dates, money, execution evidence, failed-refund evidence, and current selected-row scope. Approve, reject, retry, execute, and return mutation submissions now re-fetch current monitoring authority and current detail authority immediately before mutation; stale open modals or stale selected rows cannot submit lifecycle intent.
+Super Admin refund monitoring validates lifecycle vocabulary and duplicate rows before presentation. URL-selected refund IDs are candidates only and are re-derived from the current accepted monitoring list. Details validate refund status, payment status, payment-record status, execution status, return status, dates, money, execution evidence, failed-refund evidence, and current selected-row scope. Approve, reject, retry, and execute submissions re-fetch current monitoring and detail authority; return state remains read-only on this surface.
 
 ## Payment Consistency Findings
 
@@ -41,7 +41,7 @@ Order lifecycle cannot create refund lifecycle. Customer refund entry remains bo
 
 ## Return Consistency Findings
 
-Return lifecycle cannot become refund lifecycle. Embedded return DTOs must match current refund, item, customer, and vendor identities and pass return status/trigger/timestamp/action validation. Return milestone labels are presentation only. Return override and failed-return submissions now re-enter current refund detail authority and use the current backend return ID before mutation.
+Return lifecycle cannot become refund lifecycle. Embedded return DTOs must match current refund, item, customer, and vendor identities and pass return status/trigger/timestamp/action validation. Return milestone labels are presentation only. Owning-vendor return submissions re-enter the current vendor order/return authority and use the current backend status before mutation.
 
 ## Bootstrap Findings
 
@@ -61,8 +61,8 @@ Lifecycle replay, storage replay, history replay, route replay, selection replay
 
 ## Runtime Hardening Performed
 
-- Added Super Admin mutation-time revalidation for refund lifecycle actions: approve, reject, retry, execute, return override, and mark-return-failed now refetch current backend monitoring authority and current backend detail authority before submitting backend-bound intent.
-- Added current backend capability checks for `canApprove`, `canReject`, `canRetry`, `canExecute`, payout-ready status, payout-method mismatch confirmation, current return identity, and current `canMarkFailed` before mutation submission.
+- Retained Super Admin mutation-time revalidation for refund actions: approve, reject, retry, and execute refetch current backend monitoring and detail authority before submitting intent.
+- Removed Super Admin return mutations; vendor return commands validate current vendor identity, action grant, and expected status.
 - Added fail-closed localized message for missing current backend refund action authority.
 
 ## Exact Runtime Files Modified

@@ -27,6 +27,13 @@ const toStrictNumber = (value, { allowZero = false, maxDecimalPlaces = 10 } = {}
 
 const buildRequestId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 const MIXED_PAYMENT_TOLERANCE = 0.01
+const EDITABLE_PAYMENT_METHODS = new Set(['Cash', 'Card', 'Mixed', 'Credit'])
+const searchActiveSalesRepresentatives = ({ search, page, pageSize }) => searchSalesRepresentatives({
+    search,
+    page,
+    pageSize,
+    isActive: true,
+})
 
 export const getSaleSubmissionErrorMessage = (error, t) => {
     if (isRequestTimeout(error)) {
@@ -45,7 +52,9 @@ const isActiveSaleSubmissionConflict = (error) => {
     }
 
     // Check for machine-readable conflict code first
-    const conflictCode = error.response?.data?.conflictCode
+    const conflictCode = error.response?.data?.code
+        || error.response?.data?.conflictCode
+        || error.response?.data?.data?.conflictCode
     if (conflictCode) {
         // Only treat SALE_IN_PROGRESS as an active submission conflict
         // Other conflict codes (if any) should return false
@@ -113,6 +122,14 @@ const buildPaymentBreakdown = ({ paymentMethod, safeTotal, change, mixedPayment,
         }]
     }
 
+    if (paymentMethod === 'Credit') {
+        return [{
+            key: 'credit',
+            label: t('paymentModal.customerAccountCharge'),
+            amount: safeTotal,
+        }]
+    }
+
     return [
         {
             key: 'cash',
@@ -137,11 +154,15 @@ export default function PaymentModal({
     paymentAttemptId,
     posCartId,
     onRevalidateStock,
+    onPreparePosCart,
     onClose,
     onComplete,
     onError,
     editingSaleId,
     editingMutationVersion,
+    initialPaymentMethod,
+    initialCashAmount,
+    initialSalesRepresentative,
 }) {
     const { t, i18n } = useTranslation()
     const isRTL = i18n.language === 'ar'
@@ -159,16 +180,24 @@ export default function PaymentModal({
 
     useEffect(() => {
         const safeTotal = Math.max(0, roundCurrency(total))
-        setPaymentMethod('Cash')
-        setCashAmount(safeTotal.toFixed(2))
+        const nextPaymentMethod = editingSaleId && EDITABLE_PAYMENT_METHODS.has(initialPaymentMethod)
+            ? initialPaymentMethod
+            : 'Cash'
+        const parsedInitialCashAmount = parseAmountInput(initialCashAmount)
+        const nextCashAmount = editingSaleId && parsedInitialCashAmount.isValid
+            ? parsedInitialCashAmount.value
+            : safeTotal
+
+        setPaymentMethod(nextPaymentMethod)
+        setCashAmount(nextCashAmount.toFixed(2))
         setLoading(false)
-        setSelectedSalesRep(null)
+        setSelectedSalesRep(editingSaleId ? initialSalesRepresentative || null : null)
         setPendingConfirmation(null)
         setAmbiguousSubmissionError('')
         submissionLockRef.current = false
         confirmationLockRef.current = false
         lastSubmissionRef.current = null
-    }, [total])
+    }, [editingSaleId, initialCashAmount, initialPaymentMethod, initialSalesRepresentative, total])
 
     const mixedPayment = getMixedPaymentState(total, cashAmount)
 
@@ -231,6 +260,10 @@ export default function PaymentModal({
 
         if (safeTotal <= 0) {
             return t('paymentModal.validation.totalMustBePositive')
+        }
+
+        if (paymentMethod === 'Credit' && !customer) {
+            return t('paymentModal.validation.creditCustomerRequired')
         }
 
         if (!Number.isFinite(safeDiscountValue)) {
@@ -318,6 +351,8 @@ export default function PaymentModal({
             nextCashAmount = paidAmount
         } else if (paymentMethod === 'Card') {
             nextCardAmount = safeTotal
+        } else if (paymentMethod === 'Credit') {
+            paidAmount = 0
         } else {
             if (
                 mixedPayment.hasInvalidCashAmount
@@ -362,7 +397,7 @@ export default function PaymentModal({
         }
     }
 
-    const submitPayment = async (submission) => {
+    const submitPayment = async (submission, preparedPosCartId = posCartId) => {
         if (submissionLockRef.current) {
             return false
         }
@@ -383,10 +418,10 @@ export default function PaymentModal({
             try {
                 saleResponse = editingSaleId
                     ? await api.put(`/Sales/${editingSaleId}`, submission.payload, {
-                        headers: buildIdempotencyHeaders(idempotencyKey, paymentAttemptId, posCartId),
+                        headers: buildIdempotencyHeaders(idempotencyKey, paymentAttemptId, preparedPosCartId),
                     })
                     : await api.post('/Sales', submission.payload, {
-                        headers: buildIdempotencyHeaders(idempotencyKey, paymentAttemptId, posCartId),
+                        headers: buildIdempotencyHeaders(idempotencyKey, paymentAttemptId, preparedPosCartId),
                     })
             } catch (error) {
                 console.error('Sale submission error:', error)
@@ -413,8 +448,6 @@ export default function PaymentModal({
                     ...completionData,
                 })
             }
-
-            completeSale()
 
             try {
                 const invoiceId = saleResponse.data?.invoiceId
@@ -453,6 +486,8 @@ export default function PaymentModal({
 
         confirmationLockRef.current = true
         try {
+            let preparedPosCartId = posCartId
+
             if (typeof onRevalidateStock === 'function') {
                 setIsRevalidating(true)
                 try {
@@ -474,7 +509,26 @@ export default function PaymentModal({
                 }
             }
 
-            const success = await submitPayment(pendingConfirmation)
+            if (!editingSaleId && typeof onPreparePosCart === 'function') {
+                setIsRevalidating(true)
+                try {
+                    preparedPosCartId = await onPreparePosCart()
+                    if (!preparedPosCartId) {
+                        onError(t(
+                            'paymentModal.validation.cartSyncFailed',
+                            'The active POS cart could not be prepared for payment.',
+                        ))
+                        return
+                    }
+                } catch (error) {
+                    console.error('POS cart preparation error:', error)
+                    return
+                } finally {
+                    setIsRevalidating(false)
+                }
+            }
+
+            const success = await submitPayment(pendingConfirmation, preparedPosCartId)
             if (success) {
                 setPendingConfirmation(null)
             }
@@ -542,12 +596,7 @@ export default function PaymentModal({
                             <AsyncEntitySelect
                                 value={selectedSalesRep}
                                 onChange={setSelectedSalesRep}
-                                loadOptions={({ search, page, pageSize }) => searchSalesRepresentatives({
-                                    search,
-                                    page,
-                                    pageSize,
-                                    isActive: true,
-                                })}
+                                loadOptions={searchActiveSalesRepresentatives}
                                 placeholder={t('paymentModal.salesRepPlaceholder')}
                                 emptyText={t('paymentModal.noSalesRepsFound')}
                                 disabled={isBusy}
@@ -564,11 +613,12 @@ export default function PaymentModal({
                             <label className={`mb-2 block text-sm font-medium text-gray-700 ${isRTL ? 'text-right' : 'text-left'}`}>
                                 {t('paymentModal.paymentMethod')}
                             </label>
-                            <div className="grid grid-cols-3 gap-2">
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                 {[
                                     { value: 'Cash', label: t('paymentModal.cashButton') },
                                     { value: 'Card', label: t('paymentModal.cardButton') },
                                     { value: 'Mixed', label: t('paymentModal.mixedButton') },
+                                    ...(customer ? [{ value: 'Credit', label: t('paymentModal.creditButton') }] : []),
                                 ].map(option => (
                                     <button
                                         key={option.value}
@@ -664,8 +714,12 @@ export default function PaymentModal({
             </div>
             {pendingConfirmation ? (
                 <ConfirmModal
-                    title={t('paymentModal.confirmPaymentTitle')}
-                    description={t('paymentModal.confirmPaymentMessage')}
+                    title={paymentSource.paymentMethod === 'Credit'
+                        ? t('paymentModal.confirmCreditTitle')
+                        : t('paymentModal.confirmPaymentTitle')}
+                    description={paymentSource.paymentMethod === 'Credit'
+                        ? t('paymentModal.confirmCreditMessage')
+                        : t('paymentModal.confirmPaymentMessage')}
                     confirmLabel={t('paymentModal.confirmPayment')}
                     cancelLabel={t('common.cancel')}
                     onConfirm={handleConfirmPayment}

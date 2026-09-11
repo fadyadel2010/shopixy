@@ -10,7 +10,7 @@ Actual frontend runtime action surfaces found in code:
 - POS customer/supplier receive payment and make payment.
 - POS manual wallet admin approve payment, reject payment, and view proof.
 - Super Admin vendor payment-method creation, vendor payment proof access, approve vendor payment request, and reject vendor payment request.
-- Super Admin refund review, approve refund, reject refund, retry refund execution, execute/send refund payout, override return status, and mark return failed.
+- Super Admin refund review, approve refund, reject refund, retry refund execution, and execute/send refund payout. Return logistics are separate owning-vendor actions.
 - Super Admin vendor payout queue record completed payout.
 - Super Admin vendor finance adjustment and settlement recording.
 

@@ -298,6 +298,103 @@ public sealed class FinancialReconciliationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetSnapshotAsync_CodCommissionReversalPair_ShouldNotBeOrphaned()
+    {
+        var createdAtUtc = DateTime.UtcNow.AddDays(-1);
+        var order = CreateMarketplaceOrder(
+            Guid.NewGuid(),
+            createdAtUtc,
+            "CH-RECON-COD-REFUND",
+            totalAmount: 400m,
+            subtotal: 400m,
+            shippingTotal: 0m);
+        order.PaymentMethodCode = "COD";
+        order.PaymentMethodName = "Cash on Delivery";
+        var vendorId = Guid.NewGuid();
+        var subOrder = CreateSubOrder(
+            Guid.NewGuid(),
+            order,
+            vendorId,
+            "Vendor COD",
+            "CH-RECON-COD-REFUND-A",
+            grossCommission: 40m,
+            finalCommission: 40m,
+            promoDiscount: 0m,
+            total: 400m,
+            subtotal: 400m,
+            shipping: 0m);
+        subOrder.PaymentMethod = CommerceHubPaymentMethod.CashOnDelivery;
+        subOrder.PaymentMethodCode = "COD";
+        subOrder.PaymentMethodName = "Cash on Delivery";
+        var refund = CreateRefund(
+            Guid.NewGuid(),
+            subOrder,
+            orderItemId: null,
+            quantity: null,
+            processedAtUtc: createdAtUtc.AddHours(1),
+            amount: 400m,
+            vendorEarningReversal: 360m,
+            commissionReversal: 40m,
+            promoReversal: 0m,
+            isFullRefund: true);
+
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubSubOrders.Add(subOrder);
+        _dbContext.CommerceHubRefunds.Add(refund);
+        AddVendorTransaction(
+            vendorId,
+            CommerceHubFinancialTransactionType.OrderPayment,
+            CommerceHubFinancialTransactionDirection.Credit,
+            400m,
+            CommerceHubFinancialReferenceType.Order,
+            subOrder.Id,
+            createdAtUtc,
+            "COD collection");
+        AddPlatformTransaction(
+            CommerceHubFinancialTransactionType.Commission,
+            CommerceHubFinancialTransactionDirection.Credit,
+            40m,
+            CommerceHubFinancialReferenceType.Order,
+            subOrder.Id,
+            createdAtUtc,
+            "COD commission");
+        AddVendorTransaction(
+            vendorId,
+            CommerceHubFinancialTransactionType.Commission,
+            CommerceHubFinancialTransactionDirection.Debit,
+            40m,
+            CommerceHubFinancialReferenceType.Order,
+            subOrder.Id,
+            createdAtUtc,
+            "COD commission debt");
+        AddPlatformTransaction(
+            CommerceHubFinancialTransactionType.Commission,
+            CommerceHubFinancialTransactionDirection.Debit,
+            40m,
+            CommerceHubFinancialReferenceType.Refund,
+            refund.Id,
+            createdAtUtc.AddHours(1),
+            "COD commission reversal");
+        AddVendorTransaction(
+            vendorId,
+            CommerceHubFinancialTransactionType.Commission,
+            CommerceHubFinancialTransactionDirection.Credit,
+            40m,
+            CommerceHubFinancialReferenceType.Refund,
+            refund.Id,
+            createdAtUtc.AddHours(1),
+            "COD debt reduction");
+        await SaveCommerceHubFixtureAsync();
+
+        var snapshot = await _readService.GetSnapshotAsync();
+
+        Assert.Equal("OK", snapshot.Status);
+        Assert.Equal(0, snapshot.RefundFlowMismatchCount);
+        Assert.Equal(0, snapshot.OrphanTransactionsCount);
+        Assert.Equal(0, snapshot.MissingPairCount);
+    }
+
+    [Fact]
     public async Task RunAsync_ShouldDetectPaidExternalPaymentWithoutProviderTransactionReference()
     {
         var createdAtUtc = DateTime.UtcNow.AddDays(-2).Date.AddHours(10);
@@ -356,6 +453,159 @@ public sealed class FinancialReconciliationServiceTests : IDisposable
         Assert.Equal("Critical", execution.Report.Status);
         Assert.Contains(details.Errors, error => error.IssueType == "EXTERNAL_PAYMENT_REFERENCE_MISSING");
         Assert.True(details.CompensationActionCount > 0);
+        Assert.Equal(1, _alertHook.CallCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldAcceptRefundedOrderAsPreviouslyCollectedExternalPayment()
+    {
+        var createdAtUtc = DateTime.UtcNow.AddDays(-2).Date.AddHours(10);
+        var order = CreateMarketplaceOrder(
+            Guid.NewGuid(),
+            createdAtUtc,
+            "CH-RECON-REFUNDED-1001",
+            totalAmount: 110m,
+            subtotal: 100m,
+            shippingTotal: 10m);
+        order.Status = OrderStatus.Refunded;
+        order.PaymentStatus = PaymentStatus.Refunded;
+        var payment = new CommerceHubPayment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 110m,
+            Currency = "EGP",
+            Provider = PaymentProvider.Paymob,
+            ProviderReference = "ch-refunded-ref-1001",
+            ProviderIntentId = "provider-order-refunded-1001",
+            ProviderTransactionId = "provider-transaction-refunded-1001",
+            Status = CommerceHubPaymentRecordStatus.Paid,
+            IsProcessed = true,
+            PaidAtUtc = createdAtUtc.AddMinutes(5),
+            ProcessedAtUtc = createdAtUtc.AddMinutes(5),
+            CreatedAt = createdAtUtc
+        };
+
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubPayments.Add(payment);
+        await SaveCommerceHubFixtureAsync();
+
+        var execution = await _service.RunAsync();
+        var details = DeserializeDetails(execution.Report);
+
+        Assert.DoesNotContain(details.Errors, error => error.IssueType == "EXTERNAL_PAYMENT_ORDER_STATE_MISMATCH");
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldAcceptProcessedProviderDeclineWithMatchingAttemptAndImmutableEvent()
+    {
+        var createdAtUtc = DateTime.UtcNow.AddDays(-1).Date.AddHours(11);
+        var processedAtUtc = createdAtUtc.AddMinutes(5);
+        var order = CreateMarketplaceOrder(
+            Guid.NewGuid(),
+            createdAtUtc,
+            "CH-RECON-DECLINE-1001",
+            totalAmount: 110m,
+            subtotal: 100m,
+            shippingTotal: 10m);
+        order.Status = OrderStatus.OnHold;
+        order.PaymentStatus = PaymentStatus.Pending;
+
+        var payment = new CommerceHubPayment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 110m,
+            Currency = "EGP",
+            Provider = PaymentProvider.Paymob,
+            ProviderReference = "ch-decline-ref-1001",
+            ProviderIntentId = "provider-order-1001",
+            ProviderTransactionId = "provider-transaction-1001",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = "Provider declined the transaction.",
+            IsProcessed = true,
+            ProcessedAtUtc = processedAtUtc,
+            CreatedAt = createdAtUtc
+        };
+        payment.Attempts.Add(new CommerceHubPaymentAttempt
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            Provider = payment.Provider,
+            AttemptNumber = 1,
+            ProviderReference = payment.ProviderReference,
+            ProviderIntentId = payment.ProviderIntentId,
+            ProviderTransactionId = payment.ProviderTransactionId,
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = payment.FailureReason,
+            CompletedAtUtc = processedAtUtc,
+            CreatedAt = createdAtUtc
+        });
+        payment.Logs.Add(new CommerceHubPaymentLog
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            EventType = "CALLBACK",
+            ProviderEventId = payment.ProviderTransactionId,
+            RawResponse = "paymob-webhook:v1:protected-evidence",
+            CreatedAt = processedAtUtc
+        });
+
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubPayments.Add(payment);
+        await SaveCommerceHubFixtureAsync();
+
+        var execution = await _service.RunAsync();
+        var details = DeserializeDetails(execution.Report);
+
+        Assert.Equal("Healthy", execution.Report.Status);
+        Assert.DoesNotContain(details.Errors, error => error.IssueType == "FAILED_EXTERNAL_PAYMENT_HAS_TRANSACTION");
+        Assert.Equal(0, _alertHook.CallCount);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldQuarantineFailedPaymentTransactionWithoutMatchingProviderEvidence()
+    {
+        var createdAtUtc = DateTime.UtcNow.AddDays(-1).Date.AddHours(12);
+        var order = CreateMarketplaceOrder(
+            Guid.NewGuid(),
+            createdAtUtc,
+            "CH-RECON-UNPROVEN-FAILURE-1001",
+            totalAmount: 110m,
+            subtotal: 100m,
+            shippingTotal: 10m);
+        order.Status = OrderStatus.OnHold;
+        order.PaymentStatus = PaymentStatus.Pending;
+        var payment = new CommerceHubPayment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Order = order,
+            Amount = 110m,
+            Currency = "EGP",
+            Provider = PaymentProvider.Paymob,
+            ProviderReference = "ch-unproven-failure-1001",
+            ProviderTransactionId = "provider-transaction-unproven",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = "Locally failed without retained provider event.",
+            IsProcessed = true,
+            ProcessedAtUtc = createdAtUtc.AddMinutes(5),
+            CreatedAt = createdAtUtc
+        };
+
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubPayments.Add(payment);
+        await SaveCommerceHubFixtureAsync();
+
+        var execution = await _service.RunAsync();
+        var details = DeserializeDetails(execution.Report);
+
+        Assert.Equal("Critical", execution.Report.Status);
+        Assert.Contains(details.Errors, error => error.IssueType == "FAILED_EXTERNAL_PAYMENT_HAS_TRANSACTION");
         Assert.Equal(1, _alertHook.CallCount);
     }
 
@@ -586,6 +836,66 @@ public sealed class FinancialReconciliationServiceTests : IDisposable
         Assert.Equal(1, details.CheckedPromoUsages);
         Assert.Empty(details.Errors);
         Assert.Empty(details.Warnings);
+    }
+
+    [Fact]
+    public async Task RunAsync_ShouldNotRequireLedgerForPendingCodSiblingOfPartiallyRefundedOrder()
+    {
+        var createdAtUtc = DateTime.UtcNow.AddDays(-2).Date.AddHours(14);
+        var order = CreateMarketplaceOrder(
+            Guid.NewGuid(),
+            createdAtUtc,
+            "CH-RECON-PARTIAL-COD",
+            totalAmount: 220m,
+            subtotal: 200m,
+            shippingTotal: 20m);
+        order.PaymentStatus = PaymentStatus.PartiallyRefunded;
+
+        var recognizedSubOrder = CreateSubOrder(
+            Guid.NewGuid(),
+            order,
+            Guid.NewGuid(),
+            "Vendor Recognized",
+            "CH-RECON-PARTIAL-COD-A",
+            grossCommission: 10m,
+            finalCommission: 10m,
+            promoDiscount: 0m);
+        var pendingCodSubOrder = CreateSubOrder(
+            Guid.NewGuid(),
+            order,
+            Guid.NewGuid(),
+            "Vendor Pending COD",
+            "CH-RECON-PARTIAL-COD-B",
+            grossCommission: 10m,
+            finalCommission: 10m,
+            promoDiscount: 0m);
+        pendingCodSubOrder.Status = OrderStatus.Pending;
+        pendingCodSubOrder.PaymentStatus = PaymentStatus.CashOnDelivery;
+        pendingCodSubOrder.PaymentMethod = CommerceHubPaymentMethod.CashOnDelivery;
+        pendingCodSubOrder.PaymentMethodCode = "COD";
+        pendingCodSubOrder.PaymentMethodName = "Cash on Delivery";
+
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubSubOrders.AddRange(recognizedSubOrder, pendingCodSubOrder);
+        AddPlatformTransaction(
+            CommerceHubFinancialTransactionType.Commission,
+            CommerceHubFinancialTransactionDirection.Credit,
+            10m,
+            CommerceHubFinancialReferenceType.Order,
+            recognizedSubOrder.Id,
+            createdAtUtc,
+            "Recognized sibling commission");
+
+        await SaveCommerceHubFixtureAsync();
+        await StoreMatchingAggregatesAsync(createdAtUtc.Date, createdAtUtc.Date);
+
+        var execution = await _service.RunAsync();
+        var details = DeserializeDetails(execution.Report);
+
+        Assert.Equal("Healthy", execution.Report.Status);
+        Assert.Equal(0, execution.Report.MismatchCount);
+        Assert.DoesNotContain(details.Errors, error =>
+            error.IssueType is "ORDER_COMMISSION_LEDGER_MISMATCH" or "NET_COMMISSION_LEDGER_MISMATCH");
     }
 
     [Fact]

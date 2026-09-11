@@ -26,6 +26,7 @@ vi.mock('../store/authStore', () => ({
 }))
 
 import {
+    confirmAdminReturnReceipt,
     getAdminOrderFulfillmentActions,
     getAdminOrderPaymentActions,
     getAdminOrders,
@@ -89,6 +90,132 @@ const mixedFifteenOrderResponse = {
     hasNextPage: false,
 }
 
+const liveFiveOrderResponse = {
+    items: [
+        {
+            tenantId: currentUser.tenantId,
+            orderId: '390dbd08-8dbe-4cfe-9008-bd361f06f3db',
+            orderNumber: 'ORD-83B3-2026-01028',
+            customerName: 'R2 Certification Customer',
+            totalAmount: 410.00,
+            currency: 'EGP',
+            status: 'Delivered',
+            paymentStatus: 'Pending',
+            source: 'Ecommerce',
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '390dbd08-8dbe-4cfe-9008-bd361f06f3db',
+                attributionId: '01a049d4-0b22-7539-bffe-38dbae50f1a6',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-28T19:23:48.386266Z',
+            },
+            isMarketplaceOrder: false,
+            createdAtUtc: '2026-08-28T19:23:48.274084Z',
+        },
+        {
+            tenantId: currentUser.tenantId,
+            orderId: '572e86e9-f53b-47b9-a7a5-5f094d0a3846',
+            orderNumber: 'ORD-83B3-2026-01027',
+            customerName: 'R2 Certification Customer',
+            totalAmount: 410.00,
+            currency: 'EGP',
+            status: 'OnHold',
+            paymentStatus: 'Pending',
+            source: 'Ecommerce',
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '572e86e9-f53b-47b9-a7a5-5f094d0a3846',
+                attributionId: '01a049d3-f8e3-7967-889e-c9853e7adac0',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-28T19:23:43.712797Z',
+            },
+            isMarketplaceOrder: false,
+            createdAtUtc: '2026-08-28T19:23:43.535996Z',
+        },
+        {
+            tenantId: currentUser.tenantId,
+            orderId: 'fd66cbb8-c6c0-470f-aa70-210ac26336e9',
+            orderNumber: 'ORD-83B3-2026-01026',
+            customerName: 'R2 Certification Customer',
+            totalAmount: 410.00,
+            currency: 'EGP',
+            status: 'Delivered',
+            paymentStatus: 'Pending',
+            source: 'Ecommerce',
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: 'fd66cbb8-c6c0-470f-aa70-210ac26336e9',
+                attributionId: '01a049b1-296b-7a69-9315-8c7ad2001cce',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-28T18:45:42.372989Z',
+            },
+            isMarketplaceOrder: false,
+            createdAtUtc: '2026-08-28T18:45:42.164995Z',
+        },
+        {
+            tenantId: currentUser.tenantId,
+            orderId: '848bd7bb-f122-48e3-b9c3-a53ba14b28a6',
+            orderNumber: 'ORD-83B3-2026-01023',
+            customerName: 'R2 Certification Customer',
+            totalAmount: 410.00,
+            currency: 'EGP',
+            status: 'OnHold',
+            paymentStatus: 'Pending',
+            source: 'Ecommerce',
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '848bd7bb-f122-48e3-b9c3-a53ba14b28a6',
+                attributionId: '01a049a7-0311-7e5f-bffd-4039747337c7',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-28T18:34:37.196942Z',
+            },
+            isMarketplaceOrder: false,
+            createdAtUtc: '2026-08-28T18:34:37.012752Z',
+        },
+        {
+            tenantId: currentUser.tenantId,
+            orderId: '0ef9b1db-d174-45fa-aab8-5c609e2b96b8',
+            orderNumber: 'ORD-83B3-2026-01022',
+            customerName: 'R2 Certification Customer',
+            totalAmount: 410.00,
+            currency: 'EGP',
+            status: 'Delivered',
+            paymentStatus: 'Refunded',
+            source: 'Ecommerce',
+            affiliateAttribution: {
+                tenantId: currentUser.tenantId,
+                orderId: '0ef9b1db-d174-45fa-aab8-5c609e2b96b8',
+                attributionId: '01a04957-b8c4-7d76-9ac0-e52ee60d840a',
+                affiliateAccountId: '01a03e11-e234-7d40-b77e-99f9463c7a40',
+                referralCode: 'DMFOQ21IP3',
+                promotionLinkId: '01a03e6b-3ff1-7c1b-9cf2-a340244c0f25',
+                source: 'ReferralLink',
+                attributedAtUtc: '2026-08-28T17:08:00.835381Z',
+            },
+            isMarketplaceOrder: false,
+            createdAtUtc: '2026-08-28T17:08:00.728166Z',
+        },
+    ],
+    page: 1,
+    pageSize: 20,
+    totalCount: 5,
+    totalPages: 1,
+    hasNextPage: false,
+    hasPreviousPage: false,
+}
+
 describe('Admin Orders API error contract', () => {
     beforeEach(() => {
         vi.clearAllMocks()
@@ -106,6 +233,20 @@ describe('Admin Orders API error contract', () => {
             .resolves.toEqual({ success: true, newStatus: 'Delivered' })
         expect(apiPostMock).toHaveBeenCalledWith(
             `/orders/${realAffiliateOrder.orderId}/fulfillment/delivered`,
+            payload,
+            expect.objectContaining({ headers: expect.objectContaining({ 'X-Tenant-Id': currentUser.tenantId }) }),
+        )
+    })
+
+    it('submits vendor receipt evidence to the fixed tenant-scoped return endpoint', async () => {
+        const returnId = '2744962e-50e4-45b8-9d03-a0f6d86671c5'
+        const payload = { resellableQuantity: 1, damagedQuantity: 0, notes: 'Received sealed' }
+        apiPostMock.mockResolvedValue({ data: { returnId, status: 'Confirmed' } })
+
+        await expect(confirmAdminReturnReceipt(returnId, payload))
+            .resolves.toEqual({ returnId, status: 'Confirmed' })
+        expect(apiPostMock).toHaveBeenCalledWith(
+            `/pos-admin/returns/${returnId}/confirm-receipt`,
             payload,
             expect.objectContaining({ headers: expect.objectContaining({ 'X-Tenant-Id': currentUser.tenantId }) }),
         )
@@ -172,6 +313,41 @@ describe('Admin Orders API error contract', () => {
         expect(apiGetMock).toHaveBeenCalledOnce()
     })
 
+    it('accepts the exact current five-order HTTP 200 response through the production client path', async () => {
+        apiGetMock.mockResolvedValue({ data: liveFiveOrderResponse })
+
+        const result = await getAdminOrders({
+            page: 1,
+            pageSize: 20,
+            sortBy: 'createdAt',
+            sortDirection: 'desc',
+        })
+
+        expect(result).toEqual(liveFiveOrderResponse)
+        expect(result.items).toHaveLength(5)
+        expect(result.items.every((order) => order.source === 'Ecommerce')).toBe(true)
+        expect(result.items.every((order) => order.affiliateAttribution)).toBe(true)
+    })
+
+    it('keeps Marketplace lineage mandatory through the production client path', async () => {
+        apiGetMock.mockResolvedValue({
+            data: {
+                ...liveFiveOrderResponse,
+                items: [{
+                    ...liveFiveOrderResponse.items[1],
+                    source: 'Marketplace',
+                    isMarketplaceOrder: true,
+                    affiliateAttribution: null,
+                }],
+                totalCount: 1,
+            },
+        })
+
+        await expect(getAdminOrders({ page: 1, pageSize: 20 })).rejects.toMatchObject({
+            code: 'ORDER_CLIENT_AUTHORITY_REJECTED',
+        })
+    })
+
     it('accepts an empty Admin Orders page without inventing Affiliate evidence', async () => {
         const emptyResponse = {
             items: [],
@@ -226,6 +402,26 @@ describe('Admin Orders API error contract', () => {
                 affiliateAttributionWarning: expect.objectContaining({ code: 'AFFILIATE_ATTRIBUTION_UNAVAILABLE' }),
             }),
         ])
+    })
+
+    it('keeps Affiliate tenant and order linkage contradictions fail-closed', async () => {
+        apiGetMock.mockResolvedValue({
+            data: {
+                ...liveFiveOrderResponse,
+                items: [{
+                    ...liveFiveOrderResponse.items[0],
+                    affiliateAttribution: {
+                        ...liveFiveOrderResponse.items[0].affiliateAttribution,
+                        tenantId: '99999999-9999-4999-8999-999999999999',
+                    },
+                }],
+                totalCount: 1,
+            },
+        })
+
+        await expect(getAdminOrders({ page: 1, pageSize: 20 })).rejects.toMatchObject({
+            code: 'ORDER_CLIENT_AUTHORITY_REJECTED',
+        })
     })
 
     it.each([500, 503])('maps an API %i without exposing its raw response', async (status) => {

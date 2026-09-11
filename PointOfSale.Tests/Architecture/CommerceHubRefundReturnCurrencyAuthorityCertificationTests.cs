@@ -28,10 +28,10 @@ public sealed class CommerceHubRefundReturnCurrencyAuthorityCertificationTests
     public void RefundExecutionPersistence_MustRejectNonEgpCurrency()
     {
         var executionConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubRefundExecutionConfiguration.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260623140000_CommerceHubRefundReturnCurrencyAuthorityHardening.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("CK_CommerceHubRefundExecutions_Currency_EGP", executionConfiguration, StringComparison.Ordinal);
-        Assert.Contains("CHECK (\"\"Currency\"\" = 'EGP') NOT VALID", migration, StringComparison.Ordinal);
+        Assert.Contains("table.CheckConstraint(\"CK_CommerceHubRefundExecutions_Currency_EGP\", \"\\\"Currency\\\" = 'EGP'\")", migration, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

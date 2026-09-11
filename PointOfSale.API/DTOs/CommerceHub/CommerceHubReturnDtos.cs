@@ -31,8 +31,6 @@ public sealed class CommerceHubReturnDetailsDto
     public bool CanMarkDelivered { get; init; }
     public bool CanMarkFailed { get; init; }
     public bool CanConfirmReceipt { get; init; }
-    public bool CanOverrideStatus { get; init; }
-    public IReadOnlyList<CommerceHubReturnStatus> AllowedOverrideStatuses { get; init; } = Array.Empty<CommerceHubReturnStatus>();
     public bool IsExecutionTriggerReached { get; init; }
 
     // SLA Tracking

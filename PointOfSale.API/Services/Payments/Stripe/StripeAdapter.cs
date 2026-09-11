@@ -31,19 +31,29 @@ public sealed class StripeAdapter : IPaymentProviderAdapter
     public ProviderCode ProviderCode { get; } = new(CommerceHubPaymentMethods.Stripe);
 
     public PaymentProviderCapabilities Capabilities => new(
-        SupportsAuthentication: true,
-        SupportsPaymentIntentionCreation: true,
-        SupportsPaymentSessionCreation: true,
+        SupportsAuthentication: IsPaymentConfigurationReady,
+        SupportsPaymentIntentionCreation: IsPaymentConfigurationReady,
+        SupportsPaymentSessionCreation: IsPaymentConfigurationReady,
         SupportsHostedCheckout: false,
-        SupportsPaymentStatusLookup: true,
-        SupportsWebhookVerification: true,
+        SupportsPaymentStatusLookup: IsPaymentConfigurationReady,
+        SupportsWebhookVerification: IsWebhookConfigurationReady,
         SupportsCallbackParsing: false,
-        SupportsRefunds: true,
+        SupportsRefunds: IsPaymentConfigurationReady,
         Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["provider"] = "stripe",
-            ["handoff"] = "client_secret"
+            ["handoff"] = "client_secret",
+            ["configuration_authority"] = "platform"
         });
+
+    private bool IsPaymentConfigurationReady =>
+        _options.Stripe.Enabled &&
+        !string.IsNullOrWhiteSpace(_options.Stripe.SecretKey) &&
+        !string.IsNullOrWhiteSpace(_options.Stripe.PublishableKey);
+
+    private bool IsWebhookConfigurationReady =>
+        IsPaymentConfigurationReady &&
+        !string.IsNullOrWhiteSpace(_options.Stripe.WebhookSecret);
 
     public async Task<PaymentProviderSessionResult> CreateSessionAsync(
         PaymentProviderSessionRequest request,

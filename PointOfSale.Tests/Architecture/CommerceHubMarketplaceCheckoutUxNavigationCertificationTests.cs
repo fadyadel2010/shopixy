@@ -76,9 +76,8 @@ public sealed class CommerceHubMarketplaceCheckoutUxNavigationCertificationTests
         Assert.Contains("authoritativePricing.storeSelections", checkoutPage, StringComparison.Ordinal);
         Assert.Contains("authoritativePricing.shippingTotal", checkoutPage, StringComparison.Ordinal);
 
-        Assert.Contains("paymentMethods.filter(pm => optionMetadata[pm.code])", paymentSelector, StringComparison.Ordinal);
-        Assert.Contains("!paymentMethod.isAvailable", paymentSelector, StringComparison.Ordinal);
-        Assert.Contains("paymentMethod.unavailableReason", paymentSelector, StringComparison.Ordinal);
+        Assert.Contains("paymentMethod.isAvailable && optionMetadata[paymentMethod.code]", paymentSelector, StringComparison.Ordinal);
+        Assert.DoesNotContain("paymentMethod.unavailableReason", paymentSelector, StringComparison.Ordinal);
 
         Assert.Contains("cartService.priceCart(request)", cartPricing, StringComparison.Ordinal);
         Assert.Contains("cartService.priceCart(authoritativeRequest)", cartPricing, StringComparison.Ordinal);

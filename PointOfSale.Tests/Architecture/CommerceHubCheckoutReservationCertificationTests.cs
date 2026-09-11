@@ -21,6 +21,20 @@ public sealed class CommerceHubCheckoutReservationCertificationTests
     }
 
     [Fact]
+    public void CheckoutReservations_MustKeepCodUntilFulfillmentAndOnlinePaymentsTimeBound()
+    {
+        var checkout = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs");
+        var reconciliation = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubInventoryReconciliationJob.cs");
+
+        Assert.Contains("subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery", checkout, StringComparison.Ordinal);
+        Assert.Contains("? null", checkout, StringComparison.Ordinal);
+        Assert.Contains(": DateTime.UtcNow.Add(InventoryReservationTtl)", checkout, StringComparison.Ordinal);
+        Assert.Contains("item.SubOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery", reconciliation, StringComparison.Ordinal);
+        Assert.Contains("item.SubOrder.Status != OrderStatus.Cancelled", reconciliation, StringComparison.Ordinal);
+        Assert.Contains("item.SubOrder.Status != OrderStatus.Refunded", reconciliation, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CheckoutConcurrency_MustKeepCartLocksCustomerLocksAndSerializableBoundary()
     {
         var service = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs");
@@ -54,6 +68,46 @@ public sealed class CommerceHubCheckoutReservationCertificationTests
         Assert.Contains("HasActiveMarketplaceReservationAuthorityAsync", recoveryService, StringComparison.Ordinal);
         Assert.Contains("persistActivePaymentRecoveryContext", checkoutPage, StringComparison.Ordinal);
         Assert.Contains("clearActivePaymentRecoveryContextIfMatches", checkoutPage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExpiredReservationRecovery_MustReacquireOnlyIntactZeroEvidenceOrderAuthority()
+    {
+        var inventory = ReadRepoFile("PointOfSale.API/Services/CommerceHub/InventoryConsistencyService.cs");
+        var payment = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubPaymentService.cs");
+        var recovery = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubPaymentRecoveryAuthorityService.cs");
+        var customerQueries = ReadRepoFile("PointOfSale.CommerceHub/src/features/customer/queries.ts");
+        var customerOrderPage = ReadRepoFile("PointOfSale.CommerceHub/src/pages/CustomerOrderDetailsPage.tsx");
+
+        Assert.Contains("ReacquireMarketplaceOrderReservationsForPaymentAsync", inventory, StringComparison.Ordinal);
+        Assert.Contains("EnsureHistoricalReservationsMatchCurrentOrderAuthority", inventory, StringComparison.Ordinal);
+        Assert.Contains("MARKETPLACE_RESERVATION_HISTORY_CHANGED", inventory, StringComparison.Ordinal);
+        Assert.Contains("MARKETPLACE_RESERVATION_QUANTITY_CHANGED", inventory, StringComparison.Ordinal);
+        Assert.Contains("MARKETPLACE_RESERVATION_REACQUISITION_REQUIRES_NO_PAYMENT_EVIDENCE", inventory, StringComparison.Ordinal);
+        Assert.Contains("LoadMarketplaceOrderReservationHistoryForUpdateAsync", inventory, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", inventory, StringComparison.Ordinal);
+        Assert.Contains("IsolationLevel.Serializable", inventory, StringComparison.Ordinal);
+
+        var lockIndex = payment.IndexOf("var paymentLockResult = await _lockService.TryAcquireLockAsync(", StringComparison.Ordinal);
+        var lockedReloadIndex = payment.IndexOf("await _dbContext.Entry(marketplaceOrder).ReloadAsync(cancellationToken);", lockIndex, StringComparison.Ordinal);
+        var readinessPrecheckIndex = payment.IndexOf("CommerceHubPayment.Initiate.ReservationReacquisition", lockedReloadIndex, StringComparison.Ordinal);
+        var reacquireIndex = payment.IndexOf("ReacquireMarketplaceOrderReservationsForPaymentAsync(", lockIndex, StringComparison.Ordinal);
+        var readinessIndex = payment.IndexOf("EnsureCommerceIntakeAllowedAsync(", reacquireIndex, StringComparison.Ordinal);
+        var providerIndex = payment.IndexOf("var session = provider switch", readinessIndex, StringComparison.Ordinal);
+        Assert.True(lockedReloadIndex > lockIndex, "Order lifecycle authority must be freshly reloaded under the payment lock.");
+        Assert.True(readinessPrecheckIndex < reacquireIndex, "Financial readiness must fail closed before reservation reacquisition mutates inventory.");
+        Assert.True(reacquireIndex > lockIndex, "Reservation reacquisition must run under the payment authority lock.");
+        Assert.True(readinessIndex > reacquireIndex, "Financial readiness must run after current inventory is proven.");
+        Assert.True(providerIndex > readinessIndex, "Provider side effects must remain behind financial readiness.");
+
+        Assert.Contains("RequiresReservationReacquisition", recovery, StringComparison.Ordinal);
+        Assert.Contains("!hasAnyPaymentAuthorityEvidence", recovery, StringComparison.Ordinal);
+        Assert.Contains("HasMarketplaceReservationReacquisitionAuthorityAsync", recovery, StringComparison.Ordinal);
+        Assert.Contains("staleTime: 0", customerQueries, StringComparison.Ordinal);
+        Assert.Contains("refetchOnMount: \"always\"", customerQueries, StringComparison.Ordinal);
+        Assert.Contains("refetchOnWindowFocus: true", customerQueries, StringComparison.Ordinal);
+        Assert.Contains("const refreshedOrder = await orderQuery.refetch()", customerOrderPage, StringComparison.Ordinal);
+        Assert.Contains("!currentOrder?.canRetryPayment", customerOrderPage, StringComparison.Ordinal);
     }
 
     [Fact]

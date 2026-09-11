@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -59,7 +60,7 @@ public sealed class SuperAdminPayoutsServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetQueueAsync_ShouldExposeBackendExecutionBlockWhenPriorPayoutNeedsReconciliation()
+    public async Task GetQueueAsync_ShouldExposeCommittedPayoutForAuthorizedReconciliation()
     {
         var vendorId = await SeedVendorAsync("Queue Reconciliation Vendor");
         await SeedDefaultPayoutMethodAsync(vendorId);
@@ -72,9 +73,32 @@ public sealed class SuperAdminPayoutsServiceTests : IDisposable
 
         Assert.Equal(vendorId, item.VendorId);
         Assert.Equal(70m, item.EligibleAmount);
-        Assert.False(item.CanRecordCompletedPayout);
-        Assert.Equal("PAYOUT_EXTERNAL_TRANSFER_RECONCILIATION_REQUIRED", item.ExecutionBlockedCode);
-        Assert.Contains("Resolve that payout before recording another completed payout", item.ExecutionBlockedReason);
+        Assert.False(item.CanPreparePayout);
+        Assert.True(item.CanCompletePayout);
+        Assert.NotNull(item.ActivePayout);
+        Assert.Null(item.ExecutionBlockedCode);
+        Assert.Equal("ReconciliationRequired", item.ActivePayout.Status);
+    }
+
+    [Fact]
+    public async Task GetQueueAsync_ShouldExposePendingPayoutForIdempotentHandoffResume()
+    {
+        var vendorId = await SeedVendorAsync("Queue Pending Vendor");
+        var payoutMethodId = await SeedDefaultPayoutMethodAsync(vendorId);
+        var graph = await SeedEligibleOnlineOrderAsync(vendorId, "CH-PAYOUT-QUEUE-PENDING");
+        await _ledgerService.RecordOrderAsync(graph.Order, graph.SubOrder);
+        await SeedPendingPayoutAsync(vendorId, payoutMethodId, 20m);
+
+        var result = await _service.GetQueueAsync(1, 20);
+        var item = Assert.Single(result.Items);
+
+        Assert.True(item.CanPreparePayout);
+        Assert.False(item.CanCompletePayout);
+        Assert.NotNull(item.ActivePayout);
+        Assert.Equal("Pending", item.ActivePayout.Status);
+        Assert.Equal(payoutMethodId, item.ActivePayout.PayoutMethodId);
+        Assert.Null(item.ActivePayout.ExternalTransferHandoffToken);
+        Assert.Null(item.ActivePayout.ExternalTransferHandoffCommittedAtUtc);
     }
 
     [Fact]
@@ -103,7 +127,7 @@ public sealed class SuperAdminPayoutsServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetQueueAsync_ShouldSplitSummaryTotalsByCurrency_WhenQueueContainsMultipleCurrencies()
+    public async Task GetQueueAsync_ShouldRejectNonEgpOrderAtPersistenceBoundary()
     {
         var egpVendorId = await SeedVendorAsync("EGP Queue Vendor", "EGP");
         await SeedDefaultPayoutMethodAsync(egpVendorId);
@@ -112,36 +136,10 @@ public sealed class SuperAdminPayoutsServiceTests : IDisposable
 
         var usdVendorId = await SeedVendorAsync("USD Queue Vendor", "USD");
         await SeedDefaultPayoutMethodAsync(usdVendorId);
-        var usdGraph = await SeedEligibleOnlineOrderAsync(usdVendorId, "CH-PAYOUT-MULTI-USD", "USD");
-        await _ledgerService.RecordOrderAsync(usdGraph.Order, usdGraph.SubOrder);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            SeedEligibleOnlineOrderAsync(usdVendorId, "CH-PAYOUT-MULTI-USD", "USD"));
 
-        var result = await _service.GetQueueAsync(1, 20);
-
-        Assert.True(result.HasCurrencyMix);
-        Assert.Null(result.AggregateCurrency);
-        Assert.Equal(0m, result.TotalPayableAmount);
-        Assert.Equal(0m, result.TotalEligibleAmount);
-        Assert.Equal(0m, result.TotalHeldAmount);
-
-        var summaries = result.CurrencySummaries.OrderBy(summary => summary.Currency, StringComparer.Ordinal).ToList();
-        Assert.Equal(2, summaries.Count);
-
-        Assert.Collection(
-            summaries,
-            summary =>
-            {
-                Assert.Equal("EGP", summary.Currency);
-                Assert.Equal(90m, summary.TotalPayableAmount);
-                Assert.Equal(90m, summary.TotalEligibleAmount);
-                Assert.Equal(0m, summary.TotalHeldAmount);
-            },
-            summary =>
-            {
-                Assert.Equal("USD", summary.Currency);
-                Assert.Equal(90m, summary.TotalPayableAmount);
-                Assert.Equal(90m, summary.TotalEligibleAmount);
-                Assert.Equal(0m, summary.TotalHeldAmount);
-            });
+        Assert.Contains("CommerceHub currency sovereignty violation", exception.Message, StringComparison.Ordinal);
     }
 
     public void Dispose()
@@ -204,10 +202,37 @@ public sealed class SuperAdminPayoutsServiceTests : IDisposable
             Currency = "EGP",
             Status = CommerceHubPayoutStatus.ReconciliationRequired,
             Method = CommerceHubPayoutMethod.BankTransfer,
+            DestinationValueSnapshot = "EG-EXEC-001",
+            ExternalTransferIdempotencyKey = $"CH-PAYOUT:{Guid.NewGuid():N}",
+            ExternalTransferHandoffToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)),
+            ExternalTransferHandoffCommittedAtUtc = DateTime.UtcNow.AddHours(-4),
             FailureReason = "External transfer outcome is unknown after the processing handoff exceeded the safe window.",
             IdempotencyKey = Guid.NewGuid().ToString("N"),
             CreatedAt = DateTime.UtcNow.AddHours(-4),
             ProcessedAtUtc = DateTime.UtcNow.AddHours(-4)
+        });
+
+        await _dbContext.SaveChangesAsync();
+    }
+
+    private async Task SeedPendingPayoutAsync(Guid vendorId, Guid payoutMethodId, decimal amount)
+    {
+        using var payoutBoundary = CommerceHubBoundaryMutationScope.BeginPayout();
+        using var financialWorkflowBoundary = CommerceHubBoundaryMutationScope.BeginFinancialWorkflow();
+
+        _dbContext.CommerceHubPayouts.Add(new CommerceHubPayout
+        {
+            Id = Guid.NewGuid(),
+            TenantId = vendorId,
+            PayoutMethodId = payoutMethodId,
+            Amount = amount,
+            Currency = "EGP",
+            Status = CommerceHubPayoutStatus.Pending,
+            Method = CommerceHubPayoutMethod.BankTransfer,
+            DestinationValueSnapshot = "EG-EXEC-001",
+            IdempotencyKey = $"pending-{Guid.NewGuid():N}",
+            ExternalTransferIdempotencyKey = $"CH-PAYOUT:{Guid.NewGuid():N}",
+            CreatedAt = DateTime.UtcNow
         });
 
         await _dbContext.SaveChangesAsync();

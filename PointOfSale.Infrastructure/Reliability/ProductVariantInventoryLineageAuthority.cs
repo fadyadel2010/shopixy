@@ -235,6 +235,73 @@ public static class ProductVariantInventoryLineageAuthority
         return current;
     }
 
+    /// <summary>
+    /// Validates reservations that were admitted while catalog and warehouse authority was live.
+    /// Later lifecycle changes must block new reservations without stranding already allocated stock.
+    /// </summary>
+    public static async Task<List<InventoryReservation>> FilterHistoricallyConsumableReservationsAsync(
+        ApplicationDbContext dbContext,
+        Guid tenantId,
+        IReadOnlyCollection<InventoryReservation> reservations,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (reservations.Count == 0)
+        {
+            return new List<InventoryReservation>();
+        }
+
+        var reservationIds = reservations
+            .Select(reservation => reservation.Id)
+            .Distinct()
+            .ToList();
+
+        var validReservationIds = await (
+                from reservation in dbContext.InventoryReservations.IgnoreQueryFilters().AsNoTracking()
+                join stock in dbContext.ProductVariantStocks.IgnoreQueryFilters().AsNoTracking()
+                    on new
+                    {
+                        reservation.TenantId,
+                        reservation.VariantId,
+                        reservation.WarehouseId
+                    }
+                    equals new
+                    {
+                        stock.TenantId,
+                        stock.VariantId,
+                        stock.WarehouseId
+                    }
+                where reservation.TenantId == tenantId &&
+                      reservationIds.Contains(reservation.Id) &&
+                      !reservation.IsDeleted &&
+                      reservation.Status == InventoryReservationStatus.Active &&
+                      reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity &&
+                      (reservation.ExpiresAtUtc == null || reservation.ExpiresAtUtc > nowUtc) &&
+                      reservation.ProductId != Guid.Empty &&
+                      reservation.OrderItemId != Guid.Empty &&
+                      !stock.IsDeleted &&
+                      stock.ReservedQuantity > 0m
+                select reservation.Id)
+            .ToListAsync(cancellationToken);
+
+        var validSet = validReservationIds.ToHashSet();
+        var historical = reservations.Where(reservation => validSet.Contains(reservation.Id)).ToList();
+        var suppressedCount = reservations.Count - historical.Count;
+        if (suppressedCount > 0)
+        {
+            OperationalConvergenceTelemetry.RecordReplayDecision(
+                OperationalConvergencePhase.Replay,
+                "historical_reservation_consumption",
+                OperationalConvergenceAuthority.ProductVariantInventory,
+                OperationalConvergenceDecision.Suppressed,
+                OperationalConvergenceReason.VariantInventoryLineageLost,
+                tenantId,
+                suppressedCount);
+        }
+
+        return historical;
+    }
+
     public static async Task<List<InventoryReservation>> FilterCurrentConsumableReservationsAcrossTenantsAsync(
         ApplicationDbContext dbContext,
         IReadOnlyCollection<InventoryReservation> reservations,

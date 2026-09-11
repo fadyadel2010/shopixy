@@ -6,6 +6,7 @@ public sealed class PublicationIntentAuthorityCertificationTests
     public void MerchantPublicationMutationPaths_MustKeepIntentSeparateFromVisibilityAuthority()
     {
         var handlers = ReadRepoFile("PointOfSale.API/CommerceHub/Handlers/CommerceHubCommandHandlers.cs");
+        var eligibility = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubPublicationEligibilityPolicy.cs");
         var listing = ReadRepoFile("PointOfSale.Core/Entities/CommerceHubListing.cs");
         var configuration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubListingConfiguration.cs");
 
@@ -17,7 +18,8 @@ public sealed class PublicationIntentAuthorityCertificationTests
         Assert.Contains("EnsureTenantHasActiveShippingAsync", publishHandler, StringComparison.Ordinal);
         Assert.Contains("EnsureLiveCommerceHubCategoryAsync", publishHandler, StringComparison.Ordinal);
         Assert.Contains("WherePubliclyVisibleLineage", publishHandler, StringComparison.Ordinal);
-        Assert.Contains("Product.PublishStatus == PointOfSale.Core.Enums.PublishStatus.Published", publishHandler, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPublicationEligibilityPolicy.GetBlockingMessage", publishHandler, StringComparison.Ordinal);
+        Assert.Contains("variant.Product.PublishStatus != PublishStatus.Published", eligibility, StringComparison.Ordinal);
         Assert.Contains("CommerceHubListing.Create", publishHandler, StringComparison.Ordinal);
 
         Assert.Contains("EnsureVendorListingAllowedAsync", updateHandler, StringComparison.Ordinal);

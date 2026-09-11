@@ -63,6 +63,14 @@ public interface ICommerceHubPaymentService
         IReadOnlyDictionary<string, string> callbackParams,
         string correlationId,
         CancellationToken cancellationToken = default);
+
+    Task<CommerceHubPaymentWebhookResultDto> ExecuteDevelopmentSuccessAsync(
+        Guid paymentId,
+        string idempotencyKey,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default);
 }
 
 internal sealed class CommerceHubProviderSessionPersistenceException : Exception
@@ -107,7 +115,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
     private readonly CommerceHubPaymentsOptions _paymentsOptions;
     private readonly CommerceHubPaymentOrchestrationTelemetry _telemetry;
     private readonly ILogger<CommerceHubPaymentService> _logger;
-    private readonly IPaymobSensitiveArtifactProtector? _paymobArtifactProtector;
+    private readonly IPaymobSensitiveArtifactProtector _paymobArtifactProtector;
 
     public CommerceHubPaymentService(
         ApplicationDbContext dbContext,
@@ -121,7 +129,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         IOptions<CommerceHubPaymentsOptions> paymentsOptions,
         CommerceHubPaymentOrchestrationTelemetry telemetry,
         ILogger<CommerceHubPaymentService> logger,
-        IPaymobSensitiveArtifactProtector? paymobArtifactProtector = null)
+        IPaymobSensitiveArtifactProtector paymobArtifactProtector)
     {
         _dbContext = dbContext;
         _financialWorkflowService = financialWorkflowService;
@@ -136,7 +144,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         _paymentsOptions = paymentsOptions.Value;
         _telemetry = telemetry;
         _logger = logger;
-        _paymobArtifactProtector = paymobArtifactProtector;
+        _paymobArtifactProtector = paymobArtifactProtector ??
+            throw new ArgumentNullException(nameof(paymobArtifactProtector));
     }
 
     public async Task<CommerceHubPaymentInitiateResponseDto> InitiateAsync(
@@ -170,10 +179,6 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         EnsureInitiationAccessAllowed(marketplaceOrder, authenticatedCustomerId, request.OrderAccessToken);
         RequireCommerceHubPaymentCurrency(marketplaceOrder.Currency, "payment initiation order");
         await EnsureInitiationAllowedAsync(marketplaceOrder, providerCode, cancellationToken);
-
-        await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(
-            marketplaceOrder.Id,
-            cancellationToken);
 
         var paymentLockKey = BuildPaymentLockKey(marketplaceOrder.Id, providerCode);
         var paymentLockToken = Guid.NewGuid().ToString("N");
@@ -211,11 +216,19 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         try
         {
         // Re-check for unresolved payment webhooks after acquiring lock to prevent race condition
-        await EnsureNoUnresolvedPaymentAsync(marketplaceOrder, providerCode, cancellationToken);
-        await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(
-            marketplaceOrder.Id,
-            cancellationToken);
+        await _dbContext.Entry(marketplaceOrder).ReloadAsync(cancellationToken);
+        if (_dbContext.Entry(marketplaceOrder).State == EntityState.Detached)
+        {
+            throw new CommerceHubCheckoutException(
+                "ORDER_NOT_FOUND",
+                "Marketplace order was not found.",
+                StatusCodes.Status404NotFound);
+        }
 
+        EnsureInitiationAccessAllowed(marketplaceOrder, authenticatedCustomerId, request.OrderAccessToken);
+        RequireCommerceHubPaymentCurrency(marketplaceOrder.Currency, "payment initiation order");
+        await EnsureInitiationAllowedAsync(marketplaceOrder, providerCode, cancellationToken);
+        await EnsureNoUnresolvedPaymentAsync(marketplaceOrder, providerCode, cancellationToken);
         var payments = await _dbContext.CommerceHubPayments
             .Include(payment => payment.Items)
             .Include(payment => payment.Attempts)
@@ -226,6 +239,29 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 !payment.IsDeleted)
             .OrderByDescending(payment => payment.CreatedAt)
             .ToListAsync(cancellationToken);
+
+        var requiresReservationReacquisition =
+            payments.Count == 0 ||
+            payments.All(payment =>
+                !CommerceHubPaymentSessionRecoveryAuthority.HasReservationReacquisitionBlockingEvidence(payment));
+
+        if (requiresReservationReacquisition)
+        {
+            await _financialReadinessGate.EnsureCommerceIntakeAllowedAsync(
+                marketplaceOrder.GetAffectedStoreIds(),
+                "CommerceHubPayment.Initiate.ReservationReacquisition",
+                cancellationToken);
+            await _inventoryConsistencyService.ReacquireMarketplaceOrderReservationsForPaymentAsync(
+                marketplaceOrder.Id,
+                correlationId,
+                cancellationToken);
+        }
+        else
+        {
+            await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(
+                marketplaceOrder.Id,
+                cancellationToken);
+        }
 
         if (payments.Any(payment => payment.Status == CommerceHubPaymentRecordStatus.Paid))
         {
@@ -380,7 +416,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 PaymentId = payment.Id,
                 EventType = initiationEventType,
                 ProviderEventId = session.ProviderIntentId,
-                RawResponse = session.RawResponse
+                RawResponse = ProtectPaymentLogPayload(provider, session.RawResponse)
             });
 
             await PersistProviderSessionAsync(
@@ -583,7 +619,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 PaymentId = payment.Id,
                 EventType = $"{initiationEventType}.persistence_gap",
                 ProviderEventId = session.ProviderIntentId,
-                RawResponse = JsonSerializer.Serialize(new
+                RawResponse = ProtectPaymentLogPayload(payment.Provider, JsonSerializer.Serialize(new
                 {
                     paymentId = payment.Id,
                     provider = providerCode,
@@ -591,7 +627,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     providerIntentId = session.ProviderIntentId,
                     correlationId,
                     reconciliationRequired = true
-                })
+                }))
             });
 
             await _dbContext.SaveChangesAsync(CancellationToken.None);
@@ -696,39 +732,21 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         };
     }
 
-    public async Task<CommerceHubPaymentConfigurationStatusDto> GetConfigurationStatusAsync(
+    public Task<CommerceHubPaymentConfigurationStatusDto> GetConfigurationStatusAsync(
         string? provider,
         Guid tenantId,
         CancellationToken cancellationToken = default)
     {
         var (providerCode, _) = NormalizeProvider(provider);
-        var paymentMethod = await _dbContext.TenantPaymentMethods
-            .FirstOrDefaultAsync(method =>
-                method.TenantId == tenantId &&
-                method.Code == providerCode,
-                cancellationToken);
-
-        if (paymentMethod == null)
-        {
-            return new CommerceHubPaymentConfigurationStatusDto
-            {
-                Provider = providerCode,
-                IsEnabled = false,
-                IsConfigured = false,
-                IsSandbox = true,
-                ValidationMessage = $"{providerCode} payment method not found"
-            };
-        }
-
         var adapterConfigured = IsProviderGloballyConfigured(providerCode);
-        return new CommerceHubPaymentConfigurationStatusDto
+        return Task.FromResult(new CommerceHubPaymentConfigurationStatusDto
         {
             Provider = providerCode,
-            IsEnabled = paymentMethod.IsEnabled && adapterConfigured,
+            IsEnabled = adapterConfigured,
             IsConfigured = adapterConfigured,
-            IsSandbox = paymentMethod.IsSandbox,
+            IsSandbox = true,
             ValidationMessage = adapterConfigured ? null : $"{providerCode} provider adapter is not configured"
-        };
+        });
     }
 
     public async Task<CommerceHubPaymentCallbackResultDto> ValidateCallbackAsync(
@@ -746,9 +764,29 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 StatusCodes.Status400BadRequest);
         }
 
-        var callback = await GetProviderAdapter(providerCode).ParseCallbackAsync(
-            new PaymentProviderCallbackRequest(callbackParams, correlationId),
-            cancellationToken);
+        PaymentProviderCallbackResult callback;
+        try
+        {
+            callback = await GetProviderAdapter(providerCode).ParseCallbackAsync(
+                new PaymentProviderCallbackRequest(callbackParams, correlationId),
+                cancellationToken);
+        }
+        catch (PaymentProviderAdapterException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "CommerceHub Paymob browser callback was rejected | Code: {Code} | CorrelationId: {CorrelationId}",
+                ex.Error.Code,
+                correlationId);
+
+            return new CommerceHubPaymentCallbackResultDto
+            {
+                IsValid = false,
+                IsSuccess = false,
+                TransactionId = callbackParams.GetValueOrDefault("id"),
+                Message = "The Paymob callback did not match the configured CommerceHub payment provider."
+            };
+        }
 
         if (!callback.IsValid)
         {
@@ -769,14 +807,50 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             cancellationToken);
         if (payment != null)
         {
+            var callbackMessage = callback.Message ?? "Payment callback verified.";
+            if (callback.IsTerminalFailure)
+            {
+                var currency = RequireCommerceHubPaymentCurrency(
+                    callback.Currency,
+                    "Paymob browser callback");
+                var amount = ConvertFromMinorUnits(callback.AmountMinorUnits, currency);
+                var rawPayload = string.Join(
+                    "&",
+                    callbackParams
+                        .Where(parameter => !string.Equals(
+                            parameter.Key,
+                            "hmac",
+                            StringComparison.OrdinalIgnoreCase))
+                        .Select(parameter =>
+                            $"{Uri.EscapeDataString(parameter.Key)}={Uri.EscapeDataString(parameter.Value)}"));
+
+                var failureResult = await ApplyWebhookOutcomeAsync(
+                    payment,
+                    providerCode,
+                    isSuccess: false,
+                    providerAmount: amount,
+                    providerCurrency: currency,
+                    providerIntentId: callback.ProviderIntentId,
+                    transactionId: callback.TransactionId,
+                    eventType: "CALLBACK",
+                    providerEventId: callback.TransactionId,
+                    rawPayload: rawPayload,
+                    failureReason: callback.FailureReason ?? "Paymob reported the transaction as failed.",
+                    needsManualCurrencyReview: false,
+                    correlationId: correlationId,
+                    cancellationToken: cancellationToken);
+                callbackMessage = failureResult.Message;
+            }
+
             return new CommerceHubPaymentCallbackResultDto
             {
                 IsValid = true,
                 IsSuccess = callback.IsSuccess,
+                IsTerminalFailure = callback.IsTerminalFailure,
                 OrderId = payment.OrderId,
                 PaymentId = payment.Id,
                 TransactionId = callback.TransactionId,
-                Message = callback.Message ?? "Payment callback verified."
+                Message = callbackMessage
             };
         }
 
@@ -789,33 +863,88 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         };
     }
 
+    public async Task<CommerceHubPaymentWebhookResultDto> ExecuteDevelopmentSuccessAsync(
+        Guid paymentId,
+        string idempotencyKey,
+        Guid? actorId,
+        string? actorEmail,
+        string correlationId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedIdempotencyKey = idempotencyKey?.Trim() ?? string.Empty;
+        if (paymentId == Guid.Empty || normalizedIdempotencyKey.Length is < 8 or > 128)
+        {
+            throw new CommerceHubCheckoutException(
+                "DEVELOPMENT_PAYMENT_SIMULATION_REQUEST_INVALID",
+                "A payment id and an idempotency key between 8 and 128 characters are required.",
+                StatusCodes.Status400BadRequest);
+        }
+
+        var payment = await _dbContext.CommerceHubPayments
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(current => current.Id == paymentId && !current.IsDeleted, cancellationToken);
+        if (payment == null)
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYMENT_NOT_FOUND",
+                "Marketplace payment was not found.",
+                StatusCodes.Status404NotFound);
+        }
+
+        var providerCode = payment.Provider switch
+        {
+            PaymentProvider.Paymob => CommerceHubPaymentMethods.Paymob,
+            PaymentProvider.Stripe => CommerceHubPaymentMethods.Stripe,
+            _ => throw new CommerceHubCheckoutException(
+                "DEVELOPMENT_PAYMENT_SIMULATION_PROVIDER_INVALID",
+                "Only platform-owned online payment providers can be simulated.",
+                StatusCodes.Status409Conflict)
+        };
+        var idempotencyHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(normalizedIdempotencyKey)))
+            .ToLowerInvariant()[..24];
+        var simulationReference = $"DEV-SIM:ONLINE:{payment.Id:N}:{idempotencyHash}";
+        var simulationEvidence = JsonSerializer.Serialize(new
+        {
+            EvidenceType = "DevelopmentOnlinePaymentSuccessSimulation",
+            IsDevelopmentSimulation = true,
+            ExternalMoneyMovementConfirmed = false,
+            PaymentId = payment.Id,
+            payment.OrderId,
+            Provider = providerCode,
+            payment.ProviderReference,
+            payment.ProviderIntentId,
+            SimulationReference = simulationReference,
+            IdempotencyKey = normalizedIdempotencyKey,
+            ActorId = actorId,
+            ActorEmail = actorEmail,
+            CorrelationId = correlationId
+        });
+
+        return await ApplyWebhookOutcomeAsync(
+            payment,
+            providerCode,
+            isSuccess: true,
+            providerAmount: payment.Amount,
+            providerCurrency: payment.Currency,
+            providerIntentId: payment.ProviderIntentId,
+            transactionId: simulationReference,
+            eventType: "DevelopmentOnlinePaymentSuccessSimulation",
+            providerEventId: simulationReference,
+            rawPayload: simulationEvidence,
+            failureReason: null,
+            needsManualCurrencyReview: false,
+            correlationId: correlationId,
+            cancellationToken: cancellationToken,
+            isDevelopmentSimulation: true);
+    }
+
     private bool IsProviderGloballyConfigured(string providerCode)
     {
-        if (string.Equals(providerCode, CommerceHubPaymentMethods.Stripe, StringComparison.OrdinalIgnoreCase))
-        {
-            return _paymentsOptions.Stripe.Enabled &&
-                   !string.IsNullOrWhiteSpace(_paymentsOptions.Stripe.SecretKey) &&
-                   !string.IsNullOrWhiteSpace(_paymentsOptions.Stripe.PublishableKey);
-        }
-
-        if (string.Equals(providerCode, CommerceHubPaymentMethods.Paymob, StringComparison.OrdinalIgnoreCase))
-        {
-            if (!_providerAdapters.TryGetValue(new ProviderCode(providerCode).Normalized, out var adapter) || adapter is null)
-            {
-                return false;
-            }
-
-            if (adapter.Capabilities is not { } capabilities)
-            {
-                return false;
-            }
-
-            return capabilities.SupportsPaymentSessionCreation &&
-                   capabilities.SupportsWebhookVerification &&
-                   capabilities.SupportsCallbackParsing;
-        }
-
-        return false;
+        return CommerceHubPaymentMethodAuthority.IsProviderExecutable(
+            providerCode,
+            _providerAdapters.Values);
     }
 
     private async Task<CommerceHubPayment?> ResolveProviderCallbackCommerceHubPaymentAsync(
@@ -910,8 +1039,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         string correlationId,
         CancellationToken cancellationToken)
     {
-        var durablePayload = _paymobArtifactProtector?.ProtectWebhookPayload(rawPayload) ??
-            WebhookDataRedactor.RedactPayload(rawPayload);
+        var durablePayload = ProtectPaymentLogPayload(PaymentProvider.Paymob, rawPayload);
         var providerReference = callback.ProviderReference?.Trim();
         var providerIntentId = callback.ProviderIntentId;
         var transactionId = callback.TransactionId;
@@ -1415,7 +1543,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     PaymentId = processedPayment.Id,
                     EventType = "provider_evidence_pending_capture",
                     ProviderEventId = providerEventId,
-                    RawResponse = rawPayload
+                    RawResponse = ProtectPaymentLogPayload(processedPayment.Provider, rawPayload)
                 });
                 await _dbContext.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
@@ -1470,7 +1598,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 PaymentId = processedPayment.Id,
                 EventType = eventType,
                 ProviderEventId = providerEventId,
-                RawResponse = rawPayload
+                RawResponse = ProtectPaymentLogPayload(processedPayment.Provider, rawPayload)
             });
 
             if (isDuplicateWebhook)
@@ -1619,11 +1747,15 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         string? failureReason,
         bool needsManualCurrencyReview,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool isDevelopmentSimulation = false)
     {
         using var commerceHubBoundary = CommerceHubBoundaryMutationScope.BeginPayment();
         using var orderLifecycleBoundary = CommerceHubBoundaryMutationScope.BeginOrderLifecycle();
         using var paymentLifecycleBoundary = CommerceHubBoundaryMutationScope.BeginPaymentLifecycle();
+        using var financialWorkflowBoundary = isSuccess
+            ? CommerceHubBoundaryMutationScope.BeginFinancialWorkflow()
+            : null;
         var paymentReferenceId = transactionId ?? providerIntentId ?? payment.ProviderReference;
         var paymentLockKey = BuildPaymentProcessingLockKey(payment.Id);
         var paymentLockToken = Guid.NewGuid().ToString("N");
@@ -1731,6 +1863,22 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 cancellationToken);
 
             var nowUtc = DateTime.UtcNow;
+            var isExactDevelopmentSimulationReplay =
+                isDevelopmentSimulation &&
+                processedPayment.IsProcessed &&
+                processedPayment.Status == CommerceHubPaymentRecordStatus.Paid &&
+                string.Equals(processedPayment.ProviderTransactionId, paymentReferenceId, StringComparison.Ordinal);
+
+            if (isDevelopmentSimulation &&
+                !isExactDevelopmentSimulationReplay &&
+                (processedPayment.IsProcessed || processedPayment.Status != CommerceHubPaymentRecordStatus.Pending))
+            {
+                throw new CommerceHubCheckoutException(
+                    "DEVELOPMENT_PAYMENT_SIMULATION_STATE_INVALID",
+                    "Development success simulation requires an unprocessed pending payment.",
+                    StatusCodes.Status409Conflict);
+            }
+
             var paymentAttempt = ResolveOrCreateWebhookAttempt(processedPayment);
             if (needsManualCurrencyReview)
             {
@@ -1743,7 +1891,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 PaymentId = processedPayment.Id,
                 EventType = eventType,
                 ProviderEventId = providerEventId,
-                RawResponse = rawPayload
+                RawResponse = ProtectPaymentLogPayload(processedPayment.Provider, rawPayload)
             });
 
             var isReconcilingEarlierFailure =
@@ -1961,6 +2109,15 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 }
                 catch (CommerceHubCheckoutException ex)
                 {
+                    if (isDevelopmentSimulation)
+                    {
+                        throw new CommerceHubCheckoutException(
+                            "DEVELOPMENT_PAYMENT_SIMULATION_RESERVATION_INVALID",
+                            "Development success simulation requires active reserved stock and created no external money movement.",
+                            StatusCodes.Status409Conflict,
+                            ex.Message);
+                    }
+
                     var compensationReason =
                         $"Marketplace order no longer has active reserved stock before payment recognition. {ex.Code}: {ex.Message}";
 
@@ -2009,7 +2166,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     PaymentId = processedPayment.Id,
                     EventType = "CanonicalPaymentCompletionEvidence",
                     ProviderEventId = paymentReferenceId,
-                    RawResponse = JsonSerializer.Serialize(new
+                    RawResponse = ProtectPaymentLogPayload(processedPayment.Provider, JsonSerializer.Serialize(new
                     {
                         providerCode,
                         providerIntentId,
@@ -2017,8 +2174,10 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                         providerAmount,
                         providerCurrency,
                         completedAtUtc = nowUtc,
-                        correlationId
-                    })
+                        correlationId,
+                        IsDevelopmentSimulation = isDevelopmentSimulation,
+                        ExternalMoneyMovementConfirmed = !isDevelopmentSimulation
+                    }))
                 });
 
                 finalizedReservationCount = await _inventoryConsistencyService.FinalizeMarketplaceOrderReservationsForPaymentAsync(
@@ -2120,7 +2279,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     paymentReferenceId,
                     finalizedReservationCount,
                     correlationId,
-                    cancellationToken);
+                    cancellationToken,
+                    isDevelopmentSimulation);
             }
 
             if (marketplaceStatusChanged)
@@ -2248,7 +2408,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         string paymentReferenceId,
         int finalizedReservationCount,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool isDevelopmentSimulation)
     {
         var affectedStoreIds = marketplaceOrder.GetAffectedStoreIds()
             .Where(id => id != Guid.Empty)
@@ -2287,7 +2448,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             eventVersion,
             occurredAtUtc,
             correlationId,
-            "PaymentCompleted");
+            "PaymentCompleted",
+            isDevelopmentSimulation);
 
         var orderPaid = CreatePaymentCompletionEvent<CommerceHubOrderPaidEvent>(
             marketplaceOrder,
@@ -2299,7 +2461,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             eventVersion,
             occurredAtUtc,
             correlationId,
-            "OrderPaid");
+            "OrderPaid",
+            isDevelopmentSimulation);
 
         var vendorEarningsCreated = CreatePaymentCompletionEvent<CommerceHubVendorEarningsCreatedEvent>(
             marketplaceOrder,
@@ -2311,7 +2474,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             eventVersion,
             occurredAtUtc,
             correlationId,
-            "VendorEarningsCreated");
+            "VendorEarningsCreated",
+            isDevelopmentSimulation);
         vendorEarningsCreated.EarningCount = earningCount;
 
         var settlementCreated = CreatePaymentCompletionEvent<CommerceHubSettlementCreatedEvent>(
@@ -2324,7 +2488,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             eventVersion,
             occurredAtUtc,
             correlationId,
-            "SettlementCreated");
+            "SettlementCreated",
+            isDevelopmentSimulation);
         settlementCreated.SettlementEntryCount = settlementEntryCount;
 
         var inventoryFinalized = CreatePaymentCompletionEvent<CommerceHubInventoryFinalizedEvent>(
@@ -2337,7 +2502,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             eventVersion,
             occurredAtUtc,
             correlationId,
-            "InventoryFinalized");
+            "InventoryFinalized",
+            isDevelopmentSimulation);
         inventoryFinalized.ReservationCount = finalizedReservationCount;
 
         await _eventPublisher.PublishAsync(paymentCompleted, cancellationToken);
@@ -2354,6 +2520,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             CustomerPhone = marketplaceOrder.PhoneNumber,
             Amount = payment.Amount,
             Currency = payment.Currency,
+            IsDevelopmentSimulation = isDevelopmentSimulation,
+            ExternalMoneyMovementConfirmed = !isDevelopmentSimulation,
             TenantId = tenantId,
             CorrelationId = correlationId,
             IdempotencyKey = BuildPaymentCompletionEventIdempotencyKey(payment.Id, eventVersion, "NotificationsRequested"),
@@ -2383,7 +2551,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         int eventVersion,
         DateTime occurredAtUtc,
         string correlationId,
-        string eventName)
+        string eventName,
+        bool isDevelopmentSimulation)
         where T : CommerceHubPaymentCompletionEvent, new()
     {
         return new T
@@ -2397,6 +2566,8 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             Amount = payment.Amount,
             Currency = payment.Currency,
             AffectedStoreIds = affectedStoreIds,
+            IsDevelopmentSimulation = isDevelopmentSimulation,
+            ExternalMoneyMovementConfirmed = !isDevelopmentSimulation,
             TenantId = tenantId,
             CorrelationId = correlationId,
             IdempotencyKey = BuildPaymentCompletionEventIdempotencyKey(payment.Id, eventVersion, eventName),
@@ -2750,6 +2921,14 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 StatusCodes.Status409Conflict);
         }
 
+        if (!IsProviderGloballyConfigured(providerCode))
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYMENT_PROVIDER_NOT_CONFIGURED",
+                $"{providerCode} is not configured for CommerceHub payment processing.",
+                StatusCodes.Status503ServiceUnavailable);
+        }
+
         if (CommerceHubOrderStateHelper.HasCollectedPayment(marketplaceOrder.PaymentStatus))
         {
             throw new CommerceHubCheckoutException(
@@ -2837,8 +3016,11 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             return;
         }
 
-        var orderAttemptCount = payments.Count(payment =>
-            payment.Status != CommerceHubPaymentRecordStatus.Ignored);
+        // The configured ceiling limits external payment-session exposure. Local validation or
+        // configuration failures that provably created no provider identity/session must remain
+        // recoverable after an administrator corrects the configuration.
+        var orderAttemptCount = payments.Count(
+            CommerceHubPaymentSessionRecoveryAuthority.HasReservationReacquisitionBlockingEvidence);
 
         if (orderAttemptCount < _paymentsOptions.MaxAttemptsPerOrder)
         {
@@ -2846,14 +3028,14 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         }
 
         _logger.LogWarning(
-            "CommerceHub payment attempt limit reached | MarketplaceOrderId: {MarketplaceOrderId} | AttemptCount: {AttemptCount} | MaxAttempts: {MaxAttempts}",
+            "CommerceHub external payment-session attempt limit reached | MarketplaceOrderId: {MarketplaceOrderId} | EvidenceBearingAttemptCount: {AttemptCount} | MaxAttempts: {MaxAttempts}",
             marketplaceOrder.Id,
             orderAttemptCount,
             _paymentsOptions.MaxAttemptsPerOrder);
 
         throw new CommerceHubCheckoutException(
             "PAYMENT_ATTEMPTS_EXCEEDED",
-            $"This marketplace order has reached the maximum of {_paymentsOptions.MaxAttemptsPerOrder} payment attempts.",
+            $"This marketplace order has reached the maximum of {_paymentsOptions.MaxAttemptsPerOrder} external payment-session attempts.",
             StatusCodes.Status409Conflict);
     }
 
@@ -2991,8 +3173,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     correlationId),
                 cancellationToken);
 
-            if (_paymobArtifactProtector is null ||
-                string.IsNullOrWhiteSpace(session.PaymentUrl) ||
+            if (string.IsNullOrWhiteSpace(session.PaymentUrl) ||
                 string.IsNullOrWhiteSpace(session.PaymentToken))
             {
                 throw new PaymentProviderAdapterException(CanonicalProviderError.Configuration(
@@ -3164,6 +3345,29 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         string authorityPoint,
         CancellationToken cancellationToken)
     {
+        var currentOrderAuthority = await _dbContext.CommerceHubMarketplaceOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(order => order.Id == marketplaceOrder.Id && !order.IsDeleted)
+            .Select(order => new
+            {
+                order.Status,
+                order.PaymentStatus,
+                order.PaymentMethodCode
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (currentOrderAuthority == null ||
+            currentOrderAuthority.Status is not (OrderStatus.Pending or OrderStatus.OnHold) ||
+            currentOrderAuthority.PaymentStatus != PaymentStatus.Pending ||
+            !CommerceHubPaymentMethods.IsOnline(currentOrderAuthority.PaymentMethodCode))
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYMENT_NOT_ALLOWED",
+                "Payment initiation is no longer allowed for this marketplace order.",
+                StatusCodes.Status409Conflict);
+        }
+
         await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(
             marketplaceOrder.Id,
             cancellationToken);
@@ -3347,7 +3551,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                     PaymentId = payment.Id,
                     EventType = initiationEventType,
                     ProviderEventId = session.ProviderIntentId,
-                    RawResponse = session.RawResponse
+                    RawResponse = ProtectPaymentLogPayload(payment.Provider, session.RawResponse)
                 });
 
                 await Task.Delay(TimeSpan.FromMilliseconds(100 * Math.Pow(2, attempt - 1)), cancellationToken);
@@ -3441,7 +3645,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 PaymentId = payment.Id,
                 EventType = initiationEventType,
                 ProviderEventId = session.ProviderIntentId,
-                RawResponse = session.RawResponse
+                RawResponse = ProtectPaymentLogPayload(payment.Provider, session.RawResponse)
             });
             await _dbContext.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -3519,13 +3723,13 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             Id = Guid.NewGuid(),
             PaymentId = payment.Id,
             EventType = $"initiate.{providerCode.ToLowerInvariant()}.failed",
-            RawResponse = JsonSerializer.Serialize(new
+            RawResponse = ProtectPaymentLogPayload(payment.Provider, JsonSerializer.Serialize(new
             {
                 paymentId = payment.Id,
                 provider = providerCode,
                 correlationId,
                 failureReason = payment.FailureReason
-            })
+            }))
         });
 
         return _dbContext.SaveChangesAsync(cancellationToken);
@@ -3560,7 +3764,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             Id = Guid.NewGuid(),
             PaymentId = payment.Id,
             EventType = $"initiate.{providerCode.ToLowerInvariant()}.outcome_unknown",
-            RawResponse = JsonSerializer.Serialize(new
+            RawResponse = ProtectPaymentLogPayload(payment.Provider, JsonSerializer.Serialize(new
             {
                 paymentId = payment.Id,
                 provider = providerCode,
@@ -3569,7 +3773,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
                 correlationId,
                 failureReason = normalizedReason,
                 reconciliationRequired = true
-            })
+            }))
         });
 
         return _dbContext.SaveChangesAsync(cancellationToken);
@@ -3919,7 +4123,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             unresolved.Currency = authoritativeCurrency;
             unresolved.EventType = eventType;
             unresolved.PayloadHash = payloadHash;
-            unresolved.RawPayload = provider == PaymentProvider.Paymob && _paymobArtifactProtector is not null
+            unresolved.RawPayload = provider == PaymentProvider.Paymob
                 ? _paymobArtifactProtector.ProtectWebhookPayload(rawPayload)
                 : PointOfSale.Core.Security.WebhookDataRedactor.RedactPayload(rawPayload);
             unresolved.CorrelationId = correlationId;
@@ -4892,6 +5096,17 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
         }
     }
 
+    private string ProtectPaymentLogPayload(PaymentProvider provider, string rawPayload)
+    {
+        if (provider != PaymentProvider.Paymob ||
+            rawPayload.StartsWith(PaymobSensitiveArtifactProtector.WebhookPayloadPrefix, StringComparison.Ordinal))
+        {
+            return rawPayload;
+        }
+
+        return _paymobArtifactProtector.ProtectWebhookPayload(rawPayload);
+    }
+
     private async Task<string> ResolveMarketplaceOrderCountryCodeAsync(
         CommerceHubMarketplaceOrder marketplaceOrder,
         CancellationToken cancellationToken)
@@ -5065,8 +5280,7 @@ public class CommerceHubPaymentService : ICommerceHubPaymentService
             !string.IsNullOrWhiteSpace(paymentToken) &&
             paymentToken.StartsWith(PaymobSensitiveArtifactProtector.PaymentSessionPrefix, StringComparison.Ordinal))
         {
-            var protectedSession = _paymobArtifactProtector?.UnprotectPaymentSession(paymentToken)
-                ?? throw new InvalidOperationException("CommerceHub Paymob session protector is unavailable.");
+            var protectedSession = _paymobArtifactProtector.UnprotectPaymentSession(paymentToken);
             paymentUrl = protectedSession.IframeUrl;
             paymentToken = null;
         }

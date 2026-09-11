@@ -16,6 +16,7 @@ export interface GovernanceUserListItem {
     status: GovernanceStatus
     riskLevel: GovernanceRiskLevel
     isKycVerified: boolean
+    isMarketplaceApproved: boolean
     hasDebt: boolean
     suspiciousFlags: number
     vendorDebt: number
@@ -77,6 +78,7 @@ export interface GovernanceUserDetails {
     status: GovernanceStatus
     riskLevel: GovernanceRiskLevel
     isKycVerified: boolean
+    isMarketplaceApproved: boolean
     createdAtUtc: string
     lastLoginAtUtc?: string | null
     statusReason?: string | null
@@ -214,6 +216,20 @@ export async function applyGovernanceAction(
     const response = await superAdminApiClient.post<GovernanceUserDetails, { reason: string }>(
         `/users/${userId}/${action}?role=${role}`,
         { reason },
+    )
+
+    return response.data
+}
+
+export async function applyVendorCertificationAction(
+    vendorId: string,
+    action: 'vendor-verification' | 'marketplace-approval',
+    enabled: boolean,
+    reason: string,
+): Promise<GovernanceUserDetails> {
+    const response = await superAdminApiClient.post<GovernanceUserDetails, { enabled: boolean; reason: string }>(
+        `/users/${vendorId}/${action}`,
+        { enabled, reason },
     )
 
     return response.data

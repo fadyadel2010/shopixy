@@ -171,6 +171,13 @@ public class AccountingOutboxService : IAccountingOutboxService
             new { PaymentId = paymentId }, idempotencyKey, null, ct);
     }
 
+    public async Task EnqueueCustomerPaymentAsync(Guid tenantId, Guid paymentId, CancellationToken ct = default)
+    {
+        var idempotencyKey = $"CUSTOMER_PAYMENT:{tenantId}:{paymentId}";
+        await EnqueueMessageAsync(tenantId, "CustomerPayment", paymentId,
+            new { PaymentId = paymentId }, idempotencyKey, null, ct);
+    }
+
     public async Task EnqueueSupplierOpeningBalanceAsync(Guid tenantId, Guid openingBalanceId, CancellationToken ct = default)
     {
         var idempotencyKey = $"SUPPLIER_OPENING_BALANCE:{tenantId}:{openingBalanceId}";

@@ -205,6 +205,10 @@ public sealed class CommerceHubFinanceReconciliationReadService : ICommerceHubFi
                     transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
                     transaction.TransactionType == CommerceHubFinancialTransactionType.Commission &&
                     transaction.Direction == CommerceHubFinancialTransactionDirection.Credit),
+                PlatformCommissionReversalCount = group.Count(transaction =>
+                    transaction.EntityType == CommerceHubFinancialEntityType.Platform &&
+                    transaction.TransactionType == CommerceHubFinancialTransactionType.Commission &&
+                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit),
                 PlatformRefundAdjustmentCount = group.Count(transaction =>
                     transaction.EntityType == CommerceHubFinancialEntityType.Platform &&
                     transaction.TransactionType == CommerceHubFinancialTransactionType.Adjustment &&
@@ -383,7 +387,7 @@ public sealed class CommerceHubFinanceReconciliationReadService : ICommerceHubFi
                 }
 
                 return source.IsCashOnDelivery
-                    ? group.VendorRefundCount == 0
+                    ? group.PlatformCommissionReversalCount == 0 || group.VendorCommissionCreditCount == 0
                     : group.PlatformRefundCount == 0 || group.VendorRefundCount == 0;
             })
             + payoutFlowGroups.Count(group =>
@@ -735,6 +739,31 @@ public sealed class CommerceHubFinanceReconciliationReadService : ICommerceHubFi
                     group => group.Key,
                     group => group.Select(row => row.VendorId).Distinct().ToList());
             var directCommissionKeySet = directCommissionKeys.ToHashSet();
+            var codOrderReferences = await _dbContext.CommerceHubSubOrders
+                .AsNoTracking()
+                .Where(subOrder =>
+                    subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery &&
+                    referenceIds.Contains(subOrder.Id))
+                .Select(subOrder => new VendorReferenceKey(
+                    subOrder.StoreId,
+                    CommerceHubFinancialReferenceType.Order,
+                    subOrder.Id))
+                .ToListAsync(cancellationToken);
+            var codRefundReferences = await (
+                    from refund in _dbContext.CommerceHubRefunds.AsNoTracking()
+                    join subOrder in _dbContext.CommerceHubSubOrders.AsNoTracking()
+                        on refund.SubOrderId equals subOrder.Id
+                    where refund.TenantId == subOrder.StoreId &&
+                          subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery &&
+                          referenceIds.Contains(refund.Id)
+                    select new VendorReferenceKey(
+                        refund.TenantId,
+                        CommerceHubFinancialReferenceType.Refund,
+                        refund.Id))
+                .ToListAsync(cancellationToken);
+            var codLegacyCommissionKeySet = codOrderReferences
+                .Concat(codRefundReferences)
+                .ToHashSet();
 
             var platformCommissionRows = await _dbContext.CommerceHubFinancialTransactions
                 .AsNoTracking()
@@ -766,7 +795,8 @@ public sealed class CommerceHubFinanceReconciliationReadService : ICommerceHubFi
                         vendorId,
                         platformCommissionRow.ReferenceType,
                         platformCommissionRow.ReferenceId);
-                    if (directCommissionKeySet.Contains(vendorReferenceKey))
+                    if (!codLegacyCommissionKeySet.Contains(vendorReferenceKey) ||
+                        directCommissionKeySet.Contains(vendorReferenceKey))
                     {
                         continue;
                     }
@@ -849,6 +879,7 @@ public sealed class CommerceHubFinanceReconciliationReadService : ICommerceHubFi
         public int PlatformRefundCount { get; init; }
         public int VendorRefundCount { get; init; }
         public int VendorCommissionCreditCount { get; init; }
+        public int PlatformCommissionReversalCount { get; init; }
         public int PlatformRefundAdjustmentCount { get; init; }
         public decimal PlatformPayoutLiabilityAmount { get; init; }
         public decimal PlatformPayoutCashAmount { get; init; }

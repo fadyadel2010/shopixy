@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MassTransit;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
@@ -2839,8 +2840,10 @@ public class CommerceHubProjectionConsumer :
 
         if (!succeeded)
         {
-            throw new InvalidOperationException(
-                $"CommerceHub search sync failed for listing {document.Id} and will be retried by message redelivery.");
+            _logger.LogWarning(
+                "CommerceHub Mongo projection committed while Elasticsearch sync remains failed | TenantId: {TenantId} | ListingId: {ListingId} | Recovery: CommerceHubAutoHealingService",
+                document.TenantId,
+                document.Id);
         }
     }
 
@@ -3039,9 +3042,40 @@ public class CommerceHubProjectionConsumer :
 
 public class CommerceHubProjectionConsumerDefinition : ConsumerDefinition<CommerceHubProjectionConsumer>
 {
-    public CommerceHubProjectionConsumerDefinition()
+    private const string DefaultEndpointName = "commercehub-projection";
+
+    public CommerceHubProjectionConsumerDefinition(IConfiguration configuration)
     {
-        EndpointName = "commercehub-projection";
+        EndpointName = ResolveEndpointName(
+            configuration["RabbitMQ:CommerceHubProjectionEndpointPrefix"]);
+    }
+
+    public static string ResolveEndpointName(string? deploymentPrefix)
+    {
+        if (string.IsNullOrWhiteSpace(deploymentPrefix))
+        {
+            return DefaultEndpointName;
+        }
+
+        var normalized = new string(deploymentPrefix
+            .Trim()
+            .ToLowerInvariant()
+            .Select(character => char.IsLetterOrDigit(character) ? character : '-')
+            .ToArray());
+
+        while (normalized.Contains("--", StringComparison.Ordinal))
+        {
+            normalized = normalized.Replace("--", "-", StringComparison.Ordinal);
+        }
+
+        normalized = normalized.Trim('-');
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InvalidOperationException(
+                "RabbitMQ:CommerceHubProjectionEndpointPrefix must contain at least one letter or digit when configured.");
+        }
+
+        return $"{normalized}-{DefaultEndpointName}";
     }
 
     protected override void ConfigureConsumer(

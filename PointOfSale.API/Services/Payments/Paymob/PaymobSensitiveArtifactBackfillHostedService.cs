@@ -35,6 +35,7 @@ public sealed class PaymobSensitiveArtifactBackfillHostedService(
         CancellationToken cancellationToken)
     {
         using var paymentBoundary = CommerceHubBoundaryMutationScope.BeginPayment();
+        using var sensitiveArtifactBackfillBoundary = CommerceHubBoundaryMutationScope.BeginSensitiveArtifactBackfill();
         var changedArtifacts = 0;
         var intents = await dbContext.PaymentIntents
             .IgnoreQueryFilters()

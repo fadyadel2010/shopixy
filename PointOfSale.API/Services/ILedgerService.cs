@@ -37,4 +37,9 @@ public interface ILedgerService
         Guid? referenceId,
         string? notes,
         Guid? userId = null);
+
+    Task<decimal> RebuildPartyTransactionBalancesAsync(
+        PartyType partyType,
+        Guid partyId,
+        CancellationToken cancellationToken = default);
 }

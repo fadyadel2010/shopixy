@@ -49,6 +49,23 @@ public sealed class PosCartsController : ControllerBase
         return ToActionResult(await _cartRuntime.GetAsync(cartId, cashierId, cancellationToken));
     }
 
+    [HttpGet("open")]
+    public async Task<ActionResult<PosCartResponse>> GetOpen(CancellationToken cancellationToken)
+    {
+        if (!TryResolveCashierId(out var cashierId))
+        {
+            return Unauthorized(new { message = "Authenticated cashier identity is required." });
+        }
+
+        var result = await _cartRuntime.GetOpenAsync(cashierId, cancellationToken);
+        if (result.StatusCode == StatusCodes.Status404NotFound)
+        {
+            return new JsonResult(null) { StatusCode = StatusCodes.Status200OK };
+        }
+
+        return ToActionResult(result);
+    }
+
     [HttpPost("{cartId:guid}/items")]
     public async Task<ActionResult<PosCartResponse>> AddItem(
         Guid cartId,

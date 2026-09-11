@@ -182,6 +182,40 @@ public class PurchasePaymentValidationTests
     }
 
     [Fact]
+    public void ResolvePurchasePaymentSplit_WithComputedTotal_RejectsPartialNonCreditPayment()
+    {
+        var request = new CreatePurchaseRequest
+        {
+            PaymentMethod = PaymentMethod.Card,
+            PaidAmount = 60m
+        };
+
+        var result = InvokeResolvePurchasePaymentSplit(request, totalAmount: 100m);
+
+        Assert.False(result.Success);
+        Assert.Equal("Cash, card, and mixed purchases must be paid in full. Use Credit for an unpaid balance.", result.ErrorMessage);
+    }
+
+    [Fact]
+    public void ResolvePurchasePaymentSplit_WithComputedTotal_AllowsExplicitMixedPayment()
+    {
+        var request = new CreatePurchaseRequest
+        {
+            PaymentMethod = PaymentMethod.Mixed,
+            PaidAmount = 100m,
+            CashAmount = 40m,
+            CardAmount = 60m
+        };
+
+        var result = InvokeResolvePurchasePaymentSplit(request, totalAmount: 100m);
+
+        Assert.True(result.Success);
+        Assert.Equal(100m, result.PaidAmount);
+        Assert.Equal(40m, result.CashAmount);
+        Assert.Equal(60m, result.CardAmount);
+    }
+
+    [Fact]
     public void ResolvePurchasePaymentSplit_WithComputedTotal_UsesRoundedCurrencyComparison()
     {
         var request = new CreatePurchaseRequest

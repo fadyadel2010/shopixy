@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.Controllers;
+using PointOfSale.API.DTOs;
 using PointOfSale.API.Services;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
@@ -19,6 +20,76 @@ namespace PointOfSale.Tests.Integration;
 
 public sealed class SalesReturnFinancialIntegrityIntegrationTests
 {
+    [Fact]
+    public void SalesReturnResponse_SerializesRefundMethodAsString_ForOriginalAndReplayParity()
+    {
+        var json = JsonSerializer.Serialize(new SalesReturnResponse
+        {
+            ReturnId = Guid.NewGuid(),
+            RefundMethod = RefundMethod.Card
+        });
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal("Card", document.RootElement.GetProperty("RefundMethod").GetString());
+    }
+
+    [Theory]
+    [InlineData(PaymentMethod.Cash, 80, 100, 0, 80, 0)]
+    [InlineData(PaymentMethod.Card, 80, 0, 100, 0, 80)]
+    [InlineData(PaymentMethod.Mixed, 100, 60, 50, 50, 50)]
+    [InlineData(PaymentMethod.Mixed, 100, 40, 50, 40, 50)]
+    public async Task GetSalesInvoiceForReturn_CapsTenderCapacityToCollectedAmount(
+        PaymentMethod paymentMethod,
+        decimal paidAmount,
+        decimal cashAmount,
+        decimal cardAmount,
+        decimal expectedCashCapacity,
+        decimal expectedCardCapacity)
+    {
+        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
+            databaseScope is null ||
+            tenantContext is null)
+        {
+            return;
+        }
+
+        using var scope = databaseScope;
+        await using (var seedContext = scope.CreateDbContext(tenantContext))
+        {
+            var seeded = await SeedScenarioAsync(seedContext, tenantId);
+            var invoice = await seedContext.SalesInvoices.SingleAsync(candidate => candidate.Id == seeded.InvoiceId);
+            invoice.PaymentMethod = paymentMethod;
+            invoice.PaidAmount = paidAmount;
+            invoice.CashAmount = cashAmount;
+            invoice.CardAmount = cardAmount;
+            await seedContext.SaveChangesAsync();
+
+            await using var actionContext = scope.CreateDbContext(tenantContext);
+            var controller = new SalesReturnsController(
+                actionContext,
+                tenantContext,
+                NullLogger<SalesReturnsController>.Instance,
+                Mock.Of<ILedgerService>(),
+                new NoOpEventPublisher(),
+                Mock.Of<IAccountingOutboxService>(),
+                Mock.Of<ICommerceAccountingService>())
+            {
+                ControllerContext = new ControllerContext
+                {
+                    HttpContext = new DefaultHttpContext()
+                }
+            };
+
+            var result = await controller.GetSalesInvoiceForReturn(seeded.InvoiceId, CancellationToken.None);
+            var okResult = Assert.IsType<OkObjectResult>(result.Result);
+            var response = Assert.IsType<SalesReturnInvoiceResponseDto>(okResult.Value);
+
+            Assert.Equal(expectedCashCapacity, response.RemainingCashRefundableAmount);
+            Assert.Equal(expectedCardCapacity, response.RemainingCardRefundableAmount);
+            Assert.False(response.HasLegacySettlementGap);
+        }
+    }
+
     [Fact]
     public async Task CreateSalesReturn_RejectsRefundOverAllocation_AndDoesNotPersistFinancialEffects()
     {

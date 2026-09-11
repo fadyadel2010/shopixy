@@ -143,6 +143,9 @@ public sealed class UserGovernanceServiceTests : IDisposable
         Assert.Equal("VENDOR_SUSPENDED", exception.Code);
         Assert.False(persistedListing.IsPublished);
         Assert.True(persistedListing.RestorePublicationOnActivate);
+        var persistedTenant = await _dbContext.Tenants.IgnoreQueryFilters().SingleAsync(x => x.Id == vendor.Id);
+        Assert.Equal(TenantStatus.Active, persistedTenant.Status);
+        Assert.True(persistedTenant.IsActive);
         _publishEndpoint.Verify(
             endpoint => endpoint.PublishAsync(
                 It.IsAny<CommerceHubListingUnpublishedEvent>(),
@@ -246,6 +249,107 @@ public sealed class UserGovernanceServiceTests : IDisposable
                 It.IsAny<CommerceHubListingUpdatedEvent>(),
                 It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyActionAsync_WhenPublishedListingProductIsMissing_ShouldStillSuppressVendorAndListing()
+    {
+        var vendor = await CreateVendorAsync("Orphaned Product Vendor", "orphaned-product@test.local");
+        var listing = await CreatePublishedListingAsync(vendor.Id);
+        _dbContext.ChangeTracker.Clear();
+        var product = await _dbContext.Products.IgnoreQueryFilters().SingleAsync(item => item.Id == listing.ProductId);
+        _dbContext.Products.Remove(product);
+        await _dbContext.SaveChangesAsync();
+
+        var details = await _service.ApplyActionAsync(
+            vendor.Id,
+            UserGovernanceRole.Vendor,
+            UserGovernanceStatus.Suspended,
+            "Contain orphaned listing.",
+            _superAdminId,
+            SuperAdminEmail);
+
+        var persistedListing = await _dbContext.CommerceHubListings
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.Id == listing.Id);
+
+        Assert.Equal("Suspended", details.Status);
+        Assert.False(persistedListing.IsPublished);
+        Assert.True(persistedListing.RestorePublicationOnActivate);
+        _publishEndpoint.Verify(
+            endpoint => endpoint.PublishAsync(
+                It.IsAny<CommerceHubListingUnpublishedEvent>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ApplyActionAsync_WhenExactVendorSuspensionIsReplayed_ShouldNotAppendDomainAuditOrEvent()
+    {
+        var vendor = await CreateVendorAsync("Idempotent Suspension Vendor", "idempotent-suspension@test.local");
+        await CreatePublishedListingAsync(vendor.Id);
+
+        await _service.ApplyActionAsync(
+            vendor.Id,
+            UserGovernanceRole.Vendor,
+            UserGovernanceStatus.Suspended,
+            "Repeat-safe suspension.",
+            _superAdminId,
+            SuperAdminEmail);
+        await _service.ApplyActionAsync(
+            vendor.Id,
+            UserGovernanceRole.Vendor,
+            UserGovernanceStatus.Suspended,
+            "Repeat-safe suspension.",
+            _superAdminId,
+            SuperAdminEmail);
+
+        Assert.Equal(1, await _dbContext.UserGovernanceAuditLogs.CountAsync());
+        _publishEndpoint.Verify(
+            endpoint => endpoint.PublishAsync(
+                It.IsAny<CommerceHubListingUnpublishedEvent>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task SetVendorMarketplaceApprovalAsync_MustRequireVerificationAndCollapseExactReplay()
+    {
+        var vendor = await CreateVendorCandidateAsync("Approval Candidate", "approval-candidate@test.local");
+
+        var exception = await Assert.ThrowsAsync<UserGovernanceException>(() =>
+            _service.SetVendorMarketplaceApprovalAsync(
+                vendor.Id,
+                true,
+                "Certification approval.",
+                _superAdminId,
+                SuperAdminEmail));
+        Assert.Equal("VENDOR_VERIFICATION_REQUIRED", exception.Code);
+
+        await _service.SetVendorVerificationAsync(
+            vendor.Id,
+            true,
+            "KYC complete.",
+            _superAdminId,
+            SuperAdminEmail);
+        await _service.SetVendorMarketplaceApprovalAsync(
+            vendor.Id,
+            true,
+            "Certification approval.",
+            _superAdminId,
+            SuperAdminEmail);
+        await _service.SetVendorMarketplaceApprovalAsync(
+            vendor.Id,
+            true,
+            "Certification approval.",
+            _superAdminId,
+            SuperAdminEmail);
+
+        var authority = await PointOfSale.Infrastructure.Reliability.CommerceHubVendorAuthority.LoadAsync(
+            _dbContext,
+            vendor.Id);
+        Assert.True(authority.IsMarketplaceEligible);
+        Assert.Equal(2, await _dbContext.UserGovernanceAuditLogs.CountAsync());
     }
 
     [Fact]
@@ -512,6 +616,31 @@ public sealed class UserGovernanceServiceTests : IDisposable
             MarketplaceApprovedAtUtc = DateTime.UtcNow,
             MarketplaceApprovedByAdminId = _superAdminId,
             MarketplaceApprovalReason = "Test marketplace approval.",
+            CreatedAtUtc = DateTime.UtcNow
+        });
+        await _dbContext.SaveChangesAsync();
+        return vendor;
+    }
+
+    private async Task<Tenant> CreateVendorCandidateAsync(string name, string email)
+    {
+        var vendor = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            ContactEmail = email,
+            Currency = "EGP",
+            IsActive = true,
+            Status = TenantStatus.Active,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _dbContext.Tenants.Add(vendor);
+        _dbContext.UserGovernanceProfiles.Add(new UserGovernanceProfile
+        {
+            Id = Guid.NewGuid(),
+            SubjectId = vendor.Id,
+            Role = UserGovernanceRole.Vendor,
+            Status = UserGovernanceStatus.Active,
             CreatedAtUtc = DateTime.UtcNow
         });
         await _dbContext.SaveChangesAsync();

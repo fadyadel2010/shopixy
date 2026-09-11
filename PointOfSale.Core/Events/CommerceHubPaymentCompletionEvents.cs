@@ -11,6 +11,8 @@ public abstract class CommerceHubPaymentCompletionEvent : IntegrationEvent, IAut
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "EGP";
     public List<Guid> AffectedStoreIds { get; set; } = new();
+    public bool IsDevelopmentSimulation { get; set; }
+    public bool ExternalMoneyMovementConfirmed { get; set; }
 
     public Guid GetAuthoritativeAggregateId() => MarketplaceOrderId;
 
@@ -45,4 +47,6 @@ public sealed class CommerceHubPaymentNotificationsRequestedEvent : IntegrationE
     public string CustomerName { get; set; } = string.Empty;
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "EGP";
+    public bool IsDevelopmentSimulation { get; set; }
+    public bool ExternalMoneyMovementConfirmed { get; set; }
 }

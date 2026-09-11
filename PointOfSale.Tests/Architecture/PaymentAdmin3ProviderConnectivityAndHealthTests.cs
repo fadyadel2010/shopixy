@@ -21,13 +21,14 @@ public sealed class PaymentAdmin3ProviderConnectivityAndHealthTests
         var result = await service.TestConnectionAsync("paymob");
 
         Assert.True(result.Result.Success);
-        Assert.Equal("Healthy", result.Result.Status);
+        Assert.Equal("Warning", result.Result.Status);
         Assert.Equal("PAYMOB", result.Result.Provider);
         Assert.Equal("Sandbox", result.Result.Environment);
         Assert.Equal("Paymob Accept API", result.Result.ProviderVersion);
         Assert.NotEmpty(result.Result.Capabilities);
-        Assert.Equal("Healthy", result.Health.Status);
+        Assert.Equal("Warning", result.Health.Status);
         Assert.NotNull(result.Health.LastSuccessfulCheckUtc);
+        Assert.NotEmpty(result.Result.Warnings);
     }
 
     [Fact]
@@ -46,6 +47,20 @@ public sealed class PaymentAdmin3ProviderConnectivityAndHealthTests
         Assert.Equal("Invalid Credentials", result.Result.ErrorCategory);
         Assert.DoesNotContain("secret", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("provider-request", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task TestConnection_AuthenticatedMerchantMismatchFailsClosed()
+    {
+        var service = CreateService(new FakePaymobClient(new PaymobAdapterAuthResponse(
+            "provider-token",
+            new PaymobMerchantProfileResponse { Id = 999 })));
+
+        var result = await service.TestConnectionAsync("PAYMOB");
+
+        Assert.False(result.Result.Success);
+        Assert.Equal("Error", result.Result.Status);
+        Assert.Equal("Merchant Identity Mismatch", result.Result.ErrorCategory);
     }
 
     [Fact]
@@ -109,7 +124,7 @@ public sealed class PaymentAdmin3ProviderConnectivityAndHealthTests
                 Enabled = true,
                 Environment = "Production",
                 Configuration = ValidConfiguration("Production"),
-                SecretReplacements = ValidSecretReplacements()
+                SecretReplacements = ValidSecretReplacements("Production")
             });
 
         var updated = administration.RecordProviderActionResult(
@@ -265,27 +280,34 @@ public sealed class PaymentAdmin3ProviderConnectivityAndHealthTests
         {
             ["currency"] = "EGP",
             ["integrationId"] = "123456",
-            ["iframeId"] = "654321",
+            ["publicKey"] = environment == "Production" ? "egy_pk_live_test-public" : "egy_pk_test_test-public",
+            ["merchantIdentifier"] = "123",
             ["displayName"] = "Paymob",
             ["description"] = "Paymob provider account for CommerceHub.",
             ["timeoutSeconds"] = "30",
             ["retryCount"] = "2",
             ["requestTimeoutSeconds"] = "30",
             ["maximumRetryAttempts"] = "3",
-            ["environment"] = environment
+            ["environment"] = environment,
+            ["webhookUrl"] = "https://api.example.test/api/payments/paymob/webhook",
+            ["browserCallbackUrl"] = "https://market.example.test/api/commercehub/payments/paymob/callback"
         };
 
     private static Dictionary<string, string> ValidCredentials() =>
         new(StringComparer.Ordinal)
         {
             ["apiKey"] = "paymob-test-api-key",
+            ["secretKey"] = "egy_sk_test_checkout-secret",
             ["hmacSecret"] = "paymob-test-hmac-secret"
         };
 
-    private static Dictionary<string, string?> ValidSecretReplacements() =>
+    private static Dictionary<string, string?> ValidSecretReplacements(string environment = "Sandbox") =>
         new(StringComparer.Ordinal)
         {
             ["apiKey"] = "paymob-test-api-key",
+            ["secretKey"] = environment == "Production"
+                ? "egy_sk_live_checkout-secret"
+                : "egy_sk_test_checkout-secret",
             ["hmacSecret"] = "paymob-test-hmac-secret"
         };
 

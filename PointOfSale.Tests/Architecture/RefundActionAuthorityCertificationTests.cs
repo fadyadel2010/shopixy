@@ -26,7 +26,7 @@ public sealed class RefundActionAuthorityCertificationTests
         var superAdminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
         var refundService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundsService.ts");
 
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorFinancialAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
         Assert.Contains("async function requireCurrentRefundMutationAuthority()", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("const refreshedRefunds = await refundsQuery.refetch()", superAdminPage, StringComparison.Ordinal);
@@ -35,7 +35,8 @@ public sealed class RefundActionAuthorityCertificationTests
         Assert.Contains("if (!currentRefund.canReject)", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("if (!currentRefund.canRetry)", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("if (!currentRefund.canExecute", superAdminPage, StringComparison.Ordinal);
-        Assert.Contains("if (returnModalMode === 'failed' && !returnRequest.canMarkFailed)", superAdminPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReturnTransitionModal", superAdminPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("returnMutation", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("requireSuperAdminRefundDetailsForCurrentSelection", superAdminAuthority, StringComparison.Ordinal);
         Assert.Contains("return requireSuperAdminRefundDetailsPresentation(response.data, refundId)", refundService, StringComparison.Ordinal);
         Assert.Contains("return requireSuperAdminReturnPresentation(response.data, returnId)", refundService, StringComparison.Ordinal);

@@ -189,7 +189,34 @@ public class CommerceHubOrdersController : ControllerBase
         return Ok(MapToDto(document, paymentRecoveryAuthority));
     }
 
-    [Authorize]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    [HttpGet("api/commercehub/suborders/{subOrderId:guid}/actions")]
+    [ProducesResponseType(typeof(CommerceHubVendorOrderActionAuthorityDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetVendorOrderActions(
+        Guid subOrderId,
+        CancellationToken cancellationToken)
+    {
+        var traceId = Activity.Current?.Id ?? HttpContext.TraceIdentifier;
+        var storeId = _tenantContext.TenantId;
+        if (!storeId.HasValue)
+        {
+            return BadRequest(new ApiErrorResponse("TENANT_REQUIRED", "Store tenant context is required.", traceId));
+        }
+
+        try
+        {
+            return Ok(await _orderManagementService.GetVendorOrderActionAuthorityAsync(
+                storeId.Value,
+                subOrderId,
+                cancellationToken));
+        }
+        catch (CommerceHubCheckoutException ex)
+        {
+            return StatusCode(ex.StatusCode, new ApiErrorResponse(ex.Code, ex.Message, traceId));
+        }
+    }
+
+    [Authorize(Roles = "Owner,Admin,Manager")]
     [HttpPatch("api/commercehub/suborders/{subOrderId:guid}/status")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
@@ -213,6 +240,7 @@ public class CommerceHubOrdersController : ControllerBase
                 storeId.Value,
                 subOrderId,
                 request.Status,
+                request.ExpectedVersion,
                 request.Reason,
                 traceId,
                 cancellationToken);
@@ -221,7 +249,8 @@ public class CommerceHubOrdersController : ControllerBase
             {
                 subOrderId = subOrder.Id,
                 status = subOrder.Status,
-                paymentStatus = subOrder.PaymentStatus
+                paymentStatus = subOrder.PaymentStatus,
+                lifecycleVersion = subOrder.ProjectionMutationVersion
             });
         }
         catch (CommerceHubCheckoutException ex)

@@ -3,6 +3,7 @@ using PointOfSale.Core.Pricing;
 
 namespace PointOfSale.Tests.Architecture;
 
+[Collection("CommerceHubPriceOverrideRuntimePolicy")]
 public sealed class CommerceHubPriceOverrideImplementationCertificationTests
 {
     [Fact]
@@ -104,14 +105,16 @@ public sealed class CommerceHubPriceOverrideImplementationCertificationTests
     }
 
     [Fact]
-    public void PersistenceMigration_MustRelaxOnlyTheIntentionalNullLock()
+    public void PersistenceBaseline_MustKeepIntentionalOverrideNullability()
     {
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260531170000_ActivateCommerceHubPriceOverrides.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
         var configuration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubListingConfiguration.cs");
         var dbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
 
-        Assert.Contains("DROP CONSTRAINT IF EXISTS \"CK_CommerceHubListings_CommerceHubPrice_PosAuthorityNull\"", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPrice = table.Column<decimal>", migration, StringComparison.Ordinal);
+        Assert.Contains("nullable: true", migration, StringComparison.Ordinal);
         Assert.Contains("CK_CommerceHubListings_CommerceHubPrice_Positive", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("CK_CommerceHubListings_CommerceHubPrice_PosAuthorityNull", migration, StringComparison.Ordinal);
         Assert.Contains("\\\"CommerceHubPrice\\\" IS NULL OR \\\"CommerceHubPrice\\\" > 0", configuration, StringComparison.Ordinal);
         Assert.Contains("CommerceHub price overrides require merchant actor and timestamp audit metadata.", dbContext, StringComparison.Ordinal);
     }
@@ -132,3 +135,6 @@ public sealed class CommerceHubPriceOverrideImplementationCertificationTests
         throw new InvalidOperationException("Repository root could not be found.");
     }
 }
+
+[CollectionDefinition("CommerceHubPriceOverrideRuntimePolicy", DisableParallelization = true)]
+public sealed class CommerceHubPriceOverrideRuntimePolicyCollection;

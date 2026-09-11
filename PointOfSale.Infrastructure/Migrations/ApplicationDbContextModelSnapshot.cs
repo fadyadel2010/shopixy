@@ -7978,6 +7978,86 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("CustomerAddressVersions");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.CustomerPayment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("BankTransferAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CardAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CashAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CustomerId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime>("PaymentDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("PaymentMethod")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ReferenceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CustomerId");
+
+                    b.HasIndex("TenantId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_CustomerPayments_TenantId_IdempotencyKey");
+
+                    b.HasIndex("TenantId", "CustomerId", "PaymentDate");
+
+                    b.ToTable("CustomerPayments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_CustomerPayments_Allocation_Consistent", "\"CashAmount\" >= 0 AND \"CardAmount\" >= 0 AND \"BankTransferAmount\" >= 0 AND \"CashAmount\" + \"CardAmount\" + \"BankTransferAmount\" = \"Amount\"");
+
+                            t.HasCheckConstraint("CK_CustomerPayments_Amount_Positive", "\"Amount\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.CustomerPayoutDetails", b =>
                 {
                     b.Property<Guid>("Id")
@@ -16869,11 +16949,23 @@ namespace PointOfSale.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<decimal>("CardRefundAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("CashRefundAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
+
+                    b.Property<decimal>("CustomerCreditAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
 
                     b.Property<Guid?>("CustomerId")
                         .HasColumnType("uuid");
@@ -16895,6 +16987,9 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.Property<string>("Reason")
                         .HasColumnType("text");
+
+                    b.Property<int?>("RefundMethod")
+                        .HasColumnType("integer");
 
                     b.Property<DateTime>("ReturnDate")
                         .HasColumnType("timestamp with time zone");
@@ -16949,6 +17044,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("Returns", t =>
                         {
                             t.HasCheckConstraint("CK_Returns_PurchaseAuthorityLineage", "(\"ReturnType\" <> 0) OR (\"OriginalPurchaseInvoiceId\" IS NOT NULL AND \"OriginalInvoiceId\" IS NULL AND \"SupplierId\" IS NOT NULL AND \"CustomerId\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_Returns_RefundAmounts_NonNegative", "\"CashRefundAmount\" >= 0 AND \"CardRefundAmount\" >= 0 AND \"CustomerCreditAmount\" >= 0");
+
+                            t.HasCheckConstraint("CK_Returns_SettlementSnapshot_Consistent", "(\"RefundMethod\" IS NULL AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = 0) OR (\"ReturnType\" = 1 AND ((\"RefundMethod\" = 0 AND \"CashRefundAmount\" = \"TotalAmount\" AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = 0) OR (\"RefundMethod\" = 1 AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = \"TotalAmount\" AND \"CustomerCreditAmount\" = 0) OR (\"RefundMethod\" = 2 AND \"CashRefundAmount\" > 0 AND \"CardRefundAmount\" > 0 AND \"CashRefundAmount\" + \"CardRefundAmount\" = \"TotalAmount\" AND \"CustomerCreditAmount\" = 0) OR (\"RefundMethod\" = 3 AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = \"TotalAmount\")))");
                         });
                 });
 
@@ -22877,6 +22976,17 @@ namespace PointOfSale.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("CustomerAddress");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.CustomerPayment", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Customer", "Customer")
+                        .WithMany()
+                        .HasForeignKey("CustomerId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Customer");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.CustomerPayoutDetails", b =>

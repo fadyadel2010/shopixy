@@ -264,6 +264,128 @@ public sealed class ProductVariantMergeSplitAuthorityTests
     }
 
     [Fact]
+    public async Task CommitOrderReservationsAsync_ConsumesHistoricalReservationAfterCatalogAndWarehouseDeactivation()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var variantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+
+        var product = CreateProduct(tenantId, productId);
+        var variant = CreateVariant(tenantId, variantId, productId, "SKU-HISTORY", "BC-HISTORY");
+        var warehouse = new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Historical",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.Products.Add(product);
+        db.ProductVariants.Add(variant);
+        db.Warehouses.Add(warehouse);
+        db.ProductVariantStocks.Add(new ProductVariantStock
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            VariantId = variantId,
+            WarehouseId = warehouseId,
+            Quantity = 2m,
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var repository = new ProductVariantStockRepository(
+            db,
+            NullLogger<ProductVariantStockRepository>.Instance);
+        Assert.True(await repository.ReserveAsync(
+            tenantId,
+            variantId,
+            warehouseId,
+            1m,
+            orderId,
+            DateTime.UtcNow.AddMinutes(15)));
+
+        var reservation = await db.InventoryReservations.IgnoreQueryFilters().SingleAsync();
+        reservation.OrderItemId = Guid.NewGuid();
+        product.IsActive = false;
+        variant.IsActive = false;
+        warehouse.IsActive = false;
+        await db.SaveChangesAsync();
+
+        await repository.CommitOrderReservationsAsync(tenantId, orderId);
+
+        var stock = await db.ProductVariantStocks.IgnoreQueryFilters().SingleAsync();
+        Assert.Equal(1m, stock.Quantity);
+        Assert.Equal(0m, stock.ReservedQuantity);
+        Assert.Equal(1m, reservation.CommittedQuantity);
+        Assert.Equal(InventoryReservationStatus.Committed, reservation.Status);
+    }
+
+    [Fact]
+    public async Task ReleaseOrderReservationsAsync_ReleasesHistoricalReservationAfterCatalogAndWarehouseDeactivation()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var variantId = Guid.NewGuid();
+        var warehouseId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+
+        var product = CreateProduct(tenantId, productId);
+        var variant = CreateVariant(tenantId, variantId, productId, "SKU-RELEASE", "BC-RELEASE");
+        var warehouse = new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = tenantId,
+            Name = "Historical",
+            IsActive = true,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.Products.Add(product);
+        db.ProductVariants.Add(variant);
+        db.Warehouses.Add(warehouse);
+        db.ProductVariantStocks.Add(new ProductVariantStock
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            VariantId = variantId,
+            WarehouseId = warehouseId,
+            Quantity = 2m,
+            CreatedAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var repository = new ProductVariantStockRepository(
+            db,
+            NullLogger<ProductVariantStockRepository>.Instance);
+        Assert.True(await repository.ReserveAsync(
+            tenantId,
+            variantId,
+            warehouseId,
+            1m,
+            orderId,
+            DateTime.UtcNow.AddMinutes(15)));
+
+        var reservation = await db.InventoryReservations.IgnoreQueryFilters().SingleAsync();
+        reservation.OrderItemId = Guid.NewGuid();
+        product.IsActive = false;
+        variant.IsActive = false;
+        warehouse.IsActive = false;
+        await db.SaveChangesAsync();
+
+        Assert.True(await repository.ReleaseOrderReservationsAsync(tenantId, orderId));
+
+        var stock = await db.ProductVariantStocks.IgnoreQueryFilters().SingleAsync();
+        Assert.Equal(2m, stock.Quantity);
+        Assert.Equal(0m, stock.ReservedQuantity);
+        Assert.Equal(1m, reservation.ReleasedQuantity);
+        Assert.Equal(InventoryReservationStatus.Released, reservation.Status);
+    }
+
+    [Fact]
     public async Task GetAvailableQuantityAsync_IgnoresInactiveWarehouseStockLineage()
     {
         var tenantId = Guid.NewGuid();

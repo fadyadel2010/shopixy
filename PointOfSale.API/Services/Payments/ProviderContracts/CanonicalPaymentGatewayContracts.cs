@@ -172,9 +172,14 @@ public sealed record PaymentProviderCallbackResult
 {
     public bool IsValid { get; init; }
     public bool IsSuccess { get; init; }
+    public bool IsPending { get; init; }
+    public bool IsTerminalFailure { get; init; }
     public string? TransactionId { get; init; }
     public string? ProviderIntentId { get; init; }
     public string? ProviderReference { get; init; }
+    public long AmountMinorUnits { get; init; }
+    public string Currency { get; init; } = string.Empty;
+    public string? FailureReason { get; init; }
     public string? Message { get; init; }
 }
 

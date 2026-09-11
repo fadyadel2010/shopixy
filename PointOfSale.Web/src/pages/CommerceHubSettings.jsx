@@ -308,6 +308,11 @@ export default function CommerceHubSettings() {
             return
         }
 
+        if (variant.isCommerceHubPublicationEligible === false) {
+            showError(variant.commerceHubPublicationEligibilityMessage || t('commerceHub.publicationBlocked'))
+            return
+        }
+
         const state = getEditState(variant.variantId)
         if (!state.categoryId) {
             showError(t('commerceHub.categoryRequired'))
@@ -337,7 +342,9 @@ export default function CommerceHubSettings() {
             const payload = {
                 variantId: variant.variantId,
                 commerceHubCategoryId: state.categoryId,
-                commerceHubPrice: state.commerceHubPrice || null,
+                commerceHubPrice: variant.isCommerceHubPriceOverrideEnabled
+                    ? state.commerceHubPrice || null
+                    : null,
                 expectedPriceOverrideMutationVersion: state.priceOverrideMutationVersion ?? 0,
                 attributesJson: Object.keys(normalizedAttributes).length > 0
                     ? normalizedAttributes
@@ -818,12 +825,22 @@ export default function CommerceHubSettings() {
                                         const state = getEditState(variant.variantId)
                                         const isPublished = variant.listing?.isPublished
                                         const isSaving = saving[variant.variantId]
-                                        const effectivePrice = resolveEffectivePrice(variant.price, state.commerceHubPrice)
-                                        const isOverridePriceActive = state.commerceHubPrice !== null && state.commerceHubPrice !== undefined
+                                        const isPriceOverrideEnabled = variant.isCommerceHubPriceOverrideEnabled === true
+                                        const effectivePrice = resolveEffectivePrice(
+                                            variant.price,
+                                            isPriceOverrideEnabled ? state.commerceHubPrice : null,
+                                        )
+                                        const isOverridePriceActive = isPriceOverrideEnabled
+                                            && state.commerceHubPrice !== null
+                                            && state.commerceHubPrice !== undefined
                                         const selectedCategoryName = getCategoryName(state.categoryId)
                                         const isCurrencyBlocked = variant.isCommerceHubCurrencyEligible !== true
                                         const currencyPolicyMessage = isCurrencyBlocked
                                             ? getCommerceHubCurrencyPolicyMessage(variant)
+                                            : null
+                                        const isPublicationBlocked = variant.isCommerceHubPublicationEligible === false
+                                        const publicationEligibilityMessage = isPublicationBlocked
+                                            ? variant.commerceHubPublicationEligibilityMessage || t('commerceHub.publicationBlocked')
                                             : null
 
                                         return (
@@ -853,6 +870,11 @@ export default function CommerceHubSettings() {
                                                                 {currencyPolicyMessage}
                                                             </div>
                                                         )}
+                                                        {isPublicationBlocked && (
+                                                            <div className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-2 py-1">
+                                                                {publicationEligibilityMessage}
+                                                            </div>
+                                                        )}
                                                     </div>
 
                                                     {/* Category Selector */}
@@ -869,19 +891,26 @@ export default function CommerceHubSettings() {
                                                             type="number"
                                                             step="0.01"
                                                             min="0"
-                                                            value={state.commerceHubPrice ?? ''}
+                                                            value={isPriceOverrideEnabled ? state.commerceHubPrice ?? '' : ''}
                                                             onChange={e => updateEditState(variant.variantId, { commerceHubPrice: e.target.value ? parseFloat(e.target.value) : null })}
-                                                            placeholder={t('commerceHub.autoPrice')}
-                                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                                            placeholder={isPriceOverrideEnabled ? t('commerceHub.autoPrice') : t('commerceHub.productPrice')}
+                                                            disabled={!isPriceOverrideEnabled}
+                                                            title={!isPriceOverrideEnabled ? t('commerceHub.priceOverrideDisabled') : undefined}
+                                                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-500"
                                                         />
+                                                        {!isPriceOverrideEnabled && (
+                                                            <p className="mt-1 max-w-[180px] text-xs leading-4 text-gray-500">
+                                                                {t('commerceHub.priceOverrideDisabled')}
+                                                            </p>
+                                                        )}
                                                     </div>
 
                                                     {/* Actions */}
                                                     <div className="flex items-end gap-2 min-w-[180px]">
                                                         <button
                                                             onClick={() => handlePublish(variant)}
-                                                            disabled={isSaving || !state.categoryId || isCurrencyBlocked || !canManageCatalog}
-                                                            title={currencyPolicyMessage || undefined}
+                                                            disabled={isSaving || !state.categoryId || isCurrencyBlocked || isPublicationBlocked || !canManageCatalog}
+                                                            title={currencyPolicyMessage || publicationEligibilityMessage || undefined}
                                                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                                                                 isPublished
                                                                     ? 'bg-blue-600 hover:bg-blue-700 text-white'
@@ -918,9 +947,9 @@ export default function CommerceHubSettings() {
                                                     price={effectivePrice}
                                                     priceLabel={isOverridePriceActive ? t('commerceHub.commerceHubPrice') : t('commerceHub.productPrice')}
                                                     currencyCode="EGP"
-                                                    onApplySuggestedPrice={(suggestedPrice) =>
-                                                        updateEditState(variant.variantId, { commerceHubPrice: suggestedPrice })
-                                                    }
+                                                    onApplySuggestedPrice={isPriceOverrideEnabled
+                                                        ? (suggestedPrice) => updateEditState(variant.variantId, { commerceHubPrice: suggestedPrice })
+                                                        : undefined}
                                                 />
 
                                                 {/* Dynamic Attributes (shown when category is selected) */}

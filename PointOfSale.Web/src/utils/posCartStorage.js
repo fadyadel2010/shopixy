@@ -157,9 +157,15 @@ const sanitizeSnapshot = (snapshot) => {
         editingSaleId: snapshot.editingSaleId || null,
         editingInvoiceNumber: snapshot.editingInvoiceNumber || null,
         editingOriginalItems: sanitizeItems(snapshot.editingOriginalItems),
+        editingBaselineFingerprint: typeof snapshot.editingBaselineFingerprint === 'string'
+            ? snapshot.editingBaselineFingerprint
+            : null,
         editingMutationVersion: Number.isInteger(snapshot.editingMutationVersion) && snapshot.editingMutationVersion >= 0
             ? snapshot.editingMutationVersion
             : null,
+        editingPaymentMethod: typeof snapshot.editingPaymentMethod === 'string' ? snapshot.editingPaymentMethod : null,
+        editingCashAmount: Number.isFinite(Number(snapshot.editingCashAmount)) ? Number(snapshot.editingCashAmount) : null,
+        editingSalesRepresentative: sanitizeCustomer(snapshot.editingSalesRepresentative),
         savedAt: typeof snapshot.savedAt === 'string' ? snapshot.savedAt : new Date().toISOString(),
     }
 }

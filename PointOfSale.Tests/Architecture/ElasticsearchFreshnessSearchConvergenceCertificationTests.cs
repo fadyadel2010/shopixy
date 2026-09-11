@@ -78,9 +78,10 @@ public sealed class ElasticsearchFreshnessSearchConvergenceCertificationTests
 
         Assert.Contains("RecomposeVisibleSuggestionProductsAsync", commerceHubQuery, StringComparison.Ordinal);
         Assert.Contains("FilterLiveSuggestionTermsAsync", commerceHubQuery, StringComparison.Ordinal);
-        Assert.Contains("MapSqlVisibleFacetsAsync", commerceHubQuery, StringComparison.Ordinal);
-        Assert.Contains("Total = visibleItems.Count", commerceHubQuery, StringComparison.Ordinal);
-        Assert.Contains("Aggregations = new Dictionary<string, CommerceHubAggregationDto>", commerceHubQuery, StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", commerceHubQuery, StringComparison.Ordinal);
+        Assert.Contains("var totalCount = authorityItems.Count", commerceHubQuery, StringComparison.Ordinal);
+        Assert.Contains("CategoryBuckets = authorityItems", commerceHubQuery, StringComparison.Ordinal);
+        Assert.Contains("PriceStats = authorityItems.Count == 0", commerceHubQuery, StringComparison.Ordinal);
     }
 
     [Fact]

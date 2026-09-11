@@ -1,9 +1,11 @@
 using System.Collections.Concurrent;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit.Sdk;
 using PointOfSale.API.Controllers;
@@ -14,6 +16,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Tests.Infrastructure;
 using UnitEntity = PointOfSale.Core.Entities.Unit;
 
@@ -242,8 +245,11 @@ public sealed class SalesReturnsConcurrencyIntegrationTests
             logger,
             ledgerService.Object,
             Mock.Of<IEventPublisher>(),
-            CreateAccountingOutboxMock().Object,
-            Mock.Of<ICommerceAccountingService>())
+            new AccountingOutboxService(
+                context,
+                Mock.Of<ICorrelationIdAccessor>(),
+                NullLogger<AccountingOutboxService>.Instance),
+            CreateCommerceAccountingMock().Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -303,7 +309,15 @@ public sealed class SalesReturnsConcurrencyIntegrationTests
             throw;
         }
 
-        var okResult = Assert.IsType<OkObjectResult>(actionResult.Result);
+        if (actionResult.Result is not OkObjectResult okResult)
+        {
+            var objectResult = actionResult.Result as ObjectResult;
+            throw new XunitException(
+                $"Sales return {idempotencyKey} failed with HTTP {objectResult?.StatusCode?.ToString() ?? "unknown"}: " +
+                $"{JsonSerializer.Serialize(objectResult?.Value)}. Logs: " +
+                string.Join(" | ", logEntries.Select(entry =>
+                    $"{entry.LogLevel}:{entry.Message}{FormatLogException(entry.Exception)}")));
+        }
         var response = Assert.IsType<SalesReturnResponse>(okResult.Value);
         progressEntries.Enqueue($"{idempotencyKey}: completed:{response.ReturnId}");
 
@@ -506,19 +520,14 @@ public sealed class SalesReturnsConcurrencyIntegrationTests
         };
     }
 
-    private static Mock<IAccountingOutboxService> CreateAccountingOutboxMock()
+    private static Mock<ICommerceAccountingService> CreateCommerceAccountingMock()
     {
-        var mock = new Mock<IAccountingOutboxService>(MockBehavior.Strict);
-        mock.Setup(service => service.EnqueuePosRefundAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<Guid>(),
-                It.IsAny<Guid>(),
-                It.IsAny<RefundMethod>(),
-                It.IsAny<decimal>(),
-                It.IsAny<decimal>(),
-                It.IsAny<int?>(),
+        var mock = new Mock<ICommerceAccountingService>(MockBehavior.Strict);
+        mock.Setup(service => service.PostPosRefundAsync(
+                It.IsAny<Return>(),
+                It.IsAny<PointOfSale.Core.Models.Refunds.RefundAllocation>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(PostingResult.Succeeded(Guid.NewGuid(), "SR-CONC-MOCK"));
         return mock;
     }
 
@@ -566,7 +575,21 @@ public sealed class SalesReturnsConcurrencyIntegrationTests
 
     private sealed record LogEntry(
         LogLevel LogLevel,
-        string Message);
+        string Message,
+        Exception? Exception);
+
+    private static string FormatLogException(Exception? exception)
+    {
+        if (exception == null)
+        {
+            return string.Empty;
+        }
+
+        var concurrencyEntries = exception is DbUpdateConcurrencyException concurrencyException
+            ? $" Entries: {string.Join(", ", concurrencyException.Entries.Select(entry => entry.Metadata.ClrType.Name))}"
+            : string.Empty;
+        return $" [{exception}{concurrencyEntries}]";
+    }
 
     private sealed class TestLogger<T>(ConcurrentQueue<LogEntry> entries) : ILogger<T>
     {
@@ -581,7 +604,7 @@ public sealed class SalesReturnsConcurrencyIntegrationTests
             Exception? exception,
             Func<TState, Exception?, string> formatter)
         {
-            entries.Enqueue(new LogEntry(logLevel, formatter(state, exception)));
+            entries.Enqueue(new LogEntry(logLevel, formatter(state, exception), exception));
         }
     }
 

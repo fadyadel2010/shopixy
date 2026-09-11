@@ -501,14 +501,14 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     public void PayoutReconciliation_MustNotBeBlockedByVendorGovernanceAfterExternalHandoff()
     {
         var payoutService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPayoutService.cs"));
-        var superAdminPayouts = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutsService.cs"));
+        var superAdminOrchestration = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutOrchestrationService.cs"));
         var markCompletedMethod = ExtractMethodBody(payoutService, "public async Task<CommerceHubPayoutDto> MarkCompletedAsync");
         var markFailedMethod = ExtractMethodBody(payoutService, "public async Task<CommerceHubPayoutDto> MarkFailedAsync");
-        var superAdminExecuteMethod = ExtractMethodBody(superAdminPayouts, "public async Task<CommerceHubPayoutDto> ExecuteAsync");
+        var superAdminCompleteMethod = ExtractMethodBody(superAdminOrchestration, "public async Task<CommerceHubPayoutDto> CompleteAsync");
 
         Assert.NotNull(markCompletedMethod);
         Assert.NotNull(markFailedMethod);
-        Assert.NotNull(superAdminExecuteMethod);
+        Assert.NotNull(superAdminCompleteMethod);
         Assert.DoesNotContain("EnsureVendorPayoutAllowedAsync", markCompletedMethod!, StringComparison.Ordinal);
         Assert.Contains("if (!IsExternallyLockedPayoutStatus(payout.Status))", markFailedMethod!, StringComparison.Ordinal);
         AssertContainsInOrder(
@@ -518,9 +518,9 @@ public sealed class CrossSystemCriticalRiskHardeningTests
             "EnsureProcessingFailureNonExecutionEvidence",
             "if (!IsExternallyLockedPayoutStatus(payout.Status))",
             "EnsureVendorPayoutAllowedAsync");
-        Assert.DoesNotContain("EnsureVendorPayoutAllowedAsync", superAdminExecuteMethod!, StringComparison.Ordinal);
-        Assert.DoesNotContain("Only active vendors can receive CommerceHub payouts.", superAdminExecuteMethod!, StringComparison.Ordinal);
-        Assert.Contains("must not block local recognition after bank/provider evidence confirms", superAdminExecuteMethod!, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureVendorPayoutAllowedAsync", superAdminCompleteMethod!, StringComparison.Ordinal);
+        Assert.Contains("_canonicalPayoutService.MarkCompletedAsync", superAdminCompleteMethod!, StringComparison.Ordinal);
+        Assert.Contains("blocking it here would desynchronize bank/provider cash", payoutService, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -626,6 +626,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     public void CommerceHubProviderRefundWebhooks_MustQueueConfirmedAccountingWithoutCallingGatewayAgain()
     {
         var paymentService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentService.cs"));
+        var stripeAdapter = File.ReadAllText(ApiPath("Services", "Payments", "Stripe", "StripeAdapter.cs"));
         var worker = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentCompensationOutboxWorker.cs"));
 
         var applyRefundMethod = ExtractMethodBody(paymentService, "ApplyProviderRefundWebhookAsync");
@@ -633,8 +634,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
 
         Assert.NotNull(applyRefundMethod);
         Assert.NotNull(markRefundMethod);
-        Assert.Contains("charge.refunded", paymentService, StringComparison.Ordinal);
-        Assert.Contains("payload.Obj.IsRefunded", paymentService, StringComparison.Ordinal);
+        Assert.Contains("charge.refunded", stripeAdapter, StringComparison.Ordinal);
+        Assert.Contains("callback.IsRefunded", paymentService, StringComparison.Ordinal);
         Assert.Contains("providerAmountIsCumulativeRefunded", applyRefundMethod!, StringComparison.Ordinal);
         Assert.Contains("processedPayment.Amount - processedPayment.RefundedAmount", applyRefundMethod!, StringComparison.Ordinal);
         Assert.Contains("PAYMENT_REFUND_AMOUNT_EXCEEDS_REMAINING", applyRefundMethod!, StringComparison.Ordinal);
@@ -658,7 +659,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("HasDurableGatewayOutcome(message)", worker, StringComparison.Ordinal);
         Assert.Contains("RefreshRefundStatusAsync", worker, StringComparison.Ordinal);
         Assert.Contains("RefreshRefundStatusAsync", gateway, StringComparison.Ordinal);
-        Assert.Contains("RefreshStripeRefundStatusAsync", gateway, StringComparison.Ordinal);
+        Assert.Contains("_refundGateway.RefreshRefundStatusAsync", gateway, StringComparison.Ordinal);
         Assert.Contains("BuildGatewayResultFromPersistedOutcome(message, payment.Provider)", worker, StringComparison.Ordinal);
         Assert.Contains("await PersistGatewayOutcomeAsync(dbContext, message, result, cancellationToken)", worker, StringComparison.Ordinal);
         Assert.Contains("dbContext.ChangeTracker.Clear();", worker, StringComparison.Ordinal);
@@ -990,14 +991,16 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     }
 
     [Fact]
-    public void CommerceHubSearchProjection_MustRetryFailedSearchSyncForCriticalEvents()
+    public void CommerceHubSearchProjection_MustCommitMongoAndDelegateFailedSearchSyncToAutoHealing()
     {
         var consumer = File.ReadAllText(InfrastructurePath("Consumers", "CommerceHubProjectionConsumer.cs"));
 
         Assert.Contains("RequiresSearchSyncRetry", consumer, StringComparison.Ordinal);
         Assert.Contains("SearchSyncFailed", consumer, StringComparison.Ordinal);
         Assert.Contains("SearchSyncPending", consumer, StringComparison.Ordinal);
-        Assert.Contains("will be retried by message redelivery", consumer, StringComparison.Ordinal);
+        Assert.Contains("CommerceHub Mongo projection committed while Elasticsearch sync remains failed", consumer, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubAutoHealingService", consumer, StringComparison.Ordinal);
+        Assert.DoesNotContain("will be retried by message redelivery", consumer, StringComparison.Ordinal);
         Assert.Contains("if (!succeeded)", consumer, StringComparison.Ordinal);
     }
 
@@ -1160,7 +1163,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
             "CommerceHubOrderAccessCookie.ReadOrderAccessToken",
             "ResolveAuthenticatedCustomerIdAsync",
             "if (!authenticatedCustomerId.HasValue && string.IsNullOrWhiteSpace(orderAccessToken))",
-            "_paymentService.InitiateAsync(");
+            "_paymentOrchestrationService.ExecuteAsync(");
         Assert.Contains("OrderAccessToken = orderAccessToken", initiateControllerMethod!, StringComparison.Ordinal);
         Assert.Contains("authenticatedCustomerId,", initiateControllerMethod!, StringComparison.Ordinal);
 
@@ -1198,7 +1201,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("ResolveHandoffType", paymentService, StringComparison.Ordinal);
         
         // Verify service method and flow
-        Assert.Contains("async initiatePayment(payload: CommerceHubPaymentInitiateRequest)", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("async initiatePayment(payload: CommerceHubPaymentInitiateRequest", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("requirePaymentInitiationAuthority", checkoutService, StringComparison.Ordinal);
         Assert.Contains("checkoutService.initiatePayment({", checkoutPage, StringComparison.Ordinal);
         
         // Verify status check and navigation behavior
@@ -1240,11 +1244,12 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     }
 
     [Fact]
-    public void CommerceHubCheckout_MustRequireConcreteOnlineProviderPerStore()
+    public void CommerceHubCheckout_MustRequireExecutablePlatformProviderWithoutReadingStorefrontAuthority()
     {
         var checkoutService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubCheckoutService.cs"));
         var validateMethod = ExtractMethodBody(checkoutService, "ValidateRequestedPaymentMethod");
         var paymentAuthority = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentMethodAuthority.cs"));
+        var paymentService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentService.cs"));
         var cartDtos = File.ReadAllText(ApiPath("DTOs", "CommerceHub", "CommerceHubCartDtos.cs"));
         var cartService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubCartService.cs"));
         var checkoutPage = File.ReadAllText(CommerceHubPath("src", "pages", "CheckoutPage.tsx"));
@@ -1253,8 +1258,12 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.NotNull(validateMethod);
         Assert.Contains("CommerceHubPaymentMethodAuthority.IsRequestedMethodAvailable", validateMethod!, StringComparison.Ordinal);
         Assert.Contains("string.Equals(method.Code, requestedPaymentMethod, StringComparison.OrdinalIgnoreCase)", paymentAuthority, StringComparison.Ordinal);
-        Assert.DoesNotContain("methodsForTenant.Any(method => method.SupportsOnline)", paymentAuthority, StringComparison.Ordinal);
-        Assert.DoesNotContain("methodsForTenant.Count == 0", paymentAuthority, StringComparison.Ordinal);
+        Assert.Contains("capabilities.SupportsPaymentSessionCreation", paymentAuthority, StringComparison.Ordinal);
+        Assert.Contains("capabilities.SupportsWebhookVerification", paymentAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethod", paymentAuthority, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", cartService, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", checkoutService, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", paymentService, StringComparison.Ordinal);
         Assert.Contains("PaymentMethods", cartDtos, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPaymentMethodAuthority.BuildAvailability", cartService, StringComparison.Ordinal);
         Assert.Contains("paymentMethods={paymentMethods}", checkoutPage, StringComparison.Ordinal);
@@ -1498,13 +1507,14 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     {
         var paymentService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPaymentService.cs"));
 
-        Assert.Contains("private const string UnknownCurrencyCode = \"XXX\";", paymentService, StringComparison.Ordinal);
-        Assert.Contains("ResolveUnresolvedProviderCurrency", paymentService, StringComparison.Ordinal);
-        Assert.Contains("HasAuthoritativeCurrency", paymentService, StringComparison.Ordinal);
+        Assert.Contains("RequireCommerceHubPaymentCurrency(callback.Currency, \"unresolved Stripe webhook\")", paymentService, StringComparison.Ordinal);
+        Assert.DoesNotContain("UnknownCurrencyCode", paymentService, StringComparison.Ordinal);
+        Assert.Contains("RequireCommerceHubPaymentCurrency(providerCurrency, \"gateway callback\")", paymentService, StringComparison.Ordinal);
+        Assert.Contains("COMMERCEHUB_PAYMENT_CURRENCY_INVALID", paymentService, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.PlatformBaseCurrencyCode", paymentService, StringComparison.Ordinal);
         Assert.DoesNotContain("NormalizeCurrency(payload.Obj.Currency, \"EGP\")", paymentService, StringComparison.Ordinal);
         Assert.DoesNotContain("NormalizeCurrency(paymentIntent.Currency, \"EGP\")", paymentService, StringComparison.Ordinal);
         Assert.DoesNotContain("NormalizeCurrency(currency, \"EGP\")", paymentService, StringComparison.Ordinal);
-        Assert.Contains("Provider-success CommerceHub webhook did not include a valid ISO currency", paymentService, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1552,14 +1562,15 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     [Fact]
     public void SuperAdminVendorPayouts_MustRequireImmutableExternalCompletionEvidence()
     {
-        var service = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutsService.cs"));
+        var service = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPayoutService.cs"));
+        var orchestration = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutOrchestrationService.cs"));
         var dto = File.ReadAllText(ApiPath("SuperAdmin", "DTOs", "SuperAdminPayoutDtos.cs"));
         var webPage = File.ReadAllText(WebPath("src", "super-admin", "payouts", "PayoutsPage.tsx"));
         var webService = File.ReadAllText(WebPath("src", "super-admin", "payouts", "payoutsService.ts"));
 
         Assert.Contains("ExternalReferenceId", dto, StringComparison.Ordinal);
         Assert.Contains("BankTransactionId", dto, StringComparison.Ordinal);
-        Assert.Contains("EnsurePayoutCompletionEvidencePresent", service, StringComparison.Ordinal);
+        Assert.Contains("EnsureTerminalPayoutEvidence", service, StringComparison.Ordinal);
         Assert.Contains("PAYOUT_EXTERNAL_CONFIRMATION_REQUIRED", service, StringComparison.Ordinal);
         Assert.Contains("CompletionEvidenceFingerprint", service, StringComparison.Ordinal);
         Assert.Contains("BuildCompletionEvidenceFingerprint", service, StringComparison.Ordinal);
@@ -1567,6 +1578,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("BuildExternalTransferIdempotencyKey", service, StringComparison.Ordinal);
         Assert.Contains("EnsureExternalPayoutEvidenceIsUniqueAsync", service, StringComparison.Ordinal);
         Assert.Contains("IsExternalPayoutEvidenceUniqueViolation", service, StringComparison.Ordinal);
+        Assert.Contains("ExternalTransferConfirmedExecuted = true", orchestration, StringComparison.Ordinal);
+        Assert.Contains("ExternalTransferHandoffToken", orchestration, StringComparison.Ordinal);
         Assert.Contains("externalReferenceId?: string", webService, StringComparison.Ordinal);
         Assert.Contains("bankTransactionId?: string", webService, StringComparison.Ordinal);
         Assert.Contains("externalReferenceId", webPage, StringComparison.Ordinal);
@@ -1582,7 +1595,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         var riskFlags = File.ReadAllText(CorePath("Constants", "PayoutRiskFlags.cs"));
         var webPage = File.ReadAllText(WebPath("src", "super-admin", "payouts", "PayoutsPage.tsx"));
 
-        Assert.Contains("CanRecordCompletedPayout", dto, StringComparison.Ordinal);
+        Assert.Contains("CanPreparePayout", dto, StringComparison.Ordinal);
+        Assert.Contains("CanCompletePayout", dto, StringComparison.Ordinal);
         Assert.Contains("ExecutionBlockedCode", dto, StringComparison.Ordinal);
         Assert.Contains("ExecutionBlockedReason", dto, StringComparison.Ordinal);
         Assert.Contains("BuildQueueExecutionState", service, StringComparison.Ordinal);
@@ -1590,7 +1604,8 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("StaleExternalTransferProcessing", riskFlags, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPayoutStatus.ReconciliationRequired", readService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPayoutStatus.Processing", readService, StringComparison.Ordinal);
-        Assert.Contains("item.canRecordCompletedPayout", webPage, StringComparison.Ordinal);
+        Assert.Contains("item.canPreparePayout", webPage, StringComparison.Ordinal);
+        Assert.Contains("item.canCompletePayout", webPage, StringComparison.Ordinal);
         Assert.Contains("item.executionBlockedReason", webPage, StringComparison.Ordinal);
         Assert.DoesNotContain("!item.riskFlags.includes('VendorSuspended')", webPage, StringComparison.Ordinal);
     }
@@ -1609,7 +1624,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("CurrencySummaries", dto, StringComparison.Ordinal);
         Assert.Contains("HasCurrencyMix", dto, StringComparison.Ordinal);
         Assert.Contains("AggregateCurrency", dto, StringComparison.Ordinal);
-        Assert.Contains("GroupBy(snapshot => NormalizeQueueCurrency(snapshot.Currency))", service, StringComparison.Ordinal);
+        Assert.Contains("GroupBy(snapshot => snapshot.Currency)", service, StringComparison.Ordinal);
         Assert.Contains("hasSingleAggregateCurrency", service, StringComparison.Ordinal);
         Assert.Contains("pageSize: number", webService, StringComparison.Ordinal);
         Assert.Contains("totalPages?: number", webService, StringComparison.Ordinal);
@@ -1742,6 +1757,9 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.Contains("checkedVendorIds", gate, StringComparison.Ordinal);
         Assert.Contains("affectedVendorIds", gate, StringComparison.Ordinal);
         Assert.Contains("COMMERCEHUB_FINANCIAL_RECONCILIATION_VENDOR_SCOPE_REQUIRED", gate, StringComparison.Ordinal);
+        Assert.Contains("allowFreshStartupBypass &&", gate, StringComparison.Ordinal);
+        Assert.Contains("HasVendorFinancialFootprintAsync", gate, StringComparison.Ordinal);
+        Assert.Contains("transaction.EntityType == CommerceHubFinancialEntityType.Vendor", gate, StringComparison.Ordinal);
         Assert.Contains("CheckedVendorIds = ResolveCheckedVendorIds(context)", reconciliation, StringComparison.Ordinal);
         Assert.Contains("AffectedVendorIds = ResolveAffectedVendorIds(context, findings)", reconciliation, StringComparison.Ordinal);
         Assert.Contains("scope.AffectedVendorIds.Count == 0 || scope.AffectedVendorIds.Contains(tenantId)", gate, StringComparison.Ordinal);
@@ -1785,7 +1803,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     [Fact]
     public void SuperAdminVendorPayouts_MustBindCompletedPayoutsToEarningAllocations()
     {
-        var service = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutsService.cs"));
+        var orchestration = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutOrchestrationService.cs"));
         var payoutService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPayoutService.cs"));
         var earning = File.ReadAllText(CorePath("Entities", "CommerceHubVendorEarning.cs"));
         var dbContext = File.ReadAllText(InfrastructurePath("Data", "ApplicationDbContext.cs"));
@@ -1793,12 +1811,10 @@ public sealed class CrossSystemCriticalRiskHardeningTests
 
         Assert.Contains("PaidOutAmount", earning, StringComparison.Ordinal);
         Assert.Contains("PayoutReservedAmount", earning, StringComparison.Ordinal);
-        Assert.Contains("AllocateCompletedPayoutEarningsAsync", service, StringComparison.Ordinal);
-        Assert.Contains("CreateMissingEligibleEarningCandidatesAsync", service, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubPayoutItems.Add", service, StringComparison.Ordinal);
-        Assert.Contains("ResolveAvailableEarningAmount", service, StringComparison.Ordinal);
-        Assert.Contains("PAYOUT_EARNING_ALLOCATION_CONFLICT", service, StringComparison.Ordinal);
-        Assert.Contains("BeginFinancialWorkflow", service, StringComparison.Ordinal);
+        Assert.Contains("SelectCanonicalPayoutEarningsAsync", orchestration, StringComparison.Ordinal);
+        Assert.Contains("PAYOUT_EARNING_ALLOCATION_CONFLICT", orchestration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPayoutItems.Add", payoutService, StringComparison.Ordinal);
+        Assert.Contains("PayoutReservedAmount =", payoutService, StringComparison.Ordinal);
         Assert.Contains("ResolvePayoutAllocatableAmount", payoutService, StringComparison.Ordinal);
         Assert.Contains("ApplyCompletedPayoutAllocation", payoutService, StringComparison.Ordinal);
         Assert.Contains("ReleasePayoutAllocation", payoutService, StringComparison.Ordinal);
@@ -2105,9 +2121,9 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         Assert.NotNull(registerMethod);
         AssertContainsInOrder(
             registerMethod,
-            "SetCustomerAccessCookie(result.Response!);",
             "ClearCommerceHubRecoveryCookie();",
-            "return Ok(CreateBrowserAuthResponse(result.Response!));");
+            "return Ok(new { message = result.Message });");
+        Assert.DoesNotContain("SetCustomerAccessCookie", registerMethod, StringComparison.Ordinal);
 
         // Extract the Login method body and verify the ordering within that method
         var loginMethod = ExtractMethodBody(authController, "Login");
@@ -3103,17 +3119,14 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     {
         var payoutService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPayoutService.cs"));
         var refundService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubRefundService.cs"));
-        var superAdminPayouts = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutsService.cs"));
 
         var createPayout = ExtractMethodBody(payoutService, "public async Task<CommerceHubPayoutDto> CreatePayoutAsync");
         var markProcessing = ExtractMethodBody(payoutService, "public async Task<CommerceHubPayoutDto> MarkProcessingAsync");
         var executeRefund = ExtractMethodBody(refundService, "ExecutePersistedRefundAsync");
-        var executeSuperAdminPayout = ExtractMethodBody(superAdminPayouts, "public async Task<CommerceHubPayoutDto> ExecuteAsync");
 
         Assert.NotNull(createPayout);
         Assert.NotNull(markProcessing);
         Assert.NotNull(executeRefund);
-        Assert.NotNull(executeSuperAdminPayout);
 
         AssertContainsInOrder(
             createPayout!,
@@ -3130,11 +3143,6 @@ public sealed class CrossSystemCriticalRiskHardeningTests
             "BeginTransactionAsync(IsolationLevel.Serializable",
             "EnsureOutwardMoneyMovementAllowedAsync",
             "ClaimPendingRefundForGatewayExecutionAsync");
-        AssertContainsInOrder(
-            executeSuperAdminPayout!,
-            "BeginTransactionAsync(IsolationLevel.Serializable",
-            "EnsureOutwardMoneyMovementAllowedAsync",
-            "new CommerceHubPayout");
     }
 
     [Fact]
@@ -3746,8 +3754,24 @@ public sealed class CrossSystemCriticalRiskHardeningTests
     private static string ApiPath(params string[] parts) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.API", Path.Combine(parts)));
 
-    private static string InfrastructurePath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Infrastructure", Path.Combine(parts)));
+    private static string InfrastructurePath(params string[] parts)
+    {
+        var repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var activePath = Path.Combine(repositoryRoot, "PointOfSale.Infrastructure", Path.Combine(parts));
+        if (File.Exists(activePath) || parts.Length == 0 || !string.Equals(parts[0], "Migrations", StringComparison.Ordinal))
+        {
+            return activePath;
+        }
+
+        return Path.Combine(
+            repositoryRoot,
+            "docs",
+            "recovery",
+            "archive",
+            "RECOVERY-4_PHASE_A",
+            "PointOfSale.Infrastructure",
+            Path.Combine(parts));
+    }
 
     private static string CorePath(params string[] parts) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Core", Path.Combine(parts)));

@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.Infrastructure;
 
@@ -113,5 +115,6 @@ public sealed class CategoriesControllerTenantScopeTests
         new(
             dbContext,
             new TestTenantContext(tenantId),
+            Mock.Of<IEventPublisher>(),
             NullLogger<CategoriesController>.Instance);
 }

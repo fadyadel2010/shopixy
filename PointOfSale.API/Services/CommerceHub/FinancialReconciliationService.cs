@@ -197,7 +197,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
                     refundLedgerTotals.CommissionAmount));
             var storedNetCommission = RoundCurrency(Math.Max(0m, storedFinalCommission - storedRefundCommission));
             var ledgerPromoNet = RoundCurrency(Math.Max(0m, (orderLedger?.PromotionDebits ?? 0m) - refundLedgerTotals.PromoAmount));
-            var isFinanciallyRecognized = IsFinanciallyRecognized(subOrder.MarketplaceOrder);
+            var isFinanciallyRecognized = IsFinanciallyRecognized(subOrder);
 
             if (subOrder.PlatformCommissionAmount < 0m ||
                 subOrder.FinalPlatformCommissionAmount < 0m ||
@@ -691,7 +691,7 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
                         "Quarantine fulfillment and payout for this order, fetch provider status by intent/reference, then replay the payment webhook or refund the unmatched provider charge."));
                 }
 
-                if (!CommerceHubOrderStateHelper.HasCollectedPayment(payment.Order.PaymentStatus))
+                if (!IsFinanciallyRecognized(payment.Order.PaymentStatus))
                 {
                     findings.Add(new ReconciliationFinding(
                         "ERROR",
@@ -708,7 +708,8 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
             }
 
             if (payment.Status == CommerceHubPaymentRecordStatus.Failed &&
-                !string.IsNullOrWhiteSpace(payment.ProviderTransactionId))
+                !string.IsNullOrWhiteSpace(payment.ProviderTransactionId) &&
+                !HasCanonicalTerminalFailureEvidence(payment))
             {
                 findings.Add(new ReconciliationFinding(
                     "ERROR",
@@ -825,6 +826,31 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
                     "Reconcile bank/provider status before releasing earnings. If transfer succeeded, complete the payout ledger; if reversed, attach reversal evidence before retry."));
             }
         }
+    }
+
+    private static bool HasCanonicalTerminalFailureEvidence(CommerceHubPayment payment)
+    {
+        if (!payment.IsProcessed ||
+            !payment.ProcessedAtUtc.HasValue ||
+            string.IsNullOrWhiteSpace(payment.FailureReason) ||
+            string.IsNullOrWhiteSpace(payment.ProviderTransactionId))
+        {
+            return false;
+        }
+
+        var transactionId = payment.ProviderTransactionId.Trim();
+        var hasMatchingFailedAttempt = payment.Attempts.Any(attempt =>
+            !attempt.IsDeleted &&
+            attempt.Provider == payment.Provider &&
+            attempt.Status == CommerceHubPaymentRecordStatus.Failed &&
+            attempt.CompletedAtUtc.HasValue &&
+            !string.IsNullOrWhiteSpace(attempt.FailureReason) &&
+            string.Equals(attempt.ProviderTransactionId?.Trim(), transactionId, StringComparison.Ordinal));
+        var hasMatchingImmutableProviderEvent = payment.Logs.Any(log =>
+            !log.IsDeleted &&
+            string.Equals(log.ProviderEventId?.Trim(), transactionId, StringComparison.Ordinal));
+
+        return hasMatchingFailedAttempt && hasMatchingImmutableProviderEvent;
     }
 
     private async Task<AggregateValidationResult> ValidateAggregatesAsync(
@@ -1159,6 +1185,9 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
         var payments = await _dbContext.CommerceHubPayments
             .AsNoTracking()
             .Include(payment => payment.Order)
+            .Include(payment => payment.Attempts)
+            .Include(payment => payment.Logs)
+            .AsSplitQuery()
             .Where(payment =>
                 !payment.IsDeleted &&
                 !payment.Order.IsDeleted &&
@@ -1563,8 +1592,13 @@ public sealed class FinancialReconciliationService : IFinancialReconciliationSer
     }
 
     private static bool IsFinanciallyRecognized(CommerceHubMarketplaceOrder order) =>
-        order.Status != OrderStatus.Cancelled &&
-        order.PaymentStatus is PaymentStatus.Collected or
+        order.Status != OrderStatus.Cancelled && IsFinanciallyRecognized(order.PaymentStatus);
+
+    private static bool IsFinanciallyRecognized(CommerceHubSubOrder subOrder) =>
+        subOrder.Status != OrderStatus.Cancelled && IsFinanciallyRecognized(subOrder.PaymentStatus);
+
+    private static bool IsFinanciallyRecognized(PaymentStatus paymentStatus) =>
+        paymentStatus is PaymentStatus.Collected or
             PaymentStatus.Settled or
             PaymentStatus.Refunded or
             PaymentStatus.PartiallyRefunded;

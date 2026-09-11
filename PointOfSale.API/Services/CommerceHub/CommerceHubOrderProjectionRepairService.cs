@@ -104,6 +104,23 @@ public sealed class CommerceHubOrderProjectionRepairService : ICommerceHubOrderP
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
+            var replacedOrphan = await CommerceHubOrderProjectionRepairSupport.TryReplaceOrphanedOrderNumberCollisionAsync(
+                _dbContext,
+                _collection,
+                order,
+                document,
+                cancellationToken);
+
+            if (replacedOrphan)
+            {
+                _logger.LogWarning(
+                    "[CommerceHubProjectionRepair] Replaced orphaned order-number projection from SQL authority | OrderId: {OrderId} | OrderNumber: {OrderNumber}",
+                    order.Id,
+                    order.OrderNumber);
+                await MarkProjectedAsync(order.Id, cancellationToken);
+                return;
+            }
+
             _logger.LogInformation(
                 ex,
                 "[CommerceHubProjectionRepair] Collapsed concurrent projection repair race | OrderId: {OrderId}",

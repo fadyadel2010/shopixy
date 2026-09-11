@@ -9,6 +9,7 @@ import { searchSuppliers } from '../services/entityLookup'
 import { buildIdempotencyHeaders, stableStringify } from '../utils/requestSafety'
 import { formatDate } from '../utils/dateFormat'
 import { roundCurrency } from '../utils/financialMath'
+import { mapPurchaseReturnInvoiceItem } from '../utils/purchaseReturnInvoice'
 
 const buildRequestId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -47,7 +48,6 @@ export default function PurchaseReturns() {
     const [items, setItems] = useState([])
     const [reason, setReason] = useState('')
     const [notes, setNotes] = useState('')
-    const [refundMethod, setRefundMethod] = useState('none') // presentation-only destination note
     const [isSubmitting, setIsSubmitting] = useState(false)
     const supplierId = selectedSupplier?.id || ''
     const submissionLockRef = useRef(false)
@@ -111,7 +111,7 @@ export default function PurchaseReturns() {
         purchaseInvoicesRequestIdRef.current = requestId
 
         try {
-            const response = await api.get(`/purchases?supplierId=${supplierId}&pageSize=50`)
+            const response = await api.get(`/purchasereturns/eligible-invoices?supplierId=${supplierId}&pageSize=50`)
             if (requestId !== purchaseInvoicesRequestIdRef.current) {
                 return
             }
@@ -126,6 +126,7 @@ export default function PurchaseReturns() {
 
             console.error('Error fetching purchase invoices:', error)
             setPurchaseInvoices([])
+            showError(error.response?.data?.message || t('purchases.failedToLoadInvoice'))
         }
     }
 
@@ -155,6 +156,9 @@ export default function PurchaseReturns() {
             return
         }
 
+        setOriginalInvoice(null)
+        setItems([])
+
         try {
             const response = await api.get(`/purchasereturns/invoice/${invoiceId}`)
             if (requestId !== invoiceRequestIdRef.current) {
@@ -162,37 +166,10 @@ export default function PurchaseReturns() {
             }
 
             setOriginalInvoice(response.data)
+            setWarehouseId(response.data.warehouseId)
 
-            // Pre-populate items from original invoice with variant info
-            const returnItems = response.data.items.map(item => {
-                // Build variant display name with attributes
-                let variantDisplayName = item.product.name;
-                if (item.productVariant) {
-                    const attrs = item.productVariant.attributes;
-                    if (attrs && typeof attrs === 'object' && Object.keys(attrs).length > 0) {
-                        const attrValues = Object.values(attrs).join(' / ');
-                        variantDisplayName = `${item.product.name} - ${attrValues}`;
-                    } else if (item.productVariant.sku) {
-                        variantDisplayName = `${item.product.name} (${item.productVariant.sku})`;
-                    }
-                }
-
-                return {
-                    productId: item.productId,
-                    productVariantId: item.productVariantId,
-                    name: item.product.name,
-                    variantDisplayName,
-                    variantSku: item.productVariant?.sku || null,
-                    variantAttributes: item.productVariant?.attributes || null,
-                    unitId: item.unitId,
-                    unitName: item.unit?.name || t('common.piece'),
-                    originalQuantity: item.quantity,
-                    quantity: 0, // User will specify return quantity
-                    unitPrice: item.unitPrice,
-                    taxRate: item.taxRate,
-                    reason: ''
-                };
-            });
+            const returnItems = response.data.items.map(item =>
+                mapPurchaseReturnInvoiceItem(item, t('common.piece')))
             setItems(returnItems)
         } catch (error) {
             if (requestId !== invoiceRequestIdRef.current) {
@@ -200,7 +177,9 @@ export default function PurchaseReturns() {
             }
 
             console.error('Error fetching invoice:', error)
-            showError(t('purchases.failedToLoadInvoice'))
+            setOriginalInvoice(null)
+            setItems([])
+            showError(error.response?.data?.message || t('purchases.failedToLoadInvoice'))
         }
     }
 
@@ -238,6 +217,11 @@ export default function PurchaseReturns() {
             return
         }
 
+        if (!originalInvoiceId || !originalInvoice) {
+            showError(t('purchases.originalInvoiceRequired'))
+            return
+        }
+
         const returnItems = items.filter(item => item.quantity > 0)
         if (returnItems.length === 0) {
             showError(t('purchases.specifyQuantitiesError'))
@@ -262,7 +246,7 @@ export default function PurchaseReturns() {
                 items: returnItems.map(i => ({
                     productId: i.productId,
                     productVariantId: i.productVariantId,
-                    unitId: i.unitId, // ✅ CRITICAL: Send unitId for correct conversion
+                    unitId: i.unitId,
                     quantity: i.quantity,
                     reason: i.reason
                 })),
@@ -307,7 +291,6 @@ export default function PurchaseReturns() {
         setItems([])
         setReason('')
         setNotes('')
-        setRefundMethod('none')
         setPurchaseInvoices([])
         submissionLockRef.current = false
         lastSubmissionRef.current = null
@@ -424,11 +407,11 @@ export default function PurchaseReturns() {
                 </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-hidden">
+            <form onSubmit={handleSubmit} className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-full lg:overflow-hidden">
                 {/* Left Panel: Form & Items */}
-                <div className={`lg:col-span-2 flex flex-col gap-6 overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
+                <div className={`lg:col-span-2 flex flex-col gap-6 lg:overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
                     {/* Header Info */}
-                    <div className="bg-white p-4 rounded-lg shadow grid grid-cols-2 gap-4">
+                    <div className="bg-white p-4 rounded-lg shadow grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.supplier')}</label>
                             <AsyncEntitySelect
@@ -452,7 +435,7 @@ export default function PurchaseReturns() {
                                 value={warehouseId}
                                 onChange={(e) => setWarehouseId(e.target.value)}
                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
-                                disabled={isBusy}
+                                disabled={Boolean(originalInvoiceId) || isBusy}
                             >
                                 {warehouses?.map(w => (
                                     <option key={w.id} value={w.id}>{w.name}</option>
@@ -480,12 +463,12 @@ export default function PurchaseReturns() {
                                 <option value="">{t('purchases.selectInvoiceOptional')}</option>
                                 {purchaseInvoices?.map(inv => (
                                     <option key={inv.id} value={inv.id}>
-                                        {inv.invoiceNumber} - {formatCurrency(inv.totalAmount)}
+                                        {inv.invoiceNumber} - {inv.warehouseName} - {formatCurrency(inv.totalAmount)}
                                     </option>
                                 ))}
                             </select>
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.reasonForReturn')}</label>
                             <input
                                 type="text"
@@ -496,7 +479,7 @@ export default function PurchaseReturns() {
                                 disabled={isBusy}
                             />
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('suppliers.notes')}</label>
                             <textarea
                                 value={notes}
@@ -516,7 +499,7 @@ export default function PurchaseReturns() {
                                 <thead className="bg-gray-50 border-b border-gray-200">
                                     <tr>
                                         <th className={`px-4 py-2 text-xs font-medium text-gray-500 uppercase ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.product')}</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('purchases.purchased')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('purchases.returnable')}</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('purchases.returnQty')}</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-32">{t('purchases.unitPrice')}</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-20">{t('purchases.taxPercent')}</th>
@@ -532,7 +515,7 @@ export default function PurchaseReturns() {
                                         </tr>
                                     ) : (
                                         items.map((item, index) => (
-                                            <tr key={index}>
+                                            <tr key={item.originalInvoiceItemIds.join(':')}>
                                                 <td className={`px-4 py-2 ${isRTL ? 'text-right' : 'text-left'}`}>
                                                     <div className="text-sm font-medium">{item.variantDisplayName || item.name}</div>
                                                     {item.variantSku && (
@@ -553,6 +536,7 @@ export default function PurchaseReturns() {
                                                         className="input w-full text-center p-1"
                                                         min="0"
                                                         max={item.originalQuantity}
+                                                        step="any"
                                                         disabled={isBusy}
                                                     />
                                                 </td>
@@ -611,45 +595,11 @@ export default function PurchaseReturns() {
                         </div>
 
                         <div className="space-y-4 border-t border-gray-200 pt-6">
-                            <div className="space-y-4">
+                            <div className="space-y-2">
                                 <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.refundMethod')}</label>
-                                <div className="flex flex-col gap-2">
-                                    <label className={`flex items-center gap-2 cursor-pointer ${isRTL ? 'flex-row-reverse justify-end' : ''}`}>
-                                        <input
-                                            type="radio"
-                                            name="refundMethod"
-                                            value="none"
-                                            checked={refundMethod === 'none'}
-                                                onChange={() => setRefundMethod('none')}
-                                            className="text-blue-600 focus:ring-blue-500"
-                                            disabled={isBusy}
-                                        />
-                                        <span className="text-sm font-medium">{t('purchases.creditSupplierAccount')}</span>
-                                    </label>
-                                    <label className={`flex items-center gap-2 cursor-pointer ${isRTL ? 'flex-row-reverse justify-end' : ''}`}>
-                                        <input
-                                            type="radio"
-                                            name="refundMethod"
-                                            value="cash"
-                                            checked={refundMethod === 'cash'}
-                                            onChange={() => setRefundMethod('cash')}
-                                            className="text-blue-600 focus:ring-blue-500"
-                                            disabled={isBusy}
-                                        />
-                                        <span className="text-sm font-medium">{t('purchases.refundToCash')}</span>
-                                    </label>
-                                    <label className={`flex items-center gap-2 cursor-pointer ${isRTL ? 'flex-row-reverse justify-end' : ''}`}>
-                                        <input
-                                            type="radio"
-                                            name="refundMethod"
-                                            value="visa"
-                                            checked={refundMethod === 'visa'}
-                                            onChange={() => setRefundMethod('visa')}
-                                            className="text-blue-600 focus:ring-blue-500"
-                                            disabled={isBusy}
-                                        />
-                                        <span className="text-sm font-medium">{t('purchases.refundToVisa')}</span>
-                                    </label>
+                                <div className={`rounded-lg border border-blue-100 bg-blue-50 p-3 ${isRTL ? 'text-right' : 'text-left'}`}>
+                                    <div className="text-sm font-medium text-blue-900">{t('purchases.creditSupplierAccount')}</div>
+                                    <div className="mt-1 text-xs text-blue-700">{t('purchases.supplierCreditOnly')}</div>
                                 </div>
                             </div>
 

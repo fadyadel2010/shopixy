@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs;
+using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
@@ -15,12 +16,18 @@ public class UnitsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ITenantContext _tenantContext;
+    private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<UnitsController> _logger;
 
-    public UnitsController(ApplicationDbContext context, ITenantContext tenantContext, ILogger<UnitsController> logger)
+    public UnitsController(
+        ApplicationDbContext context,
+        ITenantContext tenantContext,
+        IEventPublisher eventPublisher,
+        ILogger<UnitsController> logger)
     {
         _context = context;
         _tenantContext = tenantContext;
+        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
@@ -173,12 +180,21 @@ public class UnitsController : ControllerBase
                 return BadRequest($"Another unit with the name '{dto.Name}' already exists");
             }
 
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+
             unit.Name = dto.Name;
             unit.Symbol = dto.Symbol;
             unit.Description = dto.Description;
             unit.IsActive = dto.IsActive;
 
+            await CatalogDependencyProjectionPropagation.PublishUnitMutationAsync(
+                _context,
+                _eventPublisher,
+                tenantId,
+                unit.Id,
+                HttpContext.RequestAborted);
             await _context.SaveChangesAsync();
+            await transaction.CommitAsync();
 
             var result = new UnitDto
             {

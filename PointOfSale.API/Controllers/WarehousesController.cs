@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Inventory;
+using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
@@ -109,6 +110,9 @@ public class WarehousesController : ControllerBase
             return NotFound();
         }
 
+        await using var transaction = await _context.Database.BeginTransactionAsync();
+        var activeStateChanged = request.IsActive.HasValue && request.IsActive.Value != existingWarehouse.IsActive;
+
         // Only update fields that are provided (not null)
         if (request.Name != null)
         {
@@ -140,7 +144,18 @@ public class WarehousesController : ControllerBase
             existingWarehouse.IsDefault = request.IsDefault.Value;
         }
 
+        if (activeStateChanged)
+        {
+            await CatalogDependencyProjectionPropagation.PublishWarehouseMutationAsync(
+                _context,
+                _eventPublisher,
+                tenantId,
+                existingWarehouse.Id,
+                HttpContext.RequestAborted);
+        }
+
         await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
 
         return NoContent();
     }

@@ -1,3 +1,10 @@
+# 2026-08-30 Affiliate Attribution Certification Risks
+
+- PASS AF-PA4.4 source-level promotion-link admission drift is mitigated; live credential-backed runtime proof remains operational certification work.
+- PASS AF-PA5.1 source-level customer-journey persistence drift is mitigated; live multi-request cookie proof remains operational certification work.
+- PASS AF-PA5.2 source-level mixed-cart admission drift is mitigated; live cart lineage proof remains operational certification work.
+- PASS AF-PA5.3 source-level checkout and commission-candidate drift is mitigated; live financial reconciliation remains operational certification work.
+
 # 2026-07-22 Storefront / Builder Runtime Certification Registration
 
 - PASS SF-ADM2.3 builder section composition runtime certifiable.
@@ -1335,14 +1342,14 @@ Audit note:
 - prevention rule: Any provider webhook endpoint whose tenant authority is resolved from signed payload plus stored SQL records must be marked `[AllowAnonymousTenant]`; generic tenant middleware must not block it before the provider-specific trust pipeline runs.
 - references: `PointOfSale.API/Controllers/PaymentWebhooksController.cs`, `PointOfSale.API/Controllers/StripeWebhooksController.cs`, `PointOfSale.API/Controllers/PaymobWebhooksController.cs`, `PointOfSale.API/Controllers/FawryWebhookController.cs`, `PointOfSale.API/Controllers/ShippingWebhooksController.cs`, `PointOfSale.API/Middleware/TenantResolutionMiddleware.cs`, `PointOfSale.Tests/Payments/WebhookSecurityHardeningTests.cs`
 
-### CommerceHub payment-method authority now fails closed per store and drives customer selection from backend pricing authority
-- title: CommerceHub checkout no longer treats missing store payment-method authority as provider support, and the checkout selector no longer relies on a hardcoded provider list
-- affected systems: `PointOfSale.CommerceHub` checkout UI, `CommerceHubCartService`, `CommerceHubCheckoutService`, marketplace order creation, inventory reservation, provider handoff, tenant payment-method authority
-- root cause: CommerceHub checkout previously had two aligned authority gaps: the frontend hardcoded `COD`, `PAYMOB`, and `STRIPE` as selectable methods, and `ValidateRequestedPaymentMethod` treated zero enabled `TenantPaymentMethod` rows as permissive support for both COD and online providers.
-- impact: The active cross-system authority violation is closed. CommerceHub cart pricing now returns authoritative payment-method availability for the exact multi-store cart being repriced, the checkout selector binds to that capability surface and disables unavailable providers, and checkout fails closed when any participating store lacks an enabled row for the requested provider.
-- mitigation status: Actively mitigated in code on 2026-05-10. Focused CommerceHub helper and checkout tests now cover zero-config fail-closed behavior, the architecture regression guard asserts the selector consumes backend capability authority, the frontend production build passed, and the focused cross-system regression slice passed with 173 tests.
-- residual operational risk: Inventory can still remain reserved while an otherwise valid online payment is pending or being retried. That is intentional authority containment rather than provider-selection drift.
-- prevention rule: Zero enabled `TenantPaymentMethod` rows means unavailable, not compatible. CommerceHub payment selection must be driven by backend capability authority for the exact store set being repriced, and checkout must independently fail closed if the client submits a stale or unsupported provider.
+### CommerceHub payment-method authority is platform-owned and fails closed on executable provider capability
+- title: CommerceHub no longer grants platform payment-provider authority from vendor-owned Storefront payment rows
+- affected systems: `PointOfSale.CommerceHub` checkout UI, `CommerceHubCartService`, `CommerceHubCheckoutService`, `CommerceHubPaymentService`, provider adapters, marketplace order creation, inventory reservation, and provider handoff
+- root cause: CommerceHub originally exposed a hardcoded provider list, then incorrectly treated each vendor's Storefront `TenantPaymentMethod` rows as the authority for CommerceHub COD, Paymob, and Stripe. Storefront enablement does not prove that the platform has executable provider credentials, webhook verification, or callback capability.
+- impact: The active cross-domain authority violation is closed. CommerceHub cart and checkout now use platform adapter capabilities; COD remains platform policy; online provider initiation fails with `PAYMENT_PROVIDER_NOT_CONFIGURED` before reservation checks, locks, payment writes, inventory mutation, or provider execution when platform capability is absent.
+- mitigation status: Corrected and certified on 2026-09-06. Focused authority/payment tests passed 26/26, the full CommerceHub regression slice passed 799/799, API and frontend builds passed, and runtime CommerceHub platform health was HTTP 200.
+- residual operational risk: Genuine Stripe/Paymob collection, refund, and payout cannot be certified until the corresponding platform sandbox provider is configured through a supported administrative path. Stripe/Paymob operational health checks remain Storefront tenant-readiness checks and must not be interpreted as CommerceHub provider availability.
+- prevention rule: Vendor Storefront `TenantPaymentMethods` must never grant or revoke CommerceHub provider authority. CommerceHub selection and initiation must require platform adapter registration plus executable session/webhook capability, Paymob must additionally require callback parsing, and provider rejection must occur before side effects.
 - references: `PointOfSale.API/Services/CommerceHub/CommerceHubPaymentMethodAuthority.cs`, `PointOfSale.API/Services/CommerceHub/CommerceHubCartService.cs`, `PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs`, `PointOfSale.API/DTOs/CommerceHub/CommerceHubCartDtos.cs`, `PointOfSale.CommerceHub/src/checkout/PaymentMethodSelector.tsx`, `PointOfSale.CommerceHub/src/pages/CheckoutPage.tsx`, `PointOfSale.Tests/CommerceHub/CommerceHubPaymentMethodAuthorityTests.cs`, `PointOfSale.Tests/CommerceHub/CommerceHubCheckoutFinancialControlTests.cs`, `PointOfSale.Tests/Architecture/CrossSystemCriticalRiskHardeningTests.cs`
 
 ### Tenant-facing tax and settings authority is now tenant-scoped in SQL

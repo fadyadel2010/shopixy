@@ -87,10 +87,12 @@ export default function AuthBootstrap() {
                     hydrateSession(null)
                 }
             } finally {
-                if (!disposed && bootstrapRequestId === latestBootstrapRequestId.current) {
-                    setHasHydrated(true)
+                if (bootstrapRequestId === latestBootstrapRequestId.current) {
+                    if (!disposed) {
+                        setHasHydrated(true)
+                    }
+                    isBootstrapping.current = false
                 }
-                isBootstrapping.current = false
             }
         }
 
@@ -154,6 +156,13 @@ export default function AuthBootstrap() {
 
         return () => {
             disposed = true
+            // React StrictMode intentionally tears down and immediately re-runs
+            // effects in development. Invalidate this effect's in-flight request
+            // and release the shared guard so the replacement effect can perform
+            // the authoritative session bootstrap. The stale request's finally
+            // block is request-id guarded and cannot unlock the replacement.
+            latestBootstrapRequestId.current += 1
+            isBootstrapping.current = false
             window.clearInterval(revalidationInterval)
             if (debounceTimer.current) {
                 clearTimeout(debounceTimer.current)

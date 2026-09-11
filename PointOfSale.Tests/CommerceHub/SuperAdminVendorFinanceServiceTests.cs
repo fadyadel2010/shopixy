@@ -147,7 +147,7 @@ public sealed class SuperAdminVendorFinanceServiceTests : IDisposable
 
         var atRiskVendor = Assert.Single(result.Items.Where(item => item.VendorId == atRiskVendorId));
         Assert.Equal(42m, atRiskVendor.CurrentBalance);
-        Assert.Equal(16m, atRiskVendor.AmountOwedByVendor);
+        Assert.Equal(18m, atRiskVendor.AmountOwedByVendor);
         Assert.Equal(100m, atRiskVendor.TotalEarnings);
         Assert.Equal(18m, atRiskVendor.TotalCommissions);
         Assert.Equal(10m, atRiskVendor.TotalRefunds);

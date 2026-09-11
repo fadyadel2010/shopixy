@@ -108,6 +108,7 @@ public sealed class PaymentProviderActionService : IPaymentProviderActionService
         RequireConfiguration(configuration.Configuration, "currency", missingConfiguration);
         RequireConfiguration(configuration.Configuration, "integrationId", missingConfiguration);
         RequireConfiguration(configuration.Configuration, "publicKey", missingConfiguration);
+        RequireConfiguration(configuration.Configuration, "merchantIdentifier", missingConfiguration);
         RequireConfiguration(configuration.Configuration, "webhookUrl", missingConfiguration);
         RequireConfiguration(configuration.Configuration, "browserCallbackUrl", missingConfiguration);
 
@@ -121,6 +122,7 @@ public sealed class PaymentProviderActionService : IPaymentProviderActionService
         }
 
         var missingCredentials = new List<string>();
+        RequireCredential(configuration.Credentials, "apiKey", missingCredentials);
         RequireCredential(configuration.Credentials, "secretKey", missingCredentials);
         RequireCredential(configuration.Credentials, "hmacSecret", missingCredentials);
 
@@ -219,10 +221,47 @@ public sealed class PaymobConnectivityTester : IPaymentProviderConnectivityTeste
 
         try
         {
-            await _client.CheckAvailabilityAsync(cancellationToken);
+            var authentication = await _client.AuthenticateAsync(
+                new PaymobAuthRequest(configuration.Credentials["apiKey"]),
+                cancellationToken);
+            if (string.IsNullOrWhiteSpace(authentication.Token))
+            {
+                return CreateFailure(
+                    configuration,
+                    checkedAt,
+                    stopwatch.ElapsedMilliseconds,
+                    "Authentication Failed",
+                    "Paymob authentication did not return a usable access token.");
+            }
+
+            if (!long.TryParse(
+                    configuration.Configuration["merchantIdentifier"]?.ToString(),
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out var configuredMerchantIdentifier) ||
+                configuredMerchantIdentifier <= 0)
+            {
+                return CreateFailure(
+                    configuration,
+                    checkedAt,
+                    stopwatch.ElapsedMilliseconds,
+                    "Configuration Invalid",
+                    "Paymob merchant identifier must be a positive integer.");
+            }
+
+            var authenticatedMerchantIdentifier = authentication.Profile?.MerchantId ?? authentication.Profile?.Id;
+            if (authenticatedMerchantIdentifier != configuredMerchantIdentifier)
+            {
+                return CreateFailure(
+                    configuration,
+                    checkedAt,
+                    stopwatch.ElapsedMilliseconds,
+                    "Merchant Identity Mismatch",
+                    "Paymob authenticated a different merchant than the configured CommerceHub provider account.");
+            }
 
             var warnings = new List<string>();
-            warnings.Add("Provider reachability and credential format passed. Account/integration ownership is verified when Paymob accepts an Intention request.");
+            warnings.Add("API-key and merchant identity verification passed. Secret-key and integration ownership are verified when Paymob accepts an Intention request.");
 
             var status = warnings.Count == 0 ? "Healthy" : "Warning";
             return new PaymentProviderActionResultDto
@@ -232,8 +271,8 @@ public sealed class PaymobConnectivityTester : IPaymentProviderConnectivityTeste
                 Provider = configuration.ProviderCode,
                 Environment = configuration.Environment,
                 Message = status == "Healthy"
-                    ? "Provider reachability verification succeeded."
-                    : "Provider is reachable with an operational verification warning.",
+                    ? "Provider authentication and merchant identity verification succeeded."
+                    : "Provider authentication succeeded with an intention-execution verification warning.",
                 CheckedAtUtc = checkedAt,
                 LatencyMs = stopwatch.ElapsedMilliseconds,
                 Warnings = warnings,

@@ -3,6 +3,7 @@ using Moq;
 using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Helpers;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -89,6 +90,54 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
         Assert.True(capturedProjection.AiGenerated);
         Assert.Equal("test-suite", capturedProjection.AiMetadata?["generator"]?.AsString);
         cacheInvalidator.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ApplyAsync_UsesSqlProductGenerationInsteadOfStreamLocalEventVersion()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var unitId = Guid.NewGuid();
+        var categoryId = Guid.NewGuid();
+
+        await using var dbContext = CreateDbContext();
+        SeedActiveTenantAndCategory(dbContext, tenantId, categoryId);
+        var product = CreateVisibleProduct(tenantId, productId, categoryId);
+        var unit = CreateUnit(tenantId, unitId, "Piece", "pc");
+        dbContext.Products.Add(product);
+        dbContext.Units.Add(unit);
+        dbContext.ProductUnits.Add(
+            CreateProductUnit(productId, unitId, unit, salePrice: 25m, conversionFactor: 1m, isDefault: true, isBaseUnit: true));
+        await dbContext.SaveChangesAsync();
+
+        ProductDocument? capturedProjection = null;
+        var repository = CreateRepositoryMock(captured => capturedProjection = captured);
+        var writer = new ProductSqlAuthorityProjectionWriter(
+            dbContext,
+            new StorefrontProductProjectionMutationBoundary(repository.Object));
+        var streamLocalEventVersion = ProductEventVersionHelper.ToProductEventVersion(
+            product.ProjectionMutationVersion + 100);
+
+        var result = await writer.ApplyAsync(
+            new ProductSqlAuthorityProjectionWriteRequest(
+                tenantId,
+                productId,
+                new ProductDocument
+                {
+                    TenantId = tenantId,
+                    ProductId = productId
+                },
+                Guid.NewGuid(),
+                DateTime.UtcNow,
+                streamLocalEventVersion));
+
+        Assert.Equal(ProductSqlAuthorityProjectionWriteDisposition.Upserted, result.Disposition);
+        Assert.NotNull(capturedProjection);
+        Assert.Equal(product.ProjectionMutationVersion, capturedProjection!.ProductGeneration);
+        Assert.Equal(
+            ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion),
+            capturedProjection.LastEventVersion);
+        Assert.NotEqual(streamLocalEventVersion, capturedProjection.LastEventVersion);
     }
 
     [Fact]
@@ -277,12 +326,13 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
                 EventVersion: 12));
 
         Assert.Equal(ProductSqlAuthorityProjectionWriteDisposition.Tombstoned, result.Disposition);
+        var expectedGeneration = ProductEventVersionHelper.ToProductEventVersion(product.ProjectionMutationVersion);
         repository.Verify(
             item => item.TombstoneIfFreshAsync(
                 tenantId,
                 productId,
                 eventOccurredAtUtc,
-                12,
+                expectedGeneration,
                 eventId,
                 It.IsAny<CancellationToken>()),
             Times.Once);

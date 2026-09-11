@@ -1,8 +1,10 @@
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Pricing;
+using PointOfSale.Infrastructure.MongoDB.Documents;
 
 namespace PointOfSale.Tests.Architecture;
 
+[Collection("CommerceHubPriceOverrideRuntimePolicy")]
 public sealed class PricingAuthorityConsolidationCertificationTests
 {
     [Fact]
@@ -133,23 +135,57 @@ public sealed class PricingAuthorityConsolidationCertificationTests
             OnlinePrice = 18m,
             CostPrice = 9m
         };
-        CommerceHubPriceOverrideRuntimePolicy.Configure(new CommerceHubPriceOverrideRolloutOptions
+        try
         {
-            Enabled = true,
-            TenantAllowlist = [tenantId]
-        });
+            CommerceHubPriceOverrideRuntimePolicy.Configure(new CommerceHubPriceOverrideRolloutOptions
+            {
+                Enabled = true,
+                TenantAllowlist = [tenantId]
+            });
 
-        var variantOnlinePrice = CatalogPricingAuthority.ResolveVariantOnlinePrice(variant);
-        var commerceHub = new CommerceHubPriceAuthority()
-            .ResolveAsync(variant, overridePrice: 17m)
-            .GetAwaiter()
-            .GetResult();
+            var variantOnlinePrice = CatalogPricingAuthority.ResolveVariantOnlinePrice(variant);
+            var commerceHub = new CommerceHubPriceAuthority()
+                .ResolveAsync(variant, overridePrice: 17m)
+                .GetAwaiter()
+                .GetResult();
 
-        Assert.Equal(18m, variantOnlinePrice);
-        Assert.Equal(9m, CatalogPricingAuthority.ResolveVariantPurchasePrice(variant));
-        Assert.Equal(18m, commerceHub.BaseVariantPrice);
-        Assert.Equal(17m, commerceHub.FinalPrice);
-        Assert.Equal(CommerceHubPriceSource.CommerceHubOverride, commerceHub.PriceSource);
+            Assert.Equal(18m, variantOnlinePrice);
+            Assert.Equal(9m, CatalogPricingAuthority.ResolveVariantPurchasePrice(variant));
+            Assert.Equal(18m, commerceHub.BaseVariantPrice);
+            Assert.Equal(17m, commerceHub.FinalPrice);
+            Assert.Equal(CommerceHubPriceSource.CommerceHubOverride, commerceHub.PriceSource);
+        }
+        finally
+        {
+            CommerceHubPriceOverrideRuntimePolicy.Configure(new CommerceHubPriceOverrideRolloutOptions());
+        }
+    }
+
+    [Fact]
+    public void ZeroOnlinePrice_FallsBackConsistentlyAcrossCatalogAndPublicVariantReadModel()
+    {
+        var variant = new ProductVariant
+        {
+            Price = 20m,
+            OnlinePrice = 0m
+        };
+        var projectedVariant = new ProductVariantDocument
+        {
+            Price = 20m,
+            OnlinePrice = 0m
+        };
+
+        Assert.Equal(20m, CatalogPricingAuthority.ResolveVariantOnlinePrice(variant));
+        Assert.Equal(20m, variant.EffectiveOnlinePrice);
+        Assert.Equal(20m, projectedVariant.EffectivePrice);
+
+        var landingPage = ReadRepoFile("PointOfSale.API/Controllers/StorefrontLandingPageController.cs");
+        var commerceContext = ReadRepoFile("PointOfSale.API/Services/AI/CommerceContextBuilder.cs");
+        Assert.DoesNotContain("OnlinePrice ??", landingPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("OnlinePrice ??", commerceContext, StringComparison.Ordinal);
+        Assert.Contains("defaultVariant.EffectivePrice", landingPage, StringComparison.Ordinal);
+        Assert.Contains("Price = v.EffectivePrice", landingPage, StringComparison.Ordinal);
+        Assert.Contains("Price = v.EffectivePrice", commerceContext, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

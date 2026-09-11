@@ -646,6 +646,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubFina
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.FinancialLedger.ICommerceHubFinancialLedgerService, PointOfSale.API.Services.CommerceHub.FinancialLedger.CommerceHubFinancialLedgerService>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubPaymentRecoveryAuthorityService, PointOfSale.API.Services.CommerceHub.CommerceHubPaymentRecoveryAuthorityService>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubPaymentService, PointOfSale.API.Services.CommerceHub.CommerceHubPaymentService>();
+builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubProviderSessionReconciliationService, PointOfSale.API.Services.CommerceHub.CommerceHubProviderSessionReconciliationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.IPaymentRuntime, PointOfSale.API.Services.CommerceHub.CommerceHubPaymentRuntime>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubPaymentOrchestrationService, PointOfSale.API.Services.CommerceHub.CommerceHubPaymentOrchestrationService>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubEarningsService, PointOfSale.API.Services.CommerceHub.CommerceHubEarningsService>();
@@ -2835,7 +2836,7 @@ builder.Services.AddAuthentication(options =>
         ValidAudience = customerJwtSettings.Audience,
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(customerJwtSettings.Secret)),
         ClockSkew = TimeSpan.Zero,
-        RoleClaimType = System.Security.Claims.ClaimTypes.Role,
+        RoleClaimType = CustomerSecurityConstants.RoleClaimType,
         NameClaimType = "CustomerId",
         // SECURITY: Disable inbound claim remapping so standard JWT claim names
         // ("jti", "sub", etc.) are preserved as-is after token validation.
@@ -3239,6 +3240,24 @@ builder.Services.AddRateLimiter(options =>
         var partitionKey = $"public-read:{path}:tenant:{tenantPartition}:ip:{clientIp}";
 
         return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(120, segmentsPerWindow: 4));
+    });
+
+    options.AddPolicy("CustomerRefundRateLimit", httpContext =>
+    {
+        var clientIp = GetRateLimitClientIp(httpContext);
+        var subject = GetTrustedRateLimitSubject(httpContext, clientIp);
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            $"customer-refund:{subject}",
+            _ => CreateSlidingWindowOptions(5));
+    });
+
+    options.AddPolicy("CustomerRefundUploadRateLimit", httpContext =>
+    {
+        var clientIp = GetRateLimitClientIp(httpContext);
+        var subject = GetTrustedRateLimitSubject(httpContext, clientIp);
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            $"customer-refund-upload:{subject}",
+            _ => CreateSlidingWindowOptions(10));
     });
 
     // FEED-1B: dedicated policy for the anonymous public Meta feed endpoint.

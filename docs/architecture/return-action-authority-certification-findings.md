@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: Return Action Authority is production-certifiable for the inspected frontend runtime after override-action grant hardening.
+Status: Updated 2026-09-03. Return logistics actions are owning-vendor POS actions; Super Admin return presentation is read-only.
 
 ## Action surfaces
 
@@ -11,8 +11,8 @@ Actual implemented return action surfaces:
 - CommerceHub customer refund request submission and evidence upload, which are refund intents only and re-enter current backend order-item refundability.
 - CommerceHub customer refund/order return-adjacent presentation, with no standalone customer return action mutation.
 - POS vendor finance refund-impact presentation, read-only and not a return action surface.
-- POS Admin backend return endpoints exist for schedule pickup, mark picked up, mark in transit, mark delivered, and confirm receipt, but no inspected frontend runtime surface invokes them.
-- Super Admin refund detail return actions: override return status and mark return failed.
+- POS Admin backend and vendor order frontend expose schedule pickup, mark picked up, mark in transit, mark delivered, mark failed, and confirm receipt for the owning vendor.
+- Super Admin refund detail displays return state and timeline without return mutation controls.
 - POS sales return and purchase return create screens, separate POS return workflows whose controllers derive tenant, original invoice, line, stock, and financial authority server-side.
 
 No implemented frontend `ConfirmPickup`, `ConfirmDelivery`, `ConfirmVendorReceipt`, `RetryReturn`, `ExecuteReturn`, `ReviewReturn`, return transfer, return merge, return restore, or return replay action surface was found.
@@ -21,7 +21,7 @@ No implemented frontend `ConfirmPickup`, `ConfirmDelivery`, `ConfirmVendorReceip
 
 Backend owns Return Action Authority, Pickup Actions, Delivery Actions, Vendor Confirmation Actions, Failure Actions, Return Override Actions, Return Mutation Authority, tenant scope, actor scope, SQL lineage, locks, idempotency, and endpoint authorization. Frontend owns display, buttons, dialogs, selection, validation, withholding, refetching, and backend-bound intent only.
 
-Runtime hardening added backend-issued `canOverrideStatus` plus `allowedOverrideStatuses` to return DTOs. The frontend now rejects malformed override grants, hides override presentation without current backend grant, renders target statuses only from current backend evidence, and revalidates the selected override target against freshly refetched backend detail immediately before mutation.
+Runtime hardening removed override authority. The POS frontend validates vendor identity and coherent backend action grants, refetches the current vendor-scoped order immediately before mutation, and submits the refreshed status as a locked precondition.
 
 ## Customer findings
 
@@ -29,15 +29,15 @@ Customer refund submission and evidence upload cannot create CommerceHub return 
 
 ## Vendor findings
 
-Vendor refund impacts are current-session-scoped read-only financial evidence and expose no `returnId` or mutation action. POS Admin return endpoints remain backend-authorized and vendor scoped; no inspected frontend runtime grants vendor return actions from cache, finance rows, selected rows, or payment/refund state.
+Vendor refund impacts remain read-only financial evidence. The separate vendor order detail surface exposes return actions only from the current SQL-derived return DTO and cannot grant actions from cache, finance rows, selected rows, or payment/refund state.
 
 ## Admin findings
 
-Super Admin monitoring is visibility only. Selected refund IDs are re-derived from the current validated list. Return dialogs require accepted current detail and close during refresh, failure, or authority loss. Mark failed requires current `canMarkFailed`. Override requires current `canOverrideStatus` and the selected target inside current `allowedOverrideStatuses`.
+Super Admin return monitoring is visibility only. Selected refund IDs are re-derived from the current validated list, and no return transition dialog or return mutation service function exists.
 
 ## Lifecycle consistency findings
 
-Lifecycle cannot create actions. Return statuses and timestamps are presentation evidence until current backend action booleans and allowed override targets grant a backend-bound intent. Actions cannot bypass lifecycle because service execution uses the same policy as DTO grants.
+Lifecycle cannot create actions. Return statuses and timestamps are presentation evidence until current backend action booleans grant owning-vendor intent. Actions cannot bypass lifecycle because service execution uses the same policy as DTO grants plus locked expected status.
 
 ## Refund consistency findings
 
@@ -69,10 +69,10 @@ Action replay, storage replay, history replay, route replay, selection replay, m
 
 ## Runtime hardening performed
 
-- Added backend return override action authority fields: `CanOverrideStatus` and `AllowedOverrideStatuses`.
-- Added shared backend policy for allowed override targets and made `OverrideStatusAsync` enforce it.
-- Added frontend validation for override action grants and allowed target lists.
-- Bound Super Admin override presentation and submit-time intent to current backend `canOverrideStatus` and `allowedOverrideStatuses`.
+- Removed backend and frontend return override authority.
+- Bound each POS logistics command to trusted vendor tenant identity, locked expected status, and the shared transition policy.
+- Added vendor frontend validation for coherent return grants and current-order re-entry before mutation.
+- Reduced Super Admin return authority to exact read-only presentation.
 
 ## Exact runtime files modified
 
@@ -80,6 +80,10 @@ Action replay, storage replay, history replay, route replay, selection replay, m
 - `PointOfSale.API/Services/CommerceHub/CommerceHubReturnPolicy.cs`
 - `PointOfSale.API/Services/CommerceHub/CommerceHubReturnMapper.cs`
 - `PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs`
+- `PointOfSale.API/Controllers/PosAdminReturnsController.cs`
+- `PointOfSale.API/SuperAdmin/Controllers/SuperAdminReturnsController.cs`
+- `PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js`
+- `PointOfSale.Web/src/pages/CommerceHubOrders.jsx`
 - `PointOfSale.Web/src/super-admin/refunds/refundsService.ts`
 - `PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts`
 - `PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx`
@@ -104,7 +108,7 @@ Action replay, storage replay, history replay, route replay, selection replay, m
 - Who owns return action authority? Backend return/refund/order/payment/customer/vendor/admin/tenant/actor SQL, workflow, policy, lock, idempotency, and endpoint authorization authorities.
 - Can frontend fabricate actions? No.
 - Can customer perform unauthorized return actions? No.
-- Can vendor perform unauthorized return actions? No inspected frontend path grants vendor return actions; backend endpoints remain decisive.
+- Can vendor perform unauthorized return actions? No. The frontend presents current backend grants, while backend tenant, status, transition, and lock checks remain decisive.
 - Can monitoring become action authority? No.
 - Can selected rows preserve actions? No.
 - Can lifecycle create actions? No.
@@ -115,5 +119,5 @@ Action replay, storage replay, history replay, route replay, selection replay, m
 - Can cache restore actions? No.
 - Can replay restore actions? No.
 - Can tenant leakage occur? No inspected frontend path bypasses tenant/actor authority.
-- Were runtime changes required? Yes, to add explicit backend override-action grants and frontend target binding.
+- Were runtime changes required? Yes, to remove override authority and bind vendor actions to current tenant, return, status, and transition authority.
 - Is Return Action Authority production-certifiable? Yes, for the inspected frontend runtime.

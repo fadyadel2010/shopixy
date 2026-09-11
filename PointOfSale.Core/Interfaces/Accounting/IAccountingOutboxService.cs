@@ -87,6 +87,11 @@ public interface IAccountingOutboxService
     Task EnqueueSupplierPaymentAsync(Guid tenantId, Guid paymentId, CancellationToken ct = default);
 
     /// <summary>
+    /// Enqueues a customer account payment for accounting processing.
+    /// </summary>
+    Task EnqueueCustomerPaymentAsync(Guid tenantId, Guid paymentId, CancellationToken ct = default);
+
+    /// <summary>
     /// Enqueues a supplier opening balance ledger entry for accounting processing.
     /// </summary>
     /// <param name="tenantId">The tenant identifier.</param>
@@ -260,6 +265,11 @@ public interface IAccountingOutboxProcessor
     /// Retries a specific failed message.
     /// </summary>
     Task<bool> RetryFailedMessageAsync(Guid messageId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Requeues a specific unprocessed message, including a non-terminal delayed retry.
+    /// </summary>
+    Task<bool> RequeueMessageAsync(Guid messageId, CancellationToken ct = default);
 
     /// <summary>
     /// Cleans up processed and terminally failed outbox messages after the configured retention windows.

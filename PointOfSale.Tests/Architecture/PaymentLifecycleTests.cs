@@ -887,6 +887,24 @@ public class PaymentLifecycleTests
             "COD has no gateway, therefore COD webhooks should never exist.");
     }
 
+    [Fact]
+    public void OpenInventoryReservationQuantity_MustBeTenantScoped()
+    {
+        var servicePath = Path.Combine(
+            GetSolutionDirectory(),
+            "PointOfSale.Infrastructure",
+            "Payments",
+            "PaymentLifecycleService.cs");
+        var sourceCode = File.ReadAllText(servicePath);
+        var method = ExtractMethodBlock(
+            sourceCode,
+            "private async Task<decimal> GetOpenReservationQuantityAsync(Guid tenantId, Guid orderId, CancellationToken ct)");
+
+        Assert.Contains("reservation.TenantId == tenantId", method, StringComparison.Ordinal);
+        Assert.Contains("reservation.OrderId == orderId", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetOpenReservationQuantityAsync(order.Id, ct)", sourceCode, StringComparison.Ordinal);
+    }
+
     private static string ExtractMethodBlock(string sourceCode, string signature)
     {
         var startIndex = sourceCode.IndexOf(signature, StringComparison.Ordinal);

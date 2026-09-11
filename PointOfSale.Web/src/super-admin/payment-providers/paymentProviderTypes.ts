@@ -185,6 +185,44 @@ export interface RotatePaymentProviderSecretResponse {
     validationErrors: string[]
 }
 
+export interface PaymentProviderSessionReconciliationRequest {
+    paymentId: string
+    providerReference: string
+    evidenceCode: 'PAYMOB_DASHBOARD_NO_ORDER'
+    evidenceNote: string
+    administratorConfirmation: boolean
+}
+
+export interface PaymentProviderSessionReconciliationResponse {
+    providerCode: string
+    paymentId: string
+    orderId: string
+    providerReference: string
+    previousStatus: string
+    status: string
+    resolvedAtUtc: string
+    retryAllowed: boolean
+    message: string
+    permissions: string[]
+}
+
+export interface DevelopmentOnlinePaymentSuccessRequest {
+    idempotencyKey: string
+    reason: string
+    administratorConfirmation: boolean
+}
+
+export interface DevelopmentOnlinePaymentSuccessResponse {
+    processed: boolean
+    provider: string
+    providerReference?: string | null
+    transactionId?: string | null
+    message: string
+    evidenceType: 'DevelopmentOnlinePaymentSuccessSimulation'
+    isDevelopmentSimulation: true
+    externalMoneyMovementConfirmed: false
+}
+
 export interface PaymentProviderAdministrationState {
     loading: boolean
     saving: boolean

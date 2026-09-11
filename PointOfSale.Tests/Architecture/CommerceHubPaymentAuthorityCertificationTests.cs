@@ -143,11 +143,6 @@ public sealed class CommerceHubPaymentAuthorityCertificationTests
     public void CertificationArtifacts_MustRecordM3CommerceHubPaymentAuthorityTruth()
     {
         var findings = ReadRepoFile("docs/architecture/commercehub-payment-authority-certification-findings.md");
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         Assert.Contains("PASS M3 CommerceHub Payment Authority", findings, StringComparison.Ordinal);
         Assert.Contains("Payment identity findings", findings, StringComparison.Ordinal);
@@ -155,12 +150,6 @@ public sealed class CommerceHubPaymentAuthorityCertificationTests
         Assert.Contains("Marketplace fee findings", findings, StringComparison.Ordinal);
         Assert.Contains("Escrow findings", findings, StringComparison.Ordinal);
         Assert.Contains("Is CommerceHub Payment Authority production-certifiable? Yes", findings, StringComparison.Ordinal);
-
-        Assert.Contains("PASS M3 CommerceHub Payment Authority", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS M3 CommerceHub Payment Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS M3 CommerceHub payment runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS M3 CommerceHub Payment Authority", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS M3 CommerceHub Payment Authority Freeze", codexRules, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

@@ -11,17 +11,21 @@ public sealed class PaymobPaymentAuthorityCertificationTests
         var checkoutStore = ReadRepoFile("PointOfSale.Storefront/src/store/checkoutStore.ts");
         var recoverPage = ReadRepoFile("PointOfSale.Storefront/src/pages/RecoverCheckoutPage.tsx");
         var checkoutController = ReadRepoFile("PointOfSale.API/Controllers/CheckoutController.cs");
+        var paymobValidationStart = paymentSessionAuthority.IndexOf("if (hasPaymobArtifact)", StringComparison.Ordinal);
+        var paymobValidationEnd = paymentSessionAuthority.IndexOf("if (hasFawryArtifact)", paymobValidationStart, StringComparison.Ordinal);
+        Assert.True(paymobValidationStart >= 0 && paymobValidationEnd > paymobValidationStart);
+        var paymobValidation = paymentSessionAuthority[paymobValidationStart..paymobValidationEnd];
 
         Assert.Contains("requireStorefrontPaymentSessionAuthority(response.data, latestState.paymentMethod, cart.cartId)", checkoutStore, StringComparison.Ordinal);
-        Assert.Contains("provider !== 'PAYMOB'", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isNonEmptyString(paymentIntentId)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.DoesNotContain("!isNonEmptyString(checkoutToken)", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.Contains("provider !== 'PAYMOB'", paymobValidation, StringComparison.Ordinal);
+        Assert.Contains("!isNonEmptyString(paymentIntentId)", paymobValidation, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(checkoutToken)", paymobValidation, StringComparison.Ordinal);
         Assert.Contains("GuestOrderAccessCookie.SetCheckoutToken", checkoutController, StringComparison.Ordinal);
         Assert.Contains("response.CheckoutToken = null", checkoutController, StringComparison.Ordinal);
-        Assert.Contains("!isFutureIsoDate(expiresAtUtc)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("!isPaymobUnifiedCheckoutUrl(response.paymobIframeUrl)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.DoesNotContain("!isNonEmptyString(response.paymobPaymentKey)", paymentSessionAuthority, StringComparison.Ordinal);
-        Assert.Contains("complete Paymob handoff", paymentSessionAuthority, StringComparison.Ordinal);
+        Assert.Contains("!isFutureIsoDate(expiresAtUtc)", paymobValidation, StringComparison.Ordinal);
+        Assert.Contains("!isPaymobUnifiedCheckoutUrl(response.paymobIframeUrl)", paymobValidation, StringComparison.Ordinal);
+        Assert.DoesNotContain("!isNonEmptyString(response.paymobPaymentKey)", paymobValidation, StringComparison.Ordinal);
+        Assert.Contains("complete Paymob handoff", paymobValidation, StringComparison.Ordinal);
         Assert.Contains("Backend checkout response mixed provider payment-session artifacts.", paymentSessionAuthority, StringComparison.Ordinal);
         Assert.Contains("Terminal payment response unexpectedly included reusable provider payment-session artifacts.", paymentSessionAuthority, StringComparison.Ordinal);
 

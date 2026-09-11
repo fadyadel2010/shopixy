@@ -43,7 +43,11 @@ export const ProductCard = memo(({ product, onClick }: ProductCardProps) => {
           <div className="absolute left-4 top-4 flex flex-wrap gap-2">
             {product.categoryName ? <Badge variant="muted">{product.categoryName}</Badge> : null}
             <Badge variant={product.inStock ? "success" : "warning"}>
-              {product.inStock ? "In stock" : "Out of stock"}
+              {product.inStock
+                ? product.availableStock > 0
+                  ? "In stock"
+                  : "Available"
+                : "Out of stock"}
             </Badge>
           </div>
         </div>

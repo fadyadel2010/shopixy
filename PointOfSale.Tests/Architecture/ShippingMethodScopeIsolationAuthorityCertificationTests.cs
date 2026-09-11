@@ -24,7 +24,9 @@ public sealed class ShippingMethodScopeIsolationAuthorityCertificationTests
         var boundary = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/CommerceHubBoundaryMutationScope.cs");
 
         Assert.Contains("!method.IsDeleted && method.IsActive && method.TenantId == storeId", shipping, StringComparison.Ordinal);
-        Assert.Contains("configuration.TenantId == method.TenantId", shipping, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync", shipping, StringComparison.Ordinal);
+        Assert.Contains("method.TenantId,", shipping, StringComparison.Ordinal);
+        Assert.Contains("method.Id,", shipping, StringComparison.Ordinal);
         Assert.Contains("bypassCache: true", checkout, StringComparison.Ordinal);
         Assert.Contains("requestedStoreSelection.ShippingOptionId != storeSelection.ShippingOptionId", checkout, StringComparison.Ordinal);
         Assert.Contains("StoreId = group.Key", checkout, StringComparison.Ordinal);

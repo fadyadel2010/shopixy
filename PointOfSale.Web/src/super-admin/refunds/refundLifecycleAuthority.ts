@@ -62,13 +62,6 @@ const RETURN_STATUSES = new Set<SuperAdminReturnStatus>([
     'Confirmed',
     'Failed',
 ])
-const RETURN_OVERRIDE_STATUSES = new Set([
-    'Pending',
-    'PickupScheduled',
-    'PickedUp',
-    'InTransit',
-    'DeliveredToVendor',
-])
 const REFUND_EXECUTION_TRIGGERS = new Set(['OnPickup', 'OnDelivery', 'OnVendorConfirmation'])
 
 const text = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0
@@ -80,23 +73,6 @@ const positiveInt = (value: unknown) => typeof value === 'number' && Number.isIn
 const nonNegativeInt = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0
 const date = (value: unknown) => text(value) && Number.isFinite(Date.parse(value))
 const optionalDate = (value: unknown) => value == null || date(value)
-
-function allowedOverrideStatuses(value: unknown, canOverrideStatus: unknown): boolean {
-    if (!Array.isArray(value) || typeof canOverrideStatus !== 'boolean') {
-        return false
-    }
-
-    const statuses = new Set<string>()
-    for (const status of value) {
-        if (typeof status !== 'string' || !RETURN_OVERRIDE_STATUSES.has(status) || statuses.has(status)) {
-            return false
-        }
-
-        statuses.add(status)
-    }
-
-    return canOverrideStatus ? statuses.size > 0 : statuses.size === 0
-}
 
 function requireRefundMediaPresentation(media: unknown, mediaUrls: unknown): void {
     if (!Array.isArray(media) || !Array.isArray(mediaUrls) || mediaUrls.some((url) => !text(url))) {
@@ -164,8 +140,6 @@ export function requireSuperAdminReturnForCurrentRefund(
         typeof returnRequest.canMarkDelivered !== 'boolean' ||
         typeof returnRequest.canMarkFailed !== 'boolean' ||
         typeof returnRequest.canConfirmReceipt !== 'boolean' ||
-        typeof returnRequest.canOverrideStatus !== 'boolean' ||
-        !allowedOverrideStatuses(returnRequest.allowedOverrideStatuses, returnRequest.canOverrideStatus) ||
         typeof returnRequest.isExecutionTriggerReached !== 'boolean'
     ) {
         throw new Error('Super Admin refund identity authority rejected malformed return/refund evidence.')
@@ -207,8 +181,6 @@ export function requireSuperAdminReturnPresentation(
         typeof returnRequest.canMarkDelivered !== 'boolean' ||
         typeof returnRequest.canMarkFailed !== 'boolean' ||
         typeof returnRequest.canConfirmReceipt !== 'boolean' ||
-        typeof returnRequest.canOverrideStatus !== 'boolean' ||
-        !allowedOverrideStatuses(returnRequest.allowedOverrideStatuses, returnRequest.canOverrideStatus) ||
         typeof returnRequest.isExecutionTriggerReached !== 'boolean'
     ) {
         throw new Error('Super Admin refund identity authority rejected malformed return evidence.')
@@ -290,6 +262,8 @@ function requireRefundFinancialPresentation(refund: SuperAdminRefundDetails): vo
             (execution.paymentId != null && !guid(execution.paymentId)) ||
             !optionalText(execution.gatewayStatus) ||
             !optionalText(execution.gatewayReference) ||
+            typeof execution.isDevelopmentSimulation !== 'boolean' ||
+            typeof execution.externalMoneyMovementConfirmed !== 'boolean' ||
             !money(execution.commissionReversalAmount) ||
             !money(execution.vendorEarningReversalAmount) ||
             typeof execution.isPostPayoutAdjustment !== 'boolean' ||
@@ -297,6 +271,10 @@ function requireRefundFinancialPresentation(refund: SuperAdminRefundDetails): vo
             !optionalDate(execution.processedAtUtc)
         ) {
             throw new Error('Super Admin refund financial authority rejected malformed execution evidence.')
+        }
+
+        if (execution.isDevelopmentSimulation && execution.externalMoneyMovementConfirmed) {
+            throw new Error('Super Admin refund financial authority rejected contradictory execution evidence.')
         }
     }
 }

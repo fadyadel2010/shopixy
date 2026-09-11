@@ -4,12 +4,14 @@ import { AlertTriangle, ShieldCheck } from 'lucide-react'
 import { useToast } from '../../components/Toast'
 import { ConfigurationSection } from './components/ConfigurationSection'
 import { ConnectionResultPanel } from './components/ConnectionResultPanel'
+import { DevelopmentOnlinePaymentSimulationPanel } from './components/DevelopmentOnlinePaymentSimulationPanel'
 import { OperationalMessages } from './components/OperationalMessages'
 import { PaymentProviderDetails } from './components/PaymentProviderDetails'
 import { PaymentProviderLayout } from './components/PaymentProviderLayout'
 import { PaymentProviderList } from './components/PaymentProviderList'
 import { ProviderDashboard } from './components/ProviderDashboard'
 import { ProviderHealthCard } from './components/ProviderHealthCard'
+import { ProviderSessionReconciliationPanel } from './components/ProviderSessionReconciliationPanel'
 import { RotateSecretDialog } from './components/RotateSecretDialog'
 import { SaveBar } from './components/SaveBar'
 import { SecretCard } from './components/SecretCard'
@@ -19,14 +21,17 @@ import {
     getPaymentProviderDashboard,
     getPaymentProviders,
     getPaymentProviderSecrets,
+    reconcilePaymentProviderSessionNotCreated,
     rotatePaymentProviderSecret,
     savePaymentProviderConfiguration,
+    simulateDevelopmentOnlinePaymentSuccess,
     testPaymentProviderConnection,
 } from './paymentProvidersService'
 import { usePaymentProviderAdministrationState } from './usePaymentProviderAdministrationState'
 import type {
     PaymentProviderConfiguration,
     PaymentProviderSecretMetadata,
+    PaymentProviderSessionReconciliationRequest,
     RotatePaymentProviderSecretRequest,
 } from './paymentProviderTypes'
 
@@ -85,7 +90,7 @@ export default function PaymentProvidersPage() {
                 configuration: response.provider,
                 errors: response.validationErrors,
             })
-            showSuccess('Payment provider configuration shell saved.')
+            showSuccess('CommerceHub payment provider configuration saved.')
         },
         onError: (error) => {
             const message = getErrorMessage(error, 'Unable to save payment provider configuration.')
@@ -123,6 +128,35 @@ export default function PaymentProvidersPage() {
         onError: (error) => {
             const message = getErrorMessage(error, 'Unable to rotate provider secret.')
             showError(message)
+        },
+    })
+
+    const reconcileSessionMutation = useMutation({
+        mutationFn: (payload: PaymentProviderSessionReconciliationRequest) =>
+            reconcilePaymentProviderSessionNotCreated(state.selectedProviderCode!, payload),
+        onSuccess: (response) => {
+            dashboardQuery.refetch()
+            selectedProviderQuery.refetch()
+            showSuccess(response.message)
+        },
+        onError: (error) => {
+            showError(getErrorMessage(error, 'Unable to reconcile the provider session.'))
+        },
+    })
+
+    const developmentSuccessMutation = useMutation({
+        mutationFn: ({ paymentId, idempotencyKey, reason }: { paymentId: string; idempotencyKey: string; reason: string }) =>
+            simulateDevelopmentOnlinePaymentSuccess(paymentId, {
+                idempotencyKey,
+                reason,
+                administratorConfirmation: true,
+            }),
+        onSuccess: (response) => {
+            dashboardQuery.refetch()
+            showSuccess(response.message)
+        },
+        onError: (error) => {
+            showError(getErrorMessage(error, 'Unable to execute the Development payment success simulation.'))
         },
     })
 
@@ -258,8 +292,8 @@ export default function PaymentProvidersPage() {
             </div>
             <h1 className="mt-5 text-3xl font-semibold text-slate-950">Payment Providers</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                Provider-independent administration for CommerceHub payment providers. Configure provider settings here
-                without contacting external payment networks or changing checkout runtime behavior.
+                Platform-owned administration for CommerceHub payment providers. Saved executable provider settings
+                control which online payment methods CommerceHub can offer.
             </p>
         </section>
     )
@@ -362,6 +396,25 @@ export default function PaymentProvidersPage() {
                         </div>
                     </section>
                     <ConnectionResultPanel result={state.latestResult} />
+                    {import.meta.env.DEV ? (
+                        <DevelopmentOnlinePaymentSimulationPanel
+                            submitting={developmentSuccessMutation.isPending}
+                            result={developmentSuccessMutation.data}
+                            onSubmit={(paymentId, request) => developmentSuccessMutation.mutate({
+                                paymentId,
+                                idempotencyKey: request.idempotencyKey,
+                                reason: request.reason,
+                            })}
+                        />
+                    ) : null}
+                    {state.selectedProviderCode?.trim().toUpperCase() === 'PAYMOB' ? (
+                        <ProviderSessionReconciliationPanel
+                            key={state.selectedProviderCode}
+                            submitting={reconcileSessionMutation.isPending}
+                            disabled={state.dirty}
+                            onSubmit={(payload) => reconcileSessionMutation.mutate(payload)}
+                        />
+                    ) : null}
                     <SaveBar
                         saving={state.saving || saveMutation.isPending}
                         disabled={!state.selectedProviderCode || !state.configuration || state.validationErrors.length > 0}

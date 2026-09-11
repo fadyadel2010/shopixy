@@ -63,6 +63,23 @@ public sealed class DocumentNumberingHardeningTests
         Assert.Contains("20260409164612_AddReliableDocumentNumberSequences", migrationSql, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ReturnNumberSequenceAuthorityMigration_MustExistInActiveMigrationSet()
+    {
+        var migrationPath = RepoFile(
+            "PointOfSale.Infrastructure",
+            "Migrations",
+            "20260910210000_POS_ReturnNumberSequenceAuthority.cs");
+
+        Assert.NotNull(migrationPath);
+        var migrationSource = File.ReadAllText(migrationPath!);
+
+        Assert.Contains("CREATE SEQUENCE IF NOT EXISTS return_number_seq", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("max_return_number", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("Do not remove sequence authority", migrationSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("DROP SEQUENCE", migrationSource, StringComparison.Ordinal);
+    }
+
     // Returns the full path to a repository source file, or null if it doesn't exist.
     // This guards architecture tests when source files are not present (e.g., in CI/published test assemblies).
     private static string? RepoFile(params string[] relativeSegments)

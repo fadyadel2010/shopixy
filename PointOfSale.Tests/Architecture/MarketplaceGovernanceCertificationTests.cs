@@ -117,21 +117,36 @@ public sealed class MarketplaceGovernanceCertificationTests
     }
 
     [Fact]
-    public void CommerceHubBrowseAndSearchCards_MustRecomposeSqlVisibilityBeforeServing()
+    public void CommerceHubBrowseAndSearchCards_MustUseSqlAuthorityBeforeServing()
     {
         var queryService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubQueryService.cs"));
         var marketplaceReadController = File.ReadAllText(ApiPath("Controllers", "MarketplaceReadController.cs"));
 
-        Assert.Contains("RecomposeVisibleListingItemsAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("var visibleItems = await RecomposeVisibleListingItemsAsync(result.Items, cancellationToken);", queryService, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubCategoryLineageAuthority.LoadLiveIdsAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("_repository.SearchPublishedProductsAsync(request, cancellationToken)", queryService, StringComparison.Ordinal);
+        Assert.Contains("RecomposeVisibleListingItemsAsync(result.Items, cancellationToken)", queryService, StringComparison.Ordinal);
+        Assert.Contains("from listing in _dbContext.CommerceHubListings.AsNoTracking().IgnoreQueryFilters()", queryService, StringComparison.Ordinal);
+        Assert.Contains("profile.IsKycVerified &&", queryService, StringComparison.Ordinal);
+        Assert.Contains("profile.IsMarketplaceApproved) &&", queryService, StringComparison.Ordinal);
+        Assert.Contains("liveCategoryIds.Contains(listing.CommerceHubCategoryId)", queryService, StringComparison.Ordinal);
+        Assert.Contains("from stock in _dbContext.ProductVariantStocks.AsNoTracking().IgnoreQueryFilters()", queryService, StringComparison.Ordinal);
 
         Assert.Contains("GetVisibilityVersionTokenAsync", marketplaceReadController, StringComparison.Ordinal);
         Assert.Contains("GetDistinctVendorIdsAsync", marketplaceReadController, StringComparison.Ordinal);
         Assert.Contains("GetSuppressedVendorIdsAsync", marketplaceReadController, StringComparison.Ordinal);
         Assert.Contains("IsVendorSuppressedAsync", marketplaceReadController, StringComparison.Ordinal);
         Assert.Contains("FilterVisibleListingIdsAsync", marketplaceReadController, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CommerceHubVendorPublicationCards_MustCarryCurrentTenantAuthority()
+    {
+        var controller = File.ReadAllText(ApiPath("Controllers", "AdminCommerceHubController.cs"));
+        var dto = File.ReadAllText(ApiPath("DTOs", "CommerceHub", "CommerceHubAdminDtos.cs"));
+        var frontend = File.ReadAllText(WebPath("src", "pages", "CommerceHubSettings.jsx"));
+
+        Assert.Contains("public Guid TenantId { get; set; }", dto, StringComparison.Ordinal);
+        Assert.Contains("TenantId = p.TenantId,", controller, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentVendorScopedArray(productsRes || [], currentUser)", frontend, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -229,6 +244,9 @@ public sealed class MarketplaceGovernanceCertificationTests
 
     private static string InfrastructurePath(params string[] parts) =>
         Path.Combine([DiscoverSolutionRoot(AppContext.BaseDirectory), "PointOfSale.Infrastructure", .. parts]);
+
+    private static string WebPath(params string[] parts) =>
+        Path.Combine([DiscoverSolutionRoot(AppContext.BaseDirectory), "PointOfSale.Web", .. parts]);
 
     private static string DocsPath(params string[] parts) =>
         Path.Combine([DiscoverSolutionRoot(AppContext.BaseDirectory), "docs", .. parts]);

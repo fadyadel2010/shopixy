@@ -120,3 +120,33 @@ public class CommerceHubSubOrderStatusUpdatedEvent : IntegrationEvent, IAuthorit
     public IReadOnlyCollection<Guid> GetAffectedTenantIds() =>
         StoreId == Guid.Empty ? Array.Empty<Guid>() : new[] { StoreId };
 }
+
+/// <summary>
+/// Raised after a CommerceHub refund's canonical financial effects commit to the SQL ledger.
+/// ExternalMoneyMovementConfirmed distinguishes real transfer evidence from Development simulation.
+/// </summary>
+public sealed class CommerceHubRefundFinanciallyExecutedEvent : IntegrationEvent, IAuthoritativeIntegrationEvent, IAggregateScopedIntegrationEvent, IAffectedTenantScopedIntegrationEvent
+{
+    public Guid MarketplaceOrderId { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
+    public Guid SubOrderId { get; set; }
+    public Guid VendorId { get; set; }
+    public Guid RefundRequestId { get; set; }
+    public Guid FinancialRefundId { get; set; }
+    public Guid? ReturnId { get; set; }
+    public decimal Amount { get; set; }
+    public decimal VendorDebtDelta { get; set; }
+    public decimal VendorDebtIncreaseAmount { get; set; }
+    public decimal VendorDebtReductionAmount { get; set; }
+    public string Currency { get; set; } = "EGP";
+    public string ExecutionPath { get; set; } = string.Empty;
+    public string ExecutionEvidenceType { get; set; } = string.Empty;
+    public bool ExternalMoneyMovementConfirmed { get; set; }
+    public bool IsDevelopmentSimulation { get; set; }
+    public string Producer { get; set; } = string.Empty;
+
+    public Guid GetAuthoritativeAggregateId() => MarketplaceOrderId;
+
+    public IReadOnlyCollection<Guid> GetAffectedTenantIds() =>
+        VendorId == Guid.Empty ? Array.Empty<Guid>() : new[] { VendorId };
+}

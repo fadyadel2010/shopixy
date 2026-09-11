@@ -45,7 +45,7 @@ export const infiniteProductsQueryOptions = (
     queryKey: [...commerceHubProductKeys.list(query), "infinite", pageSize] as const,
     initialPageParam: 1,
     queryFn: ({ pageParam }) =>
-      queryClient.ensureQueryData(productsPageQueryOptions(query, pageParam as number, pageSize)),
+      queryClient.fetchQuery(productsPageQueryOptions(query, pageParam as number, pageSize)),
     getNextPageParam: (lastPage, allPages) => {
       const loadedItemCount = allPages.reduce((total, page) => total + page.items.length, 0);
       return loadedItemCount < lastPage.totalCount ? allPages.length + 1 : undefined;

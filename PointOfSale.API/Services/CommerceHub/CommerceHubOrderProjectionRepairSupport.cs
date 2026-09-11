@@ -1,6 +1,8 @@
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Helpers;
+using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 
 namespace PointOfSale.API.Services.CommerceHub;
@@ -123,6 +125,61 @@ internal static class CommerceHubOrderProjectionRepairSupport
         existing.LastSourceMutationTicks >= sourceMutationVersion &&
         existing.ProjectionChecksum == projectionChecksum;
 
+    public static async Task<bool> TryReplaceOrphanedOrderNumberCollisionAsync(
+        ApplicationDbContext dbContext,
+        IMongoCollection<CommerceHubOrderDocument> collection,
+        CommerceHubMarketplaceOrder order,
+        CommerceHubOrderDocument document,
+        CancellationToken cancellationToken)
+    {
+        var collision = await collection
+            .Find(candidate =>
+                candidate.OrderNumber == order.OrderNumber &&
+                candidate.MarketplaceOrderId != order.Id)
+            .Project(candidate => new OrderNumberCollisionState
+            {
+                DocumentId = candidate.Id,
+                MarketplaceOrderId = candidate.MarketplaceOrderId
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (collision == null)
+        {
+            return false;
+        }
+
+        var collisionHasSqlOwner = await dbContext.CommerceHubMarketplaceOrders
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .AnyAsync(candidate =>
+                candidate.Id == collision.MarketplaceOrderId &&
+                !candidate.IsDeleted,
+                cancellationToken);
+
+        if (collisionHasSqlOwner)
+        {
+            return false;
+        }
+
+        document.Id = collision.DocumentId;
+        try
+        {
+            var result = await collection.ReplaceOneAsync(
+                candidate =>
+                    candidate.MarketplaceOrderId == collision.MarketplaceOrderId &&
+                    candidate.OrderNumber == order.OrderNumber,
+                document,
+                new ReplaceOptions { IsUpsert = false },
+                cancellationToken);
+
+            return result.MatchedCount > 0;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return false;
+        }
+    }
+
     public static long ResolveSourceMutationVersion(CommerceHubMarketplaceOrder order)
     {
         var sourceVersion = order.ProjectionMutationVersion;
@@ -142,5 +199,11 @@ internal static class CommerceHubOrderProjectionRepairSupport
         public int LastEventVersion { get; init; }
         public long LastSourceMutationTicks { get; init; }
         public string ProjectionChecksum { get; init; } = string.Empty;
+    }
+
+    private sealed class OrderNumberCollisionState
+    {
+        public string? DocumentId { get; init; }
+        public Guid MarketplaceOrderId { get; init; }
     }
 }

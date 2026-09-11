@@ -719,6 +719,7 @@ public class CommerceHubAutoHealingService :
                 var succeeded = await ReindexListingAsync(
                     document,
                     queuedItem,
+                    mongoDbContext,
                     indexService,
                     dbContext,
                     cancellationToken);
@@ -961,6 +962,7 @@ public class CommerceHubAutoHealingService :
     private static async Task<bool> ReindexListingAsync(
         CommerceHubProductDocument? document,
         QueuedListing queuedItem,
+        MongoDbContext mongoDbContext,
         ICommerceHubSearchIndexService indexService,
         ApplicationDbContext dbContext,
         CancellationToken cancellationToken)
@@ -981,6 +983,32 @@ public class CommerceHubAutoHealingService :
 
                 if (recoveredSqlAuthority != null)
                 {
+                    var recoveredAtUtc = DateTime.UtcNow;
+                    recoveredSqlAuthority.CreatedAtUtc = recoveredSqlAuthority.CreatedAtUtc == default
+                        ? recoveredAtUtc
+                        : recoveredSqlAuthority.CreatedAtUtc;
+                    recoveredSqlAuthority.UpdatedAtUtc = recoveredAtUtc;
+                    recoveredSqlAuthority.ProjectionConvergedAtUtc = recoveredAtUtc;
+                    recoveredSqlAuthority.SearchSyncStatus = CommerceHubProductDocument.SearchSyncPending;
+                    recoveredSqlAuthority.SearchLastError = null;
+
+                    try
+                    {
+                        await mongoDbContext.CommerceHubProducts.InsertOneAsync(
+                            recoveredSqlAuthority,
+                            cancellationToken: cancellationToken);
+                    }
+                    catch (MongoWriteException exception) when (
+                        exception.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                    {
+                        recoveredSqlAuthority = await mongoDbContext.CommerceHubProducts
+                            .Find(item =>
+                                item.Id == queuedItem.ListingId &&
+                                item.TenantId == queuedItem.TenantId.Value)
+                            .FirstOrDefaultAsync(cancellationToken)
+                            ?? recoveredSqlAuthority;
+                    }
+
                     return await indexService.IndexAsync(
                         CommerceHubSearchDocumentMapper.Map(recoveredSqlAuthority),
                         cancellationToken: cancellationToken);

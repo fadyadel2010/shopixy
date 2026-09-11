@@ -17,7 +17,7 @@ export const COMMERCEHUB_PAYOUT_METHOD_TYPES = [
 
 export async function getCommerceHubEarningsDashboard() {
     try {
-        const response = await api.get('/api/commercehub/earnings')
+        const response = await api.get('/commercehub/earnings')
         return response.data
     } catch (error) {
         throw new Error(extractErrorMessage(error, 'Unable to load CommerceHub earnings.'))
@@ -26,7 +26,7 @@ export async function getCommerceHubEarningsDashboard() {
 
 export async function getVendorPayoutMethods() {
     try {
-        const response = await api.get('/api/vendors/payout-methods')
+        const response = await api.get('/vendors/payout-methods')
         return response.data
     } catch (error) {
         throw new Error(extractErrorMessage(error, 'Unable to load vendor payout methods.'))
@@ -35,7 +35,7 @@ export async function getVendorPayoutMethods() {
 
 export async function createVendorPayoutMethod(payload) {
     try {
-        const response = await api.post('/api/vendors/payout-methods', payload)
+        const response = await api.post('/vendors/payout-methods', payload)
         return response.data
     } catch (error) {
         throw new Error(extractErrorMessage(error, 'Unable to save the payout method.'))

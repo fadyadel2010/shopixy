@@ -18,7 +18,7 @@ public sealed class PaymentAdmin5UnifiedProviderDashboardCertificationTests
                 Enabled = true,
                 Environment = "Production",
                 Configuration = ValidConfiguration("Production"),
-                SecretReplacements = InitialSecrets()
+                SecretReplacements = InitialSecrets("Production")
             });
         var secrets = new PaymentProviderSecretService(administration);
         secrets.RotateSecret(
@@ -226,18 +226,24 @@ public sealed class PaymentAdmin5UnifiedProviderDashboardCertificationTests
             ["description"] = "Paymob provider account for CommerceHub.",
             ["integrationId"] = "123456",
             ["iframeId"] = "654321",
-            ["merchantIdentifier"] = "merchant-1",
+            ["publicKey"] = environment == "Production" ? "egy_pk_live_test-public" : "egy_pk_test_test-public",
+            ["merchantIdentifier"] = "123",
             ["providerAccountName"] = "CommerceHub Paymob",
+            ["webhookUrl"] = "https://api.example.test/api/payments/paymob/webhook",
+            ["browserCallbackUrl"] = "https://market.example.test/api/commercehub/payments/paymob/callback",
             ["timeoutSeconds"] = "30",
             ["retryCount"] = "2",
             ["requestTimeoutSeconds"] = "30",
             ["maximumRetryAttempts"] = "3"
         };
 
-    private static Dictionary<string, string?> InitialSecrets() =>
+    private static Dictionary<string, string?> InitialSecrets(string environment = "Sandbox") =>
         new(StringComparer.Ordinal)
         {
             ["apiKey"] = "paymob-initial-api-key",
+            ["secretKey"] = environment == "Production"
+                ? "egy_sk_live_initial-secret"
+                : "egy_sk_test_initial-secret",
             ["hmacSecret"] = "paymob-initial-hmac-secret"
         };
 }

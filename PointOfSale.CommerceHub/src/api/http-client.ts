@@ -3,6 +3,7 @@ import axios, { InternalAxiosRequestConfig } from "axios";
 import { appendCsrfHeader } from "@/api/csrf";
 import { normalizeApiError } from "@/api/api-error";
 import { dispatchCustomerSessionAuthorityLost, isCustomerSessionAuthorityEndpoint } from "@/auth/customer-session-authority";
+import { markActivePaymentInitiationTrace } from "@/features/checkout/paymentInitiationTrace";
 import { getLanguage } from "@/store/language-store";
 
 type RequestMetadata = {
@@ -43,6 +44,14 @@ httpClient.interceptors.request.use(
       nextConfig.headers.set("X-CSRF-Token", csrfHeaders["X-CSRF-Token"]);
     }
 
+    if (nextConfig.url === "/api/commercehub/payments/initiate") {
+      markActivePaymentInitiationTrace("http-request-interceptor", {
+        method: nextConfig.method?.toUpperCase(),
+        url: nextConfig.url,
+        baseUrl: nextConfig.baseURL
+      });
+    }
+
     return nextConfig;
   },
   (error) => Promise.reject(normalizeApiError(error))
@@ -50,6 +59,13 @@ httpClient.interceptors.request.use(
 
 httpClient.interceptors.response.use(
   (response) => {
+    if (response.config.url === "/api/commercehub/payments/initiate") {
+      markActivePaymentInitiationTrace("http-response-received", {
+        status: response.status,
+        url: response.config.url
+      });
+    }
+
     if (import.meta.env.DEV) {
       const metadata = (response.config as RequestConfigWithMetadata).metadata;
       const duration = metadata ? Date.now() - metadata.startedAt : 0;
@@ -61,6 +77,14 @@ httpClient.interceptors.response.use(
   (error) => {
     const status = error?.response?.status;
     const url = error?.config?.url;
+    if (url === "/api/commercehub/payments/initiate") {
+      markActivePaymentInitiationTrace("http-response-failed", {
+        status: status ?? null,
+        code: error?.response?.data?.code ?? error?.code ?? null,
+        url
+      });
+    }
+
     if ((status === 401 || status === 403) && isCustomerSessionAuthorityEndpoint(url)) {
       dispatchCustomerSessionAuthorityLost();
     }

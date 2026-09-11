@@ -1115,7 +1115,7 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             product.Images = null;
         }
         product.IsActive = command.Publication.IsActive;
-        product.TrackStock = command.Inventory.HasVariants ? false : command.Inventory.TrackStock;
+        product.TrackStock = command.Inventory.TrackStock;
         product.HasVariants = command.Inventory.HasVariants;
         product.Slug = command.Seo.Slug;
         product.MetaTitle = command.Seo.MetaTitle;

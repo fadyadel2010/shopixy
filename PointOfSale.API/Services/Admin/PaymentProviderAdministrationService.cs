@@ -260,7 +260,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
                 ["administrationPhase"] = "PAYMENT-ADMIN-2",
                 ["providerConfigurationImplemented"] = true
             }),
-            Status = HasRequiredPaymobCheckoutSecrets(protectedSecrets) ? "Configured" : "PendingConfiguration"
+            Status = HasRequiredPaymobCredentials(protectedSecrets) ? "Configured" : "PendingConfiguration"
         };
 
         PersistProviderState(next, protectedSecrets);
@@ -752,7 +752,15 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
                     continue;
                 }
 
-                configuration[item.Key] = NormalizeJsonBackedValue(item.Value);
+                var normalizedValue = NormalizeJsonBackedValue(item.Value);
+                if ((string.Equals(item.Key, "webhookUrl", StringComparison.Ordinal) ||
+                     string.Equals(item.Key, "browserCallbackUrl", StringComparison.Ordinal)) &&
+                    normalizedValue is string url)
+                {
+                    normalizedValue = url.Trim();
+                }
+
+                configuration[item.Key] = normalizedValue;
             }
         }
 
@@ -781,6 +789,7 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         var currency = ReadString(configuration, "currency", string.Empty);
         var integrationId = ReadString(configuration, "integrationId", string.Empty);
         var publicKey = ReadString(configuration, "publicKey", string.Empty);
+        var merchantIdentifier = ReadString(configuration, "merchantIdentifier", string.Empty);
         var webhookUrl = ReadString(configuration, "webhookUrl", string.Empty);
         var browserCallbackUrl = ReadString(configuration, "browserCallbackUrl", string.Empty);
         var displayName = ReadString(configuration, "displayName", string.Empty);
@@ -808,6 +817,11 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
             errors.Add("Invalid Currency.");
         }
 
+        if (enabled && !protectedSecrets.ContainsKey("apiKey"))
+        {
+            errors.Add("Missing API Key.");
+        }
+
         if (enabled && !protectedSecrets.ContainsKey("secretKey"))
         {
             errors.Add("Missing Secret Key.");
@@ -821,6 +835,11 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         if (enabled && !IsPositiveInteger(integrationId))
         {
             errors.Add("Invalid Integration ID.");
+        }
+
+        if (enabled && !IsPositiveInteger(merchantIdentifier))
+        {
+            errors.Add("Invalid Merchant Identifier.");
         }
 
         if (enabled && !IsPaymobKey(publicKey, "egy_pk_", environment))
@@ -877,7 +896,8 @@ public sealed class PaymentProviderAdministrationService : IPaymentProviderAdmin
         }
     }
 
-    private static bool HasRequiredPaymobCheckoutSecrets(IReadOnlyDictionary<string, string> protectedSecrets) =>
+    private static bool HasRequiredPaymobCredentials(IReadOnlyDictionary<string, string> protectedSecrets) =>
+        protectedSecrets.ContainsKey("apiKey") &&
         protectedSecrets.ContainsKey("secretKey") &&
         protectedSecrets.ContainsKey("hmacSecret");
 

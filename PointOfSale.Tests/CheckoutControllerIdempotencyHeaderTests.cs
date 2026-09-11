@@ -8,6 +8,7 @@ using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Checkout;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Infrastructure.Http;
+using PointOfSale.API.Security;
 using PointOfSale.API.Services.Checkout;
 using PointOfSale.Tests.TestDoubles;
 
@@ -120,6 +121,71 @@ public sealed class CheckoutControllerIdempotencyHeaderTests
             It.IsAny<CheckoutRequestDto>(),
             It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Checkout_GuestReplayWithoutOriginalCookie_ReissuesTrackingCookieForSameOrder()
+    {
+        var tenantId = Guid.NewGuid();
+        var cartId = Guid.NewGuid();
+        var orderId = Guid.NewGuid();
+        const string sessionId = "guest-replay-session";
+        const string idempotencyKey = "guest-replay-key";
+        var issuedTokens = new Queue<string>(["initial-tracking-token", "replacement-tracking-token"]);
+        var checkoutService = new Mock<ICheckoutService>();
+
+        checkoutService
+            .Setup(service => service.ProcessCheckoutAsync(
+                tenantId,
+                sessionId,
+                "session",
+                sessionId,
+                null,
+                idempotencyKey,
+                It.IsAny<CheckoutRequestDto>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new CheckoutResponseDto
+            {
+                OrderId = orderId,
+                OrderNumber = "ORD-GUEST-REPLAY",
+                TotalAmount = 125m,
+                Currency = "EGP",
+                CartId = cartId,
+                Status = "PendingPayment",
+                TrackingToken = issuedTokens.Dequeue()
+            });
+
+        var controller = new CheckoutController(
+            checkoutService.Object,
+            Mock.Of<ICheckoutAttachmentService>(),
+            NullLogger<CheckoutController>.Instance);
+
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = BuildHttpContext(tenantId, sessionId, idempotencyKey, idempotencyKey)
+        };
+        var firstResult = await controller.Checkout(BuildValidRequest(cartId), CancellationToken.None);
+        var firstResponse = Assert.IsType<CheckoutResponseDto>(Assert.IsType<OkObjectResult>(firstResult).Value);
+        var firstCookie = controller.Response.Headers.SetCookie.ToString();
+
+        Assert.Equal(orderId, firstResponse.OrderId);
+        Assert.Null(firstResponse.TrackingToken);
+        Assert.Contains($"{GuestOrderAccessCookie.TrackingTokenCookieName}=initial-tracking-token", firstCookie, StringComparison.Ordinal);
+
+        // Simulate a client that lost the original cookie but retains the checkout idempotency key and session.
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = BuildHttpContext(tenantId, sessionId, idempotencyKey, idempotencyKey)
+        };
+        var replayResult = await controller.Checkout(BuildValidRequest(cartId), CancellationToken.None);
+        var replayResponse = Assert.IsType<CheckoutResponseDto>(Assert.IsType<OkObjectResult>(replayResult).Value);
+        var replayCookie = controller.Response.Headers.SetCookie.ToString();
+
+        Assert.Equal(orderId, replayResponse.OrderId);
+        Assert.Null(replayResponse.TrackingToken);
+        Assert.Contains($"{GuestOrderAccessCookie.TrackingTokenCookieName}=replacement-tracking-token", replayCookie, StringComparison.Ordinal);
+        checkoutService.VerifyAll();
     }
 
     private static DefaultHttpContext BuildHttpContext(

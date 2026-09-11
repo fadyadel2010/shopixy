@@ -63,8 +63,9 @@ public sealed class CommerceHubPaymentCompensationOutboxWorker : BackgroundServi
             .Where(message =>
                 message.ProcessedAtUtc == null &&
                 !message.IsDeleted &&
-                !message.RequiresOperatorReconciliation &&
-                (message.NextRetryAtUtc == null || message.NextRetryAtUtc <= nowUtc) &&
+                ((message.ProviderTransactionId != null && message.ProviderTransactionId.StartsWith("DEV-SIM:ONLINE:")) ||
+                 (!message.RequiresOperatorReconciliation &&
+                  (message.NextRetryAtUtc == null || message.NextRetryAtUtc <= nowUtc))) &&
                 (message.ProcessingLeaseExpiresAtUtc == null || message.ProcessingLeaseExpiresAtUtc <= nowUtc))
             .OrderBy(message => message.CreatedAt)
             .ThenBy(message => message.Id)
@@ -82,11 +83,6 @@ public sealed class CommerceHubPaymentCompensationOutboxWorker : BackgroundServi
     {
         using var scope = _serviceProvider.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var refundGateway = scope.ServiceProvider.GetRequiredService<ICommerceHubRefundGatewayService>();
-        var financialLedger = scope.ServiceProvider.GetRequiredService<ICommerceHubFinancialLedgerService>();
-        var auditService = scope.ServiceProvider.GetRequiredService<ICommerceHubFinancialAuditService>();
-        var refundCompletionValidator = scope.ServiceProvider.GetRequiredService<IRefundCompletionValidator>();
-        var eventPublisher = scope.ServiceProvider.GetRequiredService<IEventPublisher>();
 
         var initialMessage = await dbContext.CommerceHubPaymentCompensationOutboxMessages
             .AsNoTracking()
@@ -141,6 +137,22 @@ public sealed class CommerceHubPaymentCompensationOutboxWorker : BackgroundServi
             await RecordFailureAsync(dbContext, message, "Payment no longer exists for compensation refund.", cancellationToken);
             return;
         }
+
+        if (IsDevelopmentSimulationCompensation(message, payment))
+        {
+            await CloseDevelopmentSimulationCompensationAsync(
+                dbContext,
+                message,
+                payment,
+                cancellationToken);
+            return;
+        }
+
+        var refundGateway = scope.ServiceProvider.GetRequiredService<ICommerceHubRefundGatewayService>();
+        var financialLedger = scope.ServiceProvider.GetRequiredService<ICommerceHubFinancialLedgerService>();
+        var auditService = scope.ServiceProvider.GetRequiredService<ICommerceHubFinancialAuditService>();
+        var refundCompletionValidator = scope.ServiceProvider.GetRequiredService<IRefundCompletionValidator>();
+        var eventPublisher = scope.ServiceProvider.GetRequiredService<IEventPublisher>();
 
         try
         {
@@ -1293,6 +1305,63 @@ public sealed class CommerceHubPaymentCompensationOutboxWorker : BackgroundServi
          string.Equals(gatewayStatus, "succeeded", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(gatewayStatus, "success", StringComparison.OrdinalIgnoreCase));
 
+    private static bool IsDevelopmentSimulationCompensation(
+        CommerceHubPaymentCompensationOutboxMessage message,
+        CommerceHubPayment payment) =>
+        (message.ProviderTransactionId?.StartsWith("DEV-SIM:ONLINE:", StringComparison.Ordinal) ?? false) ||
+        (payment.ProviderTransactionId?.StartsWith("DEV-SIM:ONLINE:", StringComparison.Ordinal) ?? false);
+
+    internal static async Task CloseDevelopmentSimulationCompensationAsync(
+        ApplicationDbContext dbContext,
+        CommerceHubPaymentCompensationOutboxMessage message,
+        CommerceHubPayment payment,
+        CancellationToken cancellationToken)
+    {
+        const string reason =
+            "DEVELOPMENT_PAYMENT_SIMULATION_NOT_COLLECTED: No external money movement existed; compensation closed without a gateway refund.";
+        var nowUtc = DateTime.UtcNow;
+
+        await using var transaction = dbContext.Database.IsRelational()
+            ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            payment.Status = CommerceHubPaymentRecordStatus.Failed;
+            payment.FailureReason = reason;
+            payment.PaidAtUtc = null;
+            payment.IsProcessed = true;
+            payment.ProcessedAtUtc ??= nowUtc;
+            payment.UpdatedAt = nowUtc;
+
+            foreach (var attempt in payment.Attempts.Where(attempt =>
+                         attempt.Status == CommerceHubPaymentRecordStatus.RefundRequired &&
+                         string.Equals(attempt.ProviderTransactionId, message.ProviderTransactionId, StringComparison.Ordinal)))
+            {
+                attempt.Status = CommerceHubPaymentRecordStatus.Failed;
+                attempt.FailureReason = reason;
+                attempt.CompletedAtUtc ??= nowUtc;
+                attempt.UpdatedAt = nowUtc;
+            }
+
+            message.ProcessedAtUtc = nowUtc;
+            message.NextRetryAtUtc = null;
+            message.ProcessingLeaseId = null;
+            message.ProcessingLeaseExpiresAtUtc = null;
+            message.IsFailed = false;
+            message.RequiresOperatorReconciliation = false;
+            message.LastError = reason;
+            message.UpdatedAt = nowUtc;
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        if (transaction != null)
+        {
+            await transaction.CommitAsync(cancellationToken);
+        }
+    }
+
     private static async Task<ClaimOutcome> TryClaimMessageAsync(
         ApplicationDbContext dbContext,
         CommerceHubPaymentCompensationOutboxMessage initialMessage,
@@ -1379,8 +1448,9 @@ public sealed class CommerceHubPaymentCompensationOutboxWorker : BackgroundServi
         DateTime nowUtc) =>
         message.ProcessedAtUtc == null &&
         !message.IsDeleted &&
-        !message.RequiresOperatorReconciliation &&
-        (message.NextRetryAtUtc == null || message.NextRetryAtUtc <= nowUtc) &&
+        ((message.ProviderTransactionId?.StartsWith("DEV-SIM:ONLINE:", StringComparison.Ordinal) ?? false) ||
+         (!message.RequiresOperatorReconciliation &&
+          (message.NextRetryAtUtc == null || message.NextRetryAtUtc <= nowUtc))) &&
         (message.ProcessingLeaseExpiresAtUtc == null || message.ProcessingLeaseExpiresAtUtc <= nowUtc);
 
     private readonly record struct ClaimOutcome(string Status, Guid? LeaseId)

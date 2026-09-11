@@ -32,9 +32,32 @@ import {
 import { loadPosItemStock, revalidatePosCartStock } from '../services/posStockService'
 import { getProductUnitsForProduct, loadProductUnitsMap } from '../services/productUnitsApi'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
+import { cancelPosCart, isPosCartId, synchronizePosCart } from '../services/posCartApi'
 
 const buildPaymentAttemptId = () => `pos-payment-attempt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-const buildPosCartId = () => `pos-cart-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+const toEditFingerprintNumber = (value) => {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+}
+
+const buildPosEditFingerprint = ({ items, customer, discountType, discountValue, warehouseId }) => JSON.stringify({
+    customerId: customer?.id || null,
+    warehouseId: warehouseId || null,
+    discountType: discountType === 'fixed' ? 'fixed' : 'percentage',
+    discountValue: toEditFingerprintNumber(discountValue),
+    items: (Array.isArray(items) ? items : []).map(item => ({
+        productId: item.productId || null,
+        variantId: item.variantId || item.productVariantId || null,
+        unitId: item.unitId || null,
+        quantity: toEditFingerprintNumber(item.quantity),
+        conversionFactor: toEditFingerprintNumber(item.conversionFactor),
+        unitPrice: toEditFingerprintNumber(item.unitPrice),
+        discountAmount: toEditFingerprintNumber(item.discountAmount),
+        taxRate: toEditFingerprintNumber(item.taxRate),
+        priceIncludesTax: Boolean(item.priceIncludesTax),
+    })),
+})
 
 export default function POS() {
     const { t, i18n } = useTranslation()
@@ -63,6 +86,7 @@ export default function POS() {
         canUndo,
         canRedo,
         syncStockLevels,
+        applyPosCartAuthority,
     } = usePOSCart()
 
     const { showSuccess, showError, showInfo, showWarning } = useToast()
@@ -80,7 +104,11 @@ export default function POS() {
     const [editingSaleId, setEditingSaleId] = useState(null)
     const [editingInvoiceNumber, setEditingInvoiceNumber] = useState(null)
     const [editingOriginalItems, setEditingOriginalItems] = useState([])
+    const [editingBaselineFingerprint, setEditingBaselineFingerprint] = useState(null)
     const [editingMutationVersion, setEditingMutationVersion] = useState(null)
+    const [editingPaymentMethod, setEditingPaymentMethod] = useState(null)
+    const [editingCashAmount, setEditingCashAmount] = useState(null)
+    const [editingSalesRepresentative, setEditingSalesRepresentative] = useState(null)
     const [showSearchModal, setShowSearchModal] = useState(false)
 
     // PHASE 11.6: Variant Selection State
@@ -88,6 +116,9 @@ export default function POS() {
     const [pendingProduct, setPendingProduct] = useState(null)
     const [isPreparingCheckout, setIsPreparingCheckout] = useState(false)
     const [isCartHydrated, setIsCartHydrated] = useState(false)
+    const [activePosCartId, setActivePosCartId] = useState(null)
+    const [isCartSynchronizing, setIsCartSynchronizing] = useState(false)
+    const [cartSyncError, setCartSyncError] = useState('')
 
     const barcodeRef = useRef(null)
     const searchRef = useRef(null)
@@ -96,9 +127,18 @@ export default function POS() {
     const completedPaymentAttemptRef = useRef(null)
     const checkoutRequestControllerRef = useRef(null)
     const invoiceLoadRequestControllerRef = useRef(null)
-    const productPrepControllerRef = useRef(null)
+    const productPrepControllersRef = useRef(new Set())
     const lastPersistedCartFingerprintRef = useRef(buildPosCartSnapshotFingerprint(null))
     const blockedExternalCartFingerprintRef = useRef(null)
+    const cartSyncQueueRef = useRef(Promise.resolve())
+    const cartSyncGenerationRef = useRef(0)
+    const previousCartItemCountRef = useRef(0)
+
+    const updateCurrentCartId = useCallback((cartId) => {
+        const normalizedCartId = isPosCartId(cartId) ? cartId : null
+        currentCartIdRef.current = normalizedCartId
+        setActivePosCartId(normalizedCartId)
+    }, [])
 
     const totals = calculateTotals()
     const remainingSubtotal = calculateRemainingSubtotal(totals.subtotal, totals.itemDiscounts)
@@ -106,7 +146,8 @@ export default function POS() {
     useEffect(() => () => {
         checkoutRequestControllerRef.current?.abort()
         invoiceLoadRequestControllerRef.current?.abort()
-        productPrepControllerRef.current?.abort()
+        productPrepControllersRef.current.forEach(controller => controller.abort())
+        productPrepControllersRef.current.clear()
     }, [])
 
     const getWarehouseProductStock = (product) => {
@@ -255,25 +296,32 @@ export default function POS() {
     }, [discountType, discountValue, items, remainingSubtotal, selectedWarehouse, t, totals.total])
 
     const resetPOS = useCallback(() => {
+        ++cartSyncGenerationRef.current
+        productPrepControllersRef.current.forEach(controller => controller.abort())
+        productPrepControllersRef.current.clear()
         clearCart()
-        currentCartIdRef.current = null
+        updateCurrentCartId(null)
         setEditingSaleId(null)
         setEditingInvoiceNumber(null)
         setEditingOriginalItems([])
+        setEditingBaselineFingerprint(null)
         setEditingMutationVersion(null)
-    }, [clearCart])
+        setEditingPaymentMethod(null)
+        setEditingCashAmount(null)
+        setEditingSalesRepresentative(null)
+    }, [clearCart, updateCurrentCartId])
 
     const applyPersistedCart = useCallback((snapshot) => {
         const normalizedFingerprint = buildPosCartSnapshotFingerprint(snapshot)
 
         if (!snapshot) {
             lastPersistedCartFingerprintRef.current = normalizedFingerprint
-            currentCartIdRef.current = null
+            updateCurrentCartId(null)
             resetPOS()
             return
         }
 
-        currentCartIdRef.current = snapshot.cartId || buildPosCartId()
+        updateCurrentCartId(snapshot.cartId)
         retrieveSale({
             items: snapshot.items,
             customer: snapshot.customer,
@@ -284,15 +332,130 @@ export default function POS() {
         setEditingSaleId(snapshot.editingSaleId || null)
         setEditingInvoiceNumber(snapshot.editingInvoiceNumber || null)
         setEditingOriginalItems(Array.isArray(snapshot.editingOriginalItems) ? snapshot.editingOriginalItems : [])
+        setEditingBaselineFingerprint(
+            typeof snapshot.editingBaselineFingerprint === 'string'
+                ? snapshot.editingBaselineFingerprint
+                : snapshot.editingSaleId
+                    ? buildPosEditFingerprint({
+                        items: snapshot.items,
+                        customer: snapshot.customer,
+                        discountType: snapshot.discountType,
+                        discountValue: snapshot.discountValue,
+                        warehouseId: snapshot.warehouseId,
+                    })
+                    : null,
+        )
         setEditingMutationVersion(Number.isInteger(snapshot.editingMutationVersion) ? snapshot.editingMutationVersion : null)
+        setEditingPaymentMethod(snapshot.editingPaymentMethod || null)
+        setEditingCashAmount(Number.isFinite(snapshot.editingCashAmount) ? snapshot.editingCashAmount : null)
+        setEditingSalesRepresentative(snapshot.editingSalesRepresentative || null)
         lastPersistedCartFingerprintRef.current = normalizedFingerprint
-    }, [resetPOS, retrieveSale])
+    }, [resetPOS, retrieveSale, updateCurrentCartId])
 
     useEffect(() => {
         const snapshot = getPersistedPosCart()
         applyPersistedCart(snapshot)
         setIsCartHydrated(true)
     }, [applyPersistedCart])
+
+    const enqueuePosCartSync = useCallback(({ foreground = false } = {}) => {
+        if (editingSaleId || !selectedWarehouse || items.length === 0) {
+            return Promise.resolve(null)
+        }
+
+        const generation = ++cartSyncGenerationRef.current
+        const desiredCart = {
+            warehouseId: selectedWarehouse,
+            customerId: customer?.id || null,
+            items,
+        }
+
+        const syncTask = cartSyncQueueRef.current.then(async () => {
+            if (!foreground && generation !== cartSyncGenerationRef.current) {
+                return null
+            }
+
+            setIsCartSynchronizing(true)
+            try {
+                const synchronizedCart = await synchronizePosCart({
+                    cartId: currentCartIdRef.current,
+                    ...desiredCart,
+                })
+
+                if (generation !== cartSyncGenerationRef.current) {
+                    updateCurrentCartId(synchronizedCart?.cartId)
+                    return synchronizedCart
+                }
+
+                updateCurrentCartId(synchronizedCart?.cartId)
+                applyPosCartAuthority(synchronizedCart?.items)
+                setCartSyncError('')
+                return synchronizedCart
+            } catch (error) {
+                const message = error?.response?.data?.message || error?.message || t(
+                    'pos.cartSyncFailed',
+                    'The POS cart could not be synchronized. Please try again.',
+                )
+                setCartSyncError(message)
+                if (foreground) {
+                    showError(message)
+                } else {
+                    console.error('POS cart synchronization failed:', error)
+                }
+                throw error
+            } finally {
+                if (generation === cartSyncGenerationRef.current) {
+                    setIsCartSynchronizing(false)
+                }
+            }
+        })
+
+        cartSyncQueueRef.current = syncTask.catch(() => null)
+        return syncTask
+    }, [applyPosCartAuthority, customer?.id, editingSaleId, items, selectedWarehouse, showError, t, updateCurrentCartId])
+
+    const disposeCurrentPosCart = useCallback(async (reason) => {
+        ++cartSyncGenerationRef.current
+        await cartSyncQueueRef.current.catch(() => null)
+
+        const cartId = currentCartIdRef.current
+        if (cartId) {
+            try {
+                await cancelPosCart(cartId, reason)
+            } catch (error) {
+                if (!isRequestCanceled(error)) {
+                    console.error('Failed to close POS cart:', error)
+                }
+            }
+        }
+
+        updateCurrentCartId(null)
+        setCartSyncError('')
+        setIsCartSynchronizing(false)
+    }, [updateCurrentCartId])
+
+    useEffect(() => {
+        if (!isCartHydrated || editingSaleId || !selectedWarehouse || items.length === 0) {
+            return
+        }
+
+        void enqueuePosCartSync().catch(() => {})
+    }, [editingSaleId, enqueuePosCartSync, isCartHydrated, items.length, selectedWarehouse])
+
+    useEffect(() => {
+        const previousItemCount = previousCartItemCountRef.current
+        previousCartItemCountRef.current = items.length
+
+        if (
+            isCartHydrated &&
+            !editingSaleId &&
+            previousItemCount > 0 &&
+            items.length === 0 &&
+            currentCartIdRef.current
+        ) {
+            void disposeCurrentPosCart('Last item removed from POS browser cart')
+        }
+    }, [disposeCurrentPosCart, editingSaleId, isCartHydrated, items.length])
 
     const revalidateCheckoutStock = useCallback(async () => {
         checkoutRequestControllerRef.current?.abort()
@@ -368,14 +531,20 @@ export default function POS() {
                 return
             }
 
-            currentCartIdRef.current ||= buildPosCartId()
+            if (!editingSaleId) {
+                const synchronizedCart = await enqueuePosCartSync({ foreground: true })
+                if (!synchronizedCart?.cartId) {
+                    return
+                }
+            }
+
             currentPaymentAttemptRef.current = buildPaymentAttemptId()
             completedPaymentAttemptRef.current = null
             setShowPaymentModal(true)
         } finally {
             setIsPreparingCheckout(false)
         }
-    }, [getSaleValidationError, isPreparingCheckout, revalidateCheckoutStock, showError, showPaymentModal])
+    }, [editingSaleId, enqueuePosCartSync, getSaleValidationError, isPreparingCheckout, revalidateCheckoutStock, showError, showPaymentModal])
 
     const handleWarehouseChange = async (nextWarehouseId) => {
         if (!nextWarehouseId || nextWarehouseId === selectedWarehouse) {
@@ -396,6 +565,7 @@ export default function POS() {
         }
 
         if (items.length > 0) {
+            await disposeCurrentPosCart('Warehouse changed in POS browser')
             resetPOS()
             showInfo(t('pos.warehouseChangedCartReset'))
         }
@@ -419,9 +589,47 @@ export default function POS() {
             return
         }
 
+        await disposeCurrentPosCart('POS cart cleared by cashier')
         resetPOS()
         showSuccess(t('pos.cartCleared'))
-    }, [confirm, items.length, resetPOS, showSuccess, t])
+    }, [confirm, disposeCurrentPosCart, items.length, resetPOS, showSuccess, t])
+
+    const handleExitEditing = useCallback(async () => {
+        if (!editingSaleId) {
+            return
+        }
+
+        const currentFingerprint = buildPosEditFingerprint({
+            items,
+            customer,
+            discountType,
+            discountValue,
+            warehouseId: selectedWarehouse,
+        })
+        const hasUnsavedChanges = editingBaselineFingerprint != null
+            && currentFingerprint !== editingBaselineFingerprint
+
+        if (hasUnsavedChanges) {
+            const confirmed = await confirm({
+                cancelLabel: t('common.cancel'),
+                confirmLabel: t('pos.discardAndExit'),
+                description: t('pos.exitEditingConfirm'),
+                title: t('pos.exitEditingTitle'),
+                variant: 'warning',
+            })
+
+            if (!confirmed) {
+                return
+            }
+        }
+
+        invoiceLoadRequestControllerRef.current?.abort()
+        currentPaymentAttemptRef.current = null
+        setShowPaymentModal(false)
+        clearPersistedPosCart()
+        lastPersistedCartFingerprintRef.current = buildPosCartSnapshotFingerprint(null)
+        resetPOS()
+    }, [confirm, customer, discountType, discountValue, editingBaselineFingerprint, editingSaleId, items, resetPOS, selectedWarehouse, t])
 
     const addPreparedProductToCart = async (productToAdd) => {
         if (!productToAdd) {
@@ -433,10 +641,10 @@ export default function POS() {
             return
         }
 
-        // Abort any previous product preparation request
-        productPrepControllerRef.current?.abort()
+        // Each selection is an independent cashier action. Keep its preparation
+        // alive so a fast second scan/click cannot silently discard the first.
         const controller = new AbortController()
-        productPrepControllerRef.current = controller
+        productPrepControllersRef.current.add(controller)
 
         let preparedProduct = productToAdd
         try {
@@ -457,8 +665,7 @@ export default function POS() {
                 stockQuantity: freshStock.stockQuantity,
             }
 
-            // Verify this controller is still current and not cancelled
-            if (productPrepControllerRef.current !== controller || controller.signal.aborted) {
+            if (controller.signal.aborted) {
                 return
             }
         } catch (error) {
@@ -470,10 +677,7 @@ export default function POS() {
             showError(t('common.failedToLoadData'))
             return
         } finally {
-            // Clear the controller ref if this is still the current request
-            if (productPrepControllerRef.current === controller) {
-                productPrepControllerRef.current = null
-            }
+            productPrepControllersRef.current.delete(controller)
         }
 
         const result = await addItem(preparedProduct, 1)
@@ -520,13 +724,13 @@ export default function POS() {
         return () => controller.abort()
     }, [showError, t])
 
-    const buildCurrentCartSnapshot = useCallback(({ ensureCartId = true } = {}) => {
+    const buildCurrentCartSnapshot = useCallback(() => {
         if (items.length === 0) {
             return null
         }
 
         return {
-            cartId: currentCartIdRef.current || (ensureCartId ? (currentCartIdRef.current = buildPosCartId()) : ''),
+            cartId: activePosCartId || '',
             items,
             customer,
             discountType,
@@ -535,16 +739,25 @@ export default function POS() {
             editingSaleId,
             editingInvoiceNumber,
             editingOriginalItems,
+            editingBaselineFingerprint,
             editingMutationVersion,
+            editingPaymentMethod,
+            editingCashAmount,
+            editingSalesRepresentative,
         }
     }, [
+        activePosCartId,
         customer,
         discountType,
         discountValue,
         editingInvoiceNumber,
         editingOriginalItems,
+        editingBaselineFingerprint,
         editingSaleId,
         editingMutationVersion,
+        editingPaymentMethod,
+        editingCashAmount,
+        editingSalesRepresentative,
         items,
         selectedWarehouse,
     ])
@@ -580,7 +793,7 @@ export default function POS() {
             return
         }
 
-        const localSnapshot = buildCurrentCartSnapshot({ ensureCartId: false })
+        const localSnapshot = buildCurrentCartSnapshot()
         const localFingerprint = buildPosCartSnapshotFingerprint(localSnapshot)
         const localHasActiveCart = Boolean(localSnapshot) || showPaymentModal || isPreparingCheckout
 
@@ -692,13 +905,14 @@ export default function POS() {
         }
     }
 
-    const handleHoldSale = useCallback(() => {
+    const handleHoldSale = useCallback(async () => {
         if (items.length === 0) {
             showWarning(t('pos.cartEmptyHold'))
             return
         }
 
         try {
+            await disposeCurrentPosCart('POS sale held in local register storage')
             const referenceNumber = holdSale()
             if (referenceNumber) {
                 showSuccess(t('pos.saleHeld', { reference: referenceNumber }))
@@ -710,14 +924,18 @@ export default function POS() {
             }))
             console.error('Failed to hold sale:', error)
         }
-    }, [holdSale, items.length, resetPOS, showSuccess, showWarning, showError, t])
+    }, [disposeCurrentPosCart, holdSale, items.length, resetPOS, showSuccess, showWarning, showError, t])
 
     const handleRetrieveSale = (sale) => {
-        currentCartIdRef.current = buildPosCartId()
+        updateCurrentCartId(null)
         setEditingSaleId(null)
         setEditingInvoiceNumber(null)
         setEditingOriginalItems([])
+        setEditingBaselineFingerprint(null)
         setEditingMutationVersion(null)
+        setEditingPaymentMethod(null)
+        setEditingCashAmount(null)
+        setEditingSalesRepresentative(null)
         retrieveSale(sale)
         showSuccess(t('pos.saleRetrieved', { reference: sale.referenceNumber }))
     }
@@ -850,6 +1068,11 @@ export default function POS() {
             const res = await api.get(`/sales/${invoice.id}`, { signal: controller.signal })
             const fullSale = res.data
 
+            if (fullSale.status !== 'Draft' && fullSale.status !== 0) {
+                showWarning(t('pos.completedInvoiceReturnRequired'))
+                return
+            }
+
             const originalItems = Array.isArray(fullSale.items) ? fullSale.items.map(item => ({
                 productId: item.productId,
                 variantId: item.productVariantId,
@@ -869,6 +1092,9 @@ export default function POS() {
             setEditingInvoiceNumber(fullSale.invoiceNumber)
             setEditingOriginalItems(originalItems)
             setEditingMutationVersion(Number.isInteger(fullSale.mutationVersion) ? fullSale.mutationVersion : null)
+            setEditingPaymentMethod(fullSale.paymentMethod || null)
+            setEditingCashAmount(Number(fullSale.cashAmount ?? fullSale.paidAmount))
+            setEditingSalesRepresentative(fullSale.salesRepresentative || null)
 
             if (fullSale.warehouse?.id || fullSale.warehouseId) {
                 setSelectedWarehouse(fullSale.warehouse?.id || fullSale.warehouseId)
@@ -880,8 +1106,12 @@ export default function POS() {
                 discountType: fullSale.discountPercentage > 0 ? 'percentage' : 'fixed',
                 discountValue: fullSale.discountPercentage > 0 ? fullSale.discountPercentage : fullSale.discountAmount
             }
+            setEditingBaselineFingerprint(buildPosEditFingerprint({
+                ...saleDataForCart,
+                warehouseId: fullSale.warehouse?.id || fullSale.warehouseId,
+            }))
 
-            currentCartIdRef.current = buildPosCartId()
+            updateCurrentCartId(null)
             retrieveSale(saleDataForCart)
             showSuccess(t('pos.saleLoaded', { number: fullSale.invoiceNumber }))
 
@@ -960,19 +1190,28 @@ export default function POS() {
     }
 
     return (
-        <div className="h-[calc(100vh-120px)] flex flex-col" dir={isRTL ? 'rtl' : 'ltr'}>
+        <div className="min-h-[calc(100vh-120px)] lg:h-[calc(100vh-120px)] flex flex-col" dir={isRTL ? 'rtl' : 'ltr'}>
             {/* Header */}
-            <div className={`mb-4 flex items-center justify-between gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <div className={`mb-4 flex flex-col items-stretch gap-4 xl:flex-row xl:items-center xl:justify-between ${isRTL ? 'xl:flex-row-reverse' : ''}`}>
                 <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                     <h2 className="text-2xl font-bold text-gray-900">{t('pos.title')}</h2>
                     {editingInvoiceNumber && (
-                        <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-bold border border-orange-200">
-                            {t('common.editing')}: #{editingInvoiceNumber}
-                        </span>
+                        <div className={`flex flex-wrap items-center gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                            <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-bold border border-orange-200">
+                                {t('common.editing')}: #{editingInvoiceNumber}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={handleExitEditing}
+                                className="rounded-lg border border-orange-300 bg-white px-3 py-1 text-sm font-semibold text-orange-700 transition-colors hover:bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+                            >
+                                {t('pos.exitEditing')}
+                            </button>
+                        </div>
                     )}
                 </div>
 
-                <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                <div className={`flex flex-wrap items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                     {/* Search Button */}
                     <button
                         onClick={() => setShowSearchModal(true)}
@@ -1051,10 +1290,16 @@ export default function POS() {
                 </div>
             ) : null}
 
+            {cartSyncError ? (
+                <div role="alert" className={`mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-800 ${isRTL ? 'text-right' : 'text-left'}`}>
+                    {cartSyncError}
+                </div>
+            ) : null}
+
             {/* Main Content */}
-            <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-hidden">
+            <div className="grid flex-none grid-cols-1 gap-6 overflow-visible lg:flex-1 lg:grid-cols-3 lg:overflow-hidden">
                 {/* Left Panel - Product Search */}
-                <div className="lg:col-span-2 flex flex-col gap-4 overflow-hidden">
+                <div className="flex flex-col gap-4 overflow-visible lg:col-span-2 lg:overflow-hidden">
                     {/* Barcode Scanner */}
                     <div className="card">
                         <h3 className="text-lg font-semibold mb-3">{t('pos.barcodeScanner')}</h3>
@@ -1091,11 +1336,16 @@ export default function POS() {
                 </div>
 
                 {/* Right Panel - Shopping Cart */}
-                <div className="flex flex-col gap-4 overflow-hidden">
+                <div className="flex flex-col gap-4 overflow-visible lg:overflow-hidden">
                     {/* Cart Items */}
                     <div className="card flex-1 flex flex-col overflow-hidden">
                         <h3 className="text-lg font-semibold mb-3">
                             {t('pos.cart')} ({t('pos.cartItemCount', { count: totals.itemCount })})
+                            {isCartSynchronizing ? (
+                                <span className="ml-2 text-xs font-medium text-blue-600" role="status">
+                                    {t('pos.syncingCart', 'Syncing cart...')}
+                                </span>
+                            ) : null}
                         </h3>
 
                         {items.length === 0 ? (
@@ -1128,6 +1378,7 @@ export default function POS() {
                             <label className="label">{t('pos.invoiceDiscount')}</label>
                             <div className="flex gap-2">
                                 <select
+                                    aria-label={t('pos.invoiceDiscountType', 'Invoice discount type')}
                                     value={discountType}
                                     onChange={(e) => {
                                         const nextDiscountType = e.target.value
@@ -1140,6 +1391,7 @@ export default function POS() {
                                     <option value="fixed">{t('pos.fixedDiscount')}</option>
                                 </select>
                                 <input
+                                    aria-label={t('pos.invoiceDiscountValue', 'Invoice discount value')}
                                     type="number"
                                     value={discountValue}
                                     onChange={(e) => setDiscountValue(clampDiscountValue(e.target.value))}
@@ -1195,10 +1447,10 @@ export default function POS() {
                         <div className="space-y-2">
                             <button
                                 onClick={openPaymentModal}
-                                disabled={isPreparingCheckout || Boolean(getSaleValidationError())}
+                                disabled={isPreparingCheckout || isCartSynchronizing || Boolean(getSaleValidationError())}
                                 className={`w-full text-white font-bold py-3 rounded shadow transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${editingSaleId ? 'bg-orange-600 hover:bg-orange-700' : 'bg-primary-600 hover:bg-primary-700'}`}
                             >
-                                {isPreparingCheckout
+                                {isPreparingCheckout || isCartSynchronizing
                                     ? t('pos.checkingStock')
                                     : (editingSaleId ? t('common.update') : t('pos.processPayment'))}
                             </button>
@@ -1227,7 +1479,14 @@ export default function POS() {
                     posCartId={editingSaleId ? null : currentCartIdRef.current}
                     editingSaleId={editingSaleId}
                     editingMutationVersion={editingMutationVersion}
+                    initialPaymentMethod={editingPaymentMethod}
+                    initialCashAmount={editingCashAmount}
+                    initialSalesRepresentative={editingSalesRepresentative}
                     onRevalidateStock={revalidateCheckoutStock}
+                    onPreparePosCart={async () => {
+                        const synchronizedCart = await enqueuePosCartSync({ foreground: true })
+                        return synchronizedCart?.cartId || null
+                    }}
                     onClose={() => {
                         currentPaymentAttemptRef.current = null
                         setShowPaymentModal(false)

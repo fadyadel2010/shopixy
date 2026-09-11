@@ -35,8 +35,7 @@ const optionMetadata: Record<CheckoutPaymentMethod, {
 };
 
 const PaymentMethodSelectorComponent = ({ value, disabled, paymentMethods, onChange }: PaymentMethodSelectorProps) => {
-  // Filter payment methods to only those with defined metadata
-  const supportedPaymentMethods = paymentMethods.filter(pm => optionMetadata[pm.code]);
+  const supportedPaymentMethods = paymentMethods.filter((paymentMethod) => paymentMethod.isAvailable && optionMetadata[paymentMethod.code]);
   
   return (
     <Card className="border-white/70 bg-white/90 shadow-card">
@@ -60,16 +59,15 @@ const PaymentMethodSelectorComponent = ({ value, disabled, paymentMethods, onCha
               const metadata = optionMetadata[paymentMethod.code];
               const Icon = metadata.icon;
               const isActive = paymentMethod.code === value;
-              const isOptionDisabled = disabled || !paymentMethod.isAvailable;
 
               return (
                 <label
                   key={paymentMethod.code}
                   className={cn(
                     "flex items-start gap-4 rounded-[1.75rem] border p-4 transition-all",
-                    paymentMethod.isAvailable && !disabled ? "cursor-pointer" : "cursor-not-allowed opacity-70",
+                    !disabled ? "cursor-pointer" : "cursor-not-allowed opacity-70",
                     isActive ? "border-primary bg-primary/5 shadow-soft" : "border-border/70 bg-slate-50/60",
-                    paymentMethod.isAvailable && !isActive && !disabled ? "hover:border-primary/40" : ""
+                    !isActive && !disabled ? "hover:border-primary/40" : ""
                   )}
                 >
                   <input
@@ -77,12 +75,8 @@ const PaymentMethodSelectorComponent = ({ value, disabled, paymentMethods, onCha
                     name="checkout-payment-method"
                     value={paymentMethod.code}
                     checked={isActive}
-                    disabled={isOptionDisabled}
-                    onChange={() => {
-                      if (paymentMethod.isAvailable) {
-                        onChange(paymentMethod.code);
-                      }
-                    }}
+                    disabled={disabled}
+                    onChange={() => onChange(paymentMethod.code)}
                     className="mt-1 h-4 w-4 border-border text-primary focus:ring-primary"
                   />
 
@@ -94,11 +88,6 @@ const PaymentMethodSelectorComponent = ({ value, disabled, paymentMethods, onCha
                     <div className="space-y-1">
                       <p className="font-semibold text-foreground">{metadata.title}</p>
                       <p className="text-sm leading-6 text-muted-foreground">{metadata.description}</p>
-                      {!paymentMethod.isAvailable ? (
-                        <p className="text-sm font-medium text-amber-800">
-                          {paymentMethod.unavailableReason ?? "This payment method is not enabled for every store in this order."}
-                        </p>
-                      ) : null}
                     </div>
                   </div>
                 </label>

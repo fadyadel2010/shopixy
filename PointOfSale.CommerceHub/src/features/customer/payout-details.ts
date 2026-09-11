@@ -1,4 +1,4 @@
-import type { CustomerPayoutDetails, RefundPayoutMethod } from "@/types";
+import type { CustomerPayoutDetails, CustomerRefundPayoutSnapshot, RefundPayoutMethod } from "@/types";
 
 const egyptianMobilePattern = /^01[0125]\d{8}$/;
 const instapayHandlePattern = /^[a-zA-Z][a-zA-Z0-9._-]{2,49}$/;
@@ -37,6 +37,10 @@ export const REFUND_PAYOUT_METHOD_OPTIONS: Array<{
 
 export function formatRefundPayoutMethodLabel(method: RefundPayoutMethod): string {
   return REFUND_PAYOUT_METHOD_OPTIONS.find((option) => option.value === method)?.label ?? method;
+}
+
+export function isDevelopmentRefundSimulation(payout?: CustomerRefundPayoutSnapshot | null): boolean {
+  return payout?.isDevelopmentSimulation === true;
 }
 
 export function formatRefundPayoutInput(method: RefundPayoutMethod, rawValue: string): string {

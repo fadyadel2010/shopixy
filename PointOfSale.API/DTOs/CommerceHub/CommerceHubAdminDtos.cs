@@ -66,6 +66,7 @@ public class CommerceHubAdminListingResponse
 
 public class CommerceHubAdminProductDto
 {
+    public Guid TenantId { get; set; }
     public Guid ProductId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string? Image { get; set; }
@@ -83,6 +84,9 @@ public class CommerceHubAdminVariantDto
     public string ProductCurrency { get; set; } = "EGP";
     public bool IsCommerceHubCurrencyEligible { get; set; } = true;
     public string? CommerceHubCurrencyPolicyMessage { get; set; }
+    public bool IsCommerceHubPriceOverrideEnabled { get; set; }
+    public bool IsCommerceHubPublicationEligible { get; set; } = true;
+    public string? CommerceHubPublicationEligibilityMessage { get; set; }
     public string? AttributeSummary { get; set; }
     public CommerceHubAdminVariantListingDto? Listing { get; set; }
 }

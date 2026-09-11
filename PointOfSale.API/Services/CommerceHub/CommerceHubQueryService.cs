@@ -71,7 +71,6 @@ public class CommerceHubQueryService : ICommerceHubQueryService
     private readonly ApplicationDbContext _dbContext;
     private readonly ICommerceHubVendorFinancialControlService _vendorFinancialControlService;
     private readonly ICommerceHubGovernanceCacheInvalidationService _governanceCacheInvalidationService;
-    private readonly ITenantContext _tenantContext;
     private readonly IMemoryCache _cache;
     private readonly ILogger<CommerceHubQueryService> _logger;
 
@@ -85,7 +84,6 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         ApplicationDbContext dbContext,
         ICommerceHubVendorFinancialControlService vendorFinancialControlService,
         ICommerceHubGovernanceCacheInvalidationService governanceCacheInvalidationService,
-        ITenantContext tenantContext,
         IMemoryCache cache,
         ILogger<CommerceHubQueryService> logger)
     {
@@ -98,7 +96,6 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         _dbContext = dbContext;
         _vendorFinancialControlService = vendorFinancialControlService;
         _governanceCacheInvalidationService = governanceCacheInvalidationService;
-        _tenantContext = tenantContext;
         _cache = cache;
         _logger = logger;
     }
@@ -124,13 +121,14 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         request.ExcludedTenantIds = await LoadPubliclySuppressedVendorIdsAsync(tenantId, cancellationToken);
 
         var result = await ExecuteSearchAsync(request, cancellationToken);
+        var visibleItems = await RecomposeVisibleListingItemsAsync(result.Items, cancellationToken);
 
         return new CommerceHubProductListResponse
         {
-            Items = result.Items.Select(MapListItem).ToList(),
+            Items = visibleItems.Select(MapListItem).ToList(),
             Page = request.Page,
             PageSize = request.PageSize,
-            TotalCount = result.TotalCount
+            TotalCount = visibleItems.Count
         };
     }
 
@@ -203,14 +201,16 @@ public class CommerceHubQueryService : ICommerceHubQueryService
             appliedExpansions,
             DateTime.UtcNow));
 
+        var visibleItems = await RecomposeVisibleListingItemsAsync(result.Items, cancellationToken);
+
         return new CommerceHubSearchResponse
         {
-            Items = result.Items.Select(MapListItem).ToList(),
-            Total = result.TotalCount,
+            Items = visibleItems.Select(MapListItem).ToList(),
+            Total = visibleItems.Count,
             Page = request.Page,
             PageSize = request.PageSize,
             Intent = ToIntentValue(intent.Type),
-            Facets = await MapSqlVisibleFacetsAsync(result.Items, cancellationToken),
+            Facets = await MapSqlVisibleFacetsAsync(visibleItems, cancellationToken),
             Aggregations = new Dictionary<string, CommerceHubAggregationDto>(StringComparer.OrdinalIgnoreCase),
             ZeroResultSuggestions = result.ZeroResultSuggestions == null
                 ? null
@@ -500,8 +500,6 @@ public class CommerceHubQueryService : ICommerceHubQueryService
             return null;
         }
 
-        EnsureTenantOwnedEntity(listing.TenantId, "CommerceHubListing", listing.Id);
-
         var sqlAuthority = await CommerceHubSearchSqlAuthorityOverlay.ApplyAsync(
             _dbContext,
             new CommerceHubProductDocument
@@ -573,8 +571,12 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         CommerceHubSearchRequest request,
         CancellationToken cancellationToken)
     {
-        var result = await SearchSqlAuthorityFirstAsync(request, cancellationToken);
-        result.ZeroResultSuggestions ??= await BuildZeroResultSuggestionsAsync(result, request, cancellationToken);
+        var result = await _repository.SearchPublishedProductsAsync(request, cancellationToken)
+            ?? new CommerceHubSearchReadResult();
+        result.ZeroResultSuggestions ??= await BuildZeroResultSuggestionsAsync(
+            result,
+            request,
+            cancellationToken);
         return result;
     }
 
@@ -582,6 +584,12 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         CommerceHubSearchRequest request,
         CancellationToken cancellationToken)
     {
+        var requestedCategoryId = request.CategoryId;
+        var requestedTenantId = request.TenantId;
+        var excludedTenantIds = request.ExcludedTenantIds
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
         var categoryRows = await _dbContext.CommerceHubCategories
             .AsNoTracking()
             .Select(category => new AuthorityCategory(category.Id, category.Name, category.ParentId, category.IsActive))
@@ -621,6 +629,9 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                       profile.Status == UserGovernanceStatus.Active &&
                       profile.IsKycVerified &&
                       profile.IsMarketplaceApproved) &&
+                  (!requestedTenantId.HasValue || listing.TenantId == requestedTenantId.Value) &&
+                  (excludedTenantIds.Count == 0 || !excludedTenantIds.Contains(listing.TenantId)) &&
+                  (!requestedCategoryId.HasValue || listing.CommerceHubCategoryId == requestedCategoryId.Value) &&
                   liveCategoryIds.Contains(listing.CommerceHubCategoryId)
             select new AuthorityListingCandidate(
                 listing.Id,
@@ -630,6 +641,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                 listing.VariantId,
                 product.Name,
                 product.Description,
+                variant.SKU,
                 listing.CommerceHubCategoryId,
                 listing.CommerceHubPrice,
                 variant.Price,
@@ -639,22 +651,6 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                 listing.AttributesJson,
                 listing.CreatedAt,
                 listing.UpdatedAt);
-
-        if (request.TenantId.HasValue)
-        {
-            query = query.Where(candidate => candidate.TenantId == request.TenantId.Value);
-        }
-
-        if (request.ExcludedTenantIds.Count > 0)
-        {
-            var excluded = request.ExcludedTenantIds.Where(id => id != Guid.Empty).Distinct().ToList();
-            query = query.Where(candidate => !excluded.Contains(candidate.TenantId));
-        }
-
-        if (request.CategoryId.HasValue)
-        {
-            query = query.Where(candidate => candidate.CategoryId == request.CategoryId.Value);
-        }
 
         var candidates = await query.ToListAsync(cancellationToken);
         if (candidates.Count == 0)
@@ -682,8 +678,13 @@ public class CommerceHubQueryService : ICommerceHubQueryService
             .ToDictionaryAsync(item => item.VariantId, item => Math.Max(0m, item.Available), cancellationToken);
 
         var authorityItems = candidates
-            .Select(candidate => ToAuthorityDocument(candidate, stockByVariant, categoryPaths))
-            .Where(document => MatchesAuthorityFilters(document, request))
+            .Select(candidate => new
+            {
+                Document = ToAuthorityDocument(candidate, stockByVariant, categoryPaths),
+                candidate.Sku
+            })
+            .Where(candidate => MatchesAuthorityFilters(candidate.Document, candidate.Sku, request))
+            .Select(candidate => candidate.Document)
             .ToList();
         var totalCount = authorityItems.Count;
 
@@ -806,6 +807,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
 
     private static bool MatchesAuthorityFilters(
         CommerceHubProductDocument document,
+        string? sku,
         CommerceHubSearchRequest request)
     {
         if (request.InStock.HasValue && document.InStock != request.InStock.Value)
@@ -833,8 +835,10 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         if (terms.Count > 0 && !terms.Any(term =>
                 Contains(document.ProductName, term) ||
                 Contains(document.Description, term) ||
+                Contains(sku, term) ||
                 Contains(document.StoreName, term) ||
-                Contains(document.CategoryName, term)))
+                Contains(document.CategoryName, term) ||
+                Contains(document.AttributesJson, term)))
         {
             return false;
         }
@@ -954,8 +958,23 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         }
     }
 
-    private static bool Contains(string? value, string term) =>
-        !string.IsNullOrWhiteSpace(value) && value.Contains(term, StringComparison.OrdinalIgnoreCase);
+    private static bool Contains(string? value, string term)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (value.Contains(term, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var normalizedValue = CommerceHubSearchQueryNormalizer.Normalize(value);
+        var normalizedTerm = CommerceHubSearchQueryNormalizer.Normalize(term);
+        return normalizedTerm.Length > 0 &&
+               normalizedValue.Contains(normalizedTerm, StringComparison.OrdinalIgnoreCase);
+    }
 
     private sealed record AuthorityCategory(Guid Id, string Name, Guid? ParentId, bool IsActive);
 
@@ -967,6 +986,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         Guid VariantId,
         string ProductName,
         string? Description,
+        string? Sku,
         Guid CategoryId,
         decimal? CommerceHubPrice,
         decimal VariantPrice,
@@ -2383,55 +2403,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         return $"{normalizedVendorIds.Length}:{Convert.ToHexString(hash)}";
     }
 
-    private Guid? ResolveTenantScope(Guid? requestedTenantId)
-    {
-        if (!_tenantContext.HasTenant)
-        {
-            return requestedTenantId;
-        }
-
-        var currentTenantId = _tenantContext.RequiredTenantId;
-        if (!requestedTenantId.HasValue)
-        {
-            return currentTenantId;
-        }
-
-        if (requestedTenantId.Value == currentTenantId)
-        {
-            return currentTenantId;
-        }
-
-        _logger.LogWarning(
-            "[SECURITY] Cross-tenant access attempt detected | TenantId: {TenantId} | EntityTenantId: {EntityTenantId} | Entity: {Entity}",
-            currentTenantId,
-            requestedTenantId.Value,
-            "CommerceHubQuery");
-
-        throw new UnauthorizedAccessException("Tenant isolation violation");
-    }
-
-    private void EnsureTenantOwnedEntity(Guid entityTenantId, string entityName, Guid entityId)
-    {
-        if (!_tenantContext.HasTenant)
-        {
-            return;
-        }
-
-        var currentTenantId = _tenantContext.RequiredTenantId;
-        if (entityTenantId == currentTenantId)
-        {
-            return;
-        }
-
-        _logger.LogWarning(
-            "[SECURITY] Cross-tenant access attempt detected | TenantId: {TenantId} | EntityTenantId: {EntityTenantId} | Entity: {Entity} | EntityId: {EntityId}",
-            currentTenantId,
-            entityTenantId,
-            entityName,
-            entityId);
-
-        throw new UnauthorizedAccessException("Tenant isolation violation");
-    }
+    private static Guid? ResolveTenantScope(Guid? requestedTenantId) => requestedTenantId;
 
     private static string? NormalizeUserQuery(string? query)
     {
@@ -2501,6 +2473,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                         OnlinePrice = listing.Price,
                         ImageUrl = listing.Image,
                         TotalStock = Math.Max(0, decimal.ToInt32(decimal.Truncate(listing.AvailableStock))),
+                        InStock = listing.InStock,
                         IsDefault = true,
                         IsActive = true
                     }
@@ -2535,6 +2508,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                 OnlinePrice = listing.Price,
                 ImageUrl = listing.Image ?? images.FirstOrDefault(),
                 TotalStock = Math.Max(0, decimal.ToInt32(decimal.Truncate(listing.AvailableStock))),
+                InStock = listing.InStock,
                 IsDefault = true,
                 IsActive = true
             });
@@ -2544,6 +2518,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
         listingVariant.Price = listing.Price;
         listingVariant.OnlinePrice = listing.Price;
         listingVariant.TotalStock = Math.Max(0, decimal.ToInt32(decimal.Truncate(listing.AvailableStock)));
+        listingVariant.InStock = listing.InStock;
         listingVariant.IsDefault = true;
         listingVariant.IsActive = true;
 
@@ -2670,6 +2645,7 @@ public class CommerceHubQueryService : ICommerceHubQueryService
                 MediaId = v.MediaId,
                 ImageUrl = ResolveVariantImageUrl(v, productMedia, productImages),
                 TotalStock = Math.Max(0, (int)Math.Truncate(v.TotalStock)),
+                InStock = v.TotalStock > 0,
                 IsDefault = v.IsDefault,
                 IsActive = v.IsActive,
                 Attributes = (v.Attributes ?? new List<VariantAttributeDocument>())

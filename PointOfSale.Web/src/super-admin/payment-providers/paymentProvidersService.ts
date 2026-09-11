@@ -7,9 +7,13 @@ import type {
     PaymentProviderActionResponse,
     PaymentProviderDashboard,
     PaymentProviderListResponse,
+    PaymentProviderSessionReconciliationRequest,
+    PaymentProviderSessionReconciliationResponse,
     PaymentProviderSecretLifecycleResponse,
     PaymentProviderSecretMetadata,
     PaymentProviderSummary,
+    DevelopmentOnlinePaymentSuccessRequest,
+    DevelopmentOnlinePaymentSuccessResponse,
     RotatePaymentProviderSecretRequest,
     RotatePaymentProviderSecretResponse,
 } from './paymentProviderTypes'
@@ -94,6 +98,25 @@ function requireSecretMetadata(secret: PaymentProviderSecretMetadata): PaymentPr
     }
 
     return secret
+}
+
+function requireSessionReconciliation(
+    response: PaymentProviderSessionReconciliationResponse,
+): PaymentProviderSessionReconciliationResponse {
+    if (
+        !response ||
+        typeof response.providerCode !== 'string' ||
+        typeof response.paymentId !== 'string' ||
+        typeof response.orderId !== 'string' ||
+        typeof response.providerReference !== 'string' ||
+        typeof response.status !== 'string' ||
+        typeof response.retryAllowed !== 'boolean' ||
+        typeof response.message !== 'string'
+    ) {
+        throw new Error('Provider-session reconciliation response failed admission.')
+    }
+
+    return response
 }
 
 export async function getPaymentProviders(): Promise<PaymentProviderListResponse> {
@@ -217,4 +240,50 @@ export async function rotatePaymentProviderSecret(
         permissions: response.data.permissions ?? [],
         validationErrors: response.data.validationErrors ?? [],
     }
+}
+
+export async function reconcilePaymentProviderSessionNotCreated(
+    providerCode: string,
+    payload: PaymentProviderSessionReconciliationRequest,
+): Promise<PaymentProviderSessionReconciliationResponse> {
+    const response = await superAdminApiClient.postRaw<
+        SuperAdminApiSuccessResponse<PaymentProviderSessionReconciliationResponse>,
+        PaymentProviderSessionReconciliationRequest
+    >(
+        `${SUPER_ADMIN_PAYMENT_PROVIDERS_ENDPOINT}/${encodeURIComponent(providerCode)}/actions/reconcile-session-not-created`,
+        payload,
+    )
+
+    return requireSessionReconciliation({
+        ...response.data,
+        permissions: response.data.permissions ?? [],
+    })
+}
+
+export async function simulateDevelopmentOnlinePaymentSuccess(
+    paymentId: string,
+    payload: DevelopmentOnlinePaymentSuccessRequest,
+): Promise<DevelopmentOnlinePaymentSuccessResponse> {
+    if (!import.meta.env.DEV) {
+        throw new Error('Online payment success simulation is available only in Development builds.')
+    }
+
+    const response = await superAdminApiClient.postRaw<
+        DevelopmentOnlinePaymentSuccessResponse,
+        DevelopmentOnlinePaymentSuccessRequest
+    >(`/api/dev/commercehub/payments/${encodeURIComponent(paymentId)}/simulate-success`, payload)
+
+    const result = response
+    if (
+        !result ||
+        result.evidenceType !== 'DevelopmentOnlinePaymentSuccessSimulation' ||
+        result.isDevelopmentSimulation !== true ||
+        result.externalMoneyMovementConfirmed !== false ||
+        typeof result.processed !== 'boolean' ||
+        typeof result.message !== 'string'
+    ) {
+        throw new Error('Development payment simulation response failed evidence admission.')
+    }
+
+    return result
 }

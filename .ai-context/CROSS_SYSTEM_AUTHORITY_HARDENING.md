@@ -1,3 +1,10 @@
+# 2026-08-30 Affiliate Attribution Cross-System Hardening
+
+- PASS AF-PA4.4 Storefront referral input remains a hint until backend promotion-link, tenant, lifecycle, product, price, and inventory admission succeeds.
+- PASS AF-PA5.1 Protected backend attribution evidence remains authoritative across the customer journey and is cleared when SQL authority becomes stale.
+- PASS AF-PA5.2 Affiliate admission remains attached to eligible cart lines without excluding non-affiliate lines from mixed carts.
+- PASS AF-PA5.3 Checkout revalidates current SQL attribution authority and persists commission-candidate snapshots only on admitted order lines.
+
 # 2026-07-22 Storefront / Builder Runtime Certification Registration
 
 - PASS SF-ADM2.3 Builder Section Composition Authority Hardening.
@@ -75,6 +82,12 @@
 - Verified that checkout remains SQL-authoritative through authenticated customer authority, customer/idempotency locks, request-hash idempotency, saved-cart row lock/version match, serializable transaction, current listing/product/variant/tenant/payment/shipping/promo/price/inventory recomposition, vendor/readiness gates, and reservation-before-commit order creation.
 - No runtime code hardening was required because the inspected runtime already contained the needed controls from prior pricing, inventory, finance, emergency, identity, discovery, and cart passes.
 - Added regression freezes: `CommerceHubCheckoutCertificationTests`, `CommerceHubCheckoutFinancialCertificationTests`, and `CommerceHubCheckoutReservationCertificationTests`. Findings: `docs/architecture/commercehub-checkout-certification-findings.md`.
+
+## 2026-09-06 Gate 3R CommerceHub Payment Configuration Boundary
+
+- Storefront payment configuration and CommerceHub provider configuration are separate authority domains. Vendor-owned `TenantPaymentMethods` remain Storefront-only and cannot make a CommerceHub provider executable.
+- CommerceHub cart, checkout, status, and initiation now use platform `IPaymentProviderAdapter` capabilities. COD is platform policy; online providers fail closed unless session creation and webhook verification are executable, with callback parsing additionally required for Paymob.
+- Provider-unavailable initiation is rejected before reservations, distributed locks, payment writes, inventory mutation, or adapter execution. Regression evidence passed 26/26 focused tests and 799/799 CommerceHub tests.
 
 ## 2026-06-01 PASS 16.5A Order & Fulfillment Lifecycle Certification
 

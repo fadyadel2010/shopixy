@@ -69,13 +69,12 @@ public class CommerceHubRefundHardeningTests
             "..",
             "PointOfSale.Infrastructure",
             "Migrations",
-            "Sql",
-            "20260323_ZZF_HardenCommerceHubRefundRequestSafety.sql");
+            "20260723214642_Baseline_Recovery3.cs");
 
         var migration = File.ReadAllText(Path.GetFullPath(migrationPath));
 
-        Assert.Contains("ALTER TABLE \"CommerceHubRefundRequests\"", migration);
-        Assert.Contains("\"IdempotencyKey\"", migration);
+        Assert.Contains("name: \"CommerceHubRefundRequests\"", migration);
+        Assert.Contains("IdempotencyKey = table.Column<string>", migration);
         Assert.Contains("IX_CommerceHubRefundRequests_IdempotencyKey", migration);
     }
 
@@ -134,15 +133,14 @@ public class CommerceHubRefundHardeningTests
             "..",
             "PointOfSale.Infrastructure",
             "Migrations",
-            "Sql",
-            "20260324_ZZG_AddCommerceHubSuperAdminRefundControl.sql");
+            "20260723214642_Baseline_Recovery3.cs");
 
         var migration = File.ReadAllText(Path.GetFullPath(migrationPath));
 
-        Assert.Contains("\"ReviewedBy\"", migration);
-        Assert.Contains("\"ProcessingStartedAtUtc\"", migration);
-        Assert.Contains("\"RefundRequestId\"", migration);
-        Assert.Contains("\"IsPostPayoutAdjustment\"", migration);
+        Assert.Contains("ReviewedBy = table.Column<Guid>", migration);
+        Assert.Contains("ProcessingStartedAtUtc = table.Column<DateTime>", migration);
+        Assert.Contains("RefundRequestId = table.Column<Guid>", migration);
+        Assert.Contains("IsPostPayoutAdjustment = table.Column<bool>", migration);
     }
 
     [Fact]
@@ -156,14 +154,13 @@ public class CommerceHubRefundHardeningTests
             "..",
             "PointOfSale.Infrastructure",
             "Migrations",
-            "Sql",
-            "20260324_ZZJ_AddCommerceHubManualRefundExecution.sql");
+            "20260723214642_Baseline_Recovery3.cs");
 
         var migration = File.ReadAllText(Path.GetFullPath(migrationPath));
 
-        Assert.Contains("CREATE TABLE IF NOT EXISTS \"CommerceHubRefundExecutions\"", migration);
-        Assert.Contains("\"TransactionReference\"", migration);
-        Assert.Contains("\"ExecutedBy\"", migration);
+        Assert.Contains("name: \"CommerceHubRefundExecutions\"", migration);
+        Assert.Contains("TransactionReference = table.Column<string>", migration);
+        Assert.Contains("ExecutedBy = table.Column<Guid>", migration);
         Assert.Contains("IX_CommerceHubRefundExecutions_RefundId", migration);
     }
 
@@ -178,15 +175,14 @@ public class CommerceHubRefundHardeningTests
             "..",
             "PointOfSale.Infrastructure",
             "Migrations",
-            "Sql",
-            "20260324_ZZK_AddCommerceHubReturnManagementSystem.sql");
+            "20260723214642_Baseline_Recovery3.cs");
 
         var migration = File.ReadAllText(Path.GetFullPath(migrationPath));
 
-        Assert.Contains("ALTER TABLE \"CommerceHubRefundRequests\"", migration);
-        Assert.Contains("\"ReturnRequestId\"", migration);
-        Assert.Contains("\"RefundExecutionTrigger\"", migration);
-        Assert.Contains("CREATE TABLE IF NOT EXISTS \"CommerceHubReturnRequests\"", migration);
+        Assert.Contains("name: \"CommerceHubRefundRequests\"", migration);
+        Assert.Contains("ReturnRequestId = table.Column<Guid>", migration);
+        Assert.Contains("RefundExecutionTrigger = table.Column<int>", migration);
+        Assert.Contains("name: \"CommerceHubReturnRequests\"", migration);
         Assert.Contains("IX_CommerceHubReturnRequests_RefundId", migration);
     }
 }

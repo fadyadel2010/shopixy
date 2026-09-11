@@ -60,14 +60,20 @@ export function requireMarketplaceOrderFinancialAuthority<T extends Record<strin
     }
     const childTotal = subOrder.totalAmount ?? subOrder.total;
     const childShipping = subOrder.shippingAmount ?? subOrder.shipping;
-    assertBreakdown(childTotal, subOrder.subtotal, childShipping, "Marketplace order financial authority rejected contradictory split totals.");
-    subOrderTotal += childTotal as number;
+    if (subOrder.subtotal !== undefined) {
+      assertBreakdown(childTotal, subOrder.subtotal, childShipping, "Marketplace order financial authority rejected contradictory split totals.");
+    } else if (!Array.isArray(subOrder.items) || subOrder.items.length === 0) {
+      throw new Error("Marketplace order financial authority rejected missing split subtotal and item evidence.");
+    }
+    const acceptedChildTotal = requireMoney(childTotal, "Marketplace order financial authority rejected malformed split total.");
+    const acceptedChildShipping = requireMoney(childShipping, "Marketplace order financial authority rejected malformed split shipping.");
+    subOrderTotal += acceptedChildTotal;
     if (Array.isArray(subOrder.items)) {
       let itemTotal = 0;
       for (const item of subOrder.items as Array<Record<string, unknown>>) {
         itemTotal += requireMoney(item.total, "Marketplace order financial authority rejected malformed order-item amount.");
       }
-      if (!sameMoney((childTotal as number) - (childShipping as number), itemTotal)) {
+      if (!sameMoney(acceptedChildTotal - acceptedChildShipping, itemTotal)) {
         throw new Error("Marketplace order financial authority rejected contradictory split item totals.");
       }
     }
@@ -85,8 +91,12 @@ export function requireCommerceHubCartPricingAuthority<T extends Record<string, 
   if (!Array.isArray(pricing.storeSelections) || !Array.isArray(pricing.paymentMethods)) {
     throw new Error("CommerceHub cart pricing authority rejected malformed pricing evidence.");
   }
+  let storeShippingTotal = 0;
   for (const selection of pricing.storeSelections as Array<Record<string, unknown>>) {
-    requireMoney(selection.shippingPrice, "CommerceHub cart pricing authority rejected malformed shipping evidence.");
+    storeShippingTotal += requireMoney(selection.shippingPrice, "CommerceHub cart pricing authority rejected malformed shipping evidence.");
+  }
+  if (!sameMoney(requireMoney(pricing.shippingTotal, "CommerceHub cart pricing authority rejected malformed shipping total."), storeShippingTotal)) {
+    throw new Error("CommerceHub cart pricing authority rejected contradictory store shipping evidence.");
   }
   return pricing;
 }

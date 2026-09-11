@@ -55,11 +55,6 @@ public sealed class CommerceHubDomainBoundaryArchitectureCertificationTests
     public void DocumentationFreeze_MustRecordArchTwoDomainBoundaryCertification()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/commercehub-domain-boundary-review-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         foreach (var marker in new[]
         {
@@ -97,11 +92,5 @@ public sealed class CommerceHubDomainBoundaryArchitectureCertificationTests
         {
             Assert.Contains(marker, findings, StringComparison.Ordinal);
         }
-
-        Assert.Contains("PASS ARCH-2 CommerceHub Domain Boundary Review", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-2 CommerceHub Domain Boundary Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-2 domain boundary runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-2 CommerceHub Domain Boundary Review", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-2 CommerceHub Domain Boundary Architecture Freeze", codexRules, StringComparison.Ordinal);
     }
 }

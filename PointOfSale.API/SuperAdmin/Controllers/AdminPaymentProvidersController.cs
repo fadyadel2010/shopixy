@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.Admin;
+using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.SuperAdmin.Services;
 using PointOfSale.Core.Payments.Administration;
 
@@ -14,6 +15,7 @@ public sealed class AdminPaymentProvidersController : SuperAdminBaseController
     private readonly IPaymentProviderDashboardService _paymentProviderDashboardService;
     private readonly IPaymentProviderActionService _paymentProviderActionService;
     private readonly IPaymentProviderSecretService _paymentProviderSecretService;
+    private readonly ICommerceHubProviderSessionReconciliationService _providerSessionReconciliationService;
     private readonly ISuperAdminAuditService _auditService;
 
     public AdminPaymentProvidersController(
@@ -21,13 +23,81 @@ public sealed class AdminPaymentProvidersController : SuperAdminBaseController
         IPaymentProviderDashboardService paymentProviderDashboardService,
         IPaymentProviderActionService paymentProviderActionService,
         IPaymentProviderSecretService paymentProviderSecretService,
+        ICommerceHubProviderSessionReconciliationService providerSessionReconciliationService,
         ISuperAdminAuditService auditService)
     {
         _paymentProviderAdministrationService = paymentProviderAdministrationService;
         _paymentProviderDashboardService = paymentProviderDashboardService;
         _paymentProviderActionService = paymentProviderActionService;
         _paymentProviderSecretService = paymentProviderSecretService;
+        _providerSessionReconciliationService = providerSessionReconciliationService;
         _auditService = auditService;
+    }
+
+    [HttpPost("{providerCode}/actions/reconcile-session-not-created")]
+    [ProducesResponseType(typeof(PaymentProviderSessionReconciliationResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> ReconcileProviderSessionNotCreated(
+        string providerCode,
+        [FromBody] PaymentProviderSessionReconciliationRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var correlationId = HttpContext.TraceIdentifier;
+            var result = await _providerSessionReconciliationService.ResolveNotCreatedAsync(
+                providerCode,
+                request,
+                correlationId,
+                cancellationToken);
+
+            await _auditService.LogActionAsync(
+                action: "PAYMENT_PROVIDER_SESSION_RECONCILED_NOT_CREATED",
+                entityType: "CommerceHubPayment",
+                entityId: result.PaymentId.ToString("D"),
+                description: "Super Admin reconciled an outcome-unknown Paymob session as not created after dashboard review.",
+                success: true,
+                details: new
+                {
+                    result.ProviderCode,
+                    result.PaymentId,
+                    result.OrderId,
+                    result.ProviderReference,
+                    request.EvidenceCode,
+                    request.EvidenceNote,
+                    result.PreviousStatus,
+                    result.Status,
+                    result.ResolvedAtUtc,
+                    Permission = PaymentProviderPermissions.ReconcileProviderSession,
+                    ProviderPayloadPersisted = false,
+                    SecretsRedacted = true
+                },
+                reference: result.ProviderReference,
+                actorId: CurrentSuperAdminId,
+                actorEmail: CurrentSuperAdminEmail,
+                cancellationToken: cancellationToken);
+
+            return OkResponse(new PaymentProviderSessionReconciliationResponse
+            {
+                ProviderCode = result.ProviderCode,
+                PaymentId = result.PaymentId,
+                OrderId = result.OrderId,
+                ProviderReference = result.ProviderReference,
+                PreviousStatus = result.PreviousStatus,
+                Status = result.Status,
+                ResolvedAtUtc = result.ResolvedAtUtc,
+                RetryAllowed = result.RetryAllowed,
+                Message = result.Message,
+                Permissions = PaymentProviderPermissions.All
+            });
+        }
+        catch (CommerceHubProviderSessionReconciliationException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
+        }
     }
 
     [HttpGet]

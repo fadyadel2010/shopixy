@@ -8,6 +8,7 @@ import {
   clearActivePaymentRecoveryContextIfMatches,
   persistActivePaymentRecoveryContext
 } from "@/features/checkout/activePaymentRecoveryContext";
+import { beginPaymentInitiationTrace } from "@/features/checkout/paymentInitiationTrace";
 import { OrderStatusBadge, PaymentStatusBadge, formatCustomerDate } from "@/features/customer/status";
 import { EmbeddedStripePaymentForm } from "@/payments/EmbeddedStripePaymentForm";
 import { checkoutService, orderRecoveryService } from "@/services";
@@ -77,7 +78,7 @@ export const OrderPaymentRecoveryPage = () => {
     return <InlineErrorState title="Invalid recovery link" message="This order recovery link is incomplete." />;
   }
 
-  if (orderQuery.isLoading || orderQuery.isFetching) {
+  if (orderQuery.isLoading) {
     return (
       <div className="space-y-4">
         {[0, 1, 2].map((item) => (
@@ -112,23 +113,44 @@ export const OrderPaymentRecoveryPage = () => {
     !!paymentInitiationResult.publishableKey;
 
   const handleContinuePayment = async () => {
+    const trace = beginPaymentInitiationTrace("payment-recovery", order.marketplaceOrderId);
     setIsInitiatingPayment(true);
     setPaymentInitiationError(null);
 
     try {
       // The recovery URL/token only locates an order. Current retry authority must
       // be fetched again immediately before requesting a provider handoff.
+      trace.mark("order-refetch-started");
       const refreshedOrder = await orderQuery.refetch();
       const currentOrder = refreshedOrder.data;
+      trace.mark("order-refetch-completed", {
+        isError: refreshedOrder.isError,
+        hasOrder: Boolean(currentOrder),
+        canRetryPayment: currentOrder?.canRetryPayment ?? null,
+        currentOrderId: currentOrder?.marketplaceOrderId ?? null
+      });
       if (refreshedOrder.isError || !currentOrder?.canRetryPayment) {
+        trace.mark("retry-authority-rejected");
         throw new Error("Payment retry is no longer authorized for this order.");
       }
 
       const provider = currentOrder.paymentMethodCode as Exclude<CheckoutPaymentMethod, "COD">;
+      trace.mark("checkout-service-entered", {
+        orderId: currentOrder.marketplaceOrderId,
+        provider,
+        amount: currentOrder.total,
+        currency: currentOrder.currency
+      });
       const initiationResponse = await checkoutService.initiatePayment({
         orderId: currentOrder.marketplaceOrderId,
         provider
       }, currentOrder.total, currentOrder.currency);
+      trace.mark("initiation-authority-accepted", {
+        paymentId: initiationResponse.paymentId,
+        handoffType: initiationResponse.handoffType,
+        provider: initiationResponse.provider,
+        isReusable: initiationResponse.isReusable
+      });
 
       setPaymentInitiationResult(initiationResponse);
 
@@ -164,6 +186,11 @@ export const OrderPaymentRecoveryPage = () => {
       });
     } catch (error) {
       const api = normalizeApiError(error);
+      trace.mark("handler-failed", {
+        status: api.status,
+        code: api.code ?? null,
+        message: api.message
+      });
       setPaymentInitiationError(api.message);
       showToast({
         title: "Payment initiation failed",
@@ -171,6 +198,7 @@ export const OrderPaymentRecoveryPage = () => {
         tone: "error"
       });
     } finally {
+      trace.finish();
       setIsInitiatingPayment(false);
     }
   };
@@ -260,8 +288,8 @@ export const OrderPaymentRecoveryPage = () => {
       {!order.canRetryPayment && order.paymentRecoveryMessage ? (
         <Card className="border-amber-200 bg-amber-50/80 shadow-card">
           <CardContent className="space-y-3 p-5 md:p-6">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Payment Under Review</p>
-            <h2 className="text-2xl font-black tracking-tight text-foreground">Do not retry this payment yet</h2>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">Payment Action Unavailable</p>
+            <h2 className="text-2xl font-black tracking-tight text-foreground">Payment cannot continue yet</h2>
             <p className="max-w-3xl text-sm leading-6 text-amber-950/85">{order.paymentRecoveryMessage}</p>
           </CardContent>
         </Card>

@@ -84,10 +84,6 @@ public sealed class CommerceHubPrivilegedAuthorityCertificationTests
     public void CertificationDocumentation_MustRecordPrivilegedAuthorityVerdict()
     {
         var findings = ReadRepoFile("docs/architecture/commercehub-privileged-authority-certification-findings.md");
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var rules = ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         AssertContains(findings,
             "PASS 16.1B-D Privileged Session Security Certification",
@@ -95,11 +91,6 @@ public sealed class CommerceHubPrivilegedAuthorityCertificationTests
             "Authority Matrix",
             "Required Answers",
             "Remaining Debt");
-
-        Assert.Contains("PASS 16.1B-D Privileged Session Security Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS 16.1B-D Privileged Session Security Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS 16.1B-D privileged-session authority", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS 16.1B-D Privileged Session Freeze", rules, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

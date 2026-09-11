@@ -39,6 +39,7 @@ public sealed class ReturnFinancialAuthorityCertificationTests
         Assert.Contains("ResolveRefundAllocation(request, salesReturn.TotalAmount)", salesReturnsController, StringComparison.Ordinal);
         Assert.Contains("cashAmount = authoritativeReturnTotal", salesReturnsController, StringComparison.Ordinal);
         Assert.Contains("cardAmount = authoritativeReturnTotal", salesReturnsController, StringComparison.Ordinal);
+        Assert.Contains("[Range(typeof(decimal), \"0.000001\"", salesReturnsController, StringComparison.Ordinal);
 
         Assert.Contains("LoadOriginalPurchaseInvoiceForReturnMutationAsync(request.OriginalInvoiceId.Value)", purchaseReturnsController, StringComparison.Ordinal);
         Assert.Contains("authoritativeUnitPrice", purchaseReturnsController, StringComparison.Ordinal);
@@ -71,6 +72,17 @@ public sealed class ReturnFinancialAuthorityCertificationTests
         Assert.DoesNotContain("request.RefundAmount", purchaseFingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("request.RefundToCash", purchaseFingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("DeterministicRequestHasher.ComputeHash(request)", purchaseReturnsController, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SalesReturnQuantityValidation_MustMatchSixDecimalInventoryPrecision()
+    {
+        var salesReturnsController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/SalesReturnsController.cs");
+
+        Assert.Contains(
+            "[Range(typeof(decimal), \"0.000001\", \"79228162514264337593543950335\")]",
+            salesReturnsController,
+            StringComparison.Ordinal);
     }
 
     [Fact]

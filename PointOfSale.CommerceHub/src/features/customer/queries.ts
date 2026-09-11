@@ -29,7 +29,10 @@ export const customerOrderDetailsQueryOptions = (orderId: string) =>
   queryOptions({
     queryKey: customerQueryKeys.orderDetail(orderId),
     queryFn: ({ signal }) => customerOrdersService.getOrder(orderId, signal),
-    enabled: Boolean(orderId)
+    enabled: Boolean(orderId),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true
   });
 
 export const customerPayoutDetailsQueryOptions = () =>

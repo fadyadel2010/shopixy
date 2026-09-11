@@ -28,6 +28,7 @@ public sealed class RefundIdentityAuthorityCertificationTests
         Assert.Contains("requireSuperAdminReturnPresentation(response.data, returnId)", superAdminRefundService, StringComparison.Ordinal);
         Assert.Contains("refundsQuery.isFetching || refundsQuery.isError", superAdminRefundPage, StringComparison.Ordinal);
         Assert.Contains("handleSelectRefund(null)", superAdminRefundPage, StringComparison.Ordinal);
-        Assert.Contains("queryClient.invalidateQueries({ queryKey: ['super-admin', 'refunds', 'details', currentSelectedRefund.refundId] })", superAdminRefundPage, StringComparison.Ordinal);
+        Assert.Contains("queryKey: ['super-admin', 'refunds', 'details', currentSelectedRefundId]", superAdminRefundPage, StringComparison.Ordinal);
+        Assert.Contains("getSuperAdminRefundDetails(currentSelectedRefundId as string, currentSelectedRefund ?? undefined)", superAdminRefundPage, StringComparison.Ordinal);
     }
 }

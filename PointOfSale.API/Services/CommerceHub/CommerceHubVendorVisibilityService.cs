@@ -391,8 +391,12 @@ public sealed class CommerceHubVendorVisibilityService : ICommerceHubVendorVisib
     {
         if (!products.TryGetValue(listing.ProductId, out var product))
         {
-            throw new InvalidOperationException(
-                $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}.");
+            _logger.LogWarning(
+                "Skipped CommerceHub product read-model rebuild because product authority is missing; listing visibility reduction remains authoritative | ListingId: {ListingId} | ProductId: {ProductId} | TenantId: {TenantId}",
+                listing.Id,
+                listing.ProductId,
+                listing.TenantId);
+            return Task.CompletedTask;
         }
 
         return PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(

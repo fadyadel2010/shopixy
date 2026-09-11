@@ -63,7 +63,8 @@ public sealed class CommerceHubMarketplaceCheckoutApiCertificationTests
         Assert.Contains("LockCartForCheckoutAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("EnsureLockedCartMatchesCheckoutRequest", checkoutService, StringComparison.Ordinal);
         Assert.Contains("LoadCommerceHubListingsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("LoadTenantPaymentMethodsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPaymentMethodAuthority.IsRequestedMethodAvailable", checkoutService, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", checkoutService, StringComparison.Ordinal);
         Assert.Contains("using var shippingAssignmentBoundary = CommerceHubBoundaryMutationScope.BeginShippingAssignment();", checkoutService, StringComparison.Ordinal);
         Assert.Contains("using var paymentLifecycleBoundary = CommerceHubBoundaryMutationScope.BeginPaymentLifecycle();", checkoutService, StringComparison.Ordinal);
         Assert.Contains("using var financialBoundary = CommerceHubBoundaryMutationScope.BeginFinancialWorkflow();", checkoutService, StringComparison.Ordinal);

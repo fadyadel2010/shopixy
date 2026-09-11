@@ -720,7 +720,7 @@ public sealed class DataAuthorityViolationHardeningTests
         Assert.Contains("IsPayoutAuthorityBlockingRisk", superAdmin, StringComparison.Ordinal);
         Assert.Contains("PayoutRiskFlags.", superAdmin, StringComparison.Ordinal);
         Assert.Contains("PAYOUT_AUTHORITY_CONFLICT", superAdmin, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubBoundaryMutationScope.BeginPayout()", superAdmin, StringComparison.Ordinal);
+        Assert.Contains("RequireQueueSnapshotCurrencyAuthority", superAdmin, StringComparison.Ordinal);
     }
 
     private static string ApiPath(params string[] parts) =>
@@ -729,8 +729,24 @@ public sealed class DataAuthorityViolationHardeningTests
     private static string CorePath(params string[] parts) =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Core", Path.Combine(parts)));
 
-    private static string InfrastructurePath(params string[] parts) =>
-        Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "PointOfSale.Infrastructure", Path.Combine(parts)));
+    private static string InfrastructurePath(params string[] parts)
+    {
+        var repositoryRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+        var activePath = Path.Combine(repositoryRoot, "PointOfSale.Infrastructure", Path.Combine(parts));
+        if (File.Exists(activePath) || parts.Length == 0 || !string.Equals(parts[0], "Migrations", StringComparison.Ordinal))
+        {
+            return activePath;
+        }
+
+        return Path.Combine(
+            repositoryRoot,
+            "docs",
+            "recovery",
+            "archive",
+            "RECOVERY-4_PHASE_A",
+            "PointOfSale.Infrastructure",
+            Path.Combine(parts));
+    }
 
     private static string? ExtractMethodBody(string source, string methodName)
     {

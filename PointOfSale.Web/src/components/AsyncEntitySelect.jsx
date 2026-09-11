@@ -156,6 +156,12 @@ export default function AsyncEntitySelect({
                         )
                     })}
 
+                    {error && options.length > 0 ? (
+                        <div role="alert" className={`border-t border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            {error}
+                        </div>
+                    ) : null}
+
                     {hasMore ? (
                         <button
                             type="button"
@@ -165,6 +171,10 @@ export default function AsyncEntitySelect({
                         >
                             {loading ? t('common.loading') : (t('common.loadMore') || 'Load more')}
                         </button>
+                    ) : options.length > 0 && !loading && !error ? (
+                        <div role="status" className={`border-t border-gray-100 px-4 py-2 text-xs text-gray-500 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            {t('common.endOfResults')}
+                        </div>
                     ) : null}
                 </div>
             ) : null}

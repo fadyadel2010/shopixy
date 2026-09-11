@@ -87,6 +87,112 @@ public sealed class TreasuryInflowAuthorityCertificationTests
     }
 
     [Fact]
+    public async Task CustomerPayment_AuthorizesTreasuryInflowWithinPersistedAmount()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var (cash, receivable) = await SeedCashAccountsAsync(db, tenantId);
+        var customer = new Customer
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Treasury authority customer",
+        };
+        var payment = new CustomerPayment
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CustomerId = customer.Id,
+            PaymentDate = DateTime.UtcNow,
+            Amount = 100m,
+            PaymentMethod = PointOfSale.Core.Enums.PaymentMethod.Cash,
+            CashAmount = 100m,
+            IdempotencyKey = $"customer-payment-{Guid.NewGuid():N}",
+        };
+        db.Customers.Add(customer);
+        db.CustomerPayments.Add(payment);
+        await db.SaveChangesAsync();
+
+        var posting = CreatePostingService(db);
+        var request = BuildInflow(
+            tenantId,
+            cash.Id,
+            receivable.Id,
+            payment.Amount,
+            "CustomerPayment",
+            payment.Id,
+            $"CUSTOMER_PAYMENT:{tenantId}:{payment.Id}");
+
+        var first = await posting.PostJournalAsync(request);
+        var replay = await posting.PostJournalAsync(request);
+
+        Assert.Equal(first.Id, replay.Id);
+        Assert.Equal(100m, cash.CurrentBalance);
+
+        await Assert.ThrowsAsync<InvalidJournalException>(() =>
+            posting.PostJournalAsync(BuildInflow(
+                tenantId,
+                cash.Id,
+                receivable.Id,
+                1m,
+                "CustomerPayment",
+                payment.Id,
+                $"CUSTOMER_PAYMENT-INFLATE:{tenantId}:{payment.Id}")));
+    }
+
+    [Fact]
+    public async Task ReversedSale_CanBeRepostedWithinCurrentAuthoritativeAmount()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var (cash, revenue) = await SeedCashAccountsAsync(db, tenantId);
+        var warehouse = new Warehouse
+        {
+            TenantId = tenantId,
+            Name = "T2 Rewrite Warehouse",
+            IsActive = true
+        };
+        db.Warehouses.Add(warehouse);
+        var invoice = new SalesInvoice
+        {
+            TenantId = tenantId,
+            WarehouseId = warehouse.Id,
+            InvoiceNumber = "T2-REWRITE",
+            Status = InvoiceStatus.Completed,
+            TotalAmount = 100m,
+            PaidAmount = 100m
+        };
+        db.SalesInvoices.Add(invoice);
+        await db.SaveChangesAsync();
+
+        var posting = CreatePostingService(db);
+        var original = await posting.PostJournalAsync(BuildInflow(
+            tenantId,
+            cash.Id,
+            revenue.Id,
+            100m,
+            "SalesInvoice",
+            invoice.Id,
+            $"SALE-ORIGINAL:{tenantId}:{invoice.Id}"));
+
+        await posting.ReverseJournalAsync(tenantId, original.Id, "Draft sale rewrite");
+        invoice.TotalAmount = 120m;
+        invoice.PaidAmount = 120m;
+        await db.SaveChangesAsync();
+
+        await posting.PostJournalAsync(BuildInflow(
+            tenantId,
+            cash.Id,
+            revenue.Id,
+            120m,
+            "SalesInvoice",
+            invoice.Id,
+            $"SALE-REPLACEMENT:{tenantId}:{invoice.Id}"));
+
+        Assert.Equal(120m, cash.CurrentBalance);
+    }
+
+    [Fact]
     public async Task ForeignTenantPayment_CannotCreateLocalCash()
     {
         var localTenantId = Guid.NewGuid();
@@ -144,6 +250,7 @@ public sealed class TreasuryInflowAuthorityCertificationTests
 
         Assert.Contains("ValidateTreasuryInflowAuthorityAsync", posting);
         Assert.Contains("previouslyPostedIncrease + netCashIncrease", posting);
+        Assert.Contains("\"CustomerPayment\" => await _db.CustomerPayments", posting);
         Assert.Contains("certified payment or accounting SQL authority", posting);
         Assert.Contains("Direct treasury cash-in is disabled", operations);
         Assert.Contains("RequireTreasuryTypeAsync", transfers);

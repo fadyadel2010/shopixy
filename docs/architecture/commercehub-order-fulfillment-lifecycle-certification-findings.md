@@ -41,7 +41,7 @@ POS Admin cannot mutate another tenant's sub-order through the reviewed endpoint
 
 Super Admin order service is read-only for order state: list, stats, detail, and CSV export use SQL. No Super Admin order-state override endpoint was found for CommerceHub order or sub-order status.
 
-Super Admin does have return/refund operational authority. Return overrides are explicit, audited, serializable, and restricted: confirmed inventory-bearing returns cannot be overridden; failed status must use the failed action; overrides cannot invalidate an already executed refund. Refund approval/retry/execute actions are audited and route through refund/return lifecycle services.
+Super Admin has refund review/execution authority but read-only return monitoring. The owning POS vendor controls audited, serializable, policy-bounded return logistics and receipt; no Super Admin return override or failure endpoint exists.
 
 ## Status Transition Findings
 
@@ -61,7 +61,7 @@ Delivery is only reachable from `Shipped` in the CommerceHub vendor graph and re
 
 Return workflow is refund-owned: approved refund requests create/maintain `CommerceHubReturnRequest` rows. Return transitions run under serializable transactions and `FOR UPDATE` locks, validate with `CommerceHubReturnPolicy`, append audit logs, and synchronize refund status to `WaitingForReturn` or `AwaitingPayout` only when the configured execution trigger milestone is reached.
 
-Confirmed return receipt is inventory-bearing and cannot be overridden through the generic Super Admin override path.
+Confirmed return receipt is inventory-bearing, vendor-scoped, and terminal. There is no generic Super Admin return override path.
 
 ## Refund Trigger Findings
 
@@ -73,7 +73,7 @@ Merchant, customer, and Super Admin reads use SQL authority for critical lifecyc
 
 ## Frontend Findings
 
-Customer order/refund pages render backend status/action DTOs and customer ownership results. POS Admin status mutation is exposed through the tenant-scoped CommerceHub sub-order endpoint. Super Admin order UI is read/search/export oriented; refund and return consoles expose backend-derived `CanApprove`, `CanReject`, `CanExecute`, `CanRetry`, and return action states rather than inventing lifecycle authority in the client.
+Customer order/refund pages render backend status/action DTOs and customer ownership results. POS Admin exposes tenant-scoped sub-order fulfillment plus backend-granted vendor return logistics and receipt actions. Super Admin order UI is read/search/export oriented; its refund console exposes backend-derived refund actions and read-only return state.
 
 ## Replay And Recovery Findings
 
@@ -95,7 +95,7 @@ Reviewed chaos cases:
 - Double refund trigger: cumulative refund validation, idempotency, and return milestone checks apply.
 - Projection drift: repaired from SQL before critical customer detail.
 - State resurrection: terminal and boundary guards prevent reviewed runtime resurrection.
-- Super Admin bypass: no order-state override endpoint found; return/refund overrides are audited and restricted.
+- Super Admin bypass: no order-state or return-state override endpoint exists; refund actions remain separately audited and restricted.
 
 ## Monitoring Findings
 
@@ -127,8 +127,8 @@ CommerceHub order lifecycle runtime is production-certifiable, but public launch
 
 1. Who owns order fulfillment authority? POS Admin owns tenant-scoped CommerceHub sub-order fulfillment through backend SQL lifecycle services; generic POS `Order` fulfillment remains owned by `IOrderFulfillmentService`.
 2. Can POS Admin mutate another tenant's orders? No, the certified endpoint rejects sub-orders whose `StoreId` differs from the current tenant.
-3. Can Super Admin override order state? No CommerceHub order-state override endpoint was found. Super Admin can operate audited return/refund workflows and restricted return status overrides.
-4. Are Super Admin overrides audited? Yes for return/refund operations reviewed in this pass.
+3. Can Super Admin override order or return state? No CommerceHub order-state or return-state override endpoint exists. Super Admin retains audited refund operations and read-only return monitoring.
+4. Are return operations audited? Yes. Owning-vendor return transitions and Super Admin refund operations are audited separately.
 5. Can invalid status transitions occur? Not through reviewed runtime paths; they are blocked by transition validation and DbContext boundary guards.
 6. Can cancelled orders resurrect? Not through reviewed CommerceHub fulfillment paths.
 7. Can delivered orders regress? Not through reviewed POS Admin fulfillment paths; delivered vendor orders are terminal for mutation.

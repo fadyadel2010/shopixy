@@ -125,6 +125,10 @@ public sealed class CommerceHubVendorFinancialControlServiceRelationalTests : ID
         var connection = new SqliteConnection($"DataSource={_databaseName};Mode=Memory;Cache=Shared");
         connection.Open();
         connection.CreateFunction<string?, string?>("btrim", value => value?.Trim());
+        connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (value, characters) => value?.Trim(characters?.ToCharArray() ?? []));
+        connection.CreateFunction<string?, int>("char_length", value => value?.Length ?? 0);
         connection.CreateFunction<string?, string?, string?, string?, string?>(
             "REGEXP_REPLACE",
             (value, pattern, replacement, flags) =>

@@ -7,15 +7,23 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.API.Services.Governance;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.Infrastructure.Reliability;
 
 namespace PointOfSale.API.Services.CommerceHub;
 
 public interface ICommerceHubOrderManagementService
 {
+    Task<CommerceHubVendorOrderActionAuthorityDto> GetVendorOrderActionAuthorityAsync(
+        Guid storeId,
+        Guid subOrderId,
+        CancellationToken cancellationToken = default);
+
     Task<CommerceHubSubOrder> UpdateSubOrderStatusAsync(
         Guid storeId,
         Guid subOrderId,
         OrderStatus status,
+        long? expectedVersion,
         string? reason,
         string correlationId,
         CancellationToken cancellationToken = default);
@@ -59,6 +67,7 @@ public class CommerceHubOrderManagementService : ICommerceHubOrderManagementServ
         Guid storeId,
         Guid subOrderId,
         OrderStatus status,
+        long? expectedVersion,
         string? reason,
         string correlationId,
         CancellationToken cancellationToken = default)
@@ -90,6 +99,14 @@ public class CommerceHubOrderManagementService : ICommerceHubOrderManagementServ
                     "SUBORDER_FORBIDDEN",
                     "This sub-order does not belong to the current store.",
                     StatusCodes.Status403Forbidden);
+            }
+
+            if (expectedVersion.HasValue && subOrder.ProjectionMutationVersion != expectedVersion.Value)
+            {
+                throw new CommerceHubCheckoutException(
+                    "SUBORDER_VERSION_CONFLICT",
+                    "This vendor order changed. Refresh current CommerceHub order authority before retrying.",
+                    StatusCodes.Status409Conflict);
             }
 
             await EnsureVendorOrderOperationAllowedAsync(storeId, cancellationToken);
@@ -131,6 +148,12 @@ public class CommerceHubOrderManagementService : ICommerceHubOrderManagementServ
             var previousMarketplaceStatus = marketplaceOrder.Status;
             var previousMarketplacePaymentStatus = marketplaceOrder.PaymentStatus;
             var transitionedAtUtc = DateTime.UtcNow;
+            using var commerceHubFinancialBoundary = status == OrderStatus.Delivered
+                ? CommerceHubBoundaryMutationScope.BeginFinancialWorkflow()
+                : null;
+            using var paymentLifecycleBoundary = status == OrderStatus.Delivered
+                ? CommerceHubBoundaryMutationScope.BeginPaymentLifecycle()
+                : null;
 
             if (status == OrderStatus.Delivered)
             {
@@ -189,15 +212,11 @@ public class CommerceHubOrderManagementService : ICommerceHubOrderManagementServ
 
             if (status == OrderStatus.Delivered)
             {
-                // HARDENING: Narrow financial workflow boundary to only the delivered-state financial mutation
-                using (var commerceHubFinancialBoundary = CommerceHubBoundaryMutationScope.BeginFinancialWorkflow())
-                {
-                    await _financialWorkflowService.ApplyDeliveredFinancialsAsync(
-                        marketplaceOrder,
-                        subOrder,
-                        transitionedAtUtc,
-                        cancellationToken);
-                }
+                await _financialWorkflowService.ApplyDeliveredFinancialsAsync(
+                    marketplaceOrder,
+                    subOrder,
+                    transitionedAtUtc,
+                    cancellationToken);
             }
 
             marketplaceOrder.Status = CommerceHubOrderStateHelper.AggregateMarketplaceStatus(
@@ -234,6 +253,152 @@ public class CommerceHubOrderManagementService : ICommerceHubOrderManagementServ
             marketplaceOrder.Id);
 
         return subOrder;
+    }
+
+    public async Task<CommerceHubVendorOrderActionAuthorityDto> GetVendorOrderActionAuthorityAsync(
+        Guid storeId,
+        Guid subOrderId,
+        CancellationToken cancellationToken = default)
+    {
+        var subOrder = await _dbContext.CommerceHubSubOrders
+            .AsNoTracking()
+            .Include(current => current.Items)
+            .FirstOrDefaultAsync(current =>
+                current.Id == subOrderId &&
+                !current.IsDeleted,
+                cancellationToken)
+            ?? throw new CommerceHubCheckoutException(
+                "SUBORDER_NOT_FOUND",
+                "Sub-order was not found.",
+                StatusCodes.Status404NotFound);
+
+        if (subOrder.StoreId != storeId)
+        {
+            throw new CommerceHubCheckoutException(
+                "SUBORDER_FORBIDDEN",
+                "This sub-order does not belong to the current store.",
+                StatusCodes.Status403Forbidden);
+        }
+
+        await EnsureVendorOrderOperationAllowedAsync(storeId, cancellationToken);
+
+        var paymentReady = CommerceHubOrderStateHelper.IsReadyForFulfillment(subOrder);
+        var inventoryReady = await IsInventoryReadyForDeliveryAsync(subOrder, cancellationToken);
+        var actions = new List<CommerceHubVendorOrderActionDto>();
+
+        foreach (var targetStatus in new[]
+                 {
+                     OrderStatus.Processing,
+                     OrderStatus.Shipped,
+                     OrderStatus.Delivered,
+                     OrderStatus.Cancelled
+                 })
+        {
+            if (targetStatus == subOrder.Status ||
+                !CommerceHubOrderStateHelper.CanTransition(subOrder.Status, targetStatus))
+            {
+                continue;
+            }
+
+            if (CommerceHubOrderStateHelper.RequiresPaymentReadiness(targetStatus) && !paymentReady)
+            {
+                continue;
+            }
+
+            if (targetStatus == OrderStatus.Delivered && !inventoryReady)
+            {
+                continue;
+            }
+
+            actions.Add(new CommerceHubVendorOrderActionDto
+            {
+                Code = targetStatus switch
+                {
+                    OrderStatus.Processing => "process",
+                    OrderStatus.Shipped => "ship",
+                    OrderStatus.Delivered => "deliver",
+                    OrderStatus.Cancelled => "cancel",
+                    _ => throw new InvalidOperationException("Unsupported CommerceHub vendor order action target.")
+                },
+                Label = targetStatus switch
+                {
+                    OrderStatus.Processing => "Start processing",
+                    OrderStatus.Shipped => "Mark shipped",
+                    OrderStatus.Delivered => "Mark delivered",
+                    OrderStatus.Cancelled => "Cancel vendor order",
+                    _ => targetStatus.ToString()
+                },
+                TargetStatus = targetStatus,
+                RequiresReason = targetStatus == OrderStatus.Cancelled
+            });
+        }
+
+        return new CommerceHubVendorOrderActionAuthorityDto
+        {
+            TenantId = subOrder.StoreId,
+            StoreId = subOrder.StoreId,
+            MarketplaceOrderId = subOrder.MarketplaceOrderId,
+            SubOrderId = subOrder.Id,
+            OrderNumber = subOrder.OrderNumber,
+            CurrentStatus = subOrder.Status,
+            PaymentStatus = subOrder.PaymentStatus,
+            PaymentMethodCode = subOrder.PaymentMethodCode,
+            LifecycleVersion = subOrder.ProjectionMutationVersion,
+            PaymentReady = paymentReady,
+            InventoryReady = inventoryReady,
+            PaymentReadinessMessage = paymentReady
+                ? null
+                : "Fulfillment requires collected or settled online payment, or an authoritative cash-on-delivery payment method.",
+            InventoryReadinessMessage = inventoryReady
+                ? null
+                : "Delivery requires current active SQL reservation lineage covering every item in this vendor sub-order.",
+            LifecycleMessage = actions.Count == 0
+                ? $"No vendor fulfillment transition is available from {subOrder.Status}."
+                : null,
+            AvailableActions = actions
+        };
+    }
+
+    private async Task<bool> IsInventoryReadyForDeliveryAsync(
+        CommerceHubSubOrder subOrder,
+        CancellationToken cancellationToken)
+    {
+        if (subOrder.Items.Count == 0)
+        {
+            return false;
+        }
+
+        var itemIds = subOrder.Items.Select(item => item.Id).ToArray();
+        var reservations = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(reservation =>
+                !reservation.IsDeleted &&
+                reservation.TenantId == subOrder.StoreId &&
+                reservation.OrderId == subOrder.MarketplaceOrderId &&
+                reservation.SubOrderId == subOrder.Id &&
+                itemIds.Contains(reservation.OrderItemId))
+            .ToListAsync(cancellationToken);
+        var nowUtc = DateTime.UtcNow;
+        var consumableReservations = await ProductVariantInventoryLineageAuthority.FilterCurrentConsumableReservationsAsync(
+            _dbContext,
+            subOrder.StoreId,
+            reservations.Where(reservation =>
+                reservation.Status == InventoryReservationStatus.Active &&
+                reservation.RemainingReservedQuantity > 0m &&
+                (reservation.ExpiresAtUtc == null || reservation.ExpiresAtUtc > nowUtc)).ToList(),
+            nowUtc,
+            cancellationToken);
+
+        return subOrder.Items.All(item =>
+        {
+            var itemReservations = reservations.Where(reservation => reservation.OrderItemId == item.Id);
+            var committed = itemReservations.Sum(reservation => reservation.CommittedQuantity);
+            var remaining = consumableReservations
+                .Where(reservation => reservation.OrderItemId == item.Id)
+                .Sum(reservation => reservation.RemainingReservedQuantity);
+            return committed + remaining >= item.Quantity;
+        });
     }
 
     private async Task EnsureVendorOrderOperationAllowedAsync(

@@ -128,7 +128,13 @@ internal static class ProductVariantStockMutationSupport
         IEnumerable<PendingProductVariantStockChange> pendingChanges,
         CancellationToken cancellationToken = default)
     {
-        var changes = pendingChanges.ToList();
+        var changes = pendingChanges
+            .GroupBy(change => (change.VariantId, change.WarehouseId))
+            .Select(group => group.Last() with
+            {
+                OldQuantity = group.First().OldQuantity
+            })
+            .ToList();
         if (changes.Count == 0)
         {
             return new List<ProductVariantStockChangedEvent>();

@@ -471,6 +471,62 @@ export function usePOSCart() {
         setItems(nextItems)
     }, [setItems])
 
+    const applyPosCartAuthority = useCallback((runtimeItems) => {
+        if (!Array.isArray(runtimeItems) || runtimeItems.length === 0) {
+            return false
+        }
+
+        const currentItems = itemsRef.current
+        let didChange = false
+        const nextItems = currentItems.map(item => {
+            const authoritativeItem = runtimeItems.find(candidate =>
+                candidate.productId === item.productId &&
+                candidate.productVariantId === (item.variantId || item.productVariantId || null) &&
+                (candidate.unitId || null) === (item.unitId || null)
+            )
+
+            if (!authoritativeItem) {
+                return item
+            }
+
+            const nextItem = {
+                ...item,
+                variantId: authoritativeItem.productVariantId,
+                unitId: authoritativeItem.unitId || null,
+                quantity: toSafeNumber(authoritativeItem.quantity),
+                conversionFactor: toSafeNumber(authoritativeItem.conversionFactor, 1),
+                unitPrice: Math.max(0, toSafeNumber(authoritativeItem.unitPriceSnapshot)),
+                discountAmount: Math.max(0, toSafeNumber(authoritativeItem.discountAmount)),
+                taxRate: Math.max(0, toSafeNumber(authoritativeItem.taxRateSnapshot)),
+                sku: authoritativeItem.variantSkuSnapshot || item.sku,
+            }
+
+            const changed = [
+                'variantId',
+                'unitId',
+                'quantity',
+                'conversionFactor',
+                'unitPrice',
+                'discountAmount',
+                'taxRate',
+                'sku',
+            ].some(key => nextItem[key] !== item[key])
+
+            if (changed) {
+                didChange = true
+                return nextItem
+            }
+
+            return item
+        })
+
+        if (didChange) {
+            setItems(nextItems)
+        }
+
+        return didChange
+    }, [setItems])
+
     // Hold current sale
     const holdSale = useCallback(() => {
         if (items.length === 0) return null
@@ -548,6 +604,7 @@ export function usePOSCart() {
         clearCart,
         canAddItem,
         syncStockLevels,
+        applyPosCartAuthority,
         holdSale,
         retrieveSale,
         undo,

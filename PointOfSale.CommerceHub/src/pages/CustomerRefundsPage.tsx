@@ -4,7 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { ReceiptText } from "lucide-react";
 
 import { CustomerPayoutMethodsCard } from "@/features/customer/components/CustomerPayoutMethodsCard";
-import { formatRefundPayoutMethodLabel } from "@/features/customer/payout-details";
+import {
+  formatRefundPayoutMethodLabel,
+  isDevelopmentRefundSimulation
+} from "@/features/customer/payout-details";
 import { RefundEvidenceDialog, formatRefundReasonLabel } from "@/features/customer/refund-evidence";
 import { customerRefundsQueryOptions } from "@/features/customer/queries";
 import { RefundStatusBadge, formatCustomerDate } from "@/features/customer/status";
@@ -15,7 +18,11 @@ import { Button } from "@/ui/button";
 import { Card, CardContent } from "@/ui/card";
 import { formatCurrency, useDocumentTitle } from "@/utils";
 
-const getRefundStatusMessage = (status: string) => {
+const getRefundStatusMessage = (
+  status: string,
+  isDevelopmentSimulation: boolean,
+  externalMoneyMovementConfirmed: boolean
+) => {
   if (status === "AwaitingPayout" || status === "ReadyForExecution") {
     return {
       tone: "border-amber-200 bg-amber-50 text-amber-950",
@@ -25,8 +32,16 @@ const getRefundStatusMessage = (status: string) => {
 
   if (status === "Paid" || status === "Executed" || status === "Completed") {
     return {
-      tone: "border-emerald-200 bg-emerald-50 text-emerald-950",
-      message: "Your refund has been sent successfully."
+      tone: isDevelopmentSimulation
+        ? "border-blue-200 bg-blue-50 text-blue-950"
+        : externalMoneyMovementConfirmed
+          ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+          : "border-amber-200 bg-amber-50 text-amber-950",
+      message: isDevelopmentSimulation
+        ? "Development simulation recorded successfully. No external money movement occurred."
+        : externalMoneyMovementConfirmed
+          ? "Your refund has been sent successfully."
+          : "Your refund was recorded, but external money movement has not been confirmed."
     };
   }
 
@@ -79,7 +94,12 @@ export const CustomerRefundsPage = () => {
       ) : (
         <div className="space-y-4">
           {acceptedRefunds.map((refund) => {
-            const refundStatusMessage = getRefundStatusMessage(refund.status);
+            const isDevelopmentSimulation = isDevelopmentRefundSimulation(refund.payout);
+            const refundStatusMessage = getRefundStatusMessage(
+              refund.status,
+              isDevelopmentSimulation,
+              refund.payout?.externalMoneyMovementConfirmed === true
+            );
 
             return (
               <Card key={refund.refundId} className="border-white/70 bg-white/92">
@@ -120,7 +140,14 @@ export const CustomerRefundsPage = () => {
                       {refund.reasonText ? <p className="mt-2 text-sm leading-6 text-muted-foreground">{refund.reasonText}</p> : null}
                       {refund.payout ? (
                         <div className="mt-4 rounded-[1.25rem] border border-white/70 bg-white px-4 py-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Refund method</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                            {isDevelopmentSimulation ? "Development refund simulation" : "Refund method"}
+                          </p>
+                          {isDevelopmentSimulation ? (
+                            <p className="mt-2 text-sm font-semibold text-blue-900">
+                              Internal refund recognition only. No external money movement occurred.
+                            </p>
+                          ) : null}
                           <p className="mt-2 text-sm font-semibold text-foreground">
                             {formatRefundPayoutMethodLabel(refund.payout.method)}
                           </p>
@@ -130,14 +157,21 @@ export const CustomerRefundsPage = () => {
                           ) : null}
                           {refund.payout.transactionReference ? (
                             <p className="mt-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                              Transaction Ref
+                              {isDevelopmentSimulation ? "Simulation reference" : "Transaction Ref"}
                             </p>
                           ) : null}
                           {refund.payout.transactionReference ? (
-                            <p className="mt-1 text-sm font-medium text-foreground">{refund.payout.transactionReference}</p>
+                            <p className="mt-1 break-all text-sm font-medium text-foreground">{refund.payout.transactionReference}</p>
                           ) : null}
                           {refund.payout.paidAt ? (
-                            <p className="mt-2 text-xs text-muted-foreground">Paid at {formatCustomerDate(refund.payout.paidAt)}</p>
+                            <p className="mt-2 text-xs text-muted-foreground">
+                              {isDevelopmentSimulation
+                                ? "Simulation recorded at"
+                                : refund.payout.externalMoneyMovementConfirmed
+                                  ? "Paid at"
+                                  : "Recorded at"}{" "}
+                              {formatCustomerDate(refund.payout.paidAt)}
+                            </p>
                           ) : null}
                         </div>
                       ) : null}

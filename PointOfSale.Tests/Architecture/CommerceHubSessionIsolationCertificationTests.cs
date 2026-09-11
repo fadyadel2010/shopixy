@@ -14,7 +14,7 @@ public sealed class CommerceHubSessionIsolationCertificationTests
         Assert.Contains("Request.Cookies.TryGetValue", logoutAction, StringComparison.Ordinal);
         Assert.Contains("CommerceHubCustomerAccessTokenCookieName", logoutAction, StringComparison.Ordinal);
         Assert.Contains("RevokeTokenAsync(accessToken, \"logout\"", logoutAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", logoutAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", logoutAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", logoutAction, StringComparison.Ordinal);
 
         Assert.Contains("JwtRegisteredClaimNames.Jti", revokeToken, StringComparison.Ordinal);

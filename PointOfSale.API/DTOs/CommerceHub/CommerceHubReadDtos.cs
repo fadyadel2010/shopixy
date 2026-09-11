@@ -123,7 +123,7 @@ public class CommerceHubProductVariantDto
     public Guid? MediaId { get; set; }
     public string? ImageUrl { get; set; }
     public int TotalStock { get; set; }
-    public bool InStock => TotalStock > 0;
+    public bool InStock { get; set; }
     public bool IsDefault { get; set; }
     public bool IsActive { get; set; }
     public List<CommerceHubProductVariantAttributeDto> Attributes { get; set; } = new();

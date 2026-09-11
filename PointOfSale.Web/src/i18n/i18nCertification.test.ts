@@ -27,7 +27,7 @@ describe('i18n certification audit', () => {
     })
 
     it('restores the critical audited Arabic values instead of corrupted placeholders', () => {
-        const { ar } = readLocaleResources()
+        const { en, ar } = readLocaleResources()
 
         expect(ar.orders.returnManagedByVendor).not.toContain('?')
         expect(ar.orders.whatsappDefaultShippingMethod).not.toContain('?')
@@ -37,6 +37,12 @@ describe('i18n certification audit', () => {
         expect(ar.CommerceHubFinance.filters.activeCount_one).toContain('{{count}}')
         expect(ar.CommerceHubFinance.statement.matchingTransactions_one).toContain('{{count}}')
         expect(ar.CommerceHubFinance.statement.pageSummary_one).toContain('{{count}}')
+        expect(en.CommerceHubFinance.summary.totalRefundImpactDescription).toBe(
+            'Vendor proceeds reversed by completed refunds.',
+        )
+        expect(ar.CommerceHubFinance.summary.totalRefundImpactDescription).toBe(
+            'مستحقات التاجر المعكوسة بسبب المرتجعات المكتملة.',
+        )
     })
 
     it('falls back to English for missing or empty Arabic values without crashing', async () => {

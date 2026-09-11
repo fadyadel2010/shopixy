@@ -72,6 +72,9 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         var invoice = await verifyContext.PurchaseInvoices.SingleAsync();
         Assert.Equal(100m, invoice.TotalAmount);
         Assert.Equal(100m, invoice.PaidAmount);
+        var payment = await verifyContext.PurchaseInvoicePayments.SingleAsync();
+        Assert.Equal(100m, payment.Amount);
+        Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
     }
 
     [Fact]
@@ -100,6 +103,101 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         var invoice = await verifyContext.PurchaseInvoices.SingleAsync();
         Assert.Equal(100m, invoice.TotalAmount);
         Assert.Equal(60m, invoice.PaidAmount);
+        var payment = await verifyContext.PurchaseInvoicePayments.SingleAsync();
+        Assert.Equal(60m, payment.Amount);
+        Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
+    }
+
+    [Fact]
+    public async Task CreatePurchase_PersistsMixedPaymentAllocation()
+    {
+        var setup = await SetupPurchaseTestAsync("purchase-mixed-payment-001");
+        using var scope = setup.Scope;
+        await using var actionContext = setup.ActionContext;
+
+        var result = await setup.Controller.CreatePurchase(
+            BuildRequest(
+                setup.Seeded,
+                paymentMethod: PaymentMethod.Mixed,
+                paidAmount: 100m,
+                unitCost: 100m,
+                cashAmount: 40m,
+                cardAmount: 60m));
+
+        AssertObjectResult(result, StatusCodes.Status200OK);
+
+        await using var verifyContext = scope.CreateDbContext(setup.TenantContext);
+        var payments = await verifyContext.PurchaseInvoicePayments
+            .OrderBy(payment => payment.PaymentMethod)
+            .ToListAsync();
+        Assert.Collection(
+            payments,
+            payment =>
+            {
+                Assert.Equal(PaymentMethod.Cash, payment.PaymentMethod);
+                Assert.Equal(40m, payment.Amount);
+            },
+            payment =>
+            {
+                Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
+                Assert.Equal(60m, payment.Amount);
+            });
+    }
+
+    [Fact]
+    public async Task UpdatePurchase_ReplacesPersistedPaymentAllocation()
+    {
+        var setup = await SetupPurchaseTestAsync("purchase-update-payment-001");
+        using var scope = setup.Scope;
+        await using var actionContext = setup.ActionContext;
+
+        var createResult = await setup.Controller.CreatePurchase(
+            BuildRequest(
+                setup.Seeded,
+                paymentMethod: PaymentMethod.Card,
+                paidAmount: 100m,
+                unitCost: 100m));
+        var created = ReadPurchaseResponse(createResult);
+
+        await using var beforeContext = scope.CreateDbContext(setup.TenantContext);
+        var originalPaymentId = await beforeContext.PurchaseInvoicePayments
+            .Select(payment => payment.Id)
+            .SingleAsync();
+
+        await using var updateContext = scope.CreateDbContext(setup.TenantContext);
+        var updateController = CreateController(updateContext, setup.TenantContext);
+        updateController.Request.Headers["Idempotency-Key"] = $"purchase-update-payment-{Guid.NewGuid():N}";
+        var updateRequest = BuildRequest(
+            setup.Seeded,
+            paymentMethod: PaymentMethod.Mixed,
+            paidAmount: 100m,
+            unitCost: 100m,
+            cashAmount: 40m,
+            cardAmount: 60m);
+        updateRequest.ExpectedMutationVersion = 0;
+
+        var updateResult = await updateController.UpdatePurchase(created.InvoiceId, updateRequest);
+
+        var response = ReadPurchaseResponse(AssertObjectResult(updateResult, StatusCodes.Status200OK));
+        Assert.Equal(1, response.MutationVersion);
+
+        await using var verifyContext = scope.CreateDbContext(setup.TenantContext);
+        var payments = await verifyContext.PurchaseInvoicePayments
+            .OrderBy(payment => payment.PaymentMethod)
+            .ToListAsync();
+        Assert.DoesNotContain(payments, payment => payment.Id == originalPaymentId);
+        Assert.Collection(
+            payments,
+            payment =>
+            {
+                Assert.Equal(PaymentMethod.Cash, payment.PaymentMethod);
+                Assert.Equal(40m, payment.Amount);
+            },
+            payment =>
+            {
+                Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
+                Assert.Equal(60m, payment.Amount);
+            });
     }
 
     [Fact]
@@ -171,6 +269,7 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         await using var verifyContext = scope.CreateDbContext(tenantContext);
         Assert.Equal(1, await verifyContext.PurchaseInvoices.CountAsync());
         Assert.Equal(1, await verifyContext.PurchaseInvoiceItems.CountAsync());
+        Assert.Equal(1, await verifyContext.PurchaseInvoicePayments.CountAsync());
         Assert.Equal(1, await verifyContext.PurchaseRequestIdempotencyRecords.CountAsync());
 
         var stock = await verifyContext.ProductVariantStocks.SingleAsync();
@@ -188,6 +287,8 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         }
 
         await using var seedContext = databaseScope.CreateDbContext(tenantContext);
+        await seedContext.Database.ExecuteSqlRawAsync(
+            "CREATE SEQUENCE IF NOT EXISTS purchase_invoice_seq START WITH 1000 INCREMENT BY 1 MINVALUE 1000 CACHE 1;");
         var seeded = await SeedScenarioAsync(seedContext, tenantId);
 
         var actionContext = databaseScope.CreateDbContext(tenantContext);
@@ -252,6 +353,46 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                 });
                 await context.SaveChangesAsync(cancellationToken);
             });
+        outbox
+            .Setup(service => service.EnqueuePurchaseReversalAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<int>(),
+                It.IsAny<decimal>(),
+                It.IsAny<decimal>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<Guid, Guid, string, int, decimal, decimal, CancellationToken>(async (
+                tenantId,
+                invoiceId,
+                operationKey,
+                mutationVersion,
+                cashAmount,
+                cardAmount,
+                cancellationToken) =>
+            {
+                context.AccountingOutboxMessages.Add(new PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenantId,
+                    EventType = "PurchaseReversal",
+                    SourceType = "PurchaseReversal",
+                    BusinessEntityId = invoiceId,
+                    PayloadJson = "{}",
+                    IdempotencyKey = BuildPurchaseMutationAccountingOutboxIdempotencyKey(
+                        tenantId,
+                        invoiceId,
+                        operationKey,
+                        cashAmount,
+                        cardAmount,
+                        mutationVersion),
+                    AggregateVersion = mutationVersion,
+                    OccurredAtUtc = DateTime.UtcNow,
+                    CreatedAt = DateTime.UtcNow,
+                    IsDeleted = false
+                });
+                await context.SaveChangesAsync(cancellationToken);
+            });
 
         var commerceAccounting = new Mock<ICommerceAccountingService>();
         commerceAccounting
@@ -262,6 +403,29 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                 It.IsAny<decimal?>(),
                 It.IsAny<decimal?>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "JRN-PUR-TEST"));
+
+        var cashboxAccountService = new Mock<ICashboxLedgerAccountService>();
+        cashboxAccountService
+            .Setup(service => service.ResolveWarehouseCashboxAccountAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CashboxLedgerAccountInfo(
+                CashboxId: null,
+                AccountId: Guid.NewGuid(),
+                AccountCode: "1010",
+                Name: "Test Cashbox",
+                IsDefault: true,
+                WarehouseId: null,
+                Location: null));
+
+        var treasuryReadService = new Mock<ITreasuryReadService>();
+        treasuryReadService
+            .Setup(service => service.GetAccountBalanceAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1_000_000m);
 
         return new PurchasesController(
             context,
@@ -274,9 +438,10 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             new NoOpEventPublisher(),
             outbox.Object,
             commerceAccounting.Object,
+            Mock.Of<IFinancialPostingService>(),
             Mock.Of<IAccountResolver>(),
-            Mock.Of<ITreasuryReadService>(),
-            Mock.Of<ICashboxLedgerAccountService>(),
+            treasuryReadService.Object,
+            cashboxAccountService.Object,
             Mock.Of<IPurchaseFinancialIntegrityService>())
         {
             ControllerContext = new ControllerContext
@@ -294,12 +459,23 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         int mutationVersion) =>
         $"PURCHASE:{tenantId}:{invoiceId}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}";
 
+    private static string BuildPurchaseMutationAccountingOutboxIdempotencyKey(
+        Guid tenantId,
+        Guid invoiceId,
+        string operationKey,
+        decimal cashAmount,
+        decimal cardAmount,
+        int mutationVersion) =>
+        $"PURCHASE:{tenantId}:{invoiceId}:{operationKey}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}";
+
     private static CreatePurchaseRequest BuildRequest(
         SeededPurchaseScenario seeded,
         PaymentMethod paymentMethod,
         decimal paidAmount,
         decimal unitCost,
-        PaymentMethod? initialPaymentMethod = null)
+        PaymentMethod? initialPaymentMethod = null,
+        decimal? cashAmount = null,
+        decimal? cardAmount = null)
     {
         return new CreatePurchaseRequest
         {
@@ -309,6 +485,8 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             PaymentMethod = paymentMethod,
             InitialPaymentMethod = initialPaymentMethod,
             PaidAmount = paidAmount,
+            CashAmount = cashAmount,
+            CardAmount = cardAmount,
             Items =
             [
                 new PurchaseItemRequest

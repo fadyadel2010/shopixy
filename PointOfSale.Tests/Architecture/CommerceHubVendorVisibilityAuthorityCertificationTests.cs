@@ -42,7 +42,9 @@ public sealed class CommerceHubVendorVisibilityAuthorityCertificationTests
         var controller = ReadRepoFile("PointOfSale.API/Controllers/CommerceHubController.cs");
 
         Assert.Contains("request.ExcludedTenantIds = await LoadPubliclySuppressedVendorIdsAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("RecomposeVisibleListingItemsAsync(result.Items, cancellationToken)", queryService, StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("tenant.Status == TenantStatus.Active", queryService, StringComparison.Ordinal);
+        Assert.Contains("UserGovernanceStatus.Active", queryService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("LoadGovernanceHiddenVendorIdsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("LoadSuspendedVendorIdsAsync", queryService, StringComparison.Ordinal);
@@ -73,6 +75,10 @@ public sealed class CommerceHubVendorVisibilityAuthorityCertificationTests
         Assert.Contains("commerceHubService.getProducts", productQueries, StringComparison.Ordinal);
         Assert.Contains("commerceHubService.getProductById", productQueries, StringComparison.Ordinal);
         Assert.Contains("commerceHubService.search(query, signal)", discoveryQueries, StringComparison.Ordinal);
+        Assert.Contains("queryClient.fetchQuery(productsPageQueryOptions", productQueries, StringComparison.Ordinal);
+        Assert.Contains("queryClient.fetchQuery(searchResultsPageQueryOptions", discoveryQueries, StringComparison.Ordinal);
+        Assert.DoesNotContain("ensureQueryData", productQueries, StringComparison.Ordinal);
+        Assert.DoesNotContain("ensureQueryData", discoveryQueries, StringComparison.Ordinal);
         Assert.Contains("httpClient.get<CommerceHubProductListResponse>", commerceHubService, StringComparison.Ordinal);
         Assert.Contains("httpClient.get<CommerceHubProductDetail>", commerceHubService, StringComparison.Ordinal);
         Assert.Contains("httpClient.get<CommerceHubSearchResponse>", commerceHubService, StringComparison.Ordinal);

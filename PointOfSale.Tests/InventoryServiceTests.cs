@@ -57,6 +57,8 @@ public class InventoryServiceTests
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
 
+        AddProduct(productId);
+        AddWarehouse(warehouseId);
         _context.ProductVariants.Add(new ProductVariant
         {
             Id = variantId,
@@ -98,6 +100,8 @@ public class InventoryServiceTests
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
 
+        AddProduct(productId);
+        AddWarehouse(warehouseId);
         _context.ProductVariants.Add(new ProductVariant
         {
             Id = variantId,
@@ -128,6 +132,8 @@ public class InventoryServiceTests
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
 
+        AddProduct(productId);
+        AddWarehouse(warehouseId);
         _context.ProductVariants.Add(new ProductVariant
         {
             Id = variantId,
@@ -163,6 +169,9 @@ public class InventoryServiceTests
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
 
+        AddProduct(productId);
+        AddWarehouse(sourceId);
+        AddWarehouse(targetId);
         _context.ProductVariants.Add(new ProductVariant
         {
             Id = variantId,
@@ -194,5 +203,28 @@ public class InventoryServiceTests
         Assert.Contains(movements, m => m.MovementType == StockMovementType.TransferOut && m.WarehouseId == sourceId && m.QuantityChange == -20);
         Assert.Contains(movements, m => m.MovementType == StockMovementType.TransferIn && m.WarehouseId == targetId && m.QuantityChange == 20);
         Assert.Empty(_context.WarehouseStocks);
+    }
+
+    private void AddProduct(Guid productId)
+    {
+        _context.Products.Add(new Product
+        {
+            Id = productId,
+            TenantId = _testTenantId,
+            Name = "Inventory service product",
+            SKU = $"INV-{productId:N}",
+            IsActive = true
+        });
+    }
+
+    private void AddWarehouse(Guid warehouseId)
+    {
+        _context.Warehouses.Add(new Warehouse
+        {
+            Id = warehouseId,
+            TenantId = _testTenantId,
+            Name = $"Inventory service warehouse {warehouseId:N}",
+            IsActive = true
+        });
     }
 }

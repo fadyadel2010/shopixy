@@ -5051,6 +5051,7 @@ public class CheckoutService : ICheckoutService
             }
 
             item.SKU = authoritativeVariant.SKU ?? item.SKU;
+            item.Name = authoritativeVariant.ProductName;
             item.CurrentPrice = authoritativeVariant.EffectivePrice;
             item.CostPrice = authoritativeVariant.CostPrice;
             item.Weight = Math.Max(0m, authoritativeVariant.Weight);
@@ -6344,7 +6345,7 @@ public class CheckoutService : ICheckoutService
             throw;
         }
 
-        if (emitExternalReservationSideEffects)
+        if (emitExternalReservationSideEffects && HasPhysicalInventoryReservation(reservedItems))
         {
             await EmitInventoryReservedEventAsync(
                 tenantId, orderId, snapshot.CartId, reservationId, reservedItems,
@@ -6358,6 +6359,9 @@ public class CheckoutService : ICheckoutService
 
         return new InventoryReservationResult(reservationId, reservedItems, reservationExpiresAtUtc);
     }
+
+    internal static bool HasPhysicalInventoryReservation(IReadOnlyCollection<InventoryReservationItem> items) =>
+        items.Count > 0;
 
     private async Task ReleaseInventoryReservationAsync(
         Guid reservationId,
@@ -7112,17 +7116,20 @@ public class CheckoutService : ICheckoutService
                 correlationId,
                 cancellationToken);
 
-            await PersistInventoryReservedOutboxAsync(
-                tenantId,
-                order.Id,
-                snapshot.CartId,
-                inventoryReservation.ReservationId,
-                inventoryReservation.ReservedItems,
-                inventoryReservation.ExpiresAtUtc,
-                requestId,
-                correlationId,
-                eventVersion: 1,
-                cancellationToken);
+            if (HasPhysicalInventoryReservation(inventoryReservation.ReservedItems))
+            {
+                await PersistInventoryReservedOutboxAsync(
+                    tenantId,
+                    order.Id,
+                    snapshot.CartId,
+                    inventoryReservation.ReservationId,
+                    inventoryReservation.ReservedItems,
+                    inventoryReservation.ExpiresAtUtc,
+                    requestId,
+                    correlationId,
+                    eventVersion: 1,
+                    cancellationToken);
+            }
 
             // Durable exactly-once boundary: the order and its idempotency binding
             // are flushed together before the checkout transaction commits, even
@@ -7250,7 +7257,7 @@ public class CheckoutService : ICheckoutService
         // ═══════════════════════════════════════════════════════════════════
         
         // External side effects stay post-commit. InventoryReservedEvent is already durably queued in the outbox.
-        if (inventoryReservation != null)
+        if (inventoryReservation != null && HasPhysicalInventoryReservation(inventoryReservation.ReservedItems))
         {
             try
             {
@@ -9387,6 +9394,7 @@ public class CheckoutService : ICheckoutService
                     ReferralCode = order.AffiliateReferralCode,
                     OrderTotal = order.Total,
                     Currency = orderCurrency,
+                    PaymentMethodCode = order.PaymentMethodCode,
                     ItemCount = order.Items.Count,
                     IsGuestCheckout = order.IsGuestCheckout,
                     // AF-15: Include PromotionLinkId for v2 flow

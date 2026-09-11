@@ -179,7 +179,7 @@ export default function Suppliers() {
                                             <div className="text-sm text-gray-500">{supplier.phone}</div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                                            <span className={supplier.balance > 0 ? 'text-red-600' : 'text-green-600'}>
+                                            <span className={supplier.balance < 0 ? 'text-red-600' : supplier.balance > 0 ? 'text-green-600' : 'text-gray-600'}>
                                                 {formatCurrency(supplier.balance)}
                                             </span>
                                         </td>

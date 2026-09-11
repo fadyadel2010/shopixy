@@ -293,7 +293,9 @@ export const requireBackendAffiliateAttributionAuthority = (order) => {
         !GUID_PATTERN.test(attributionOrderId) ||
         tenantId.toLowerCase() !== orderTenantId.toLowerCase() ||
         attributionOrderId.toLowerCase() !== orderId.toLowerCase()) {
-        throw new Error('Affiliate order lineage authority rejected cross-order attribution evidence.')
+        const error = new Error('Affiliate order lineage authority rejected cross-order attribution evidence.')
+        error.code = 'AFFILIATE_ATTRIBUTION_AUTHORITY_CONTRADICTION'
+        throw error
     }
 
     if (!GUID_PATTERN.test(attributionId) ||
@@ -329,7 +331,11 @@ export const admitBackendAffiliateAttributionPresentation = (order) => {
             ...order,
             affiliateAttribution: admittedAttribution,
         }
-    } catch {
+    } catch (error) {
+        if (error?.code === 'AFFILIATE_ATTRIBUTION_AUTHORITY_CONTRADICTION') {
+            throw error
+        }
+
         return {
             ...order,
             affiliateAttribution: null,

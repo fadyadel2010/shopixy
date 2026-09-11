@@ -7,7 +7,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
+using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Enums.CommerceHubFinance;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Models.Refunds;
@@ -1101,6 +1103,7 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
             "PosPurchase",
             "PurchaseReversal",
             "SupplierPayment",
+            "CustomerPayment",
             "SupplierOpeningBalance",
             "PartyLedgerAdjustment",
             "PosRefund",
@@ -1124,9 +1127,269 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task RequeueMessageAsync_NonTerminalDelayedMessage_ClearsRetryState()
+    {
+        var message = AccountingOutboxMessage.Create(
+            _tenantId,
+            "CommerceHubLedgerPosting",
+            Guid.NewGuid(),
+            "CommerceHubFinancialTransaction",
+            "{}",
+            $"COMMERCEHUB_TX:{Guid.NewGuid():N}");
+        message.Id = Guid.NewGuid();
+        message.RecordNonTerminalFinancialFailure("Old mapper rejected the posting.");
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        var requeued = await _processor.RequeueMessageAsync(message.Id);
+
+        Assert.True(requeued);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.False(stored.IsFailed);
+        Assert.Equal(0, stored.AttemptCount);
+        Assert.Null(stored.ClaimedUntilUtc);
+        Assert.Null(stored.LastError);
+        Assert.Null(stored.NextRetryAtUtc);
+        Assert.NotNull(stored.UpdatedAt);
+    }
+
+    [Fact]
+    public async Task ProcessPendingMessagesAsync_BeforePayoutVendorRefundMirror_MarksProcessedWithoutPostingDuplicateJournal()
+    {
+        var refundId = Guid.NewGuid();
+        var platformAdjustment = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Platform,
+            null,
+            CommerceHubFinancialTransactionType.Adjustment,
+            CommerceHubFinancialBucket.Payable,
+            refundId);
+        var vendorMirror = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            _tenantId,
+            CommerceHubFinancialTransactionType.Refund,
+            CommerceHubFinancialBucket.Payable,
+            refundId);
+        var message = CreateCommerceHubLedgerPostingMessage(vendorMirror);
+        message.RecordNonTerminalFinancialFailure("Legacy duplicate payable posting failed.");
+        message.ResetForRetry();
+
+        _db.CommerceHubFinancialTransactions.AddRange(platformAdjustment, vendorMirror);
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(1, processedCount);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.NotNull(stored.ProcessedAtUtc);
+        Assert.Equal(Guid.Empty, stored.JournalId);
+        Assert.False(stored.IsFailed);
+        Assert.Null(stored.LastError);
+        Assert.Null(stored.NextRetryAtUtc);
+        Assert.Empty(await _db.CommerceAccountingAudits.ToListAsync());
+        _commerceAccounting.Verify(accounting => accounting.PostCommerceHubFinancialTransactionAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<DateTime>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessPendingMessagesAsync_OrphanVendorRefundPayable_RemainsRetryable()
+    {
+        var vendorMirror = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            _tenantId,
+            CommerceHubFinancialTransactionType.Refund,
+            CommerceHubFinancialBucket.Payable,
+            Guid.NewGuid());
+        var message = CreateCommerceHubLedgerPostingMessage(vendorMirror);
+
+        _db.CommerceHubFinancialTransactions.Add(vendorMirror);
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(0, processedCount);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.Null(stored.ProcessedAtUtc);
+        Assert.False(stored.IsFailed);
+        Assert.Equal(1, stored.AttemptCount);
+        Assert.Contains("canonical platform payable adjustment", stored.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(stored.NextRetryAtUtc);
+        _commerceAccounting.Verify(accounting => accounting.PostCommerceHubFinancialTransactionAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<DateTime>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessPendingMessagesAsync_VendorPayoutPayableMirror_MarksProcessedWithoutPostingDuplicateJournal()
+    {
+        var payoutId = Guid.NewGuid();
+        var platformPayout = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Platform,
+            null,
+            CommerceHubFinancialTransactionType.Payout,
+            CommerceHubFinancialBucket.Payable,
+            CommerceHubFinancialReferenceType.Payout,
+            payoutId);
+        var vendorMirror = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            _tenantId,
+            CommerceHubFinancialTransactionType.Payout,
+            CommerceHubFinancialBucket.Payable,
+            CommerceHubFinancialReferenceType.Payout,
+            payoutId);
+        var message = CreateCommerceHubLedgerPostingMessage(vendorMirror);
+
+        _db.CommerceHubFinancialTransactions.AddRange(platformPayout, vendorMirror);
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(1, processedCount);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.NotNull(stored.ProcessedAtUtc);
+        Assert.Equal(Guid.Empty, stored.JournalId);
+        Assert.Empty(await _db.CommerceAccountingAudits.ToListAsync());
+        _commerceAccounting.Verify(accounting => accounting.PostCommerceHubFinancialTransactionAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<DateTime>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessPendingMessagesAsync_OrphanVendorPayoutPayable_RemainsRetryable()
+    {
+        var vendorMirror = CreateCommerceHubTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            _tenantId,
+            CommerceHubFinancialTransactionType.Payout,
+            CommerceHubFinancialBucket.Payable,
+            CommerceHubFinancialReferenceType.Payout,
+            Guid.NewGuid());
+        var message = CreateCommerceHubLedgerPostingMessage(vendorMirror);
+
+        _db.CommerceHubFinancialTransactions.Add(vendorMirror);
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(0, processedCount);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.Null(stored.ProcessedAtUtc);
+        Assert.False(stored.IsFailed);
+        Assert.Equal(1, stored.AttemptCount);
+        Assert.Contains("canonical platform payout liability", stored.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(stored.NextRetryAtUtc);
+        _commerceAccounting.Verify(accounting => accounting.PostCommerceHubFinancialTransactionAsync(
+            It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<decimal>(),
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<DateTime>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     public void Dispose()
     {
         _serviceProvider.Dispose();
+    }
+
+    private CommerceHubFinancialTransaction CreateCommerceHubTransaction(
+        CommerceHubFinancialEntityType entityType,
+        Guid? entityId,
+        CommerceHubFinancialTransactionType transactionType,
+        CommerceHubFinancialBucket bucket,
+        Guid referenceId) =>
+        CreateCommerceHubTransaction(
+            entityType,
+            entityId,
+            transactionType,
+            bucket,
+            CommerceHubFinancialReferenceType.Refund,
+            referenceId);
+
+    private CommerceHubFinancialTransaction CreateCommerceHubTransaction(
+        CommerceHubFinancialEntityType entityType,
+        Guid? entityId,
+        CommerceHubFinancialTransactionType transactionType,
+        CommerceHubFinancialBucket bucket,
+        CommerceHubFinancialReferenceType referenceType,
+        Guid referenceId) =>
+        CommerceHubFinancialTransaction.Create(
+            entityType,
+            entityId,
+            transactionType,
+            CommerceHubFinancialTransactionDirection.Debit,
+            90m,
+            "EGP",
+            referenceType,
+            referenceId,
+            "CommerceHub operational mirror test transaction.",
+            financialBucketOverride: bucket);
+
+    private AccountingOutboxMessage CreateCommerceHubLedgerPostingMessage(CommerceHubFinancialTransaction transaction)
+    {
+        var message = AccountingOutboxMessage.Create(
+            _tenantId,
+            "CommerceHubLedgerPosting",
+            transaction.Id,
+            nameof(CommerceHubFinancialTransaction),
+            JsonSerializer.Serialize(new
+            {
+                TransactionId = transaction.Id,
+                TransactionType = transaction.TransactionType.ToString(),
+                Direction = transaction.Direction.ToString(),
+                EntityType = transaction.EntityType.ToString(),
+                FinancialBucket = transaction.FinancialBucket.ToString(),
+                transaction.Amount,
+                transaction.Currency,
+                transaction.Description,
+                OccurredAtUtc = transaction.CreatedAtUtc
+            }),
+            $"COMMERCEHUB_TX:{_tenantId:N}:{transaction.Id:N}",
+            sourceType: nameof(CommerceHubFinancialTransaction));
+        message.Id = Guid.NewGuid();
+        return message;
     }
 
     private SalesInvoice SeedInvoice(

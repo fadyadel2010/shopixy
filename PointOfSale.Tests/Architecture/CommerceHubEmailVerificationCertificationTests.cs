@@ -8,6 +8,7 @@ public sealed class CommerceHubEmailVerificationCertificationTests
         var entity = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/CommerceHubCustomerEmailVerificationToken.cs");
         var config = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubCustomerEmailVerificationTokenConfiguration.cs");
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCustomerAuthService.cs");
+        var appSettings = CertificationSource.ReadRepoFile("PointOfSale.API/appsettings.json");
 
         Assert.Contains("SHA256.HashData", entity, StringComparison.Ordinal);
         Assert.Contains("RAW TOKEN IS NEVER STORED", entity, StringComparison.Ordinal);
@@ -23,6 +24,8 @@ public sealed class CommerceHubEmailVerificationCertificationTests
         Assert.Contains("consumed != 1", verifyMethod, StringComparison.Ordinal);
         Assert.Contains("customer.MarkEmailVerified()", verifyMethod, StringComparison.Ordinal);
         Assert.DoesNotContain("BuildAuthResponse", verifyMethod, StringComparison.Ordinal);
+        Assert.Contains("public string PublicBaseUrl { get; set; } = \"http://localhost:5175\";", service, StringComparison.Ordinal);
+        Assert.Contains("\"PublicBaseUrl\": \"http://localhost:5175\"", appSettings, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -41,7 +44,7 @@ public sealed class CommerceHubEmailVerificationCertificationTests
         Assert.Contains("EmailVerificationRequested", changeEmail, StringComparison.Ordinal);
 
         var changeEmailAction = Slice(controller, "[HttpPost(\"change-email\")]", "private Guid? ResolveCustomerId()");
-        Assert.Contains("Response.Cookies.Delete", changeEmailAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", changeEmailAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", changeEmailAction, StringComparison.Ordinal);
     }
 

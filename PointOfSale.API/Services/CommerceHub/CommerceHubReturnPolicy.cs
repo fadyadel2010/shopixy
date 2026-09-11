@@ -22,48 +22,6 @@ public static class CommerceHubReturnPolicy
     public static bool CanConfirmReceipt(CommerceHubReturnStatus status) =>
         status == CommerceHubReturnStatus.DeliveredToVendor;
 
-    public static IReadOnlyList<CommerceHubReturnStatus> GetAllowedOverrideStatuses(
-        CommerceHubReturnStatus currentStatus,
-        CommerceHubRefundRequestStatus refundStatus,
-        RefundExecutionTrigger trigger)
-    {
-        if (currentStatus == CommerceHubReturnStatus.Confirmed)
-        {
-            return Array.Empty<CommerceHubReturnStatus>();
-        }
-
-        var allowed = new List<CommerceHubReturnStatus>
-        {
-            CommerceHubReturnStatus.Pending,
-            CommerceHubReturnStatus.PickupScheduled,
-            CommerceHubReturnStatus.PickedUp,
-            CommerceHubReturnStatus.InTransit,
-            CommerceHubReturnStatus.DeliveredToVendor
-        };
-
-        if (CommerceHubRefundRequestWorkflowPolicy.IsExecuted(refundStatus))
-        {
-            allowed = allowed
-                .Where(status => IsExecutionTriggerReached(trigger, status))
-                .ToList();
-        }
-
-        return allowed;
-    }
-
-    public static bool CanOverrideStatus(
-        CommerceHubReturnStatus currentStatus,
-        CommerceHubRefundRequestStatus refundStatus,
-        RefundExecutionTrigger trigger) =>
-        GetAllowedOverrideStatuses(currentStatus, refundStatus, trigger).Count > 0;
-
-    public static bool CanOverrideStatusTo(
-        CommerceHubReturnStatus currentStatus,
-        CommerceHubReturnStatus targetStatus,
-        CommerceHubRefundRequestStatus refundStatus,
-        RefundExecutionTrigger trigger) =>
-        GetAllowedOverrideStatuses(currentStatus, refundStatus, trigger).Contains(targetStatus);
-
     public static bool IsTerminal(CommerceHubReturnStatus status) =>
         status is CommerceHubReturnStatus.Confirmed or CommerceHubReturnStatus.Failed;
 

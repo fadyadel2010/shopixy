@@ -1181,9 +1181,9 @@ public sealed partial class SuperAdminFinancialDashboardService : ISuperAdminFin
             adjustmentFlowMismatchCount = snapshot.AdjustmentFlowMismatchCount;
             multiCurrencyReferenceCount = snapshot.MultiCurrencyReferenceCount;
             invalidEntityScopeCount = snapshot.InvalidEntityScopeCount;
-            orphanTransactionsCount = snapshot.OrphanTransactionsCount;
-            orderFlowMismatchCount = snapshot.OrderFlowMismatchCount;
-            refundFlowMismatchCount = snapshot.RefundFlowMismatchCount;
+            // Live issue queries and the reconciliation snapshot cover different diagnostics.
+            // Keep the live counters aligned with the sampled details instead of replacing
+            // them with snapshot-only ledger-flow counters.
         }
 
         var totalIssueCount =
@@ -1586,8 +1586,15 @@ public sealed partial class SuperAdminFinancialDashboardService : ISuperAdminFin
                     transaction.TransactionType == CommerceHubFinancialTransactionType.Promotion &&
                     transaction.Direction == CommerceHubFinancialTransactionDirection.Debit)
                 .Sum(transaction => (decimal?)transaction.Amount) ?? 0m
-            where ledgerGrossCommission != row.PlatformCommissionAmount ||
-                  ledgerPromoCost != row.PromoDiscountAmount
+            let isFinanciallyRecognized = row.Status != OrderStatus.Cancelled &&
+                (row.PaymentStatus == PaymentStatus.Collected ||
+                 row.PaymentStatus == PaymentStatus.Settled ||
+                 row.PaymentStatus == PaymentStatus.Refunded ||
+                 row.PaymentStatus == PaymentStatus.PartiallyRefunded)
+            let hasOrderLedger = ledgerGrossCommission != 0m || ledgerPromoCost != 0m
+            where (isFinanciallyRecognized || hasOrderLedger) &&
+                  (ledgerGrossCommission != row.PlatformCommissionAmount ||
+                   ledgerPromoCost != row.PromoDiscountAmount)
             select new IntegrityIssueSeedRow
             {
                 ReferenceId = row.SubOrderId,
@@ -2005,6 +2012,8 @@ public sealed partial class SuperAdminFinancialDashboardService : ISuperAdminFin
                 VendorId = subOrder.StoreId,
                 PromoCode = marketplaceOrder.PromoCode,
                 Currency = subOrder.Currency,
+                Status = subOrder.Status,
+                PaymentStatus = subOrder.PaymentStatus,
                 Total = subOrder.Total,
                 PlatformCommissionAmount = subOrder.PlatformCommissionAmount,
                 FinalPlatformCommissionAmount = subOrder.FinalPlatformCommissionAmount,
@@ -3357,6 +3366,8 @@ public sealed partial class SuperAdminFinancialDashboardService : ISuperAdminFin
         public Guid VendorId { get; init; }
         public string? PromoCode { get; init; }
         public string Currency { get; init; } = DefaultCurrency;
+        public OrderStatus Status { get; init; }
+        public PaymentStatus PaymentStatus { get; init; }
         public decimal Total { get; init; }
         public decimal PlatformCommissionAmount { get; init; }
         public decimal FinalPlatformCommissionAmount { get; init; }

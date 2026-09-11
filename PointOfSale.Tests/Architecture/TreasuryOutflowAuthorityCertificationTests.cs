@@ -88,6 +88,56 @@ public sealed class TreasuryOutflowAuthorityCertificationTests
     }
 
     [Fact]
+    public async Task ReversedLiabilityOutflow_CanBeRepostedWithinAuthoritativeAmount()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var (cash, payable) = await SeedFundedCashAsync(db, tenantId, 200m, AccountType.Liability);
+        var supplier = new Supplier
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "T3 Supplier"
+        };
+        var payment = new SupplierPayment
+        {
+            TenantId = tenantId,
+            SupplierId = supplier.Id,
+            PaymentDate = DateTime.UtcNow,
+            Amount = 100m,
+            PaymentMethod = PaymentMethodEnum.Cash,
+            IdempotencyKey = $"SUPPLIER:{Guid.NewGuid():N}"
+        };
+        db.Suppliers.Add(supplier);
+        db.SupplierPayments.Add(payment);
+        await db.SaveChangesAsync();
+
+        var posting = CreatePostingService(db);
+        var original = await posting.PostJournalAsync(BuildOutflow(
+            tenantId,
+            cash.Id,
+            payable.Id,
+            100m,
+            "SupplierPayment",
+            payment.Id,
+            $"SUPPLIER_PAYMENT:{tenantId}:{payment.Id}:V1"));
+
+        await posting.ReverseJournalAsync(tenantId, original.Id, "Correct payment allocation");
+        var replacement = await posting.PostJournalAsync(BuildOutflow(
+            tenantId,
+            cash.Id,
+            payable.Id,
+            100m,
+            "SupplierPayment",
+            payment.Id,
+            $"SUPPLIER_PAYMENT:{tenantId}:{payment.Id}:V2"));
+
+        Assert.Equal(JournalStatus.Reversed, original.Status);
+        Assert.Equal(JournalStatus.Posted, replacement.Status);
+        Assert.Equal(100m, cash.CurrentBalance);
+    }
+
+    [Fact]
     public async Task ForeignTenantLiability_CannotReduceLocalCash()
     {
         var localTenantId = Guid.NewGuid();

@@ -2,9 +2,8 @@
 # PointOfSale (Shopixy) — Professional .gitignore
 # SOURCE-CODE-BACKED. Every rule below is justified by actual repository
 # contents. See docs/project/GIT-1_PROFESSIONAL_GITIGNORE_CERTIFICATION.md
-# for the rule-by-rule audit and evidence.
 #
-# Stack (verified from *.csproj / package.json):
+# Stack:
 #   - .NET 9 : PointOfSale.API, .Core, .Infrastructure, .Tests, PointOfSale (MVC)
 #   - Vite + React 18 + TypeScript : PointOfSale.Web, .CommerceHub, .Storefront
 #   - Node + TypeScript : PointOfSale.WhatsApp.Baileys
@@ -25,11 +24,12 @@ $RECYCLE.BIN/
 # -----------------------------------------------------------------------------
 .vs/
 .idea/
-*.user            # *.csproj.user, launchSettings overrides — machine specific
+*.user
 *.suo
 *.userosscache
 *.sln.docstates
 *.DotSettings.user
+
 # Keep shared VS Code workspace config; ignore per-user state only.
 .vscode/*
 !.vscode/settings.json
@@ -38,14 +38,15 @@ $RECYCLE.BIN/
 !.vscode/tasks.json
 
 # -----------------------------------------------------------------------------
-# .NET build output  (bin/, obj/ exist under every .csproj — verified)
+# .NET build output
 # -----------------------------------------------------------------------------
 [Bb]in/
 [Oo]bj/
 *.dll
 *.exe
 *.pdb
-# Playwright browsers unpacked into bin/.../.playwright (verified on disk)
+
+# Playwright browsers unpacked into bin/.../.playwright
 **/.playwright/
 
 # -----------------------------------------------------------------------------
@@ -57,7 +58,7 @@ packages/
 .nuget/
 
 # -----------------------------------------------------------------------------
-# Node / Vite / React  (node_modules + dist verified in all JS projects)
+# Node / Vite / React
 # -----------------------------------------------------------------------------
 node_modules/
 dist/
@@ -84,14 +85,15 @@ coverage/
 # -----------------------------------------------------------------------------
 *.log
 logs/
-tmp/
+**/tmp/
+**/temp/
+**/.temp/
+**/.codex-temp/
 *.tmp
 
 # -----------------------------------------------------------------------------
 # Environment files (SECRETS)
-# Ignore real env files; ALWAYS keep the committed *.example templates.
-# Evidence: .env / .env.production / .env.staging carry runtime config;
-# *.example files are intentionally tracked documentation.
+# Keep committed *.example templates.
 # -----------------------------------------------------------------------------
 .env
 .env.*
@@ -100,28 +102,26 @@ tmp/
 
 # -----------------------------------------------------------------------------
 # Application secrets / local overrides (SECRETS)
-# appsettings.*.local.json hold developer/test-only credentials (verified:
-# appsettings.Development.local.json, appsettings.Test.local.json on disk).
-# Committed appsettings.{json,Development,Staging,Production,Test} are
-# placeholder-only and MUST stay tracked.
 # -----------------------------------------------------------------------------
 appsettings.*.local.json
+appsettings.*.local.*
 secrets.json
 credentials.yaml
 credentials.json
 token_check.json
 *.pfx
 *.p12
-# Root machine-specific config artifact (appsettings.af22.json) — not a shared config
-appsettings.*.local.*
 
 # -----------------------------------------------------------------------------
 # Runtime data / generated credentials
 # -----------------------------------------------------------------------------
-# ASP.NET Data Protection keys (real crypto keys generated at runtime —
-# verified: temp/test-environment/data-protection-keys/key-*.xml)
-temp/
+
+# ASP.NET Core Data Protection keys
 data-protection-keys/
+**/DataProtection-Keys/
+**/DataProtectionKeys/
+**/.aspnet/DataProtection-Keys/
+
 # Runtime databases / journals
 *.db
 *.sqlite
@@ -132,16 +132,37 @@ data-protection-keys/
 *.pid
 
 # -----------------------------------------------------------------------------
-# WhatsApp / Baileys runtime auth state (SECRETS — live session credentials)
+# WhatsApp / Baileys runtime auth state
 # -----------------------------------------------------------------------------
 auth_states/
 PointOfSale.WhatsApp.Baileys/auth_states/
 
 # -----------------------------------------------------------------------------
-# AI tooling / scratch (not part of the product)
-# Evidence: .codex-tmp/ (stale probe project), .agents/ scratch dir on disk
+# AI tooling / scratch
 # -----------------------------------------------------------------------------
 .codex-tmp/
 .agents/
 .cursor/
 .aider*
+
+# -----------------------------------------------------------------------------
+# Local database / dump / backup artifacts
+# -----------------------------------------------------------------------------
+*.dump
+*.bak
+*.backup
+*.sql.gz
+*.tar.gz
+
+# -----------------------------------------------------------------------------
+# Local deployment / archive packages
+# -----------------------------------------------------------------------------
+*.zip
+*.7z
+*.rar
+
+# -----------------------------------------------------------------------------
+# Local environment / deployment artifacts
+# -----------------------------------------------------------------------------
+*.local.env
+*.secret

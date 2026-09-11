@@ -381,7 +381,7 @@ public class CommerceContextBuilder : ICommerceContextBuilder
                         ? string.Join(" / ", v.Attributes.Select(a => a.Value))
                         : v.SKU ?? string.Empty,
                     Sku = v.SKU,
-                    Price = v.OnlinePrice ?? v.Price,
+                    Price = v.EffectivePrice,
                     InStock = v.TotalStock > 0,
                     Attributes = v.Attributes?.ToDictionary(a => a.Name, a => a.Value) ?? new()
                 })

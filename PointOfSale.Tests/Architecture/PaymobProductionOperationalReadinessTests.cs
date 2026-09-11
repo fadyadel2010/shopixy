@@ -36,6 +36,8 @@ public sealed class PaymobProductionOperationalReadinessTests
         Assert.Contains("IsRegisteredOnce<IPaymobRuntimeBridge>", health, StringComparison.Ordinal);
         Assert.Contains("IsRegisteredOnce<IPaymobWebhookRuntimeIntegrationService>", health, StringComparison.Ordinal);
         Assert.Contains("PaymobWebhookReplayRecords", health, StringComparison.Ordinal);
+        Assert.Contains("credentials.CredentialsConfigured || tenantConfigurationHealth", health, StringComparison.Ordinal);
+        Assert.Contains("globalCredentialsConfigured", health, StringComparison.Ordinal);
     }
 
     [Fact]

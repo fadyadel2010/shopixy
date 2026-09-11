@@ -2,12 +2,19 @@ using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.Middleware;
+using PointOfSale.API.Security;
+using PointOfSale.API.Services.Affiliate;
 using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Infrastructure.MongoDB.Documents.Affiliate;
 using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.MultiTenancy;
 
 namespace PointOfSale.Tests.Affiliate;
 
@@ -76,6 +83,35 @@ public class AffiliateAnalyticsTests
         Assert.NotNull(method);
         var paramTypes = method!.GetParameters().Select(p => p.ParameterType.Name).ToList();
         Assert.DoesNotContain("MongoDbContext", paramTypes);
+    }
+
+    [Fact]
+    public async Task Middleware_WhenDownstreamFailsWithoutTenant_PropagatesAndInvokesOnce()
+    {
+        var invocationCount = 0;
+        var expected = new InvalidOperationException("downstream failure");
+        var middleware = new AffiliateReferralMiddleware(
+            _ =>
+            {
+                invocationCount++;
+                return Task.FromException(expected);
+            },
+            NullLogger<AffiliateReferralMiddleware>.Instance);
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var dbContext = new ApplicationDbContext(options);
+
+        var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() => middleware.InvokeAsync(
+            new DefaultHttpContext(),
+            new TenantContext(),
+            dbContext,
+            Mock.Of<IEventPublisher>(),
+            Mock.Of<IAffiliateModeMetricsService>(),
+            Mock.Of<IAffiliateAttributionEvidenceTokenService>()));
+
+        Assert.Same(expected, thrown);
+        Assert.Equal(1, invocationCount);
     }
 
     // ═══════════════════════════════════════════════════════════════════

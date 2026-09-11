@@ -23,7 +23,8 @@ public sealed class CommerceHubSearchQueryParser : ICommerceHubSearchQueryParser
         "sort",
         "page",
         "pageSize",
-        "filters"
+        "filters",
+        "lang"
     };
 
     private static readonly string[] RangeSuffixes = [".gte", ".gt", ".lte", ".lt", ".min", ".max", "_gte", "_gt", "_lte", "_lt", "_min", "_max"];

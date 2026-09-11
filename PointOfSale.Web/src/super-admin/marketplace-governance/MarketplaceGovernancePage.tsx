@@ -6,9 +6,9 @@ import {
     getMarketplaceGovernanceDashboard,
     getMarketplaceGovernanceListings,
     restoreMarketplaceListing,
-    restoreMarketplaceTenant,
+    restoreMarketplaceVendor,
     suppressMarketplaceListing,
-    suspendMarketplaceTenant,
+    suspendMarketplaceVendor,
     type GovernanceListingStatus,
     type MarketplaceGovernanceListing,
     type MarketplaceGovernanceListingFilters,
@@ -120,10 +120,10 @@ export default function MarketplaceGovernancePage() {
         }
     }
 
-    async function runTenantAction(action: 'suspend' | 'restore') {
+    async function runVendorAction(action: 'suspend' | 'restore') {
         if (!selectedListing) return
 
-        const reason = window.prompt(`${action === 'suspend' ? 'Suspend' : 'Restore'} tenant reason`)?.trim()
+        const reason = window.prompt(`${action === 'suspend' ? 'Suspend' : 'Restore'} vendor marketplace participation reason`)?.trim()
         if (!reason || reason.length < 3) return
 
         setActionError(null)
@@ -131,13 +131,13 @@ export default function MarketplaceGovernancePage() {
         setIsActionRunning(true)
         try {
             const result = action === 'suspend'
-                ? await suspendMarketplaceTenant(selectedListing.tenantId, reason)
-                : await restoreMarketplaceTenant(selectedListing.tenantId, reason)
+                ? await suspendMarketplaceVendor(selectedListing.tenantId, reason)
+                : await restoreMarketplaceVendor(selectedListing.tenantId, reason)
 
             setActionMessage(result.message)
             await queryClient.invalidateQueries({ queryKey: ['super-admin', 'marketplace-governance'] })
         } catch (error) {
-            setActionError(getErrorMessage(error, 'Tenant governance action failed.'))
+            setActionError(getErrorMessage(error, 'Vendor governance action failed.'))
         } finally {
             setIsActionRunning(false)
         }
@@ -338,11 +338,11 @@ export default function MarketplaceGovernancePage() {
                                     <RotateCcw className="h-4 w-4" />
                                     Restore listing
                                 </button>
-                                <button type="button" disabled={actionDisabled} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-900 disabled:opacity-50" onClick={() => runTenantAction('suspend')}>
-                                    Suspend tenant
+                                <button type="button" disabled={actionDisabled} className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-900 disabled:opacity-50" onClick={() => runVendorAction('suspend')}>
+                                    Suspend vendor
                                 </button>
-                                <button type="button" disabled={actionDisabled} className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-900 disabled:opacity-50" onClick={() => runTenantAction('restore')}>
-                                    Restore tenant
+                                <button type="button" disabled={actionDisabled} className="rounded-2xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm font-semibold text-cyan-900 disabled:opacity-50" onClick={() => runVendorAction('restore')}>
+                                    Restore vendor
                                 </button>
                             </div>
                         </div>

@@ -235,13 +235,47 @@ public class StatementOfAccountController : ControllerBase
     {
         try
         {
-            var balance = await _context.AccountLedgers
+            var ledgerQuery = _context.AccountLedgers
+                .AsNoTracking()
                 .Where(a =>
                     a.TenantId == _tenantContext.RequiredTenantId &&
                     a.PartyType == partyType &&
-                    a.PartyId == partyId)
-                .Select(a => (decimal?)(a.DebitAmount - a.CreditAmount))
-                .SumAsync() ?? 0m;
+                    a.PartyId == partyId);
+
+            var aggregates = partyType == PartyType.Customer
+                ? await ledgerQuery
+                    .GroupBy(_ => 1)
+                    .Select(group => new
+                    {
+                        Balance = group.Sum(entry => entry.DebitAmount - entry.CreditAmount),
+                        LastPaymentDate = group
+                            .Where(entry => entry.TransactionType == TransactionType.PaymentReceived)
+                            .Max(entry => (DateTime?)entry.TransactionDate),
+                        TotalPaid = group
+                            .Where(entry => entry.TransactionType == TransactionType.PaymentReceived)
+                            .Sum(entry => (decimal?)entry.CreditAmount) ?? 0m,
+                        TotalInvoiced = group
+                            .Where(entry => entry.TransactionType == TransactionType.Sale)
+                            .Sum(entry => (decimal?)entry.DebitAmount) ?? 0m
+                    })
+                    .FirstOrDefaultAsync()
+                : await ledgerQuery
+                    .GroupBy(_ => 1)
+                    .Select(group => new
+                    {
+                        Balance = group.Sum(entry => entry.DebitAmount - entry.CreditAmount),
+                        LastPaymentDate = group
+                            .Where(entry => entry.TransactionType == TransactionType.PaymentMade)
+                            .Max(entry => (DateTime?)entry.TransactionDate),
+                        TotalPaid = group
+                            .Where(entry => entry.TransactionType == TransactionType.PaymentMade)
+                            .Sum(entry => (decimal?)entry.DebitAmount) ?? 0m,
+                        TotalInvoiced = group
+                            .Where(entry => entry.TransactionType == TransactionType.Purchase)
+                            .Sum(entry => (decimal?)entry.CreditAmount) ?? 0m
+                    })
+                    .FirstOrDefaultAsync();
+            var balance = aggregates?.Balance ?? 0m;
 
             string partyName = string.Empty;
             if (partyType == PartyType.Customer)
@@ -269,7 +303,10 @@ public class StatementOfAccountController : ControllerBase
                 PartyName = partyName,
                 PartyType = partyType,
                 Balance = Math.Abs(balance),
-                BalanceType = DetermineBalanceType(balance, partyType)
+                BalanceType = DetermineBalanceType(balance, partyType),
+                LastPaymentDate = aggregates?.LastPaymentDate,
+                TotalPaid = aggregates?.TotalPaid ?? 0m,
+                TotalInvoiced = aggregates?.TotalInvoiced ?? 0m
             });
         }
         catch (Exception ex)

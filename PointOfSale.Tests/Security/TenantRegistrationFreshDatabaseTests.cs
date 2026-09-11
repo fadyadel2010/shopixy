@@ -43,6 +43,14 @@ public sealed class TenantRegistrationFreshDatabaseTests
         Assert.Equal(FinancialCurrencyGuard.PlatformBaseCurrencyCode, await context.Tenants.Select(t => t.Currency).SingleAsync());
         Assert.Equal(1, await context.Users.IgnoreQueryFilters().CountAsync());
         Assert.Equal(1, await context.StoreConfigs.IgnoreQueryFilters().CountAsync());
+
+        var warehouseId = await context.Warehouses.IgnoreQueryFilters()
+            .Where(warehouse => warehouse.IsDefault)
+            .Select(warehouse => warehouse.Id)
+            .SingleAsync();
+        var shippingMethods = await context.ShippingMethods.IgnoreQueryFilters().ToListAsync();
+        Assert.Equal(3, shippingMethods.Count);
+        Assert.All(shippingMethods, method => Assert.Equal(warehouseId, method.FulfillmentWarehouseId));
     }
 
     [Fact]

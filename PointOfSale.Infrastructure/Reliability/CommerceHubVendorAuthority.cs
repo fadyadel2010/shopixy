@@ -94,6 +94,7 @@ public static class CommerceHubVendorAuthority
                 join profile in dbContext.UserGovernanceProfiles.AsNoTracking()
                     on tenant.Id equals profile.SubjectId
                 where normalizedIds.Contains(tenant.Id) &&
+                      tenant.IsActive &&
                       tenant.Status == TenantStatus.Active &&
                       tenant.DeletedAtUtc == null &&
                       profile.Role == UserGovernanceRole.Vendor &&

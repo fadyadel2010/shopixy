@@ -141,6 +141,49 @@ public sealed class ProductVariantStockMutationSupportIntegrationTests
     }
 
     [Fact]
+    public async Task BuildCommittedStockEventsAsync_CoalescesRepeatedStockChanges()
+    {
+        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||
+            databaseScope is null ||
+            tenantContext is null)
+        {
+            return;
+        }
+
+        using var scope = databaseScope;
+        await using var context = scope.CreateDbContext(tenantContext);
+        var seeded = await SeedInventoryAsync(context, tenantId);
+        var variant = await context.ProductVariants.SingleAsync(candidate => candidate.Id == seeded.PrimaryVariantId);
+        variant.StockUpdatedAtUtc = DateTime.UtcNow;
+        await context.SaveChangesAsync();
+
+        var events = await ProductVariantStockMutationSupport.BuildCommittedStockEventsAsync(
+            context,
+            tenantId,
+            [
+                ProductVariantStockMutationSupport.BuildPendingStockChange(
+                    seeded.PrimaryVariantId,
+                    variant.ProductId,
+                    seeded.WarehouseId,
+                    10m,
+                    12m,
+                    "SaleRevert"),
+                ProductVariantStockMutationSupport.BuildPendingStockChange(
+                    seeded.PrimaryVariantId,
+                    variant.ProductId,
+                    seeded.WarehouseId,
+                    12m,
+                    8m,
+                    "Sale")
+            ]);
+
+        var stockEvent = Assert.Single(events);
+        Assert.Equal(10m, stockEvent.OldQuantity);
+        Assert.Equal(8m, stockEvent.NewQuantity);
+        Assert.Equal("Sale", stockEvent.Reason);
+    }
+
+    [Fact]
     public async Task LockMultipleStocksAsync_AcquiresLocksInDeterministicOrder_PreventingDeadlocks()
     {
         if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out var tenantId, out var tenantContext) ||

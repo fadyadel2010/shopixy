@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useDebounce } from '../../hooks/useDebounce'
 import {
     applyGovernanceAction,
+    applyVendorCertificationAction,
     getGovernedUserDetails,
     getGovernedUsers,
     type GovernanceRiskLevel,
@@ -162,6 +163,43 @@ export default function UsersPage() {
             await usersQuery.refetch()
         } catch (error) {
             setActionError(error instanceof Error ? error.message : t('superAdmin.usersPage.feedback.applyActionFailed'))
+        }
+    }
+
+    async function runVendorCertificationAction(
+        action: 'vendor-verification' | 'marketplace-approval',
+        enabled: boolean,
+    ) {
+        if (!detailsQuery.data || detailsQuery.data.role !== 'Vendor') return
+
+        const actionLabel = action === 'vendor-verification'
+            ? enabled
+                ? t('superAdmin.usersPage.actions.verifyVendor')
+                : t('superAdmin.usersPage.actions.revokeVendorVerification')
+            : enabled
+                ? t('superAdmin.usersPage.actions.approveMarketplace')
+                : t('superAdmin.usersPage.actions.revokeMarketplaceApproval')
+        const reason = window.prompt(
+            t('superAdmin.usersPage.prompts.reasonForAction', { action: actionLabel }),
+        )?.trim()
+        if (!reason || reason.length < 3) return
+
+        setActionError(null)
+        try {
+            const updated = await applyVendorCertificationAction(
+                detailsQuery.data.id,
+                action,
+                enabled,
+                reason,
+            )
+
+            queryClient.setQueryData(
+                ['super-admin', 'governance', 'details', updated.id, updated.role],
+                updated,
+            )
+            await usersQuery.refetch()
+        } catch (error) {
+            setActionError(error instanceof Error ? error.message : t('superAdmin.usersPage.feedback.applyCertificationFailed'))
         }
     }
 
@@ -375,6 +413,50 @@ export default function UsersPage() {
                                     </div>
                                 </div>
                             </div>
+
+                            {detailsQuery.data.role === 'Vendor' ? (
+                                <div className="rounded-3xl border border-sky-200 bg-sky-50 p-4">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-sky-800">{t('superAdmin.usersPage.detail.marketplaceAccess')}</p>
+                                    <p className="mt-2 text-sm leading-6 text-sky-950/75">{t('superAdmin.usersPage.detail.marketplaceAccessDescription')}</p>
+                                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                                        <div className="rounded-2xl border border-white/80 bg-white p-4">
+                                            <p className="text-sm font-semibold text-slate-950">{t('superAdmin.usersPage.detail.vendorVerification')}</p>
+                                            <p className={`mt-2 text-sm font-medium ${detailsQuery.data.isKycVerified ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                                {detailsQuery.data.isKycVerified
+                                                    ? t('superAdmin.usersPage.detail.verified')
+                                                    : t('superAdmin.usersPage.detail.pending')}
+                                            </p>
+                                            <button
+                                                type="button"
+                                                className="mt-4 rounded-xl border border-sky-200 bg-sky-100 px-3 py-2 text-sm font-semibold text-sky-950"
+                                                onClick={() => runVendorCertificationAction('vendor-verification', !detailsQuery.data.isKycVerified)}
+                                            >
+                                                {detailsQuery.data.isKycVerified
+                                                    ? t('superAdmin.usersPage.actions.revokeVendorVerification')
+                                                    : t('superAdmin.usersPage.actions.verifyVendor')}
+                                            </button>
+                                        </div>
+                                        <div className="rounded-2xl border border-white/80 bg-white p-4">
+                                            <p className="text-sm font-semibold text-slate-950">{t('superAdmin.usersPage.detail.marketplaceApproval')}</p>
+                                            <p className={`mt-2 text-sm font-medium ${detailsQuery.data.isMarketplaceApproved ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                                {detailsQuery.data.isMarketplaceApproved
+                                                    ? t('superAdmin.usersPage.detail.approved')
+                                                    : t('superAdmin.usersPage.detail.pending')}
+                                            </p>
+                                            <button
+                                                type="button"
+                                                disabled={!detailsQuery.data.isKycVerified && !detailsQuery.data.isMarketplaceApproved}
+                                                className="mt-4 rounded-xl border border-emerald-200 bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-950 disabled:cursor-not-allowed disabled:opacity-50"
+                                                onClick={() => runVendorCertificationAction('marketplace-approval', !detailsQuery.data.isMarketplaceApproved)}
+                                            >
+                                                {detailsQuery.data.isMarketplaceApproved
+                                                    ? t('superAdmin.usersPage.actions.revokeMarketplaceApproval')
+                                                    : t('superAdmin.usersPage.actions.approveMarketplace')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : null}
 
                             <div className="rounded-3xl border border-slate-200 bg-white p-4">
                                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">{t('superAdmin.usersPage.detail.riskIndicators')}</p>

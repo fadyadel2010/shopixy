@@ -284,6 +284,10 @@ public class SuppliersController : ControllerBase
                 CreatedAt = paymentTimestamp,
                 UpdatedAt = paymentTimestamp,
             });
+            balanceAfter = await _ledgerService.RebuildPartyTransactionBalancesAsync(
+                PartyType.Supplier,
+                supplier.Id,
+                cancellationToken);
 
             await _accountingOutbox.EnqueueSupplierPaymentAsync(payment.TenantId, payment.Id, cancellationToken);
             await _context.SaveChangesAsync(cancellationToken);
@@ -337,6 +341,40 @@ public class SuppliersController : ControllerBase
                 message = "An error occurred while creating the supplier payment.",
             });
         }
+    }
+
+    [HttpGet("{id}/payments")]
+    public async Task<ActionResult<IReadOnlyList<SupplierPaymentHistoryResponse>>> GetSupplierPayments(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var supplierExists = await _context.Suppliers
+            .AsNoTracking()
+            .AnyAsync(supplier => supplier.Id == id && !supplier.IsDeleted, cancellationToken);
+        if (!supplierExists)
+        {
+            return NotFound(new { message = "Supplier not found." });
+        }
+
+        var payments = await _context.SupplierPayments
+            .AsNoTracking()
+            .Where(payment => payment.SupplierId == id)
+            .OrderByDescending(payment => payment.PaymentDate)
+            .ThenByDescending(payment => payment.CreatedAt)
+            .Select(payment => new SupplierPaymentHistoryResponse
+            {
+                Id = payment.Id,
+                SupplierId = payment.SupplierId,
+                TransactionDate = payment.PaymentDate,
+                Amount = payment.Amount,
+                PaymentMethod = payment.PaymentMethod,
+                ReferenceNumber = payment.ReferenceNumber,
+                Notes = payment.Notes,
+                IdempotencyKey = payment.IdempotencyKey,
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(payments);
     }
 
     [HttpPut("{id}")]
@@ -1040,6 +1078,18 @@ public record SupplierPaymentResponse
     public string? ReferenceNumber { get; set; }
     public string? Notes { get; set; }
     public decimal BalanceAfter { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public record SupplierPaymentHistoryResponse
+{
+    public Guid Id { get; set; }
+    public Guid SupplierId { get; set; }
+    public DateTime TransactionDate { get; set; }
+    public decimal Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; }
+    public string? ReferenceNumber { get; set; }
+    public string? Notes { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 

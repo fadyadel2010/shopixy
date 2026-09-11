@@ -242,6 +242,26 @@ describe('CommerceHub vendor financial participation authority', () => {
         }, currentUser)).toBeNull()
     })
 
+    it('accepts the canonical at-risk debt state on finance and repayment dashboards', () => {
+        expect(deriveVendorFinancialDashboardPresentation({
+            ...financeDashboard,
+            debtStatus: 'AT_RISK',
+            isAtRisk: true,
+            amountOwedByVendor: 132,
+        }, currentUser)).toMatchObject({
+            debtStatus: 'AT_RISK',
+            amountOwedByVendor: 132,
+        })
+        expect(deriveVendorPaymentsDashboardPresentation({
+            ...paymentsDashboard,
+            debtStatus: 'AT_RISK',
+            amountOwedByVendor: 132,
+        }, currentUser)).toMatchObject({
+            debtStatus: 'AT_RISK',
+            amountOwedByVendor: 132,
+        })
+    })
+
     it('derives earnings, payout methods, and payout history only from current backend authority', () => {
         expect(deriveVendorEarningsDashboardPresentation(earningsDashboard, currentUser)).toMatchObject({
             vendorId: currentUser.tenantId,

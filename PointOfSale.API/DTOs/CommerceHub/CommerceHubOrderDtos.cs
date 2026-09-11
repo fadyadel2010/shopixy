@@ -75,8 +75,38 @@ public class CommerceHubUpdateSubOrderStatusRequestDto
 {
     public OrderStatus Status { get; set; }
 
+    [Range(1, long.MaxValue)]
+    public long? ExpectedVersion { get; set; }
+
     [StringLength(500)]
     public string? Reason { get; set; }
+}
+
+public sealed class CommerceHubVendorOrderActionAuthorityDto
+{
+    public Guid TenantId { get; set; }
+    public Guid StoreId { get; set; }
+    public Guid MarketplaceOrderId { get; set; }
+    public Guid SubOrderId { get; set; }
+    public string OrderNumber { get; set; } = string.Empty;
+    public OrderStatus CurrentStatus { get; set; }
+    public PaymentStatus PaymentStatus { get; set; }
+    public string PaymentMethodCode { get; set; } = string.Empty;
+    public long LifecycleVersion { get; set; }
+    public bool PaymentReady { get; set; }
+    public bool InventoryReady { get; set; }
+    public string? PaymentReadinessMessage { get; set; }
+    public string? InventoryReadinessMessage { get; set; }
+    public string? LifecycleMessage { get; set; }
+    public List<CommerceHubVendorOrderActionDto> AvailableActions { get; set; } = new();
+}
+
+public sealed class CommerceHubVendorOrderActionDto
+{
+    public string Code { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public OrderStatus TargetStatus { get; set; }
+    public bool RequiresReason { get; set; }
 }
 
 public class CommerceHubPaymentInitiateRequestDto
@@ -210,6 +240,7 @@ public class CommerceHubPaymentCallbackResultDto
 {
     public bool IsValid { get; set; }
     public bool IsSuccess { get; set; }
+    public bool IsTerminalFailure { get; set; }
     public Guid? TenantId { get; set; }
     public Guid? OrderId { get; set; }
     public Guid? PaymentId { get; set; }

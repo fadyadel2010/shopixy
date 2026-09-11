@@ -654,10 +654,10 @@ public class ReportsController : ControllerBase, IActionFilter
 
             var asOfDate = request.AsOfDate?.Date ?? DateTime.UtcNow.Date;
             var asOfDateUtc = DateTime.SpecifyKind(asOfDate.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
-            var currentBoundary = asOfDateUtc;
-            var days30Boundary = asOfDateUtc.AddDays(-30);
-            var days60Boundary = asOfDateUtc.AddDays(-60);
-            var days90Boundary = asOfDateUtc.AddDays(-90);
+            var currentBoundary = DateTime.SpecifyKind(asOfDate, DateTimeKind.Utc);
+            var days30Boundary = currentBoundary.AddDays(-30);
+            var days60Boundary = currentBoundary.AddDays(-60);
+            var days90Boundary = currentBoundary.AddDays(-90);
 
             var customerBalances = await _context.AccountLedgers
                 .AsNoTracking()
@@ -783,10 +783,10 @@ public class ReportsController : ControllerBase, IActionFilter
 
             var asOfDate = request.AsOfDate?.Date ?? DateTime.UtcNow.Date;
             var asOfDateUtc = DateTime.SpecifyKind(asOfDate.AddDays(1).AddTicks(-1), DateTimeKind.Utc);
-            var currentBoundary = asOfDateUtc;
-            var days30Boundary = asOfDateUtc.AddDays(-30);
-            var days60Boundary = asOfDateUtc.AddDays(-60);
-            var days90Boundary = asOfDateUtc.AddDays(-90);
+            var currentBoundary = DateTime.SpecifyKind(asOfDate, DateTimeKind.Utc);
+            var days30Boundary = currentBoundary.AddDays(-30);
+            var days60Boundary = currentBoundary.AddDays(-60);
+            var days90Boundary = currentBoundary.AddDays(-90);
 
             var supplierBalances = await _context.AccountLedgers
                 .AsNoTracking()

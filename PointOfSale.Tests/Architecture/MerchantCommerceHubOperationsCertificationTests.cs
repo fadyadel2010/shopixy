@@ -13,6 +13,13 @@ public sealed class MerchantCommerceHubOperationsCertificationTests
         Assert.Contains("error?.response?.data?.message || error?.message || fallbackMessage", frontend, StringComparison.Ordinal);
         Assert.Contains("Configure at least one active shipping method before publishing products to CommerceHub.", handlers, StringComparison.Ordinal);
         Assert.Contains("CommerceHub price overrides are disabled for this tenant.", handlers, StringComparison.Ordinal);
+        Assert.Contains("IsCommerceHubPriceOverrideEnabled = isCommerceHubPriceOverrideEnabled", controller, StringComparison.Ordinal);
+        Assert.Contains("variant.isCommerceHubPriceOverrideEnabled", frontend, StringComparison.Ordinal);
+        Assert.Contains("? state.commerceHubPrice || null", frontend, StringComparison.Ordinal);
+        Assert.Contains("IsCommerceHubPublicationEligible", controller, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPublicationEligibilityPolicy.GetBlockingMessage", handlers, StringComparison.Ordinal);
+        Assert.Contains("variant.isCommerceHubPublicationEligible === false", frontend, StringComparison.Ordinal);
+        Assert.Contains("publicationEligibilityMessage", frontend, StringComparison.Ordinal);
         Assert.Contains("CommerceHub category is not currently available for listing publication.", handlers, StringComparison.Ordinal);
         Assert.Contains("[HttpPost(\"publish\")]", controller, StringComparison.Ordinal);
         Assert.Contains("[HttpPut(\"update\")]", controller, StringComparison.Ordinal);

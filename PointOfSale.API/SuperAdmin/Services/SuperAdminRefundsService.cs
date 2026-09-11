@@ -636,6 +636,11 @@ public sealed class SuperAdminRefundsService : ISuperAdminRefundsService
                     PaymentId = executedRefund?.PaymentId,
                     GatewayStatus = executedRefund?.GatewayStatus,
                     GatewayReference = executedRefund?.Reference,
+                    IsDevelopmentSimulation = executedRefund?.GatewayStatus is
+                        "development-simulated-cod-refund" or
+                        "development-simulated-online-refund",
+                    ExternalMoneyMovementConfirmed = executedRefund?.Status == CommerceHubRefundStatus.Completed &&
+                        string.Equals(executedRefund.GatewayStatus, "manual-confirmed", StringComparison.Ordinal),
                     CommissionReversalAmount = executedRefund?.CommissionReversalAmount ?? 0m,
                     VendorEarningReversalAmount = executedRefund?.VendorEarningReversalAmount ?? 0m,
                     IsPostPayoutAdjustment = executedRefund?.IsPostPayoutAdjustment ?? false,

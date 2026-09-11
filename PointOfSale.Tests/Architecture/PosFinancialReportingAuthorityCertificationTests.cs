@@ -32,6 +32,20 @@ public sealed class PosFinancialReportingAuthorityCertificationTests
     }
 
     [Fact]
+    public void PartyAging_CurrentBucket_MustStartAtTheBeginningOfTheAsOfDate()
+    {
+        var reports = ReadRepoFile("PointOfSale.API/Controllers/ReportsController.cs");
+        var agingStart = reports.IndexOf("#region Accounts Receivable Aging", StringComparison.Ordinal);
+        var agingEnd = reports.IndexOf("#region Sales Summary", agingStart, StringComparison.Ordinal);
+        var agingSource = reports[agingStart..agingEnd];
+
+        Assert.Equal(2, CountOccurrences(
+            agingSource,
+            "var currentBoundary = DateTime.SpecifyKind(asOfDate, DateTimeKind.Utc);"));
+        Assert.DoesNotContain("var currentBoundary = asOfDateUtc;", agingSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void DashboardFinancialCards_MustNotUseShadowBalancesOrCachedTotals()
     {
         var dashboard = ReadRepoFile("PointOfSale.API/Controllers/DashboardController.cs");
@@ -128,4 +142,7 @@ public sealed class PosFinancialReportingAuthorityCertificationTests
 
         return File.ReadAllText(path);
     }
+
+    private static int CountOccurrences(string source, string value) =>
+        source.Split(value, StringSplitOptions.None).Length - 1;
 }

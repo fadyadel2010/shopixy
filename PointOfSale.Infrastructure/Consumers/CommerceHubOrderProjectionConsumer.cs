@@ -13,7 +13,8 @@ namespace PointOfSale.Infrastructure.Consumers;
 public class CommerceHubOrderProjectionConsumer :
     IConsumer<CommerceHubMarketplaceOrderCreatedEvent>,
     IConsumer<CommerceHubMarketplaceOrderStatusUpdatedEvent>,
-    IConsumer<CommerceHubSubOrderStatusUpdatedEvent>
+    IConsumer<CommerceHubSubOrderStatusUpdatedEvent>,
+    IConsumer<CommerceHubRefundFinanciallyExecutedEvent>
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IMongoCollection<CommerceHubOrderDocument> _collection;
@@ -37,6 +38,9 @@ public class CommerceHubOrderProjectionConsumer :
         ProjectAsync(context.Message.MarketplaceOrderId, context.Message.EventId, context.Message.OccurredAtUtc, context.Message.EventVersion, context.CancellationToken);
 
     public Task Consume(ConsumeContext<CommerceHubSubOrderStatusUpdatedEvent> context) =>
+        ProjectAsync(context.Message.MarketplaceOrderId, context.Message.EventId, context.Message.OccurredAtUtc, context.Message.EventVersion, context.CancellationToken);
+
+    public Task Consume(ConsumeContext<CommerceHubRefundFinanciallyExecutedEvent> context) =>
         ProjectAsync(context.Message.MarketplaceOrderId, context.Message.EventId, context.Message.OccurredAtUtc, context.Message.EventVersion, context.CancellationToken);
 
     private async Task ProjectAsync(

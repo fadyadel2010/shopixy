@@ -2252,7 +2252,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 var oldPaymentStatus = order.PaymentStatus;
                 var oldOrderStatus = order.Status;
                 ApplySuccessfulPaymentAllocation(order, amount);
-                var reservedQuantityToCommit = await GetOpenReservationQuantityAsync(order.Id, ct);
+                var reservedQuantityToCommit = await GetOpenReservationQuantityAsync(order.TenantId, order.Id, ct);
 
                 TransitionCheckoutState(order, CheckoutState.Paid);
                 order.PaymentStatus = PaymentStatus.Collected;
@@ -2619,7 +2619,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 using var orderStatusScope = OrderStatusSaveChangesInterceptor.BeginAuthorizedContext();
                 var oldPaymentStatus = order.PaymentStatus;
                 var oldOrderStatus = order.Status;
-                var reservedQuantityToRelease = await GetOpenReservationQuantityAsync(order.Id, ct);
+                var reservedQuantityToRelease = await GetOpenReservationQuantityAsync(order.TenantId, order.Id, ct);
 
                 TransitionCheckoutState(
                     order,
@@ -3753,7 +3753,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         PaymentLifecycleOutcome outcome,
         CancellationToken ct)
     {
-        var remainingReservedQuantity = await GetOpenReservationQuantityAsync(order.Id, ct);
+        var remainingReservedQuantity = await GetOpenReservationQuantityAsync(order.TenantId, order.Id, ct);
         
         // ----------------------------------------------------------------------
         // CRITICAL: Always return Commit/Release based on outcome, even if inventory
@@ -3791,10 +3791,13 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         return (PaymentInventoryAction.Release, remainingReservedQuantity);
     }
 
-    private async Task<decimal> GetOpenReservationQuantityAsync(Guid orderId, CancellationToken ct)
+    private async Task<decimal> GetOpenReservationQuantityAsync(Guid tenantId, Guid orderId, CancellationToken ct)
     {
         return await _db.InventoryReservations
-            .Where(reservation => reservation.OrderId == orderId && !reservation.IsDeleted)
+            .Where(reservation =>
+                reservation.TenantId == tenantId &&
+                reservation.OrderId == orderId &&
+                !reservation.IsDeleted)
             .Select(reservation => (decimal?)(reservation.ReservedQuantity - reservation.CommittedQuantity - reservation.ReleasedQuantity))
             .SumAsync(ct) ?? 0m;
     }
@@ -3919,7 +3922,7 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             if (!string.Equals(failureCode, "RESERVED_STOCK_NOT_ALLOCATED", StringComparison.Ordinal))
             {
-                var reservedQuantityToRelease = await GetOpenReservationQuantityAsync(order.Id, ct);
+                var reservedQuantityToRelease = await GetOpenReservationQuantityAsync(order.TenantId, order.Id, ct);
                 if (reservedQuantityToRelease > 0m)
                 {
                     var inventoryReleased = await _stockRepository.ReleaseOrderReservationsAsync(order.TenantId, order.Id, ct);

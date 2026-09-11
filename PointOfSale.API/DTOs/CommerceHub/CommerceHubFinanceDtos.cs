@@ -5,6 +5,7 @@ namespace PointOfSale.API.DTOs.CommerceHub;
 public class CommerceHubCreatePayoutRequestDto
 {
     public List<Guid> EarningIds { get; set; } = new();
+    public Guid? PayoutMethodId { get; set; }
     public CommerceHubPayoutMethod Method { get; set; } = CommerceHubPayoutMethod.Manual;
     public string IdempotencyKey { get; set; } = string.Empty;
     public string? Reference { get; set; }

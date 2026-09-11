@@ -25,8 +25,8 @@ public sealed class MarketplaceFinanceRiskCertificationTests
         Assert.Contains("ValidateOrderFinancialIntegrity", ledger, StringComparison.Ordinal);
         Assert.Contains("ValidateRefundFinancialIntegrity", ledger, StringComparison.Ordinal);
         Assert.Contains("ValidatePayoutFinancialIntegrity", ledger, StringComparison.Ordinal);
-        Assert.Contains("FinancialCurrencyGuard.RequireCurrency", ledger, StringComparison.Ordinal);
-        Assert.Contains("FinancialCurrencyGuard.RequireCurrency", transaction, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", ledger, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", transaction, StringComparison.Ordinal);
         Assert.Contains("CommerceHubFinancialTransaction", dbContext, StringComparison.Ordinal);
         Assert.Contains("records are append-only and cannot be updated", dbContext, StringComparison.Ordinal);
     }
@@ -98,7 +98,7 @@ public sealed class MarketplaceFinanceRiskCertificationTests
         Assert.Contains("EnsureNoProcessingPayoutForRefundEarningsAsync", refundExecution, StringComparison.Ordinal);
         Assert.Contains("CaptureStateForUpdateAsync", refund, StringComparison.Ordinal);
         Assert.Contains("CaptureStateForUpdateAsync", refundExecution, StringComparison.Ordinal);
-        Assert.Contains("FinancialCurrencyGuard.RequireCurrency", safety, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", safety, StringComparison.Ordinal);
 
         Assert.Contains("critical", readiness, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("blocked", readiness, StringComparison.OrdinalIgnoreCase);

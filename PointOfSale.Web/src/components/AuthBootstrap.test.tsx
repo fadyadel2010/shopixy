@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { StrictMode, act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -122,6 +122,33 @@ describe('POS auth bootstrap runtime hardening', () => {
         })
 
         expect(useAuthStore.getState().user?.id).toBe(replacementUser.id)
+    })
+
+    it('restarts an in-flight bootstrap after the StrictMode effect replay', async () => {
+        const abandonedRequest = createDeferred()
+        apiMock.get
+            .mockReturnValueOnce(abandonedRequest.promise)
+            .mockResolvedValueOnce({ data: { user: authenticatedUser } })
+
+        render(
+            <StrictMode>
+                <AuthBootstrap />
+            </StrictMode>,
+        )
+
+        await waitFor(() => {
+            expect(apiMock.get).toHaveBeenCalledTimes(2)
+            const state = useAuthStore.getState()
+            expect(state.isAuthenticated).toBe(true)
+            expect(state.hasHydrated).toBe(true)
+        })
+
+        await act(async () => {
+            abandonedRequest.resolve({ data: { user: { ...authenticatedUser, id: 'stale-user' } } })
+            await Promise.resolve()
+        })
+
+        expect(useAuthStore.getState().user?.id).toBe(authenticatedUser.id)
     })
 
     it('does not render protected content for a persisted session before backend bootstrap proves authority', () => {

@@ -7,10 +7,11 @@ public sealed class CommerceHubSearchVisibilityCertificationTests
     {
         var queryService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs");
 
-        Assert.Contains("RecomposeVisibleListingItemsAsync", queryService, StringComparison.Ordinal);
-        Assert.Contains("Total = visibleItems.Count", queryService, StringComparison.Ordinal);
-        Assert.Contains("TotalCount = visibleItems.Count", queryService, StringComparison.Ordinal);
-        Assert.Contains("MapSqlVisibleFacetsAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("SearchSqlAuthorityFirstAsync", queryService, StringComparison.Ordinal);
+        Assert.Contains("var totalCount = authorityItems.Count", queryService, StringComparison.Ordinal);
+        Assert.Contains("OrderAuthorityItems(authorityItems, request)", queryService, StringComparison.Ordinal);
+        Assert.Contains(".Skip(PaginationGuard.GetSkip(page, pageSize))", queryService, StringComparison.Ordinal);
+        Assert.Contains("TotalCount = totalCount", queryService, StringComparison.Ordinal);
         Assert.Contains("RecomposeVisibleSuggestionProductsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("RecomposeVisibleAutocompleteProductsAsync", queryService, StringComparison.Ordinal);
         Assert.Contains("FilterLiveSuggestionTermsAsync", queryService, StringComparison.Ordinal);

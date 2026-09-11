@@ -45,12 +45,31 @@ public sealed class PosCartRuntimeService : IPosCartRuntimeService
                 var tenantId = _tenantContext.RequiredTenantId;
                 var now = DateTime.UtcNow;
 
+                var expiredOpenCarts = await _context.PosCarts
+                    .Where(cart =>
+                        cart.TenantId == tenantId &&
+                        cart.CashierId == cashierId &&
+                        (cart.Status == PosCartStatus.Active ||
+                         cart.Status == PosCartStatus.Held ||
+                         cart.Status == PosCartStatus.Recovered) &&
+                        cart.ExpiresAtUtc <= now)
+                    .ToListAsync(cancellationToken);
+
+                foreach (var expiredCart in expiredOpenCarts)
+                {
+                    expiredCart.Status = PosCartStatus.Expired;
+                    expiredCart.ExpiredAtUtc = now;
+                    TouchCart(expiredCart, now);
+                    StageOutbox(expiredCart, "PosCartExpired", $"AUTO_EXPIRE:{expiredCart.Id:N}", now);
+                }
+
                 var activeCartExists = await _context.PosCarts.AnyAsync(cart =>
                     cart.TenantId == tenantId &&
                     cart.CashierId == cashierId &&
                     (cart.Status == PosCartStatus.Active ||
                      cart.Status == PosCartStatus.Held ||
-                     cart.Status == PosCartStatus.Recovered),
+                     cart.Status == PosCartStatus.Recovered) &&
+                    cart.ExpiresAtUtc > now,
                     cancellationToken);
                 if (activeCartExists)
                 {
@@ -104,6 +123,30 @@ public sealed class PosCartRuntimeService : IPosCartRuntimeService
         if (cart == null || cart.CashierId != cashierId)
         {
             return PosCartServiceResult<PosCartResponse>.NotFound("POS cart not found.");
+        }
+
+        return PosCartServiceResult<PosCartResponse>.Ok(ToResponse(cart));
+    }
+
+    public async Task<PosCartServiceResult<PosCartResponse>> GetOpenAsync(
+        Guid cashierId,
+        CancellationToken cancellationToken = default)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        var cart = await _context.PosCarts
+            .Include(candidate => candidate.Items.OrderBy(item => item.LineNumber))
+            .Where(candidate =>
+                candidate.TenantId == tenantId &&
+                candidate.CashierId == cashierId &&
+                (candidate.Status == PosCartStatus.Active ||
+                 candidate.Status == PosCartStatus.Held ||
+                 candidate.Status == PosCartStatus.Recovered))
+            .OrderByDescending(candidate => candidate.UpdatedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (cart == null)
+        {
+            return PosCartServiceResult<PosCartResponse>.NotFound("Open POS cart not found.");
         }
 
         return PosCartServiceResult<PosCartResponse>.Ok(ToResponse(cart));
@@ -521,13 +564,13 @@ public sealed class PosCartRuntimeService : IPosCartRuntimeService
                     unit.ProductId == request.ProductId &&
                     unit.IsDefault,
                     cancellationToken);
-            if (productUnit == null)
+            if (productUnit == null && !product.HasVariants)
             {
                 return ItemSnapshotResult.Fail("Default unit is not configured for product.");
             }
 
-            unitId = productUnit.UnitId;
-            conversionFactor = productUnit.ConversionFactor;
+            unitId = productUnit?.UnitId;
+            conversionFactor = productUnit?.ConversionFactor ?? 1m;
         }
 
         if (conversionFactor <= 0)
@@ -548,7 +591,7 @@ public sealed class PosCartRuntimeService : IPosCartRuntimeService
             return ItemSnapshotResult.Fail("Insufficient stock for POS cart item.");
         }
 
-        var unitPrice = RoundCurrency(productUnit.SellingPrice ?? variant.Price * conversionFactor);
+        var unitPrice = RoundCurrency(productUnit?.SellingPrice ?? variant.Price * conversionFactor);
         var lineSubtotal = RoundCurrency(request.Quantity * unitPrice);
         var discount = RoundCurrency(request.DiscountAmount);
         if (discount > lineSubtotal)

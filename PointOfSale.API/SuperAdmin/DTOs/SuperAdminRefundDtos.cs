@@ -192,6 +192,8 @@ public sealed class SuperAdminRefundExecutionDto
     public Guid? PaymentId { get; init; }
     public string? GatewayStatus { get; init; }
     public string? GatewayReference { get; init; }
+    public bool IsDevelopmentSimulation { get; init; }
+    public bool ExternalMoneyMovementConfirmed { get; init; }
     public decimal CommissionReversalAmount { get; init; }
     public decimal VendorEarningReversalAmount { get; init; }
     public bool IsPostPayoutAdjustment { get; init; }

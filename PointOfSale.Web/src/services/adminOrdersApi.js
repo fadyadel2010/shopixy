@@ -52,7 +52,7 @@ function resolveTenantId() {
     return useAuthStore.getState().user?.tenantId || ''
 }
 
-function buildTenantHeaders() {
+export function buildTenantHeaders() {
     const tenantId = resolveTenantId()
 
     if (!tenantId) {
@@ -78,6 +78,10 @@ function buildOrderQueryParams(filters) {
 
     if (filters.paymentStatus) {
         params.set('paymentStatus', filters.paymentStatus)
+    }
+
+    if (filters.source) {
+        params.set('source', filters.source)
     }
 
     if (filters.fromDate) {
@@ -132,6 +136,19 @@ export async function getAdminOrderDetails(orderId, signal) {
         return requireVendorOrderVisibilityAuthority(lifecycleAccepted, useAuthStore.getState().user, orderId)
     } catch (error) {
         throw mapAdminOrdersError(error, 'Unable to load order details right now.')
+    }
+}
+
+export async function confirmAdminReturnReceipt(returnId, payload) {
+    try {
+        const response = await api.post(
+            `/pos-admin/returns/${returnId}/confirm-receipt`,
+            payload,
+            { headers: buildTenantHeaders() },
+        )
+        return response.data
+    } catch (error) {
+        throw mapAdminOrdersError(error, 'Unable to confirm this return receipt right now.')
     }
 }
 

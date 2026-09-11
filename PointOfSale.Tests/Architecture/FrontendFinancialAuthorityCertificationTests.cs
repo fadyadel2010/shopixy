@@ -80,7 +80,7 @@ public sealed class FrontendFinancialAuthorityCertificationTests
 
         Assert.Contains("CUSTOMER_SESSION_REVALIDATION_INTERVAL_MS = 30_000", bootstrap, StringComparison.Ordinal);
         Assert.Contains("window.setInterval(() => void revalidateSession()", bootstrap, StringComparison.Ordinal);
-        Assert.Contains("window.addEventListener(\"focus\", revalidateSession)", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener(\"focus\", handleBackgroundRevalidation)", bootstrap, StringComparison.Ordinal);
         Assert.Contains("document.addEventListener(\"visibilitychange\", handleVisibility)", bootstrap, StringComparison.Ordinal);
         Assert.Contains("queryClient.removeQueries", bootstrap, StringComparison.Ordinal);
         Assert.Contains("CUSTOMER_SESSION_LOGOUT_STORAGE_KEY", bootstrap, StringComparison.Ordinal);

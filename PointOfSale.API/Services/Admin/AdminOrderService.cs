@@ -86,6 +86,11 @@ public class AdminOrderService : IAdminOrderService
                 o.Source == OrderSource.Ecommerce)
             .AsNoTracking();
 
+        if (query.Source == OrderSource.Marketplace)
+        {
+            standardOrdersQuery = standardOrdersQuery.Where(_ => false);
+        }
+
         if (query.Status.HasValue)
         {
             standardOrdersQuery = standardOrdersQuery.Where(o => o.Status == query.Status.Value);
@@ -134,6 +139,11 @@ public class AdminOrderService : IAdminOrderService
                 CustomerId = o.CustomerId,
                 CustomerName = o.Customer != null ? o.Customer.Name : o.GuestName,
                 TotalAmount = o.Total,
+                SubtotalAmount = o.Subtotal,
+                ShippingAmount = o.ShippingCost,
+                ItemCount = o.Items.Count,
+                TotalQuantity = o.Items.Sum(item => item.Quantity),
+                ProductSummary = o.Items.OrderBy(item => item.Id).Select(item => item.ProductName).FirstOrDefault(),
                 Currency = o.Currency,
                 Status = o.Status,
                 PaymentStatus = o.PaymentStatus,
@@ -151,6 +161,11 @@ public class AdminOrderService : IAdminOrderService
                 !subOrder.IsDeleted &&
                 subOrder.StoreId == tenantId &&
                 !subOrder.MarketplaceOrder.IsDeleted);
+
+        if (query.Source == OrderSource.Ecommerce)
+        {
+            marketplaceOrdersQuery = marketplaceOrdersQuery.Where(_ => false);
+        }
 
         if (query.CustomerId.HasValue)
         {
@@ -196,6 +211,11 @@ public class AdminOrderService : IAdminOrderService
                 CustomerId = null,
                 CustomerName = subOrder.MarketplaceOrder.FullName,
                 TotalAmount = subOrder.Total,
+                SubtotalAmount = subOrder.Subtotal,
+                ShippingAmount = subOrder.Shipping,
+                ItemCount = subOrder.Items.Count,
+                TotalQuantity = subOrder.Items.Sum(item => item.Quantity),
+                ProductSummary = subOrder.Items.OrderBy(item => item.Id).Select(item => item.ProductName).FirstOrDefault(),
                 Currency = subOrder.Currency,
                 Status = subOrder.Status,
                 PaymentStatus = subOrder.PaymentStatus,
@@ -266,6 +286,11 @@ public class AdminOrderService : IAdminOrderService
         CustomerId = row.CustomerId,
         CustomerName = row.CustomerName,
         TotalAmount = row.TotalAmount,
+        SubtotalAmount = row.SubtotalAmount,
+        ShippingAmount = row.ShippingAmount,
+        ItemCount = row.ItemCount,
+        TotalQuantity = row.TotalQuantity,
+        ProductSummary = row.ProductSummary,
         Currency = row.Currency,
         Status = row.Status,
         PaymentStatus = row.PaymentStatus,
@@ -285,6 +310,11 @@ public class AdminOrderService : IAdminOrderService
         public Guid? CustomerId { get; init; }
         public string? CustomerName { get; init; }
         public decimal TotalAmount { get; init; }
+        public decimal SubtotalAmount { get; init; }
+        public decimal ShippingAmount { get; init; }
+        public int ItemCount { get; init; }
+        public int TotalQuantity { get; init; }
+        public string? ProductSummary { get; init; }
         public string Currency { get; init; } = string.Empty;
         public OrderStatus Status { get; init; }
         public PaymentStatus PaymentStatus { get; init; }
@@ -1522,11 +1552,38 @@ public class AdminOrderService : IAdminOrderService
             })
             .ToDictionaryAsync(lineage => lineage.OrderId, cancellationToken);
 
+        var refundRows = await (
+                from refund in _context.CommerceHubRefundRequests.AsNoTracking()
+                join item in _context.CommerceHubSubOrderItems.AsNoTracking() on refund.OrderItemId equals item.Id
+                where marketplaceOrderIds.Contains(item.SubOrderId) &&
+                      refund.VendorId == tenantId &&
+                      !refund.IsDeleted &&
+                      !item.IsDeleted
+                select new { item.SubOrderId, Refund = refund })
+            .ToListAsync(cancellationToken);
+        var latestRefundBySubOrder = refundRows
+            .GroupBy(row => row.SubOrderId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(row => row.Refund.CreatedAt).ThenByDescending(row => row.Refund.Id).First().Refund);
+        var latestRefundIds = latestRefundBySubOrder.Values.Select(refund => refund.Id).ToArray();
+        var returnStatuses = await _context.CommerceHubReturnRequests
+            .AsNoTracking()
+            .Where(returnRequest => latestRefundIds.Contains(returnRequest.RefundId) && !returnRequest.IsDeleted)
+            .Select(returnRequest => new { returnRequest.RefundId, returnRequest.Status })
+            .ToDictionaryAsync(row => row.RefundId, row => row.Status.ToString(), cancellationToken);
+
         foreach (var order in orders.Where(order => order.IsMarketplaceOrder))
         {
             if (evidence.TryGetValue(order.OrderId, out var lineage))
             {
                 order.MarketplaceLineage = lineage;
+            }
+
+            if (latestRefundBySubOrder.TryGetValue(order.OrderId, out var refund))
+            {
+                order.RefundStatus = refund.Status.ToString();
+                order.ReturnStatus = returnStatuses.GetValueOrDefault(refund.Id);
             }
         }
     }
@@ -1552,6 +1609,29 @@ public class AdminOrderService : IAdminOrderService
             .AsNoTracking()
             .Where(returnRequest => refundIds.Contains(returnRequest.RefundId) && !returnRequest.IsDeleted)
             .ToDictionaryAsync(returnRequest => returnRequest.RefundId, cancellationToken);
+        var trackedRefundLookup = await _context.CommerceHubRefunds
+            .AsNoTracking()
+            .Where(refund =>
+                refund.TenantId == subOrder.StoreId &&
+                refund.SubOrderId == subOrder.Id &&
+                refund.RefundRequestId.HasValue &&
+                refundIds.Contains(refund.RefundRequestId.Value) &&
+                !refund.IsDeleted)
+            .GroupBy(refund => refund.RefundRequestId!.Value)
+            .Select(group => group.OrderByDescending(refund => refund.CreatedAt).First())
+            .ToDictionaryAsync(refund => refund.RefundRequestId!.Value, cancellationToken);
+        var executionLookup = await _context.CommerceHubRefundExecutions
+            .AsNoTracking()
+            .Where(execution => refundIds.Contains(execution.RefundId) && !execution.IsDeleted)
+            .GroupBy(execution => execution.RefundId)
+            .Select(group => group.OrderByDescending(execution => execution.ExecutedAt).First())
+            .ToDictionaryAsync(execution => execution.RefundId, cancellationToken);
+        var lifecycleHistory = await _context.CommerceHubSubOrderStatusHistory
+            .AsNoTracking()
+            .Where(history => history.SubOrderId == subOrder.Id && !history.IsDeleted)
+            .OrderByDescending(history => history.ChangedAtUtc)
+            .ThenByDescending(history => history.Id)
+            .ToListAsync(cancellationToken);
         var refundLookup = refundRequests
             .GroupBy(refundRequest => refundRequest.OrderItemId)
             .ToDictionary(
@@ -1563,6 +1643,7 @@ public class AdminOrderService : IAdminOrderService
             TenantId = subOrder.StoreId,
             OrderId = subOrder.Id,
             RowVersion = string.Empty,
+            CommerceHubLifecycleVersion = subOrder.ProjectionMutationVersion,
             OrderNumber = subOrder.OrderNumber,
             Status = subOrder.Status,
             PaymentStatus = subOrder.PaymentStatus,
@@ -1594,6 +1675,13 @@ public class AdminOrderService : IAdminOrderService
                         ReturnRequest = returnLookup.TryGetValue(refundRequest.Id, out var returnRequest)
                             ? CommerceHubReturnMapper.MapDetails(returnRequest, refundRequest)
                             : null,
+                        ExecutionState = ResolveRefundExecutionState(
+                            refundRequest,
+                            trackedRefundLookup.GetValueOrDefault(refundRequest.Id),
+                            executionLookup.GetValueOrDefault(refundRequest.Id)),
+                        NextAction = ResolveVendorRefundNextAction(
+                            refundRequest,
+                            returnLookup.GetValueOrDefault(refundRequest.Id)),
                         MediaUrls = evidenceLookup.TryGetValue(refundRequest.Id, out var media)
                             ? media.Select(entry => entry.Url).ToList()
                             : new List<string>(),
@@ -1607,6 +1695,14 @@ public class AdminOrderService : IAdminOrderService
             }).ToList(),
             Payments = new List<AdminPaymentIntentDto>(),
             Shipment = null,
+            CommerceHubLifecycleHistory = lifecycleHistory.Select(history => new AdminCommerceHubOrderHistoryDto
+            {
+                HistoryId = history.Id,
+                PreviousStatus = history.PreviousStatus,
+                NewStatus = history.NewStatus,
+                Reason = history.Reason,
+                ChangedAtUtc = history.ChangedAtUtc
+            }).ToList(),
             Totals = new AdminOrderTotalsDto
             {
                 Subtotal = subOrder.Subtotal,
@@ -1668,6 +1764,46 @@ public class AdminOrderService : IAdminOrderService
                 Country = null
             },
             BillingAddress = null
+        };
+    }
+
+    private static string ResolveRefundExecutionState(
+        CommerceHubRefundRequest refundRequest,
+        CommerceHubRefund? trackedRefund,
+        CommerceHubRefundExecution? execution)
+    {
+        if (execution != null)
+        {
+            return execution.IsSuccessful ? "Completed" : "Failed";
+        }
+
+        if (trackedRefund != null)
+        {
+            return trackedRefund.Status.ToString();
+        }
+
+        return refundRequest.Status is CommerceHubRefundRequestStatus.Paid or CommerceHubRefundRequestStatus.Completed
+            ? "Completed"
+            : "NotStarted";
+    }
+
+    private static string ResolveVendorRefundNextAction(
+        CommerceHubRefundRequest refundRequest,
+        CommerceHubReturnRequest? returnRequest)
+    {
+        if (returnRequest != null && CommerceHubReturnPolicy.CanConfirmReceipt(returnRequest.Status))
+        {
+            return "ConfirmReceipt";
+        }
+
+        return refundRequest.Status switch
+        {
+            CommerceHubRefundRequestStatus.Requested or CommerceHubRefundRequestStatus.UnderReview => "PlatformReview",
+            CommerceHubRefundRequestStatus.Approved or CommerceHubRefundRequestStatus.WaitingForReturn => "AwaitReturnDelivery",
+            CommerceHubRefundRequestStatus.AwaitingPayout or CommerceHubRefundRequestStatus.Processing => "PlatformRefundExecution",
+            CommerceHubRefundRequestStatus.Completed or CommerceHubRefundRequestStatus.Paid => "Complete",
+            CommerceHubRefundRequestStatus.Rejected or CommerceHubRefundRequestStatus.Cancelled or CommerceHubRefundRequestStatus.Failed => "None",
+            _ => "PlatformReview"
         };
     }
 

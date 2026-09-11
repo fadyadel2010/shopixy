@@ -44,7 +44,7 @@ public sealed class CommerceHubCustomerIdentityOptions
 {
     public const string SectionName = "CommerceHub:CustomerIdentity";
 
-    public string PublicBaseUrl { get; set; } = "http://localhost:5173";
+    public string PublicBaseUrl { get; set; } = "http://localhost:5175";
 }
 
 public class CommerceHubCustomerAuthService : ICommerceHubCustomerAuthService
@@ -284,7 +284,7 @@ public class CommerceHubCustomerAuthService : ICommerceHubCustomerAuthService
             new("CustomerId", customer.Id.ToString()),
             new(ClaimTypes.NameIdentifier, customer.Id.ToString()),
             new(ClaimTypes.Email, customer.Email),
-            new(ClaimTypes.Role, CustomerSecurityConstants.Role),
+            new(CustomerSecurityConstants.RoleClaimType, CustomerSecurityConstants.Role),
             new(JwtRegisteredClaimNames.Sub, customer.Id.ToString()),
             new(JwtRegisteredClaimNames.Email, customer.Email),
             new(JwtRegisteredClaimNames.Iat, EpochTime.GetIntDate(issuedAtUtc).ToString(), ClaimValueTypes.Integer64),

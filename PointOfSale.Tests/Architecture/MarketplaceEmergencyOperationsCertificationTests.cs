@@ -38,7 +38,8 @@ public sealed class MarketplaceEmergencyOperationsCertificationTests
             "ClearGovernanceRestoreState",
             "EnqueueListingVerification",
             "MARKETPLACE_LISTING_SUPPRESSED",
-            "MARKETPLACE_TENANT_SUSPENDED");
+            "_userGovernanceService.ApplyActionAsync",
+            "MARKETPLACE_VENDOR_SUSPENDED");
 
         AssertSourceContains(
             ApiPath("SuperAdmin", "Controllers", "SuperAdminMarketplaceOperationsController.cs"),

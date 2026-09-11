@@ -29,6 +29,7 @@ public sealed class MarketplaceGovernanceConsoleCertificationTests
         Assert.Contains("listing.HideByGovernance()", controller, StringComparison.Ordinal);
         Assert.Contains("listing.RestoreAfterGovernance()", controller, StringComparison.Ordinal);
         Assert.Contains("GetRestoreAuthorityFailureAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("vendorAuthority.IsMarketplaceEligible", controller, StringComparison.Ordinal);
         Assert.Contains("CommerceHubListingUnpublishedEvent", controller, StringComparison.Ordinal);
         Assert.Contains("CommerceHubListingUpdatedEvent", controller, StringComparison.Ordinal);
         Assert.Contains("EnqueueListingVerification", controller, StringComparison.Ordinal);
@@ -38,18 +39,16 @@ public sealed class MarketplaceGovernanceConsoleCertificationTests
     }
 
     [Fact]
-    public void TenantGovernance_MustRemainSqlAuthoritativeAndTriggerVisibilityVerification()
+    public void VendorGovernance_MustNotMutateCoreTenantLifecycleAuthority()
     {
         var controller = ReadRepoFile("PointOfSale.API/SuperAdmin/Controllers/SuperAdminMarketplaceGovernanceController.cs");
 
-        Assert.Contains("ApplyTenantGovernanceAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("tenant.SetLifecycleStatus(", controller, StringComparison.Ordinal);
-        Assert.Contains("targetStatus,", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("tenant.Status = targetStatus", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("tenant.IsActive = targetStatus == TenantStatus.Active", controller, StringComparison.Ordinal);
-        Assert.Contains("EnqueueTenantListingVerification", controller, StringComparison.Ordinal);
-        Assert.Contains("MARKETPLACE_TENANT_SUSPENDED", controller, StringComparison.Ordinal);
-        Assert.Contains("MARKETPLACE_TENANT_RESTORED", controller, StringComparison.Ordinal);
+        Assert.Contains("ApplyVendorGovernanceAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("UserGovernanceRole.Vendor", controller, StringComparison.Ordinal);
+        Assert.Contains("_userGovernanceService.ApplyActionAsync", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("tenant.SetLifecycleStatus(", controller, StringComparison.Ordinal);
+        Assert.Contains("MARKETPLACE_VENDOR_SUSPENDED", controller, StringComparison.Ordinal);
+        Assert.Contains("MARKETPLACE_VENDOR_RESTORED", controller, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -64,8 +63,8 @@ public sealed class MarketplaceGovernanceConsoleCertificationTests
         Assert.Contains("getMarketplaceGovernanceListings", page, StringComparison.Ordinal);
         Assert.Contains("suppressMarketplaceListing", page, StringComparison.Ordinal);
         Assert.Contains("restoreMarketplaceListing", page, StringComparison.Ordinal);
-        Assert.Contains("suspendMarketplaceTenant", page, StringComparison.Ordinal);
-        Assert.Contains("restoreMarketplaceTenant", page, StringComparison.Ordinal);
+        Assert.Contains("suspendMarketplaceVendor", page, StringComparison.Ordinal);
+        Assert.Contains("restoreMarketplaceVendor", page, StringComparison.Ordinal);
         Assert.Contains("/marketplace-governance/dashboard", service, StringComparison.Ordinal);
         Assert.Contains("/marketplace-governance/listings", service, StringComparison.Ordinal);
         Assert.Contains("marketplace/governance", routes, StringComparison.Ordinal);
@@ -85,6 +84,8 @@ public sealed class MarketplaceGovernanceConsoleCertificationTests
         Assert.Contains("request.OverrideEnabled.HasValue", controller, StringComparison.Ordinal);
         Assert.Contains("request.VendorStatus.HasValue", controller, StringComparison.Ordinal);
         Assert.Contains("request.TenantStatus.HasValue", controller, StringComparison.Ordinal);
+        Assert.Contains("let vendorIneligible = profile == null", controller, StringComparison.Ordinal);
+        Assert.Contains("let governanceHidden = vendorIneligible || tenantInactive", controller, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath)

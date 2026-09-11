@@ -226,6 +226,17 @@ public static class SafeResponseMapper
         Items = invoice.Items
             .Where(item => !item.IsDeleted)
             .Select(ToPurchaseInvoiceItemResponseDto)
+            .ToList(),
+        Payments = invoice.Payments
+            .Where(payment => !payment.IsDeleted)
+            .Select(payment => new PurchaseInvoicePaymentResponseDto
+            {
+                Id = payment.Id,
+                PaymentDate = payment.PaymentDate,
+                Amount = payment.Amount,
+                PaymentMethod = payment.PaymentMethod,
+                ReferenceNumber = payment.ReferenceNumber
+            })
             .ToList()
     };
 
@@ -245,6 +256,10 @@ public static class SafeResponseMapper
         Subtotal = entity.Subtotal,
         TaxAmount = entity.TaxAmount,
         TotalAmount = entity.TotalAmount,
+        RefundMethod = entity.RefundMethod,
+        CashRefundAmount = entity.CashRefundAmount,
+        CardRefundAmount = entity.CardRefundAmount,
+        CustomerCreditAmount = entity.CustomerCreditAmount,
         Reason = entity.Reason,
         Notes = entity.Notes,
         Items = entity.Items

@@ -29,5 +29,31 @@ public class TenantContext : ITenantContext
     {
         TenantId = null;
     }
-}
 
+    /// <summary>
+    /// Temporarily removes request tenant affinity for a trusted cross-tenant workflow.
+    /// The previous tenant is restored when the returned scope is disposed.
+    /// </summary>
+    public IDisposable BeginGlobalScope()
+    {
+        var previousTenantId = TenantId;
+        TenantId = null;
+        return new GlobalScope(this, previousTenantId);
+    }
+
+    private sealed class GlobalScope(TenantContext context, Guid? previousTenantId) : IDisposable
+    {
+        private bool _disposed;
+
+        public void Dispose()
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            context.TenantId = previousTenantId;
+            _disposed = true;
+        }
+    }
+}

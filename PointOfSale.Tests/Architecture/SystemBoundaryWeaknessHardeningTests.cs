@@ -130,7 +130,6 @@ public sealed class SystemBoundaryWeaknessHardeningTests
         var refundService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubRefundService.cs"));
         var refundExecution = File.ReadAllText(ApiPath("Services", "CommerceHub", "RefundExecutionService.cs"));
         var payoutService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubPayoutService.cs"));
-        var superAdminPayoutService = File.ReadAllText(ApiPath("SuperAdmin", "Services", "SuperAdminPayoutsService.cs"));
         var projectionConsumer = File.ReadAllText(InfrastructurePath("Consumers", "CommerceHubOrderProjectionConsumer.cs"));
         var financialWorkflowService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubFinancialWorkflowService.cs"));
         var orderManagementService = File.ReadAllText(ApiPath("Services", "CommerceHub", "CommerceHubOrderManagementService.cs"));
@@ -183,9 +182,6 @@ public sealed class SystemBoundaryWeaknessHardeningTests
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginOrderLifecycle()", refundExecution, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginPayout()", refundExecution, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginPayout()", payoutService, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubBoundaryMutationScope.BeginPayout()", superAdminPayoutService, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubBoundaryMutationScope.BeginFinancialWorkflow()", superAdminPayoutService, StringComparison.Ordinal);
-        Assert.Contains("await EnsureEarningsHaveLedgerConfirmationAsync(", superAdminPayoutService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginProjection()", projectionConsumer, StringComparison.Ordinal);
 
         // Verify financial workflow boundary exists and is used in orchestration services

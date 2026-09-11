@@ -29,6 +29,10 @@ const mockReceiptData = {
         items: [
             {
                 productName: 'Test Product',
+                variantDescription: 'Color: Red, Size: M',
+                variantSku: 'TEST-RED-M',
+                unitName: 'Box',
+                conversionFactor: 5,
                 quantity: 2,
                 unitPrice: 10.00,
                 total: 20.00
@@ -59,6 +63,14 @@ describe('ReceiptModal print resilience', () => {
         window.print = originalPrint
         vi.restoreAllMocks()
         vi.useRealTimers()
+    })
+
+    it('shows the exact variant SKU and sale unit on the receipt line', () => {
+        render(<ReceiptModal receiptData={mockReceiptData} onClose={vi.fn()} />)
+
+        expect(screen.getByText(/Variant: Color: Red, Size: M/i)).toBeInTheDocument()
+        expect(screen.getByText(/SKU: TEST-RED-M/i)).toBeInTheDocument()
+        expect(screen.getByText(/Unit: Box \(x5\)/i)).toBeInTheDocument()
     })
 
     it('successfully prints and shows no error alert when window.print works', async () => {

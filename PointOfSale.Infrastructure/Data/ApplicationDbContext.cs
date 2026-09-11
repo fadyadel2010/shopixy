@@ -111,6 +111,7 @@ public class ApplicationDbContext : DbContext
     public DbSet<SalesInvoice> SalesInvoices => Set<SalesInvoice>();
     public DbSet<SalesInvoiceItem> SalesInvoiceItems => Set<SalesInvoiceItem>();
     public DbSet<SalesInvoicePayment> SalesInvoicePayments => Set<SalesInvoicePayment>();
+    public DbSet<CustomerPayment> CustomerPayments => Set<CustomerPayment>();
     public DbSet<SalesRequestIdempotency> SalesRequestIdempotencyRecords => Set<SalesRequestIdempotency>();
     public DbSet<PosCart> PosCarts => Set<PosCart>();
     public DbSet<PosCartItem> PosCartItems => Set<PosCartItem>();
@@ -725,6 +726,9 @@ public class ApplicationDbContext : DbContext
             !e.IsDeleted && e.TenantId == CurrentTenantId);
             
         modelBuilder.Entity<CustomerTransaction>().HasQueryFilter(e => 
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        modelBuilder.Entity<CustomerPayment>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
             
         modelBuilder.Entity<SupplierTransaction>().HasQueryFilter(e => 
@@ -1859,6 +1863,10 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<Return>(entity =>
         {
+            entity.Property(returnEntity => returnEntity.CashRefundAmount).HasPrecision(18, 2);
+            entity.Property(returnEntity => returnEntity.CardRefundAmount).HasPrecision(18, 2);
+            entity.Property(returnEntity => returnEntity.CustomerCreditAmount).HasPrecision(18, 2);
+
             entity.HasIndex(r => new { r.TenantId, r.ReturnNumber })
                 .IsUnique()
                 .HasFilter("\"IsDeleted\" = false");
@@ -1877,6 +1885,16 @@ public class ApplicationDbContext : DbContext
                     "CK_Returns_PurchaseAuthorityLineage",
                     $"(\"ReturnType\" <> {(int)ReturnType.PurchaseReturn}) OR " +
                     "(\"OriginalPurchaseInvoiceId\" IS NOT NULL AND \"OriginalInvoiceId\" IS NULL AND \"SupplierId\" IS NOT NULL AND \"CustomerId\" IS NULL)");
+                table.HasCheckConstraint(
+                    "CK_Returns_RefundAmounts_NonNegative",
+                    "\"CashRefundAmount\" >= 0 AND \"CardRefundAmount\" >= 0 AND \"CustomerCreditAmount\" >= 0");
+                table.HasCheckConstraint(
+                    "CK_Returns_SettlementSnapshot_Consistent",
+                    "(\"RefundMethod\" IS NULL AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = 0) OR " +
+                    "(\"ReturnType\" = 1 AND ((\"RefundMethod\" = 0 AND \"CashRefundAmount\" = \"TotalAmount\" AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = 0) OR " +
+                    "(\"RefundMethod\" = 1 AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = \"TotalAmount\" AND \"CustomerCreditAmount\" = 0) OR " +
+                    "(\"RefundMethod\" = 2 AND \"CashRefundAmount\" > 0 AND \"CardRefundAmount\" > 0 AND \"CashRefundAmount\" + \"CardRefundAmount\" = \"TotalAmount\" AND \"CustomerCreditAmount\" = 0) OR " +
+                    "(\"RefundMethod\" = 3 AND \"CashRefundAmount\" = 0 AND \"CardRefundAmount\" = 0 AND \"CustomerCreditAmount\" = \"TotalAmount\")))");
             });
         });
 
@@ -3281,6 +3299,37 @@ public class ApplicationDbContext : DbContext
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<CustomerPayment>(entity =>
+        {
+            entity.ToTable("CustomerPayments", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_CustomerPayments_Amount_Positive",
+                    "\"Amount\" > 0");
+                table.HasCheckConstraint(
+                    "CK_CustomerPayments_Allocation_Consistent",
+                    "\"CashAmount\" >= 0 AND \"CardAmount\" >= 0 AND \"BankTransferAmount\" >= 0 AND " +
+                    "\"CashAmount\" + \"CardAmount\" + \"BankTransferAmount\" = \"Amount\"");
+            });
+            entity.HasKey(payment => payment.Id);
+            entity.HasIndex(payment => new { payment.TenantId, payment.IdempotencyKey })
+                .IsUnique()
+                .HasDatabaseName("IX_CustomerPayments_TenantId_IdempotencyKey");
+            entity.HasIndex(payment => new { payment.TenantId, payment.CustomerId, payment.PaymentDate });
+            entity.Property(payment => payment.Amount).HasPrecision(18, 2);
+            entity.Property(payment => payment.CashAmount).HasPrecision(18, 2);
+            entity.Property(payment => payment.CardAmount).HasPrecision(18, 2);
+            entity.Property(payment => payment.BankTransferAmount).HasPrecision(18, 2);
+            entity.Property(payment => payment.IdempotencyKey).HasMaxLength(100);
+            entity.Property(payment => payment.ReferenceNumber).HasMaxLength(100);
+            entity.Property(payment => payment.Notes).HasMaxLength(1000);
+
+            entity.HasOne(payment => payment.Customer)
+                .WithMany()
+                .HasForeignKey(payment => payment.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<CarrierAccountPolicy>(entity =>
         {
             entity.HasKey(e => e.Id);
@@ -4379,13 +4428,19 @@ public class ApplicationDbContext : DbContext
             CommerceHubBoundaryMutationScope.IsProjectionAuthorized,
             "CommerceHub marketplace orders cannot be created with projection markers outside the CommerceHub projection boundary.",
             nameof(CommerceHubMarketplaceOrder.IsProjected),
-            nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc));
+            nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc),
+            nameof(CommerceHubMarketplaceOrder.LastProjectionAttemptAt),
+            nameof(CommerceHubMarketplaceOrder.ProjectionAttemptCount),
+            nameof(CommerceHubMarketplaceOrder.IsProjectionTerminalFailure));
 
         GuardBoundaryOwnedProperties<CommerceHubMarketplaceOrder>(
             CommerceHubBoundaryMutationScope.IsProjectionAuthorized,
             "CommerceHub projection markers can only be changed by the CommerceHub projection boundary.",
             nameof(CommerceHubMarketplaceOrder.IsProjected),
-            nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc));
+            nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc),
+            nameof(CommerceHubMarketplaceOrder.LastProjectionAttemptAt),
+            nameof(CommerceHubMarketplaceOrder.ProjectionAttemptCount),
+            nameof(CommerceHubMarketplaceOrder.IsProjectionTerminalFailure));
 
         GuardBoundaryOwnedCreationState<CommerceHubSubOrder>(
             CommerceHubBoundaryMutationScope.IsOrderLifecycleAuthorized,
@@ -5736,6 +5791,9 @@ public class ApplicationDbContext : DbContext
             modifiedProperties.All(propertyName =>
                 propertyName is nameof(CommerceHubMarketplaceOrder.IsProjected)
                     or nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc)
+                    or nameof(CommerceHubMarketplaceOrder.LastProjectionAttemptAt)
+                    or nameof(CommerceHubMarketplaceOrder.ProjectionAttemptCount)
+                    or nameof(CommerceHubMarketplaceOrder.IsProjectionTerminalFailure)
                     or nameof(BaseEntity.UpdatedAt));
     }
 
@@ -6048,6 +6106,13 @@ public class ApplicationDbContext : DbContext
                 var transaction = entry.Entity;
                 RememberCustomer(transaction.CustomerId);
                 _tenantEdges.Add(new TenantEdge(transaction.TenantId, Describe(transaction), RelatedKind.Customer, transaction.CustomerId, "CustomerId"));
+            }
+
+            foreach (var entry in _context.ChangeTracker.Entries<CustomerPayment>().Where(IsPersistedMutation))
+            {
+                var payment = entry.Entity;
+                RememberCustomer(payment.CustomerId);
+                _tenantEdges.Add(new TenantEdge(payment.TenantId, Describe(payment), RelatedKind.Customer, payment.CustomerId, "CustomerId"));
             }
 
             foreach (var entry in _context.ChangeTracker.Entries<SupplierTransaction>().Where(IsPersistedMutation))
@@ -6495,6 +6560,9 @@ public class ApplicationDbContext : DbContext
             nameof(CommerceHubMarketplaceOrder.PaidAt),
             nameof(CommerceHubMarketplaceOrder.IsProjected),
             nameof(CommerceHubMarketplaceOrder.ProjectedAtUtc),
+            nameof(CommerceHubMarketplaceOrder.LastProjectionAttemptAt),
+            nameof(CommerceHubMarketplaceOrder.ProjectionAttemptCount),
+            nameof(CommerceHubMarketplaceOrder.IsProjectionTerminalFailure),
             nameof(CommerceHubMarketplaceOrder.ProjectionMutationVersion),
             nameof(BaseEntity.UpdatedAt),
             nameof(BaseEntity.UpdatedBy));
@@ -6554,9 +6622,19 @@ public class ApplicationDbContext : DbContext
             nameof(BaseEntity.UpdatedAt),
             nameof(BaseEntity.UpdatedBy));
 
-        GuardImmutableCommerceHubEntity<CommerceHubPaymentLog>(
-            nameof(BaseEntity.UpdatedAt),
-            nameof(BaseEntity.UpdatedBy));
+        if (CommerceHubBoundaryMutationScope.IsSensitiveArtifactBackfillAuthorized)
+        {
+            GuardImmutableCommerceHubEntity<CommerceHubPaymentLog>(
+                nameof(CommerceHubPaymentLog.RawResponse),
+                nameof(BaseEntity.UpdatedAt),
+                nameof(BaseEntity.UpdatedBy));
+        }
+        else
+        {
+            GuardImmutableCommerceHubEntity<CommerceHubPaymentLog>(
+                nameof(BaseEntity.UpdatedAt),
+                nameof(BaseEntity.UpdatedBy));
+        }
 
         GuardImmutableCommerceHubEntity<CommerceHubRefund>(
             nameof(CommerceHubRefund.Status),

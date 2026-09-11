@@ -122,7 +122,7 @@ public class AffiliateAttributedProjectionConsumer : IConsumer<AffiliateAttribut
             .SetOnInsert(d => d.Status, "Pending") // Pending until commission is earned
             .SetOnInsert(d => d.OrderStatus, string.Empty) // Will be set by OrderCreated event
             .SetOnInsert(d => d.FulfillmentStatus, string.Empty)
-            .SetOnInsert(d => d.PaymentMethod, string.Empty)
+            .Set(d => d.PaymentMethod, evt.PaymentMethodCode)
             .SetOnInsert(d => d.PaidAmount, 0m)
             .SetOnInsert(d => d.Items, new List<AffiliateOrderItemSubDocument>())
             .SetOnInsert(d => d.CreatedAtUtc, DateTime.UtcNow)

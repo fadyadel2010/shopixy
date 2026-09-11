@@ -24,19 +24,25 @@ public sealed class ReturnVisibilityAuthorityCertificationTests
     }
 
     [Fact]
-    public void VendorReturnVisibility_MustRemainCurrentVendorFinancialImpactOnly()
+    public void VendorReturnVisibility_MustRemainCurrentVendorScoped()
     {
         var vendorFinancePage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/pages/CommerceHubFinance.jsx");
         var vendorAuthority = CertificationSource.ReadRepoFile("PointOfSale.Web/src/auth/commerceHubVendorFinancialParticipationAuthority.js");
+        var vendorOrdersPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/pages/CommerceHubOrders.jsx");
+        var vendorOrdersService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js");
 
         Assert.Contains("deriveVendorFinancialDashboardPresentation(dashboardQuery.data, user)", vendorFinancePage, StringComparison.Ordinal);
         Assert.Contains("const recentRefundImpacts = dashboard?.recentRefundImpacts || []", vendorFinancePage, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorAuthority, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorAuthority, StringComparison.Ordinal);
         Assert.Contains("GUID_PATTERN.test(normalizeString(row?.refundId))", vendorAuthority, StringComparison.Ordinal);
         Assert.Contains("REFUND_IMPACT_TYPES.has(normalizeString(row?.impactType))", vendorAuthority, StringComparison.Ordinal);
         Assert.DoesNotContain("returnId", vendorFinancePage, StringComparison.Ordinal);
         Assert.DoesNotContain("override-status", vendorFinancePage, StringComparison.Ordinal);
+        Assert.Contains("refund.returnRequest", vendorOrdersPage, StringComparison.Ordinal);
+        Assert.Contains("requireCommerceHubVendorReturnAuthority", vendorOrdersService, StringComparison.Ordinal);
+        Assert.Contains("await getCommerceHubVendorOrder(subOrderId)", vendorOrdersService, StringComparison.Ordinal);
+        Assert.Contains("String(returnRequest.vendorId || '').toLowerCase() !== tenantId", vendorOrdersService, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -53,11 +59,12 @@ public sealed class ReturnVisibilityAuthorityCertificationTests
         Assert.Contains("!refundsQuery.isError", page, StringComparison.Ordinal);
         Assert.Contains("!detailsQuery.isFetching", page, StringComparison.Ordinal);
         Assert.Contains("!detailsQuery.isError", page, StringComparison.Ordinal);
-        Assert.Contains("returnModalMode && acceptedRefundDetails?.returnRequest", page, StringComparison.Ordinal);
         Assert.Contains("async function requireCurrentRefundMutationAuthority()", page, StringComparison.Ordinal);
         Assert.Contains("const refreshedRefunds = await refundsQuery.refetch()", page, StringComparison.Ordinal);
-        Assert.Contains("returnId: returnRequest.returnId", page, StringComparison.Ordinal);
         Assert.Contains("return requireSuperAdminReturnPresentation(response.data, returnId)", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("override-status", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("mark-failed", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReturnTransitionModal", page, StringComparison.Ordinal);
         Assert.Contains("returnRequest.returnId.toLowerCase() !== expectedReturnId.toLowerCase()", authority, StringComparison.Ordinal);
         Assert.Contains("returnRequest.refundId.toLowerCase() !== currentRefund.refundId.toLowerCase()", authority, StringComparison.Ordinal);
         Assert.Contains("returnRequest.customerId.toLowerCase() !== currentRefund.customer.customerId.toLowerCase()", authority, StringComparison.Ordinal);

@@ -321,6 +321,77 @@ public sealed class SuperAdminFinancialDashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task GetIntegrityCheckAsync_GlobalScope_ShouldKeepLiveCountersAlignedWithSampledIssues()
+    {
+        await SeedBrokenScenarioAsync();
+
+        var integrity = await _service.GetIntegrityCheckAsync(new SuperAdminFinancialIntegrityCheckQueryDto
+        {
+            MaxIssues = 50
+        });
+
+        Assert.Equal("ISSUES_DETECTED", integrity.Status);
+        Assert.NotEmpty(integrity.Issues);
+        Assert.True(integrity.OrderFlowMismatchCount > 0);
+        Assert.True(integrity.TotalIssueCount > 0);
+        Assert.Contains(integrity.Issues, issue => issue.IssueType == "ORDER_MATH_MISMATCH");
+    }
+
+    [Fact]
+    public async Task GetIntegrityCheckAsync_ShouldNotRequireLedgerForPendingCodSiblingOfPartiallyRefundedOrder()
+    {
+        var vendorId = Guid.NewGuid();
+        var createdAtUtc = new DateTime(2026, 3, 22, 12, 0, 0, DateTimeKind.Utc);
+        var customer = CreateCustomer("pending-cod-dashboard@example.com", "Pending COD Customer");
+        var order = CreateMarketplaceOrder(
+            id: Guid.NewGuid(),
+            customerId: customer.Id,
+            orderNumber: "CH-DASH-PARTIAL-COD",
+            createdAtUtc: createdAtUtc,
+            totalAmount: 110m,
+            subtotal: 100m,
+            shippingTotal: 10m);
+        order.PaymentStatus = PaymentStatus.PartiallyRefunded;
+
+        var pendingCodSubOrder = CreateSubOrder(
+            id: Guid.NewGuid(),
+            order: order,
+            vendorId: vendorId,
+            vendorName: "Pending COD Dashboard Vendor",
+            orderNumber: "CH-DASH-PARTIAL-COD-B",
+            createdAtUtc: createdAtUtc,
+            total: 110m,
+            subtotal: 100m,
+            shipping: 10m,
+            grossCommission: 10m,
+            finalCommission: 10m,
+            promoDiscount: 0m,
+            vendorEarning: 100m);
+        pendingCodSubOrder.Status = OrderStatus.Pending;
+        pendingCodSubOrder.PaymentStatus = PaymentStatus.CashOnDelivery;
+        pendingCodSubOrder.PaymentMethod = CommerceHubPaymentMethod.CashOnDelivery;
+        pendingCodSubOrder.PaymentMethodCode = "COD";
+        pendingCodSubOrder.PaymentMethodName = "Cash on Delivery";
+
+        _dbContext.Tenants.Add(CreateTenant(vendorId, "Pending COD Dashboard Vendor", "pending-cod-dashboard"));
+        _dbContext.CommerceHubCustomers.Add(customer);
+        _dbContext.CommerceHubMarketplaceOrders.Add(order);
+        _dbContext.CommerceHubSubOrders.Add(pendingCodSubOrder);
+        await SaveCommerceHubFixtureAsync();
+
+        var integrity = await _service.GetIntegrityCheckAsync(new SuperAdminFinancialIntegrityCheckQueryDto
+        {
+            FromDateUtc = createdAtUtc.Date,
+            ToDateUtc = createdAtUtc.Date.AddDays(1).AddTicks(-1),
+            MaxIssues = 10
+        });
+
+        Assert.Equal(0, integrity.OrderFlowMismatchCount);
+        Assert.DoesNotContain(integrity.Issues, issue =>
+            issue.IssueType == "ORDER_LEDGER_MISMATCH" && issue.ReferenceId == pendingCodSubOrder.Id);
+    }
+
+    [Fact]
     public async Task GetIntegrityCheckAsync_ShouldDetectDuplicatePromoUsageWithoutLedger()
     {
         var vendorId = Guid.NewGuid();

@@ -6,6 +6,7 @@ import { useToast } from '../components/Toast'
 import api from '../services/api'
 import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
+import { getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
 
 const StatementOfAccount = () => {
     const { t } = useTranslation()
@@ -83,12 +84,6 @@ const StatementOfAccount = () => {
             OpeningBalance: t('cashbox.openingBalanceType'),
         }
         return labels[type] || type
-    }
-
-    const getBalanceColor = (balanceType) => {
-        if (balanceType === 'Debit' || balanceType === t('accounts.debit')) return 'text-red-600'
-        if (balanceType === 'Credit' || balanceType === t('accounts.credit')) return 'text-green-600'
-        return 'text-gray-600'
     }
 
     return (
@@ -209,7 +204,7 @@ const StatementOfAccount = () => {
 
                         <div className="bg-blue-50 p-4 rounded-lg">
                             <p className="text-sm text-gray-600 mb-1">{t('accounts.closingBalance')}</p>
-                            <p className={`text-2xl font-bold ${getBalanceColor(statement.summary.balanceType)}`}>
+                            <p className={`text-2xl font-bold ${getPartyBalanceColorClass(partyType, statement.summary.balanceType)}`}>
                                 {formatCurrency(statement.summary.closingBalance)}
                             </p>
                             <p className="text-xs text-gray-500 mt-1">

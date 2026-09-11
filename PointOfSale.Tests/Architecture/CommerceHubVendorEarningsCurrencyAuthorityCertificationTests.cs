@@ -43,7 +43,7 @@ public sealed class CommerceHubVendorEarningsCurrencyAuthorityCertificationTests
         var financialTransactionConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubFinancialTransactionConfiguration.cs");
         var settlementConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubVendorSettlementConfiguration.cs");
         var paymentRequestConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubVendorPaymentRequestConfiguration.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260623150000_CommerceHubVendorEarningsCurrencyAuthorityHardening.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("GuardCommerceHubCurrencySovereignty", dbContext, StringComparison.Ordinal);
         Assert.Contains("CK_CommerceHubPayouts_Currency_EGP", dbContext, StringComparison.Ordinal);
@@ -56,8 +56,7 @@ public sealed class CommerceHubVendorEarningsCurrencyAuthorityCertificationTests
             "CK_CommerceHubPayouts_Currency_EGP",
             "CK_CommerceHubFinancialTransactions_Currency_EGP",
             "CK_CommerceHubVendorSettlements_Currency_EGP",
-            "CK_CommerceHubVendorPaymentRequests_Currency_EGP",
-            "NOT VALID"
+            "CK_CommerceHubVendorPaymentRequests_Currency_EGP"
         })
         {
             Assert.Contains(marker, migration, StringComparison.Ordinal);

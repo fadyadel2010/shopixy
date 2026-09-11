@@ -30,7 +30,9 @@ const queueItem: SuperAdminVendorPayoutQueueItem = {
         isVerified: true,
     }],
     riskFlags: [],
-    canRecordCompletedPayout: true,
+    activePayout: null,
+    canPreparePayout: true,
+    canCompletePayout: false,
     executionBlockedCode: null,
     executionBlockedReason: null,
 }
@@ -94,5 +96,61 @@ describe('payoutFinancialAuthority', () => {
     it('rejects stale payout-method selection absent from current backend queue evidence', () => {
         expect(() => requireCurrentPayoutMethodSelection('33333333-3333-4333-8333-333333333333', queueItem)).toThrow(/stale payout-method selection/)
         expect(requireCurrentPayoutMethodSelection(methodId, queueItem).id).toBe(methodId)
+    })
+
+    it('accepts a committed processing payout only as completion authority', () => {
+        const activeQueueResult: SuperAdminVendorPayoutQueueResult = {
+            ...queueResult,
+            payouts: [{
+                ...queueItem,
+                totalPayable: 0,
+                eligibleAmount: 0,
+                holdbackAmount: 0,
+                activePayout: {
+                    payoutId: '33333333-3333-4333-8333-333333333333',
+                    amount: 100,
+                    currency: 'EGP',
+                    status: 'Processing',
+                    payoutMethodId: methodId,
+                    method: 'BankTransfer',
+                    destinationValueSnapshot: '****1234',
+                    idempotencyKey: 'prepare-idempotency',
+                    externalTransferIdempotencyKey: 'transfer-intent',
+                    externalTransferHandoffToken: 'handoff-token',
+                    externalTransferHandoffCommittedAtUtc: '2026-06-21T12:00:00Z',
+                },
+                canPreparePayout: false,
+                canCompletePayout: true,
+            }],
+            currencySummaries: [{
+                currency: 'EGP',
+                totalPayableAmount: 0,
+                totalEligibleAmount: 0,
+                totalHeldAmount: 0,
+            }],
+            totalPayableAmount: 0,
+            totalEligibleAmount: 0,
+            totalHeldAmount: 0,
+        }
+
+        const accepted = requireSuperAdminPayoutQueueFinancialAuthority(activeQueueResult).payouts[0]!
+        expect(accepted.canCompletePayout).toBe(true)
+        expect(accepted.canPreparePayout).toBe(false)
+    })
+
+    it('accepts backend-blocked preparation despite otherwise eligible queue evidence', () => {
+        const blockedQueueResult: SuperAdminVendorPayoutQueueResult = {
+            ...queueResult,
+            payouts: [{
+                ...queueItem,
+                canPreparePayout: false,
+                executionBlockedCode: 'PAYOUT_AUTHORITY_CONFLICT',
+                executionBlockedReason: 'Financial authority checks blocked payout preparation.',
+            }],
+        }
+
+        const accepted = requireSuperAdminPayoutQueueFinancialAuthority(blockedQueueResult).payouts[0]!
+        expect(accepted.canPreparePayout).toBe(false)
+        expect(accepted.executionBlockedCode).toBe('PAYOUT_AUTHORITY_CONFLICT')
     })
 })

@@ -6,6 +6,7 @@ public static class PaymentProviderPermissions
     public const string Edit = "PaymentProviders.Edit";
     public const string Configure = "PaymentProviders.Configure";
     public const string TestConnection = "PaymentProviders.TestConnection";
+    public const string ReconcileProviderSession = "PaymentProviders.ReconcileProviderSession";
     public const string RotateSecrets = "PaymentProviders.RotateSecrets";
     public const string ViewSecretMetadata = "PaymentProviders.ViewSecretMetadata";
 
@@ -15,6 +16,7 @@ public static class PaymentProviderPermissions
         Edit,
         Configure,
         TestConnection,
+        ReconcileProviderSession,
         RotateSecrets,
         ViewSecretMetadata
     ];

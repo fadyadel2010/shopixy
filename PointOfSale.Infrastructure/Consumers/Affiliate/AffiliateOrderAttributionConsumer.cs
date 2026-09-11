@@ -183,7 +183,7 @@ public class AffiliateOrderAttributionConsumer : IConsumer<AffiliateOrderPlacedE
                     .SetOnInsert(d => d.Status, "AttributedPendingPayment")
                     .SetOnInsert(d => d.OrderStatus, "PendingPayment")
                     .SetOnInsert(d => d.FulfillmentStatus, "PendingPayment")
-                    .SetOnInsert(d => d.PaymentMethod, string.Empty)
+                    .Set(d => d.PaymentMethod, evt.PaymentMethodCode)
                     .SetOnInsert(d => d.PaidAmount, 0m)
                     .SetOnInsert(d => d.Items, new List<AffiliateOrderItemSubDocument>())
                     .SetOnInsert(d => d.CreatedAtUtc, DateTime.UtcNow)

@@ -185,6 +185,7 @@ public class SalesController : ControllerBase
 
             idempotencyRecord = claim.Record!;
             EnsureSupportedPaymentMethod(request.PaymentMethod);
+            EnsurePaymentMethodCustomerCompatibility(request.PaymentMethod, request.CustomerId);
 
             // Validate warehouse exists
             var warehouse = await LoadActiveWarehouseAsync(request.WarehouseId);
@@ -492,7 +493,7 @@ public class SalesController : ControllerBase
                     InvoiceNumber = invoiceNumber,
                     TotalAmount = RoundCurrency(invoice.TotalAmount),
                     PaidAmount = RoundCurrency(invoice.PaidAmount),
-                    ChangeAmount = RoundCurrency(invoice.PaidAmount - invoice.TotalAmount),
+                    ChangeAmount = ResolveSaleChangeAmount(invoice),
                     Message = "Sale completed successfully"
                 }));
 
@@ -1236,7 +1237,7 @@ public class SalesController : ControllerBase
                 var defaultUnit = productUnits.FirstOrDefault(
                     pu => pu.ProductId == itemRequest.ProductId && pu.IsDefault);
 
-                if (defaultUnit == null)
+                if (defaultUnit == null && !product.HasVariants)
                 {
                     return (null, BadRequest(new
                     {
@@ -1244,7 +1245,7 @@ public class SalesController : ControllerBase
                     }));
                 }
 
-                if (defaultUnit.ConversionFactor <= 0)
+                if (defaultUnit != null && defaultUnit.ConversionFactor <= 0)
                 {
                     return (null, BadRequest(new
                     {
@@ -1252,8 +1253,8 @@ public class SalesController : ControllerBase
                     }));
                 }
 
-                unitId = defaultUnit.UnitId;
-                conversionFactor = defaultUnit.ConversionFactor;
+                unitId = defaultUnit?.UnitId;
+                conversionFactor = defaultUnit?.ConversionFactor ?? 1m;
             }
 
             var variant = variantDict.GetValueOrDefault(i);
@@ -1374,6 +1375,7 @@ public class SalesController : ControllerBase
 
             idempotencyRecord = claim.Record!;
             EnsureSupportedPaymentMethod(request.PaymentMethod);
+            EnsurePaymentMethodCustomerCompatibility(request.PaymentMethod, request.CustomerId);
 
             var invoice = await LoadSalesInvoiceForMutationAsync(id);
 
@@ -1384,6 +1386,7 @@ public class SalesController : ControllerBase
             {
                 ActionResult<SaleResponse> conflictResult = Conflict(new
                 {
+                    errorCode = "SALE_INVOICE_IMMUTABLE",
                     message = "Only draft sales invoices can be rewritten. Use sales returns to reverse completed invoices."
                 });
 
@@ -1397,6 +1400,7 @@ public class SalesController : ControllerBase
             {
                 ActionResult<SaleResponse> conflictResult = Conflict(new
                 {
+                    errorCode = "SALE_MUTATION_CONFLICT",
                     message = "Sale was changed by another session. Reload the invoice before updating.",
                     currentMutationVersion = invoice.AccountingMutationVersion
                 });
@@ -1569,6 +1573,7 @@ public class SalesController : ControllerBase
             invoice.PaidAmount = paymentAmounts.PaidAmount;
             invoice.CashAmount = paymentAmounts.CashAmount;
             invoice.CardAmount = paymentAmounts.CardAmount;
+            invoice.Status = InvoiceStatus.Completed;
 
             // 7. Re-apply Financials
              if (customer != null)
@@ -1687,7 +1692,7 @@ public class SalesController : ControllerBase
                     InvoiceNumber = invoice.InvoiceNumber,
                     TotalAmount = RoundCurrency(invoice.TotalAmount),
                     PaidAmount = RoundCurrency(invoice.PaidAmount),
-                    ChangeAmount = RoundCurrency(invoice.PaidAmount - invoice.TotalAmount),
+                    ChangeAmount = ResolveSaleChangeAmount(invoice),
                     Message = "Sale updated successfully"
                 }));
 
@@ -1720,6 +1725,7 @@ public class SalesController : ControllerBase
                 ex.RequestedQuantity);
             return Conflict(new
             {
+                errorCode = "INSUFFICIENT_STOCK",
                 message = "Insufficient stock",
                 availableStock = ex.AvailableQuantity,
                 requestedQuantity = ex.RequestedQuantity
@@ -2508,6 +2514,11 @@ public class SalesController : ControllerBase
             .Include(s => s.Warehouse)
             .Include(s => s.Items)
                 .ThenInclude(i => i.Product)
+            .Include(s => s.Items)
+                .ThenInclude(i => i.ProductVariant)
+                    .ThenInclude(v => v!.Attributes)
+            .Include(s => s.Items)
+                .ThenInclude(i => i.Unit)
             .FirstOrDefaultAsync(s => s.Id == id);
 
         if (invoice == null)
@@ -2523,6 +2534,17 @@ public class SalesController : ControllerBase
             Items = invoice.Items.Select(i => new ReceiptItem
             {
                 ProductName = i.Product.Name,
+                ProductVariantId = i.ProductVariantId,
+                VariantSku = i.ProductVariant?.SKU,
+                VariantDescription = i.ProductVariant == null
+                    ? null
+                    : string.Join(", ", i.ProductVariant.Attributes
+                        .OrderBy(attribute => attribute.SortOrder)
+                        .ThenBy(attribute => attribute.Name)
+                        .Select(attribute => $"{attribute.Name}: {attribute.Value}")),
+                UnitId = i.UnitId,
+                UnitName = i.Unit?.Name,
+                ConversionFactor = i.ConversionFactor,
                 Quantity = i.Quantity,
                 UnitPrice = i.UnitPrice,
                 Discount = i.DiscountAmount,
@@ -2533,7 +2555,7 @@ public class SalesController : ControllerBase
             Tax = invoice.TaxAmount,
             Total = invoice.TotalAmount,
             Paid = invoice.PaidAmount,
-            Change = invoice.PaidAmount - invoice.TotalAmount,
+            Change = ResolveSaleChangeAmount(invoice),
             PaymentMethod = invoice.PaymentMethod.ToString()
         };
 
@@ -2581,6 +2603,9 @@ public class SalesController : ControllerBase
 
         return Math.Min(paidAmount, totalAmount);
     }
+
+    private static decimal ResolveSaleChangeAmount(SalesInvoice invoice) =>
+        Math.Max(0m, RoundCurrency(invoice.PaidAmount - invoice.TotalAmount));
 
     private static void ApplySaleTotals(
         SalesInvoice invoice,
@@ -2632,9 +2657,20 @@ public class SalesController : ControllerBase
     {
         if (paymentMethod != PaymentMethod.Mixed
             && paymentMethod != PaymentMethod.Cash
-            && paymentMethod != PaymentMethod.Card)
+            && paymentMethod != PaymentMethod.Card
+            && paymentMethod != PaymentMethod.Credit)
         {
             throw new ValidationException("Unsupported payment method");
+        }
+    }
+
+    private static void EnsurePaymentMethodCustomerCompatibility(
+        PaymentMethod paymentMethod,
+        Guid? customerId)
+    {
+        if (paymentMethod == PaymentMethod.Credit && !customerId.HasValue)
+        {
+            throw new ValidationException("Credit sales require a customer account");
         }
     }
 
@@ -2655,6 +2691,16 @@ public class SalesController : ControllerBase
         if (roundedTotalAmount < 0 || roundedPaidAmount < 0)
         {
             throw new ValidationException("Invalid payment amount");
+        }
+
+        if (paymentMethod == PaymentMethod.Credit)
+        {
+            if (roundedPaidAmount != 0 || normalizedCashAmount != 0 || normalizedCardAmount != 0)
+            {
+                throw new ValidationException("Credit sales cannot include an immediate payment");
+            }
+
+            return (RoundCurrency(0), RoundCurrency(0), RoundCurrency(0));
         }
 
         if (paymentMethod == PaymentMethod.Mixed)
@@ -2782,7 +2828,12 @@ public class SalesController : ControllerBase
         try
         {
             await using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT nextval('\"{SalesInvoiceNumberSequenceName}\"')";
+            var qualifiedSequenceName = $"public.\"{SalesInvoiceNumberSequenceName}\"";
+            command.CommandText = $@"
+                SELECT CASE
+                    WHEN to_regclass('{qualifiedSequenceName}') IS NULL THEN NULL
+                    ELSE nextval(to_regclass('{qualifiedSequenceName}'))
+                END";
 
             var currentTransaction = _context.Database.CurrentTransaction;
             if (currentTransaction != null)
@@ -2791,6 +2842,14 @@ public class SalesController : ControllerBase
             }
 
             var result = await command.ExecuteScalarAsync();
+            if (result == null || result == DBNull.Value)
+            {
+                _logger.LogWarning(
+                    "Sales invoice number sequence {SequenceName} is missing. Falling back to locked invoice-number generation.",
+                    SalesInvoiceNumberSequenceName);
+                return null;
+            }
+
             return Convert.ToInt64(result);
         }
         catch (PostgresException ex) when (IsMissingInvoiceSequence(ex))
@@ -2993,6 +3052,12 @@ public record ReceiptData
 public record ReceiptItem
 {
     public string ProductName { get; set; } = string.Empty;
+    public Guid? ProductVariantId { get; set; }
+    public string? VariantSku { get; set; }
+    public string? VariantDescription { get; set; }
+    public Guid? UnitId { get; set; }
+    public string? UnitName { get; set; }
+    public decimal ConversionFactor { get; set; } = 1m;
     public decimal Quantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal Discount { get; set; }

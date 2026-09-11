@@ -13,6 +13,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.Payments;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
 using PointOfSale.Infrastructure.Observability;
@@ -58,15 +59,6 @@ public sealed class EcommerceRefundLifecycleTests
         var tenantId = Guid.NewGuid();
         await using var connection = await OpenConnectionAsync();
         await using var context = await CreateContextAsync(connection, tenantId);
-        var accountingOutbox = new Mock<IAccountingOutboxService>();
-        accountingOutbox
-            .Setup(service => service.EnqueueEcommerceRefundAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<Guid>(),
-                It.IsAny<decimal>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         var commerceAccounting = new Mock<ICommerceAccountingService>();
         commerceAccounting
             .Setup(service => service.PostEcommerceRefundAsync(
@@ -76,7 +68,10 @@ public sealed class EcommerceRefundLifecycleTests
                 It.IsAny<EcommerceRefundAccountingContext?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "REFUND-JOURNAL-TEST"));
-        var service = CreateService(context, accountingOutbox, commerceAccounting);
+        var service = CreateService(
+            context,
+            commerceAccounting: commerceAccounting,
+            useSqlAccountingOutbox: true);
         var order = await SeedPaidOrderAsync(context, tenantId, orderTotal: 100m, paidAmount: 100m);
 
         var first = await service.RecordRefundAsync(order.Id, 40m, "refund-001", "Customer refund");
@@ -107,14 +102,10 @@ public sealed class EcommerceRefundLifecycleTests
         Assert.Equal(persistedOrder.Items.Single().Id, refundLine.OrderItemId);
         Assert.Equal(40m, refundLine.Amount);
 
-        accountingOutbox.Verify(
-            service => service.EnqueueEcommerceRefundAsync(
-                tenantId,
-                order.Id,
-                40m,
-                "refund-001",
-                It.IsAny<CancellationToken>()),
-            Times.Once);
+        var accountingMessage = await context.AccountingOutboxMessages
+            .SingleAsync(message => message.IdempotencyKey == $"ECOM_REFUND:{tenantId}:{order.Id}:refund-001");
+        Assert.NotNull(accountingMessage.ProcessedAtUtc);
+        Assert.NotNull(accountingMessage.JournalId);
 
         // Verify commerce accounting side effect
         commerceAccounting.Verify(
@@ -307,7 +298,6 @@ public sealed class EcommerceRefundLifecycleTests
         var tenantId = Guid.NewGuid();
         await using var connection = await OpenConnectionAsync();
         await using var context = await CreateContextAsync(connection, tenantId);
-        var accountingOutbox = new Mock<IAccountingOutboxService>();
         var commerceAccounting = new Mock<ICommerceAccountingService>();
         commerceAccounting
             .Setup(service => service.PostEcommerceRefundAsync(
@@ -317,7 +307,10 @@ public sealed class EcommerceRefundLifecycleTests
                 It.IsAny<EcommerceRefundAccountingContext?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "REFUND-JOURNAL-TEST"));
-        var service = CreateService(context, accountingOutbox, commerceAccounting);
+        var service = CreateService(
+            context,
+            commerceAccounting: commerceAccounting,
+            useSqlAccountingOutbox: true);
         var order = await SeedPaidOrderAsync(
             context,
             tenantId,
@@ -371,29 +364,11 @@ public sealed class EcommerceRefundLifecycleTests
         Assert.Equal("payout-001", refund.PayoutBatchId);
         Assert.Equal(settledAtUtc, refund.SettledAtUtc);
 
-        accountingOutbox.Verify(
-            service => service.EnqueueSettledEcommerceRefundAsync(
-                tenantId,
-                order.Id,
-                25m,
-                "refund-settled-001",
-                It.Is<EcommerceRefundAccountingContext>(context =>
-                    context.IsPostSettlementRefund &&
-                    context.SettlementBatchId == settlementBatch.Id &&
-                    context.SettlementType == "GATEWAY" &&
-                    context.SettlementId == "settlement-001" &&
-                    context.PayoutBatchId == "payout-001" &&
-                    context.SettledAtUtc == settledAtUtc),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-        accountingOutbox.Verify(
-            service => service.EnqueueEcommerceRefundAsync(
-                It.IsAny<Guid>(),
-                It.IsAny<Guid>(),
-                It.IsAny<decimal>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
+        var accountingMessage = await context.AccountingOutboxMessages
+            .SingleAsync(message => message.IdempotencyKey == $"ECOM_REFUND:{tenantId}:{order.Id}:refund-settled-001");
+        Assert.Equal("EcommerceRefund", accountingMessage.EventType);
+        Assert.NotNull(accountingMessage.ProcessedAtUtc);
+        Assert.NotNull(accountingMessage.JournalId);
 
         // Verify commerce accounting side effect
         commerceAccounting.Verify(
@@ -423,7 +398,7 @@ public sealed class EcommerceRefundLifecycleTests
             .UseSqlite(connection)
             .EnableSensitiveDataLogging()
             .Options;
-        var context = new ApplicationDbContext(options, new TestTenantContext(tenantId));
+        var context = new RefundLifecycleTestDbContext(options, new TestTenantContext(tenantId));
         await context.Database.EnsureCreatedAsync();
         return context;
     }
@@ -432,8 +407,14 @@ public sealed class EcommerceRefundLifecycleTests
         ApplicationDbContext context,
         Mock<IAccountingOutboxService>? accountingOutbox = null,
         Mock<ICommerceAccountingService>? commerceAccounting = null,
-        Mock<IEventPublisher>? eventPublisher = null)
+        Mock<IEventPublisher>? eventPublisher = null,
+        bool useSqlAccountingOutbox = false)
     {
+        var correlationIdAccessor = new Mock<ICorrelationIdAccessor>();
+        correlationIdAccessor
+            .Setup(accessor => accessor.GetCorrelationId())
+            .Returns("refund-lifecycle-test");
+
         accountingOutbox ??= new Mock<IAccountingOutboxService>();
         accountingOutbox
             .Setup(service => service.EnqueueEcommerceRefundAsync(
@@ -503,14 +484,16 @@ public sealed class EcommerceRefundLifecycleTests
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var correlationIdAccessor = new Mock<ICorrelationIdAccessor>();
-        correlationIdAccessor
-            .Setup(accessor => accessor.GetCorrelationId())
-            .Returns("refund-lifecycle-test");
+        IAccountingOutboxService accountingOutboxService = useSqlAccountingOutbox
+            ? new AccountingOutboxService(
+                context,
+                correlationIdAccessor.Object,
+                NullLogger<AccountingOutboxService>.Instance)
+            : accountingOutbox.Object;
 
         return new PaymentLifecycleService(
             context,
-            accountingOutbox.Object,
+            accountingOutboxService,
             commerceAccounting.Object,
             eventPublisher.Object,
             marketplaceOutbox.Object,
@@ -606,12 +589,14 @@ public sealed class EcommerceRefundLifecycleTests
             "Posted online collection for refund lifecycle test",
             BuildOnlinePaymentIdempotencyKey(tenantId, order.Id, paymentIntent.Id),
             userId: null);
+        order.FinancialPostingJournalId = collectionJournal.Id;
 
         context.Categories.Add(category);
         context.Products.Add(product);
         context.Orders.Add(order);
         context.PaymentIntents.Add(paymentIntent);
         context.JournalEntries.Add(collectionJournal);
+        using var ledgerAuthority = LedgerMutationScope.Authorize();
         await context.SaveChangesAsync();
         return order;
     }
@@ -621,6 +606,12 @@ public sealed class EcommerceRefundLifecycleTests
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)
     {
+        connection.CreateFunction<string?, string?>("btrim", value => value?.Trim());
+        connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (value, characters) => value?.Trim((characters ?? " ").ToCharArray()));
+        connection.CreateFunction<string?, int>("char_length", value => value?.Length ?? 0);
+
         connection.CreateFunction<string?, string?, string?, string?, string?>(
             "REGEXP_REPLACE",
             (input, pattern, replacement, options) =>
@@ -643,5 +634,21 @@ public sealed class EcommerceRefundLifecycleTests
                     replacement ?? string.Empty,
                     regexOptions);
             });
+    }
+
+    private sealed class RefundLifecycleTestDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        TestTenantContext tenantContext)
+        : ApplicationDbContext(options, tenantContext)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<Order>().Property<uint>("xmin").HasDefaultValue(1u);
+            modelBuilder.Entity<Product>().Property(product => product.RowVersion).HasDefaultValue(1u);
+            modelBuilder.Entity<PaymentIntent>().Property(intent => intent.RowVersion).HasDefaultValue(1u);
+            modelBuilder.Entity<OrderItem>().Property(item => item.PaidAmount).HasConversion<double>();
+            modelBuilder.Entity<OrderItem>().Property(item => item.RefundedAmount).HasConversion<double>();
+        }
     }
 }

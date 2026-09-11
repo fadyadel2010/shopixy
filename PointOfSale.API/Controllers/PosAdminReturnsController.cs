@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces;
 
 namespace PointOfSale.API.Controllers;
@@ -32,14 +33,18 @@ public sealed class PosAdminReturnsController : ControllerBase
     [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public Task<IActionResult> SchedulePickup(
         Guid returnId,
         [FromBody] AdminReturnStatusUpdateRequest request,
         CancellationToken cancellationToken = default) =>
-        ExecuteVendorActionAsync(
+        ExecuteVendorStatusActionAsync(
             returnId,
-            () => _returnManagementService.SchedulePickupAsync(
+            request,
+            expectedStatus => _returnManagementService.SchedulePickupAsync(
                 returnId,
+                _tenantContext.RequiredTenantId,
+                expectedStatus,
                 request?.TimestampUtc,
                 request?.TrackingNumber,
                 request?.CourierName,
@@ -54,14 +59,18 @@ public sealed class PosAdminReturnsController : ControllerBase
     [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public Task<IActionResult> MarkPickedUp(
         Guid returnId,
         [FromBody] AdminReturnStatusUpdateRequest request,
         CancellationToken cancellationToken = default) =>
-        ExecuteVendorActionAsync(
+        ExecuteVendorStatusActionAsync(
             returnId,
-            () => _returnManagementService.MarkPickedUpAsync(
+            request,
+            expectedStatus => _returnManagementService.MarkPickedUpAsync(
                 returnId,
+                _tenantContext.RequiredTenantId,
+                expectedStatus,
                 request?.TimestampUtc,
                 request?.TrackingNumber,
                 request?.CourierName,
@@ -76,14 +85,18 @@ public sealed class PosAdminReturnsController : ControllerBase
     [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public Task<IActionResult> MarkInTransit(
         Guid returnId,
         [FromBody] AdminReturnStatusUpdateRequest request,
         CancellationToken cancellationToken = default) =>
-        ExecuteVendorActionAsync(
+        ExecuteVendorStatusActionAsync(
             returnId,
-            () => _returnManagementService.MarkInTransitAsync(
+            request,
+            expectedStatus => _returnManagementService.MarkInTransitAsync(
                 returnId,
+                _tenantContext.RequiredTenantId,
+                expectedStatus,
                 request?.TimestampUtc,
                 request?.TrackingNumber,
                 request?.CourierName,
@@ -98,14 +111,44 @@ public sealed class PosAdminReturnsController : ControllerBase
     [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
     public Task<IActionResult> MarkDelivered(
         Guid returnId,
         [FromBody] AdminReturnStatusUpdateRequest request,
         CancellationToken cancellationToken = default) =>
-        ExecuteVendorActionAsync(
+        ExecuteVendorStatusActionAsync(
             returnId,
-            () => _returnManagementService.MarkDeliveredAsync(
+            request,
+            expectedStatus => _returnManagementService.MarkDeliveredAsync(
                 returnId,
+                _tenantContext.RequiredTenantId,
+                expectedStatus,
+                request?.TimestampUtc,
+                request?.TrackingNumber,
+                request?.CourierName,
+                request?.Notes,
+                CurrentActorId,
+                CurrentActorEmail,
+                HttpContext.TraceIdentifier,
+                source: "PosAdminAPI",
+                cancellationToken: cancellationToken));
+
+    [HttpPost("{returnId:guid}/mark-failed")]
+    [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status428PreconditionRequired)]
+    public Task<IActionResult> MarkFailed(
+        Guid returnId,
+        [FromBody] AdminReturnStatusUpdateRequest request,
+        CancellationToken cancellationToken = default) =>
+        ExecuteVendorStatusActionAsync(
+            returnId,
+            request,
+            expectedStatus => _returnManagementService.MarkFailedAsync(
+                returnId,
+                _tenantContext.RequiredTenantId,
+                expectedStatus,
                 request?.TimestampUtc,
                 request?.TrackingNumber,
                 request?.CourierName,
@@ -160,6 +203,25 @@ public sealed class PosAdminReturnsController : ControllerBase
 
     private string? CurrentActorEmail =>
         User.FindFirstValue(ClaimTypes.Email) ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+
+    private Task<IActionResult> ExecuteVendorStatusActionAsync(
+        Guid returnId,
+        AdminReturnStatusUpdateRequest? request,
+        Func<CommerceHubReturnStatus, Task<CommerceHubReturnDetailsDto>> action)
+    {
+        if (request?.ExpectedStatus is null)
+        {
+            return Task.FromResult<IActionResult>(StatusCode(
+                StatusCodes.Status428PreconditionRequired,
+                new
+                {
+                    code = "RETURN_EXPECTED_STATUS_REQUIRED",
+                    message = "The current return status is required before changing return logistics."
+                }));
+        }
+
+        return ExecuteVendorActionAsync(returnId, () => action(request.ExpectedStatus.Value));
+    }
 
     private async Task<IActionResult> ExecuteVendorActionAsync(
         Guid returnId,

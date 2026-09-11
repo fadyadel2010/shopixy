@@ -257,6 +257,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.commerceHub', 'CommerceHub'),
             icon: '🏪',
             children: [
+                { path: '/commercehub/orders', label: t('nav.commerceHubOrders', 'Orders'), icon: '📦', capability: 'commercehub.orders.view' },
                 { path: '/admin/commercehub', label: t('nav.commerceHubSettings', 'Publishing Settings'), icon: '⚙️', capability: 'commercehub.catalog.manage' },
                 { path: '/commercehub/finance', label: t('nav.commerceHubFinance', 'Finance Dashboard'), icon: '💼', capability: 'commercehub.finance.view' },
                 { path: '/commercehub/earnings', label: t('nav.commerceHubEarnings', 'Vendor Earnings'), icon: '📈', capability: 'commercehub.finance.view' },

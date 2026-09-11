@@ -10,7 +10,7 @@ namespace PointOfSale.API.Infrastructure.Mvc;
 
 public sealed class ApiErrorResponseNormalizationFilter : IAsyncResultFilter
 {
-    private static readonly string[] CodePropertyNames = { "Code", "ErrorCode" };
+    private static readonly string[] CodePropertyNames = { "Code", "ErrorCode", "ConflictCode" };
     private static readonly string[] MessagePropertyNames = { "Message", "MessageEn", "MessageAr", "Error" };
 
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)

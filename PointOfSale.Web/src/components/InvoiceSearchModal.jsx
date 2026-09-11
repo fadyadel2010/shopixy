@@ -8,6 +8,10 @@ import { useRTL } from '../hooks/useRTL'
 import { formatDate } from '../utils/dateFormat'
 import { useDebounce } from '../hooks/useDebounce'
 
+export const canRewriteInvoice = (type, invoice) => (
+    type !== 'sales' || invoice?.status === 'Draft' || invoice?.status === 0
+)
+
 export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint }) {
     const { t } = useTranslation()
     const { isRTL, dir, locale } = useRTL()
@@ -96,8 +100,8 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
     }
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" dir={dir}>
-            <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 sm:p-4 z-50" dir={dir}>
+            <div className="bg-white rounded-lg shadow-xl w-full min-w-0 max-w-4xl max-h-[90vh] flex flex-col">
                 <div className={`p-4 border-b border-gray-200 flex justify-between items-center ${isRTL ? 'flex-row-reverse' : ''}`}>
                     <h2 className={`text-xl font-bold ${isRTL ? 'text-right' : 'text-left'}`}>
                         {type === 'sales' ? t('pos.searchInvoices') : t('purchases.searchInvoices')}
@@ -119,13 +123,14 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                     ) : null}
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4">
+                <div className="flex-1 min-w-0 overflow-y-auto p-4">
                     {loading && invoices.length === 0 ? (
                         <div className="flex justify-center p-8">
                             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"></div>
                         </div>
                     ) : (
-                        <table className={`w-full ${isRTL ? 'text-right' : 'text-left'}`}>
+                        <div className="w-full overflow-x-auto">
+                        <table className={`w-full min-w-[680px] ${isRTL ? 'text-right' : 'text-left'}`}>
                             <thead className="bg-gray-50 text-gray-500 text-xs uppercase font-medium">
                                 <tr>
                                     <th className={`px-4 py-2 ${isRTL ? 'text-right' : 'text-left'}`}>{t('common.invoiceNumber')}</th>
@@ -138,7 +143,10 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {invoices.map(invoice => (
+                                {invoices.map(invoice => {
+                                    const canRewrite = canRewriteInvoice(type, invoice)
+
+                                    return (
                                     <tr key={invoice.id || invoice.invoiceId} className="hover:bg-gray-50">
                                         <td className={`px-4 py-3 font-medium ${isRTL ? 'text-right' : 'text-left'}`}>{invoice.invoiceNumber}</td>
                                         <td className={`px-4 py-3 cursor-default ${isRTL ? 'text-right' : 'text-left'}`}>
@@ -151,12 +159,15 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                                             {formatCurrency(invoice.totalAmount)}
                                         </td>
                                         <td className={`px-4 py-3 flex justify-center gap-2 ${isRTL ? 'flex-row-reverse' : ''}`}>
-                                            <button
-                                                onClick={() => onSelect(invoice)}
-                                                className="btn-secondary py-1 px-3 text-sm"
-                                            >
-                                                {t('common.edit')}
-                                            </button>
+                                            <span title={canRewrite ? '' : t('pos.completedInvoiceReturnRequired')}>
+                                                <button
+                                                    onClick={() => onSelect(invoice)}
+                                                    disabled={!canRewrite}
+                                                    className="btn-secondary py-1 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+                                                >
+                                                    {t('common.edit')}
+                                                </button>
+                                            </span>
                                             {onPrint && (
                                                 <button
                                                     onClick={() => onPrint(invoice)}
@@ -175,7 +186,8 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                                             </button>
                                         </td>
                                     </tr>
-                                ))}
+                                    )
+                                })}
                                 {invoices.length === 0 && (
                                     <tr>
                                         <td colSpan="5" className="px-4 py-8 text-center text-gray-500">
@@ -185,6 +197,7 @@ export default function InvoiceSearchModal({ type, onClose, onSelect, onPrint })
                                 )}
                             </tbody>
                         </table>
+                        </div>
                     )}
                 </div>
 

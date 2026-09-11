@@ -205,6 +205,60 @@ public sealed class SupplierFinancialIdempotencyTests
     }
 
     [Fact]
+    public async Task GetPartyBalance_IncludesCustomerPaymentAndInvoiceAggregates()
+    {
+        var harness = CreateStatementHarness();
+        var customerId = Guid.NewGuid();
+        var saleDate = new DateTime(2026, 9, 11, 10, 0, 0, DateTimeKind.Utc);
+        var paymentDate = saleDate.AddHours(1);
+        harness.Context.Customers.Add(new Customer
+        {
+            Id = customerId,
+            TenantId = harness.TenantId,
+            Name = "Balance Aggregate Customer",
+            CreatedAt = saleDate
+        });
+        harness.Context.AccountLedgers.AddRange(
+            new AccountLedger
+            {
+                Id = Guid.NewGuid(),
+                TenantId = harness.TenantId,
+                PartyType = PartyType.Customer,
+                PartyId = customerId,
+                TransactionDate = saleDate,
+                TransactionType = TransactionType.Sale,
+                DocumentNumber = "INV-AGG-001",
+                DebitAmount = 21m,
+                RunningBalance = 21m,
+                CreatedAt = saleDate
+            },
+            new AccountLedger
+            {
+                Id = Guid.NewGuid(),
+                TenantId = harness.TenantId,
+                PartyType = PartyType.Customer,
+                PartyId = customerId,
+                TransactionDate = paymentDate,
+                TransactionType = TransactionType.PaymentReceived,
+                DocumentNumber = "CPAY-AGG-001",
+                CreditAmount = 10m,
+                RunningBalance = 11m,
+                CreatedAt = paymentDate
+            });
+        await harness.Context.SaveChangesAsync();
+
+        var result = await harness.Controller.GetPartyBalance(PartyType.Customer, customerId);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var response = Assert.IsType<PartyBalanceResponse>(ok.Value);
+        Assert.Equal(11m, response.Balance);
+        Assert.Equal("Debit", response.BalanceType);
+        Assert.Equal(paymentDate, response.LastPaymentDate);
+        Assert.Equal(10m, response.TotalPaid);
+        Assert.Equal(21m, response.TotalInvoiced);
+    }
+
+    [Fact]
     public async Task FinancialMutationIdempotencyService_BlocksSecondSupplierClaimWhileFirstIsInProgress()
     {
         var tenantId = Guid.NewGuid();

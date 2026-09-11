@@ -1,3 +1,10 @@
+# 2026-08-30 Affiliate Attribution Certification Registration
+
+- PASS AF-PA4.4 Promotion Link Resolution, Storefront Entry & Attribution Admission source certification.
+- PASS AF-PA5.1 Customer Journey Attribution Persistence source certification.
+- PASS AF-PA5.2 Cart Attribution, Eligible Product Admission & Mixed Cart source certification.
+- PASS AF-PA5.3 Checkout Attribution, Order Line Admission & Commission Candidate source certification.
+
 # 2026-07-22 Storefront / Builder Runtime Certification Registration
 
 - PASS SF-ADM2.3 Builder Section Composition Authority Certification.
@@ -991,3 +998,11 @@ The architectural pattern is:
 - Runtime hardening made `GET /api/customers/auth/me` explicitly require the `CustomerJwt` scheme and `Customer` role instead of relying on manual claim checks after anonymous endpoint execution.
 - Logout revokes the current JTI and clears browser cookie authority; revoke-all, password reset, password change, and email change advance durable `CommerceHubCustomers.TokensValidAfterUtc` cutoff.
 - Regression-freeze coverage was added in `CommerceHubAuthenticationAuthorityCertificationTests`, `CommerceHubEmailVerificationCertificationTests`, and `CommerceHubSessionCreationCertificationTests`. Findings are recorded in `docs/architecture/commercehub-authentication-authority-certification-findings.md`.
+
+## 2026-09-06 Gate 3R CommerceHub Payment Configuration Authority
+
+- CommerceHub payment configuration is platform-owned. Vendor IDs establish the participating stores, but vendor Storefront `TenantPaymentMethods` do not authorize CommerceHub providers.
+- COD is CommerceHub platform policy. Paymob and Stripe availability comes from registered `IPaymentProviderAdapter` executable capabilities; session creation and webhook verification are mandatory, and Paymob also requires callback parsing.
+- `CommerceHubCartService`, `CommerceHubCheckoutService`, and `CommerceHubPaymentService` no longer read `TenantPaymentMethods`. Provider-unavailable initiation returns `PAYMENT_PROVIDER_NOT_CONFIGURED` before reservation checks, locks, payment rows, inventory mutation, or adapter calls.
+- Gate evidence passed: focused tests 26/26, full CommerceHub tests 799/799, API build with 0 errors, POS Web and CommerceHub production builds, `/health/live` HTTP 200, and `/health/marketplace` HTTP 200.
+- `ORD-CH-0017` remained one pending EGP 2,150 order with no provider transaction, earnings, refunds, payouts, financial audit rows, or financial transactions. External provider execution remains uncertified until platform sandbox configuration exists.

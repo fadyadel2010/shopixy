@@ -69,7 +69,8 @@ public sealed class CommerceHubCheckoutCertificationTests
         Assert.Contains("LoadProductVariantsForCheckoutAuthorityAsync", service, StringComparison.Ordinal);
         Assert.Contains("LoadProductsForCheckoutAuthorityAsync", service, StringComparison.Ordinal);
         Assert.Contains("LoadTenantsForCheckoutAuthorityAsync", service, StringComparison.Ordinal);
-        Assert.Contains("LoadTenantPaymentMethodsForCheckoutAuthorityAsync", service, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPaymentMethodAuthority.IsRequestedMethodAvailable", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", service, StringComparison.Ordinal);
         Assert.Contains("EnsureCommerceIntakeAllowedAsync", service, StringComparison.Ordinal);
         Assert.Contains("GetVendorsSuspendedFromNewOrdersAsync", service, StringComparison.Ordinal);
         Assert.Contains("EnsureVendorOrderAcceptanceAllowedAsync", service, StringComparison.Ordinal);

@@ -7,7 +7,7 @@ Status: Refund Identity Authority is production-certifiable for inspected fronte
 ## Implemented Identity Artifacts
 
 - `refundId`: customer refund history, embedded customer order refunds, Super Admin refund monitoring/details/actions, vendor refund-impact evidence.
-- `returnId`: Super Admin refund return-lifecycle presentation and return mutation target.
+- `returnId`: owning-vendor return action target and Super Admin read-only return-lifecycle presentation.
 - `executionId`: Super Admin refund execution evidence.
 - `financialRefundId`: Super Admin refund execution financial lineage evidence.
 - `paymentId`: Super Admin refund financial preview/execution evidence only.
@@ -34,7 +34,7 @@ Not found in inspected frontend runtime: `RefundNumber`, `RefundRequestId`, `Ref
 ## Runtime Hardening Performed
 
 - Added Super Admin return/refund identity validation for embedded return DTOs in refund details.
-- Added standalone Super Admin return DTO validation for exact `returnId` equality on return read and mutation responses.
+- Retained standalone Super Admin return DTO validation for exact `returnId` equality on reads and added exact vendor return target validation for action responses.
 - Added regression coverage rejecting embedded return/refund mismatch and standalone return identity substitution.
 
 ## Exact Runtime Files Modified

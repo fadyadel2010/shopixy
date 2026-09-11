@@ -23,7 +23,8 @@ public sealed class SuperAdminPayoutOrchestrationArchitectureTests
         Assert.DoesNotContain(typeof(ICommerceHubFinancialLedgerService), constructorParameterTypes);
 
         var controller = ReadRepoFile("PointOfSale.API/SuperAdmin/Controllers/SuperAdminPayoutsController.cs");
-        Assert.Contains("_payoutOrchestrationService.ExecuteAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("_payoutOrchestrationService.PrepareAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("_payoutOrchestrationService.CompleteAsync", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("ICommerceHubPayoutService", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("ICommerceHubFinancialLedgerService", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("RecordPayoutAsync", controller, StringComparison.Ordinal);
@@ -58,9 +59,10 @@ public sealed class SuperAdminPayoutOrchestrationArchitectureTests
     }
 
     [Fact]
-    public void SuperAdminExecution_MustUseCanonicalPayoutLifecycleInOrder()
+    public void SuperAdminExecution_MustCommitHandoffBeforeSeparateCompletionRequest()
     {
         var orchestration = ReadRepoFile("PointOfSale.API/SuperAdmin/Services/SuperAdminPayoutOrchestrationService.cs");
+        var controller = ReadRepoFile("PointOfSale.API/SuperAdmin/Controllers/SuperAdminPayoutsController.cs");
         var createIndex = orchestration.IndexOf("CreatePayoutAsync", StringComparison.Ordinal);
         var processingIndex = orchestration.IndexOf("MarkProcessingAsync", StringComparison.Ordinal);
         var completedIndex = orchestration.IndexOf("MarkCompletedAsync", StringComparison.Ordinal);
@@ -69,6 +71,9 @@ public sealed class SuperAdminPayoutOrchestrationArchitectureTests
         Assert.True(processingIndex > createIndex, "Super Admin payout orchestration must mark Processing after creation.");
         Assert.True(completedIndex > processingIndex, "Super Admin payout orchestration must complete only after Processing.");
         Assert.Contains("EnsureCommittedExternalHandoff(processing)", orchestration, StringComparison.Ordinal);
+        Assert.Contains("[HttpPost(\"{vendorId:guid}/prepare\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("[HttpPost(\"{vendorId:guid}/{payoutId:guid}/complete\")]", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("[HttpPost(\"{vendorId:guid}/execute\")]", controller, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -78,7 +83,7 @@ public sealed class SuperAdminPayoutOrchestrationArchitectureTests
         var payoutsService = ReadRepoFile("PointOfSale.API/SuperAdmin/Services/SuperAdminPayoutsService.cs");
         var superAdminRuntime = orchestration + payoutsService;
 
-        Assert.DoesNotContain("new CommerceHubPayout", superAdminRuntime, StringComparison.Ordinal);
+        Assert.DoesNotContain("_dbContext.CommerceHubPayouts.Add", superAdminRuntime, StringComparison.Ordinal);
         Assert.DoesNotContain("Status = CommerceHubPayoutStatus.Completed", superAdminRuntime, StringComparison.Ordinal);
         Assert.DoesNotContain("RecordPayoutAsync", superAdminRuntime, StringComparison.Ordinal);
         Assert.DoesNotContain("_payoutsService.ExecuteAsync", orchestration, StringComparison.Ordinal);

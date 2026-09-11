@@ -112,6 +112,48 @@ public sealed class InventoryConsistencyServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ReleaseReservationAsync_MustNotLoadReservationOwnedByAnotherTenant()
+    {
+        var graph = await SeedInventoryGraphAsync(initialQuantity: 8m, orderQuantity: 2);
+
+        await _service.ReserveOrderItemAsync(
+            new InventoryReservationRequest(
+                graph.TenantId,
+                graph.OrderId,
+                graph.SubOrderId,
+                graph.OrderItemId,
+                graph.ProductId,
+                graph.VariantId,
+                2m,
+                null,
+                DateTime.UtcNow.AddMinutes(10),
+                InventoryEventIdFactory.Create("reserve-tenant-owner", graph.OrderItemId),
+                "corr-reserve-tenant-owner",
+                "test"));
+
+        var reservation = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == graph.TenantId);
+        var foreignTenantId = Guid.NewGuid();
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ReleaseReservationAsync(
+                foreignTenantId,
+                reservation.Id,
+                1m,
+                InventoryEventIdFactory.Create("release-foreign-tenant", reservation.Id),
+                "corr-release-foreign-tenant",
+                "test"));
+
+        Assert.Equal("INVENTORY_RESERVATION_NOT_FOUND", exception.Code);
+        Assert.Equal(2m, reservation.RemainingReservedQuantity);
+        var stock = await _dbContext.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == graph.TenantId && item.VariantId == graph.VariantId);
+        Assert.Equal(2m, stock.ReservedQuantity);
+    }
+
+    [Fact]
     public async Task ReserveOrderItemAsync_ShouldRejectSameEventIdWithDifferentPayload()
     {
         var graph = await SeedInventoryGraphAsync(initialQuantity: 8m, orderQuantity: 2);
@@ -666,6 +708,237 @@ public sealed class InventoryConsistencyServiceTests : IDisposable
         Assert.Equal("INVENTORY_DELIVERY_REQUIRES_ACTIVE_RESERVATION", exception.Code);
     }
 
+    [Fact]
+    public async Task InventoryReconciliation_ShouldNotExpireCashOnDeliveryReservation()
+    {
+        var graph = await SeedInventoryGraphAsync(initialQuantity: 3m, orderQuantity: 2);
+
+        await _service.ReserveOrderItemAsync(
+            new InventoryReservationRequest(
+                graph.TenantId,
+                graph.OrderId,
+                graph.SubOrderId,
+                graph.OrderItemId,
+                graph.ProductId,
+                graph.VariantId,
+                2m,
+                null,
+                DateTime.UtcNow.AddMinutes(-1),
+                InventoryEventIdFactory.Create("reserve-expired-cod-reconciliation", graph.OrderItemId),
+                "corr-reserve",
+                "test"));
+
+        var job = new CommerceHubInventoryReconciliationJob(
+            _dbContext,
+            _service,
+            NullLogger<CommerceHubInventoryReconciliationJob>.Instance);
+
+        var result = await job.ExecuteAsync();
+        var reservation = await _dbContext.InventoryReservations.SingleAsync();
+
+        Assert.Equal(0, result.ExpiredReservationsReleasedCount);
+        Assert.Equal(InventoryReservationStatus.Active, reservation.Status);
+        Assert.Equal(0m, reservation.ReleasedQuantity);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenOriginalWasReleased_ShouldRestoreOnce()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+
+        await _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-reacquire");
+        await _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-reacquire-replay");
+
+        var activeReservations = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .Where(reservation =>
+                reservation.OrderId == graph.OrderId &&
+                reservation.Status == InventoryReservationStatus.Active)
+            .ToListAsync();
+        var stock = await _dbContext.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.VariantId == graph.VariantId);
+
+        Assert.Single(activeReservations);
+        Assert.Equal(2m, activeReservations.Sum(reservation => reservation.RemainingReservedQuantity));
+        Assert.All(activeReservations, reservation => Assert.True(reservation.ExpiresAtUtc > DateTime.UtcNow));
+        Assert.Equal(2m, stock.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenPartiallyReserved_ShouldOnlyReserveMissingQuantity()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+        var partialReserved = await _service.ReserveOrderItemAsync(
+            new InventoryReservationRequest(
+                graph.TenantId,
+                graph.OrderId,
+                graph.SubOrderId,
+                graph.OrderItemId,
+                graph.ProductId,
+                graph.VariantId,
+                1m,
+                null,
+                DateTime.UtcNow.AddMinutes(10),
+                Guid.NewGuid(),
+                "corr-partial",
+                "test"));
+        Assert.True(partialReserved);
+
+        await _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-fill-partial");
+
+        var activeReservations = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .Where(reservation => reservation.OrderId == graph.OrderId && reservation.Status == InventoryReservationStatus.Active)
+            .ToListAsync();
+        var stock = await _dbContext.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.VariantId == graph.VariantId);
+
+        Assert.Equal(2, activeReservations.Count);
+        Assert.Equal(2m, activeReservations.Sum(reservation => reservation.RemainingReservedQuantity));
+        Assert.Equal(2m, stock.ReservedQuantity);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenStockIsInsufficient_ShouldFailWithoutReservation()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 2m, orderQuantity: 2);
+        var stock = await _dbContext.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.VariantId == graph.VariantId);
+        stock.Quantity = 1m;
+        await _dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-shortage"));
+
+        Assert.Equal("OUT_OF_STOCK", exception.Code);
+        Assert.Equal(0m, stock.ReservedQuantity);
+        Assert.DoesNotContain(
+            await _dbContext.InventoryReservations.IgnoreQueryFilters().ToListAsync(),
+            reservation => reservation.OrderId == graph.OrderId && reservation.Status == InventoryReservationStatus.Active);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenDeletedPaymentEvidenceExists_ShouldRefuse()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            _dbContext.CommerceHubPayments.Add(new CommerceHubPayment
+            {
+                Id = Guid.NewGuid(),
+                OrderId = graph.OrderId,
+                Amount = 200m,
+                Currency = "EGP",
+                Provider = PaymentProvider.Stripe,
+                ProviderReference = $"stripe-{Guid.NewGuid():N}",
+                Status = CommerceHubPaymentRecordStatus.Failed,
+                IsDeleted = true
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-deleted-payment"));
+
+        Assert.Equal("MARKETPLACE_RESERVATION_REACQUISITION_REQUIRES_NO_PAYMENT_EVIDENCE", exception.Code);
+        Assert.DoesNotContain(
+            await _dbContext.InventoryReservations.IgnoreQueryFilters().ToListAsync(),
+            reservation => reservation.OrderId == graph.OrderId && reservation.Status == InventoryReservationStatus.Active);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenFailedPaymentsContainNoProviderEvidence_ShouldRestore()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+        var payment = new CommerceHubPayment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = graph.OrderId,
+            Amount = 200m,
+            Currency = "EGP",
+            Provider = PaymentProvider.Paymob,
+            ProviderReference = Guid.NewGuid().ToString("N"),
+            ProviderIntentId = $"{CommerceHubPaymentSessionRecoveryAuthority.ProviderSessionReinitFencePrefix}{Guid.NewGuid():N}",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = "PROVIDER_SESSION_RECONCILED_NOT_CREATED: operator confirmed no matching provider session."
+        };
+        payment.Attempts.Add(new CommerceHubPaymentAttempt
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            Provider = PaymentProvider.Paymob,
+            AttemptNumber = 1,
+            ProviderReference = payment.ProviderReference,
+            ProviderIntentId = $"{CommerceHubPaymentSessionRecoveryAuthority.ProviderSessionReinitFencePrefix}{Guid.NewGuid():N}",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = payment.FailureReason,
+            CompletedAtUtc = DateTime.UtcNow
+        });
+        payment.Logs.Add(new CommerceHubPaymentLog
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            EventType = "initiate.paymob.outcome_reconciled_not_created",
+            RawResponse = "{}"
+        });
+
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            _dbContext.CommerceHubPayments.Add(payment);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        await _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(
+            graph.OrderId,
+            "corr-reconciled-payment");
+
+        var activeReservation = Assert.Single(await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .Where(reservation =>
+                reservation.OrderId == graph.OrderId &&
+                reservation.Status == InventoryReservationStatus.Active)
+            .ToListAsync());
+        Assert.Equal(2m, activeReservation.RemainingReservedQuantity);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenOrderQuantityChanged_ShouldRefuse()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+        var originalReservation = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .SingleAsync(current => current.OrderId == graph.OrderId);
+        originalReservation.ReservedQuantity = 1m;
+        originalReservation.ReleasedQuantity = 1m;
+        await _dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-quantity-changed"));
+
+        Assert.Equal("MARKETPLACE_RESERVATION_QUANTITY_CHANGED", exception.Code);
+    }
+
+    [Fact]
+    public async Task ReacquireMarketplaceOrderReservationsForPaymentAsync_WhenVariantChanged_ShouldRefuse()
+    {
+        var graph = await SeedReleasedPendingOnlineReservationAsync(initialQuantity: 5m, orderQuantity: 2);
+        var originalReservation = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .SingleAsync(current => current.OrderId == graph.OrderId);
+        originalReservation.VariantId = Guid.NewGuid();
+        await _dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ReacquireMarketplaceOrderReservationsForPaymentAsync(graph.OrderId, "corr-variant-changed"));
+
+        Assert.Equal("MARKETPLACE_RESERVATION_HISTORY_CHANGED", exception.Code);
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();
@@ -823,6 +1096,59 @@ public sealed class InventoryConsistencyServiceTests : IDisposable
             subOrderId,
             orderItemId,
             orderQuantity);
+    }
+
+    private async Task<InventoryGraph> SeedReleasedPendingOnlineReservationAsync(decimal initialQuantity, int orderQuantity)
+    {
+        var graph = await SeedInventoryGraphAsync(initialQuantity, orderQuantity, onlinePayment: true);
+        var order = await _dbContext.CommerceHubMarketplaceOrders
+            .Include(current => current.SubOrders)
+            .ThenInclude(subOrder => subOrder.Items)
+            .SingleAsync(current => current.Id == graph.OrderId);
+
+        using (CommerceHubBoundaryMutationScope.BeginOrderLifecycle())
+        using (CommerceHubBoundaryMutationScope.BeginPaymentLifecycle())
+        {
+            order.Status = OrderStatus.Pending;
+            order.PaymentStatus = PaymentStatus.Pending;
+            foreach (var subOrder in order.SubOrders)
+            {
+                subOrder.Status = OrderStatus.Pending;
+                subOrder.PaymentStatus = PaymentStatus.Pending;
+                foreach (var item in subOrder.Items)
+                {
+                    item.Status = CommerceHubOrderItemStatus.Pending;
+                }
+            }
+
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var reserved = await _service.ReserveOrderItemAsync(
+            new InventoryReservationRequest(
+                graph.TenantId,
+                graph.OrderId,
+                graph.SubOrderId,
+                graph.OrderItemId,
+                graph.ProductId,
+                graph.VariantId,
+                orderQuantity,
+                null,
+                DateTime.UtcNow.AddMinutes(10),
+                Guid.NewGuid(),
+                "corr-original",
+                "CommerceHubCheckout"));
+        Assert.True(reserved);
+
+        await _service.ReleaseOrderItemReservationsAsync(
+            graph.TenantId,
+            graph.OrderItemId,
+            null,
+            Guid.NewGuid(),
+            "corr-original-release",
+            "test");
+
+        return graph;
     }
 
     private async Task<MultiTenantInventoryGraph> SeedMultiTenantMarketplaceReservationAuthorityGraphAsync()

@@ -709,6 +709,64 @@ public class CheckoutController : ControllerBase
         }
     }
 
+    [HttpGet("attachments/development-download")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> DownloadDevelopmentAttachmentObject(
+        [FromQuery] string? token,
+        CancellationToken cancellationToken)
+    {
+        var traceId = GetTraceId();
+        var environment = HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
+        if (!environment.IsDevelopment())
+        {
+            return NotFound();
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+        {
+            return BadRequest(new ApiErrorResponse(
+                "DEVELOPMENT_DOWNLOAD_TOKEN_REQUIRED",
+                "Download lease token is required.",
+                traceId));
+        }
+
+        var storage = HttpContext.RequestServices.GetRequiredService<PointOfSale.API.Services.IR2StorageService>();
+        if (storage is not PointOfSale.API.Services.IDevelopmentPresignedDownloadStorage developmentStorage)
+        {
+            return NotFound();
+        }
+
+        try
+        {
+            var download = await developmentStorage.OpenPresignedDownloadAsync(token, cancellationToken);
+            return File(download.Content, download.ContentType, enableRangeProcessing: true);
+        }
+        catch (PointOfSale.API.Services.DevelopmentPresignedDownloadException ex)
+        {
+            var statusCode = ex.ErrorCode switch
+            {
+                "DEVELOPMENT_DOWNLOAD_LEASE_EXPIRED" => StatusCodes.Status410Gone,
+                "DEVELOPMENT_DOWNLOAD_TOKEN_INVALID" or
+                "DEVELOPMENT_DOWNLOAD_LEASE_NOT_FOUND" => StatusCodes.Status403Forbidden,
+                _ => StatusCodes.Status400BadRequest
+            };
+
+            return StatusCode(statusCode, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (FileNotFoundException)
+        {
+            return NotFound(new ApiErrorResponse(
+                "DEVELOPMENT_DOWNLOAD_OBJECT_NOT_FOUND",
+                "Stored object was not found.",
+                traceId));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Development attachment download failed | TraceId: {TraceId}", traceId);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, ApiErrorResponse.ServiceUnavailable(traceId));
+        }
+    }
+
     [HttpDelete("attachments/{attachmentId:guid}")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     [ProducesResponseType(StatusCodes.Status204NoContent)]

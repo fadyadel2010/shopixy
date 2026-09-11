@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { normalizeApiError } from "@/api/api-error";
 import { deriveCustomerAuthResponseAuthority } from "@/auth/customer-session-authority";
 import { clearActivePaymentRecoveryContext } from "@/features/checkout/activePaymentRecoveryContext";
 import { customerAuthService } from "@/services";
@@ -94,7 +95,7 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => ({
         isHydrating: false
       }));
       return customer;
-    } catch {
+    } catch (error) {
       if (
         signal?.aborted ||
         hydrationRequestId !== latestHydrationRequestId ||
@@ -105,12 +106,22 @@ export const useCustomerAuthStore = create<CustomerAuthState>((set, get) => ({
           isHydrating: false
         }));
         return get().customer;
-      } else {
+      }
+
+      const apiError = normalizeApiError(error);
+      if (apiError.status === 401 || apiError.status === 403) {
         customerAuthorityRevision += 1;
         clearActivePaymentRecoveryContext();
         set(clearedSessionState);
+        return null;
       }
-      return null;
+
+      set((state) => ({
+        ...state,
+        hasHydrated: true,
+        isHydrating: false
+      }));
+      return get().customer;
     }
   }
 }));

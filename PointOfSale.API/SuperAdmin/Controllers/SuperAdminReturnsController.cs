@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Services.CommerceHub;
-using PointOfSale.API.SuperAdmin.DTOs;
 
 namespace PointOfSale.API.SuperAdmin.Controllers;
 
@@ -41,51 +40,6 @@ public sealed class SuperAdminReturnsController : SuperAdminBaseController
 
                 return result;
             });
-
-    [HttpPost("{returnId:guid}/override-status")]
-    [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public Task<IActionResult> OverrideStatus(
-        Guid returnId,
-        [FromBody] SuperAdminOverrideReturnStatusRequest request,
-        CancellationToken cancellationToken = default) =>
-        ExecuteActionAsync(
-            returnId,
-            () => _returnManagementService.OverrideStatusAsync(
-                returnId,
-                request.Status,
-                request?.TimestampUtc,
-                request?.TrackingNumber,
-                request?.CourierName,
-                request?.Notes,
-                CurrentSuperAdminId,
-                CurrentSuperAdminEmail,
-                HttpContext.TraceIdentifier,
-                cancellationToken: cancellationToken));
-
-    [HttpPost("{returnId:guid}/mark-failed")]
-    [ProducesResponseType(typeof(CommerceHubReturnDetailsDto), StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public Task<IActionResult> MarkFailed(
-        Guid returnId,
-        [FromBody] SuperAdminReturnStatusUpdateRequest request,
-        CancellationToken cancellationToken = default) =>
-        ExecuteActionAsync(
-            returnId,
-            () => _returnManagementService.MarkFailedAsync(
-                returnId,
-                request?.TimestampUtc,
-                request?.TrackingNumber,
-                request?.CourierName,
-                request?.Notes,
-                CurrentSuperAdminId,
-                CurrentSuperAdminEmail,
-                HttpContext.TraceIdentifier,
-                cancellationToken: cancellationToken));
 
     private async Task<IActionResult> ExecuteActionAsync(
         Guid returnId,

@@ -585,8 +585,13 @@ public static class PaymobWebhookPayloadParser
             IsRefunded = ParseBool(values, "is_refunded"),
             Is3dSecure = ParseBool(values, "is_3d_secure"),
             IntegrationId = ParseLong(values, "integration_id"),
+            ProfileId = ParseLong(values, "profile_id"),
             HasParentTransaction = ParseBool(values, "has_parent_transaction"),
-            Order = new PaymobOfficialOrder { Id = orderId },
+            Order = new PaymobOfficialOrder
+            {
+                Id = orderId,
+                MerchantOrderId = Get(values, "merchant_order_id")
+            },
             CreatedAt = Get(values, "created_at"),
             Currency = Get(values, "currency"),
             SourceData = new PaymobOfficialSourceData
@@ -596,14 +601,20 @@ public static class PaymobWebhookPayloadParser
                 Type = Get(values, "source_data.type")
             },
             Owner = ParseLong(values, "owner"),
-            ErrorOccured = ParseBool(values, "error_occured")
+            ErrorOccured = ParseBool(values, "error_occured"),
+            DataMessage = Get(values, "data.message"),
+            Data = new PaymobOfficialCallbackData
+            {
+                Message = Get(values, "data.message"),
+                TxnResponseCode = Get(values, "txn_response_code")
+            }
         };
 
         return new PaymobCallback(
             "CALLBACK",
             transactionId.ToString(CultureInfo.InvariantCulture),
             orderId,
-            string.Empty,
+            payload.Order?.MerchantOrderId ?? string.Empty,
             providerReference,
             transactionReference,
             BuildIdempotencyKey(transactionId, payload),
@@ -1182,6 +1193,9 @@ public sealed record PaymobOfficialCallbackPayload
 
     [JsonPropertyName("integration_id")]
     public long? IntegrationId { get; init; }
+
+    [JsonPropertyName("profile_id")]
+    public long? ProfileId { get; init; }
 
     [JsonPropertyName("has_parent_transaction")]
     public bool HasParentTransaction { get; init; }

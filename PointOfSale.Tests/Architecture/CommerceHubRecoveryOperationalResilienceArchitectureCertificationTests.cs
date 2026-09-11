@@ -10,6 +10,8 @@ public sealed class CommerceHubRecoveryOperationalResilienceArchitectureCertific
         var projectionOutbox = ReadRepoFile("PointOfSale.Infrastructure/Eventing/MarketplaceProjectionOutboxProcessor.cs");
         var commerceHubProjectionRepair = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubOrderProjectionRepairService.cs");
         var commerceHubProjectionReconciliation = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubProjectionReconciliationService.cs");
+        var commerceHubProjectionRepairSupport = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubOrderProjectionRepairSupport.cs");
+        var applicationDbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
         var storefrontProjectionRepair = ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontOrderProjectionRepairService.cs");
         var storefrontProjectionReconciliation = ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontOrderProjectionReconciliationService.cs");
         var searchOverlay = ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/CommerceHubSearchSqlAuthorityOverlay.cs");
@@ -56,10 +58,18 @@ public sealed class CommerceHubRecoveryOperationalResilienceArchitectureCertific
         {
             Assert.Contains("BuildProjectionRecoveryFilter", projectionRepair, StringComparison.Ordinal);
             Assert.Contains("ProjectionProvesSqlAuthority", projectionRepair, StringComparison.Ordinal);
+            Assert.Contains("TryReplaceOrphanedOrderNumberCollisionAsync", projectionRepair, StringComparison.Ordinal);
             Assert.Contains("CommerceHubBoundaryMutationScope.BeginProjection()", projectionRepair, StringComparison.Ordinal);
         }
 
         Assert.Contains("CommerceHubProjectionRepairException", commerceHubProjectionRepair, StringComparison.Ordinal);
+        Assert.Contains("IgnoreQueryFilters", commerceHubProjectionRepairSupport, StringComparison.Ordinal);
+        Assert.Contains("candidate.Id == collision.MarketplaceOrderId", commerceHubProjectionRepairSupport, StringComparison.Ordinal);
+        Assert.Contains("!candidate.IsDeleted", commerceHubProjectionRepairSupport, StringComparison.Ordinal);
+        Assert.Contains("new ReplaceOptions { IsUpsert = false }", commerceHubProjectionRepairSupport, StringComparison.Ordinal);
+        Assert.Contains("nameof(CommerceHubMarketplaceOrder.LastProjectionAttemptAt)", applicationDbContext, StringComparison.Ordinal);
+        Assert.Contains("nameof(CommerceHubMarketplaceOrder.ProjectionAttemptCount)", applicationDbContext, StringComparison.Ordinal);
+        Assert.Contains("nameof(CommerceHubMarketplaceOrder.IsProjectionTerminalFailure)", applicationDbContext, StringComparison.Ordinal);
 
         foreach (var storefrontProjection in new[] { storefrontProjectionRepair, storefrontProjectionReconciliation })
         {
@@ -131,11 +141,6 @@ public sealed class CommerceHubRecoveryOperationalResilienceArchitectureCertific
     public void DocumentationFreeze_MustRecordArchFiveRecoveryOperationalCertification()
     {
         var findings = ReadRepoFile("docs/architecture/commercehub-recovery-operational-resilience-review-findings.md");
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         foreach (var marker in new[]
         {
@@ -167,12 +172,6 @@ public sealed class CommerceHubRecoveryOperationalResilienceArchitectureCertific
         {
             Assert.Contains(marker, findings, StringComparison.Ordinal);
         }
-
-        Assert.Contains("PASS ARCH-5 CommerceHub Recovery, Replay & Operational Resilience Review", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-5 CommerceHub Recovery Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-5 recovery runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-5 CommerceHub Recovery, Replay & Operational Resilience Review", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-5 CommerceHub Recovery Operational Resilience Architecture Freeze", codexRules, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

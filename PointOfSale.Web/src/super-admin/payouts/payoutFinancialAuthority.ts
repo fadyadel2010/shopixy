@@ -1,5 +1,6 @@
 import type {
     SuperAdminPayoutDto,
+    SuperAdminActiveVendorPayout,
     SuperAdminVendorPayoutMethodChoice,
     SuperAdminVendorPayoutQueueCurrencySummary,
     SuperAdminVendorPayoutQueueItem,
@@ -21,6 +22,7 @@ const authorityCurrency = (value: unknown) =>
 
 const PAYOUT_METHODS = new Set(['BankTransfer', 'VodafoneCash', 'InstaPay'])
 const PAYOUT_STATUSES = new Set(['Pending', 'Processing', 'Completed', 'Failed', 'ReconciliationRequired'])
+const ACTIVE_PAYOUT_STATUSES = new Set(['Pending', 'Processing', 'ReconciliationRequired'])
 const RISK_FLAGS = new Set([
     'VendorSuspended',
     'GovernanceSuspended',
@@ -57,6 +59,38 @@ function requirePayoutMethod(value: unknown): SuperAdminVendorPayoutMethodChoice
     return method
 }
 
+function requireActivePayout(value: unknown): SuperAdminActiveVendorPayout {
+    const payout = value as SuperAdminActiveVendorPayout
+    if (
+        !guid(payout?.payoutId) ||
+        !money(payout.amount) ||
+        payout.amount <= 0 ||
+        !authorityCurrency(payout.currency) ||
+        !ACTIVE_PAYOUT_STATUSES.has(payout.status) ||
+        !PAYOUT_METHODS.has(payout.method) ||
+        !(payout.payoutMethodId == null || guid(payout.payoutMethodId)) ||
+        !optionalText(payout.destinationValueSnapshot) ||
+        !text(payout.idempotencyKey) ||
+        !text(payout.externalTransferIdempotencyKey) ||
+        !optionalText(payout.externalTransferHandoffToken) ||
+        !optionalDate(payout.externalTransferHandoffCommittedAtUtc)
+    ) {
+        throw new Error('Super Admin payout financial authority rejected malformed committed handoff evidence.')
+    }
+
+    const hasCommittedHandoff = payout.status !== 'Pending'
+    if (hasCommittedHandoff &&
+        (!text(payout.externalTransferHandoffToken) || !payout.externalTransferHandoffCommittedAtUtc)) {
+        throw new Error('Super Admin payout financial authority rejected missing committed handoff evidence.')
+    }
+
+    if (!hasCommittedHandoff && (payout.externalTransferHandoffToken || payout.externalTransferHandoffCommittedAtUtc)) {
+        throw new Error('Super Admin payout financial authority rejected premature handoff evidence.')
+    }
+
+    return payout
+}
+
 function requireQueueItem(value: unknown): SuperAdminVendorPayoutQueueItem {
     const item = value as SuperAdminVendorPayoutQueueItem
     if (
@@ -71,7 +105,8 @@ function requireQueueItem(value: unknown): SuperAdminVendorPayoutQueueItem {
         !optionalDate(item.lastOrderAt) ||
         !Array.isArray(item.payoutMethods) ||
         !Array.isArray(item.riskFlags) ||
-        typeof item.canRecordCompletedPayout !== 'boolean' ||
+        typeof item.canPreparePayout !== 'boolean' ||
+        typeof item.canCompletePayout !== 'boolean' ||
         !optionalText(item.defaultPayoutMethodId) ||
         !optionalText(item.defaultPayoutMethodType) ||
         !optionalText(item.defaultPayoutDestinationValue) ||
@@ -90,6 +125,7 @@ function requireQueueItem(value: unknown): SuperAdminVendorPayoutQueueItem {
     }
 
     const methods = item.payoutMethods.map(requirePayoutMethod)
+    const activePayout = item.activePayout == null ? null : requireActivePayout(item.activePayout)
     const methodIds = new Set<string>()
     for (const method of methods) {
         const methodId = method.id.toLowerCase()
@@ -111,11 +147,29 @@ function requireQueueItem(value: unknown): SuperAdminVendorPayoutQueueItem {
         throw new Error('Super Admin payout financial authority rejected malformed risk evidence.')
     }
 
-    if (item.canRecordCompletedPayout && (item.eligibleAmount <= 0 || methods.length === 0)) {
-        throw new Error('Super Admin payout financial authority rejected executable payout without eligible method authority.')
+    const hasPendingPayout = activePayout?.status === 'Pending'
+    const pendingCanPrepare = !!(
+        hasPendingPayout &&
+        activePayout?.payoutMethodId &&
+        activePayout.destinationValueSnapshot
+    )
+    if (item.canPreparePayout && !hasPendingPayout && (activePayout || item.eligibleAmount <= 0 || methods.length === 0)) {
+        throw new Error('Super Admin payout financial authority rejected payout preparation without eligible method authority.')
     }
 
-    return { ...item, payoutMethods: methods }
+    if (item.canPreparePayout && item.canCompletePayout) {
+        throw new Error('Super Admin payout financial authority rejected simultaneous preparation and completion authority.')
+    }
+
+    if (activePayout && (
+        hasPendingPayout
+            ? item.canCompletePayout || item.canPreparePayout !== pendingCanPrepare
+            : item.canPreparePayout || !item.canCompletePayout
+    )) {
+        throw new Error('Super Admin payout financial authority rejected contradictory payout handoff authority.')
+    }
+
+    return { ...item, activePayout, payoutMethods: methods }
 }
 
 function requireCurrencySummary(value: unknown): SuperAdminVendorPayoutQueueCurrencySummary {
@@ -215,6 +269,7 @@ export function requireSuperAdminPayoutExecutionPresentation(
     value: unknown,
     expectedVendorId: string,
     expectedAmount: number,
+    expectedStatuses: ReadonlyArray<'Processing' | 'Completed'>,
 ): SuperAdminPayoutDto {
     const payout = value as SuperAdminPayoutDto
     if (
@@ -228,6 +283,7 @@ export function requireSuperAdminPayoutExecutionPresentation(
         !sameMoney(payout.amount, expectedAmount) ||
         !authorityCurrency(payout.currency) ||
         !PAYOUT_STATUSES.has(payout.status) ||
+        !expectedStatuses.includes(payout.status as 'Processing' | 'Completed') ||
         !PAYOUT_METHODS.has(payout.method) ||
         !text(payout.idempotencyKey) ||
         !text(payout.createdAtUtc) ||
@@ -235,9 +291,22 @@ export function requireSuperAdminPayoutExecutionPresentation(
         !optionalText(payout.payoutMethodId) ||
         !optionalText(payout.destinationValueSnapshot) ||
         !optionalText(payout.reference) ||
+        !optionalText(payout.externalReferenceId) ||
+        !optionalText(payout.bankTransactionId) ||
+        !optionalText(payout.externalTransferIdempotencyKey) ||
+        !optionalText(payout.externalTransferHandoffToken) ||
+        !optionalDate(payout.externalTransferHandoffCommittedAtUtc) ||
         !optionalText(payout.processedBy)
     ) {
         throw new Error('Super Admin payout financial authority rejected execution response evidence.')
+    }
+
+    if (
+        !text(payout.externalTransferIdempotencyKey) ||
+        !text(payout.externalTransferHandoffToken) ||
+        !payout.externalTransferHandoffCommittedAtUtc
+    ) {
+        throw new Error('Super Admin payout financial authority rejected missing committed handoff evidence.')
     }
 
     return payout

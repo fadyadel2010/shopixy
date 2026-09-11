@@ -7,6 +7,7 @@ import {
 const order = {
     orderId: 'order-1',
     tenantId: '11111111-1111-4111-8111-111111111111',
+    isMarketplaceOrder: true,
     status: 'Processing',
     paymentStatus: 'Paid',
     subOrders: [
@@ -54,5 +55,17 @@ describe('Marketplace order lifecycle authority', () => {
             paymentStatus: 'Pending',
             subOrders: [{ ...order.subOrders[0], status: 'Delivered', paymentStatus: 'Paid' }],
         })).toThrow(/parent\/child lifecycle/)
+    })
+
+    it('does not apply Marketplace payment coupling to a canonical Ecommerce lifecycle', () => {
+        const ecommerceOrder = {
+            orderId: 'order-2',
+            tenantId: '11111111-1111-4111-8111-111111111111',
+            isMarketplaceOrder: false,
+            status: 'Delivered',
+            paymentStatus: 'Pending',
+        }
+
+        expect(requireMarketplaceOrderLifecycleAuthority(ecommerceOrder)).toBe(ecommerceOrder)
     })
 })

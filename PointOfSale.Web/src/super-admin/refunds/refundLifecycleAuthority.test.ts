@@ -132,8 +132,6 @@ const returnRequest = {
     canMarkDelivered: false,
     canMarkFailed: true,
     canConfirmReceipt: false,
-    canOverrideStatus: true,
-    allowedOverrideStatuses: ['Pending', 'PickupScheduled', 'PickedUp', 'InTransit', 'DeliveredToVendor'],
     isExecutionTriggerReached: false,
 }
 
@@ -232,43 +230,22 @@ describe('Super Admin refund lifecycle authority', () => {
         }, returnId)).toThrow(/refund identity authority rejected/i)
     })
 
-    it('rejects return action grants that fabricate override authority', () => {
-        expect(() => requireSuperAdminReturnPresentation({
-            ...returnRequest,
-            canOverrideStatus: undefined,
-        }, returnId)).toThrow(/refund identity authority rejected/i)
-
-        expect(() => requireSuperAdminReturnPresentation({
-            ...returnRequest,
-            canOverrideStatus: true,
-            allowedOverrideStatuses: [],
-        }, returnId)).toThrow(/refund identity authority rejected/i)
-
-        expect(() => requireSuperAdminReturnPresentation({
-            ...returnRequest,
-            canOverrideStatus: false,
-            allowedOverrideStatuses: ['Pending'],
-        }, returnId)).toThrow(/refund identity authority rejected/i)
-
-        expect(() => requireSuperAdminReturnPresentation({
-            ...returnRequest,
-            allowedOverrideStatuses: ['Pending', 'Confirmed'],
-        }, returnId)).toThrow(/refund identity authority rejected/i)
+    it('accepts vendor lifecycle grants as read-only monitoring evidence', () => {
+        expect(requireSuperAdminReturnPresentation(returnRequest, returnId)).toBe(returnRequest)
     })
 
-    it('freezes return reads and mutations to the exact backend-issued return target', () => {
+    it('freezes Super Admin returns to exact read-only targets', () => {
         const service = readFileSync(resolve(__dirname, 'refundsService.ts'), 'utf8')
 
         expect(service).toContain('return requireSuperAdminReturnPresentation(response.data, returnId)')
         expect(service).toContain('`/returns/${returnId}`')
-        expect(service).toContain('`/returns/${returnId}/mark-failed`')
-        expect(service).toContain('`/returns/${returnId}/override-status`')
+        expect(service).not.toContain('`/returns/${returnId}/mark-failed`')
+        expect(service).not.toContain('`/returns/${returnId}/override-status`')
     })
 
     it('freezes Super Admin refund mutations behind current backend lifecycle authority re-entry', () => {
         const page = readFileSync(resolve(__dirname, 'RefundsPage.tsx'), 'utf8')
 
-        expect(page).toContain('requireSuperAdminReturnForCurrentRefund')
         expect(page).toContain('async function requireCurrentRefundMutationAuthority()')
         expect(page).toContain('const refreshedRefunds = await refundsQuery.refetch()')
         expect(page).toContain('requireCurrentSuperAdminRefundSelection(selectedRefundId, refreshedRefunds.data.refunds)')
@@ -277,20 +254,59 @@ describe('Super Admin refund lifecycle authority', () => {
         expect(page).toContain('if (!currentRefund.canReject)')
         expect(page).toContain('if (!currentRefund.canRetry)')
         expect(page).toContain('if (!currentRefund.canExecute || (!isRefundAwaitingPayout(currentRefund.status) && currentRefund.status !== \'Approved\'))')
-        expect(page).toContain("returnId: returnRequest.returnId")
-        expect(page).toContain('getDefaultOverrideStatus(returnRequest)')
-        expect(page).toContain('!returnRequest.canOverrideStatus')
-        expect(page).toContain('!returnRequest.allowedOverrideStatuses.includes(overrideStatus)')
         expect(page).toContain('const acceptedRefundDetails =')
         expect(page).toContain('refund={acceptedRefundDetails}')
         expect(page).toContain('executeModalOpen && acceptedRefundDetails')
-        expect(page).toContain('returnModalMode && acceptedRefundDetails?.returnRequest')
+        expect(page).not.toContain('ReturnTransitionModal')
     })
 
-    it('freezes return mutation responses to the current refund scope', () => {
+    it('does not expose Super Admin return mutation controls', () => {
         const page = readFileSync(resolve(__dirname, 'RefundsPage.tsx'), 'utf8')
 
-        expect(page).toContain('const currentRefundDetails = detailsQuery.data')
-        expect(page).toContain('requireSuperAdminReturnForCurrentRefund(returnRequest, currentRefundDetails)')
+        expect(page).not.toContain('onOverrideReturn')
+        expect(page).not.toContain('onMarkReturnFailed')
+        expect(page).not.toContain('returnMutation')
+        expect(page).not.toContain('setReturnModalMode')
+    })
+
+    it('exposes canonical refund simulations only behind the Development frontend guard', () => {
+        const page = readFileSync(resolve(__dirname, 'RefundsPage.tsx'), 'utf8')
+        const service = readFileSync(resolve(__dirname, 'refundsService.ts'), 'utf8')
+
+        expect(page).toContain("refund.financialPreview.executionPath === 'CashOnDeliveryDebtReduction'")
+        expect(page).toContain("refund.financialPreview.executionPath === 'OnlineBeforePayout'")
+        expect(page).toContain('No external money movement will be confirmed.')
+        expect(page).toContain('superAdmin.refundsPage.actions.replayDevelopmentSimulation')
+        expect(page).toContain('refund.execution?.isDevelopmentSimulation === true')
+        expect(page).toContain('superAdmin.refundsPage.sections.payoutConfirmation.simulationCaption')
+        expect(page.indexOf('const isDevelopmentSimulation = refund?.execution?.isDevelopmentSimulation === true'))
+            .toBeGreaterThan(page.indexOf('function RefundDetailsDrawer({'))
+        expect(page).toContain('Idempotency replay applied no additional financial effect.')
+        expect(service).toContain("if (!import.meta.env.DEV)")
+        expect(service).toContain('/execute-cod-debt-reduction')
+        expect(service).toContain('/execute-online-before-payout')
+        expect(service).toContain("result.evidenceType !== 'DevelopmentSimulatedCodCustomerRefund'")
+        expect(service).toContain("result.evidenceType !== 'DevelopmentSimulatedOnlineCustomerRefund'")
+        expect(service).toContain('result.isDevelopmentSimulation !== true')
+        expect(service).toContain('result.externalMoneyMovementConfirmed !== false')
+    })
+
+    it('exposes only the bounded Gate 3R accounting requeue through authenticated Development UI', () => {
+        const app = readFileSync(resolve(__dirname, '../../App.jsx'), 'utf8')
+        const page = readFileSync(resolve(__dirname, 'RefundsPage.tsx'), 'utf8')
+        const service = readFileSync(resolve(__dirname, 'refundsService.ts'), 'utf8')
+
+        expect(app).toContain('<Route element={<SuperAdminQueryBoundary><SuperAdminProtectedRoute /></SuperAdminQueryBoundary>}>')
+        expect(app).toContain('<SuperAdminCapabilityRoute capability="super-admin.refunds.manage" />')
+        expect(page).toContain("const GATE3R_REFUND_ID = 'd9ac7cf0-3822-437c-9e66-e8c258c8b633'")
+        expect(page).toContain('import.meta.env.DEV && refund.refundId.toLowerCase() === GATE3R_REFUND_ID')
+        expect(page).toContain('window.confirm(')
+        expect(page).toContain('disabled={isDevelopmentAccountingRequeuePending || Boolean(developmentAccountingRequeueResult)}')
+        expect(page).toContain('setSuccessMessage(message)')
+        expect(page).toContain('window.alert(message)')
+        expect(service).toContain("export const GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID = '01a08680-3cff-7ef1-a6ff-58fa723f30f1'")
+        expect(service).toContain('`/api/debug/outbox/requeue/${GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID}`')
+        expect(service).toContain("if (!import.meta.env.DEV)")
+        expect(service).not.toContain('/api/debug/outbox/process')
     })
 })

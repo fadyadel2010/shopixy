@@ -772,13 +772,61 @@ public sealed class CommerceHubFinancialReadinessGate : ICommerceHubFinancialRea
                         .Any(settlement =>
                             settlement.VendorId == tenantId &&
                             settlement.Id == transaction.ReferenceId))))) &&
-                !_dbContext.JournalEntries
-                    .IgnoreQueryFilters()
-                    .Any(journal =>
-                        journal.TenantId == tenantId &&
-                        journal.SourceType == "CommerceHubFinancialTransaction" &&
-                        journal.SourceId == transaction.Id &&
-                        journal.Status == JournalStatus.Posted))
+                !(_dbContext.JournalEntries
+                      .IgnoreQueryFilters()
+                      .Any(journal =>
+                          journal.TenantId == tenantId &&
+                          journal.SourceType == "CommerceHubFinancialTransaction" &&
+                          journal.SourceId == transaction.Id &&
+                          journal.Status == JournalStatus.Posted) ||
+                  (transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+                   transaction.EntityId == tenantId &&
+                   transaction.TransactionType == CommerceHubFinancialTransactionType.Refund &&
+                   transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                   transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                   transaction.ReferenceType == CommerceHubFinancialReferenceType.Refund &&
+                   _dbContext.Set<CommerceHubFinancialTransaction>()
+                       .AsNoTracking()
+                       .Any(platformAdjustment =>
+                           platformAdjustment.EntityType == CommerceHubFinancialEntityType.Platform &&
+                           platformAdjustment.TransactionType == CommerceHubFinancialTransactionType.Adjustment &&
+                           platformAdjustment.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                           platformAdjustment.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                           platformAdjustment.ReferenceType == CommerceHubFinancialReferenceType.Refund &&
+                           platformAdjustment.ReferenceId == transaction.ReferenceId &&
+                           platformAdjustment.Amount == transaction.Amount &&
+                           platformAdjustment.Currency == transaction.Currency &&
+                           _dbContext.JournalEntries
+                               .IgnoreQueryFilters()
+                               .Any(journal =>
+                                    journal.TenantId == tenantId &&
+                                    journal.SourceType == "CommerceHubFinancialTransaction" &&
+                                    journal.SourceId == platformAdjustment.Id &&
+                                    journal.Status == JournalStatus.Posted))) ||
+                  (transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+                   transaction.EntityId == tenantId &&
+                   transaction.TransactionType == CommerceHubFinancialTransactionType.Payout &&
+                   transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                   transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                   transaction.ReferenceType == CommerceHubFinancialReferenceType.Payout &&
+                   _dbContext.Set<CommerceHubFinancialTransaction>()
+                       .AsNoTracking()
+                       .Any(platformPayout =>
+                           platformPayout.EntityType == CommerceHubFinancialEntityType.Platform &&
+                           platformPayout.TransactionType == CommerceHubFinancialTransactionType.Payout &&
+                           platformPayout.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                           platformPayout.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                           platformPayout.ReferenceType == CommerceHubFinancialReferenceType.Payout &&
+                           platformPayout.ReferenceId == transaction.ReferenceId &&
+                           platformPayout.Amount == transaction.Amount &&
+                           platformPayout.Currency == transaction.Currency &&
+                           _dbContext.JournalEntries
+                               .IgnoreQueryFilters()
+                               .Any(journal =>
+                                   journal.TenantId == tenantId &&
+                                   journal.SourceType == "CommerceHubFinancialTransaction" &&
+                                   journal.SourceId == platformPayout.Id &&
+                                   journal.Status == JournalStatus.Posted)))))
             .OrderBy(transaction => transaction.CreatedAtUtc)
             .Select(transaction => new
             {
@@ -889,6 +937,19 @@ public sealed class CommerceHubFinancialReadinessGate : ICommerceHubFinancialRea
         var scope = ParseReconciliationScope(latestReport.DetailsJson);
         if (!scope.IsVendorScoped || !scope.CheckedVendorIds.Contains(tenantId))
         {
+            if (allowFreshStartupBypass &&
+                !await HasVendorFinancialFootprintAsync(tenantId, cancellationToken))
+            {
+                _logger.LogWarning(
+                    "Allowing CommerceHub intake for a vendor outside the latest reconciliation scope because no prior financial footprint exists | Operation: {Operation} | VendorId: {VendorId} | ReportId: {ReportId} | TimestampUtc: {TimestampUtc}",
+                    operationName,
+                    tenantId,
+                    latestReport.Id,
+                    latestReport.TimestampUtc);
+
+                return;
+            }
+
             _logger.LogError(
                 "Blocking CommerceHub outward money movement because latest reconciliation report does not prove vendor coverage | Operation: {Operation} | VendorId: {VendorId} | ReportId: {ReportId} | Status: {Status} | TimestampUtc: {TimestampUtc}",
                 operationName,
@@ -1699,5 +1760,41 @@ public sealed class CommerceHubFinancialReadinessGate : ICommerceHubFinancialRea
             .AnyAsync(webhook => !webhook.IsDeleted, cancellationToken);
 
         return hasUnresolvedWebhooks;
+    }
+
+    private async Task<bool> HasVendorFinancialFootprintAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        if (await _dbContext.CommerceHubSubOrders
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .AnyAsync(subOrder => subOrder.StoreId == tenantId, cancellationToken) ||
+            await _dbContext.Set<CommerceHubFinancialTransaction>()
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .AnyAsync(transaction =>
+                    transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+                    transaction.EntityId == tenantId,
+                    cancellationToken) ||
+            await _dbContext.CommerceHubVendorEarnings
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .AnyAsync(earning => earning.TenantId == tenantId, cancellationToken) ||
+            await _dbContext.CommerceHubPayouts
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .AnyAsync(payout => payout.TenantId == tenantId, cancellationToken) ||
+            await _dbContext.CommerceHubVendorSettlements
+                .AsNoTracking()
+                .AnyAsync(settlement => settlement.VendorId == tenantId, cancellationToken) ||
+            await _dbContext.CommerceHubFinancialAuditLogs
+                .AsNoTracking()
+                .AnyAsync(audit => audit.TenantId == tenantId, cancellationToken))
+        {
+            return true;
+        }
+
+        return false;
     }
 }

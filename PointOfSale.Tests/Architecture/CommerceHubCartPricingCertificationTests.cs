@@ -25,6 +25,7 @@ public sealed class CommerceHubCartPricingCertificationTests
         var cartService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCartService.cs");
         var checkoutService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs");
         var cartTypes = ReadRepoFile("PointOfSale.CommerceHub/src/types/cart.ts");
+        var frontendFinancialAuthority = ReadRepoFile("PointOfSale.CommerceHub/src/features/orderFinancialAuthority.ts");
 
         Assert.Contains("CommerceHubCartPricingResponseDto", cartService, StringComparison.Ordinal);
         Assert.Contains("_promoService.ValidatePromoAsync", cartService, StringComparison.Ordinal);
@@ -35,6 +36,8 @@ public sealed class CommerceHubCartPricingCertificationTests
         Assert.Contains("PromoDiscountTotal", checkoutService, StringComparison.Ordinal);
         Assert.Contains("ShippingTotal", checkoutService, StringComparison.Ordinal);
         Assert.Contains("buildCommerceHubCartPricingRequest", cartTypes, StringComparison.Ordinal);
+        Assert.Contains("storeShippingTotal += requireMoney(selection.shippingPrice", frontendFinancialAuthority, StringComparison.Ordinal);
+        Assert.Contains("contradictory store shipping evidence", frontendFinancialAuthority, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using PointOfSale.Core.Helpers;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -133,6 +134,10 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
                 admissionDecision: "PendingMutationBoundary",
                 mutationFenceDecision: "Pending");
 
+            var authoritativeVersion = sqlProjection == null
+                ? request.EventVersion
+                : ProductEventVersionHelper.ToProductEventVersion(sqlProjection.ProductGeneration);
+
             if (sqlProjection == null || !sqlProjection.IsActive || !sqlProjection.IsOnlineVisible)
             {
                 var tombstone = await _mutationBoundary.ApplyAsync(
@@ -142,7 +147,7 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
                         request.ProductId,
                         Projection: null,
                         request.EventOccurredAtUtc,
-                        request.EventVersion,
+                        authoritativeVersion,
                         request.EventId,
                         ReviewReason: "SQL authority no longer proves storefront product visibility."),
                     cancellationToken);
@@ -166,7 +171,7 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
 
             sqlProjection.LastEventId = request.EventId;
             sqlProjection.LastEventOccurredAtUtc = request.EventOccurredAtUtc;
-            sqlProjection.LastEventVersion = request.EventVersion;
+            sqlProjection.LastEventVersion = authoritativeVersion;
             sqlProjection.ReadModelName = ReadModelEvolutionRegistry.StorefrontProduct;
             sqlProjection.ReadModelSchemaVersion = ProductDocument.CurrentReadModelSchemaVersion;
             sqlProjection.ProjectionVersion = ProductDocument.CurrentProjectionVersion;
@@ -178,7 +183,7 @@ public sealed class ProductSqlAuthorityProjectionWriter : IProductSqlAuthorityPr
                     request.ProductId,
                     sqlProjection,
                     request.EventOccurredAtUtc,
-                    request.EventVersion,
+                    authoritativeVersion,
                     request.EventId,
                     ReviewReason: "SQL authority recomposed complete storefront ProductDocument."),
                 cancellationToken);

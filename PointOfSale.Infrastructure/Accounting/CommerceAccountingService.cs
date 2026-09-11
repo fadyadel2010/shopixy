@@ -77,7 +77,7 @@ public class CommerceAccountingService : ICommerceAccountingService
             // Get required accounts (excluding cash account - resolved conditionally)
             var accounts = await _accountResolver.GetByCodesAsync(
                 invoice.TenantId,
-                new[] { AccountCodes.VisaClearing, AccountCodes.PosSales,
+                new[] { AccountCodes.VisaClearing, AccountCodes.PosSales, AccountCodes.SalesTaxPayable,
                         AccountCodes.CostOfGoodsSold, AccountCodes.Inventory },
                 ct);
             
@@ -156,11 +156,21 @@ public class CommerceAccountingService : ICommerceAccountingService
                     break;
             }
             
-            // Credit Sales Revenue
-            revenueLines.Add(PostingLine.Credit(
-                accounts[AccountCodes.PosSales].Id,
-                invoice.TotalAmount,
-                $"Revenue {invoice.InvoiceNumber}"));
+            var netRevenue = invoice.TotalAmount - invoice.TaxAmount;
+            if (netRevenue > 0m)
+            {
+                revenueLines.Add(PostingLine.Credit(
+                    accounts[AccountCodes.PosSales].Id,
+                    netRevenue,
+                    $"Revenue {invoice.InvoiceNumber}"));
+            }
+            if (invoice.TaxAmount > 0m)
+            {
+                revenueLines.Add(PostingLine.Credit(
+                    accounts[AccountCodes.SalesTaxPayable].Id,
+                    invoice.TaxAmount,
+                    $"Sales tax {invoice.InvoiceNumber}"));
+            }
             
             var revenueRequest = new PostingRequest
             {
@@ -284,6 +294,7 @@ public class CommerceAccountingService : ICommerceAccountingService
             var requiredAccountCodes = new List<string>
             {
                 AccountCodes.Inventory,
+                AccountCodes.InputTaxReceivable,
                 AccountCodes.SupplierPayables
             };
 
@@ -308,11 +319,22 @@ public class CommerceAccountingService : ICommerceAccountingService
                 requiredAccountCodes,
                 ct);
             
-            var lines = new List<PostingLine>
+            var inventoryAmount = invoice.TotalAmount - invoice.TaxAmount;
+            var lines = new List<PostingLine>();
+            if (inventoryAmount > 0m)
             {
-                // Debit Inventory (asset increases)
-                PostingLine.Debit(accounts[AccountCodes.Inventory].Id, invoice.TotalAmount, $"Purchase {invoice.InvoiceNumber}")
-            };
+                lines.Add(PostingLine.Debit(
+                    accounts[AccountCodes.Inventory].Id,
+                    inventoryAmount,
+                    $"Purchase {invoice.InvoiceNumber}"));
+            }
+            if (invoice.TaxAmount > 0m)
+            {
+                lines.Add(PostingLine.Debit(
+                    accounts[AccountCodes.InputTaxReceivable].Id,
+                    invoice.TaxAmount,
+                    $"Input tax {invoice.InvoiceNumber}"));
+            }
 
             if (normalizedCashAmount > 0)
             {
@@ -498,6 +520,70 @@ public class CommerceAccountingService : ICommerceAccountingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to post supplier opening balance for supplier {SupplierId}", openingBalance.PartyId);
+            return PostingResult.Failed(ex.Message);
+        }
+    }
+
+    public async Task<PostingResult> PostCustomerPaymentAsync(CustomerPayment payment, CancellationToken ct = default)
+    {
+        try
+        {
+            var tenantId = payment.TenantId;
+            var cashboxAccountCode = payment.CashAmount > 0m
+                ? await ResolveDefaultCashboxAccountCodeAsync(tenantId, ct)
+                : null;
+            var requiredAccountCodes = new HashSet<string>(StringComparer.Ordinal)
+            {
+                AccountCodes.AccountsReceivable
+            };
+
+            if (cashboxAccountCode != null)
+            {
+                requiredAccountCodes.Add(cashboxAccountCode);
+            }
+            if (payment.CardAmount > 0m)
+            {
+                requiredAccountCodes.Add(AccountCodes.VisaClearing);
+            }
+            if (payment.BankTransferAmount > 0m)
+            {
+                requiredAccountCodes.Add(AccountCodes.BankAccount);
+            }
+
+            var accounts = await _accountResolver.GetByCodesAsync(tenantId, requiredAccountCodes, ct);
+            var lines = new List<PostingLine>();
+            if (payment.CashAmount > 0m)
+            {
+                lines.Add(PostingLine.Debit(accounts[cashboxAccountCode!].Id, payment.CashAmount, "Customer cash received"));
+            }
+            if (payment.CardAmount > 0m)
+            {
+                lines.Add(PostingLine.Debit(accounts[AccountCodes.VisaClearing].Id, payment.CardAmount, "Customer card payment received"));
+            }
+            if (payment.BankTransferAmount > 0m)
+            {
+                lines.Add(PostingLine.Debit(accounts[AccountCodes.BankAccount].Id, payment.BankTransferAmount, "Customer bank transfer received"));
+            }
+            lines.Add(PostingLine.Credit(accounts[AccountCodes.AccountsReceivable].Id, payment.Amount, "Reduce customer receivable"));
+
+            var request = new PostingRequest
+            {
+                TenantId = tenantId,
+                JournalDate = payment.PaymentDate,
+                SourceType = "CustomerPayment",
+                SourceId = payment.Id,
+                SourceReference = payment.ReferenceNumber,
+                Description = $"Customer payment {payment.ReferenceNumber}",
+                IdempotencyKey = $"CUSTOMER_PAYMENT:{tenantId}:{payment.Id}",
+                Lines = lines
+            };
+
+            var journal = await _postingService.PostJournalAsync(request, ct);
+            return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post customer payment {PaymentId}", payment.Id);
             return PostingResult.Failed(ex.Message);
         }
     }
@@ -693,6 +779,7 @@ public class CommerceAccountingService : ICommerceAccountingService
             var requiredAccountCodes = new List<string>
             {
                 AccountCodes.PosSales,
+                AccountCodes.SalesTaxPayable,
                 AccountCodes.Inventory,
                 AccountCodes.CostOfGoodsSold
             };
@@ -723,13 +810,22 @@ public class CommerceAccountingService : ICommerceAccountingService
                 ct);
 
             // Reverse the revenue recognition using the explicit refund funding split.
-            var lines = new List<PostingLine>
+            var netRevenueReversal = returnObj.TotalAmount - returnObj.TaxAmount;
+            var lines = new List<PostingLine>();
+            if (netRevenueReversal > 0m)
             {
-                PostingLine.Debit(
+                lines.Add(PostingLine.Debit(
                     accounts[AccountCodes.PosSales].Id,
-                    returnObj.TotalAmount,
-                    $"Return {returnObj.ReturnNumber}")
-            };
+                    netRevenueReversal,
+                    $"Return {returnObj.ReturnNumber}"));
+            }
+            if (returnObj.TaxAmount > 0m)
+            {
+                lines.Add(PostingLine.Debit(
+                    accounts[AccountCodes.SalesTaxPayable].Id,
+                    returnObj.TaxAmount,
+                    $"Sales tax reversal {returnObj.ReturnNumber}"));
+            }
 
             if (allocation.CashAmount > 0m)
             {
@@ -813,7 +909,7 @@ public class CommerceAccountingService : ICommerceAccountingService
         {
             var accounts = await _accountResolver.GetByCodesAsync(
                 returnObj.TenantId,
-                new[] { AccountCodes.SupplierPayables, AccountCodes.Inventory },
+                new[] { AccountCodes.SupplierPayables, AccountCodes.Inventory, AccountCodes.InputTaxReceivable },
                 ct);
 
             var request = new PostingRequest
@@ -825,17 +921,7 @@ public class CommerceAccountingService : ICommerceAccountingService
                 SourceReference = returnObj.ReturnNumber,
                 Description = $"Purchase return {returnObj.ReturnNumber}",
                 IdempotencyKey = $"PURCHASE_RETURN:{returnObj.TenantId}:{returnObj.Id}",
-                Lines = new List<PostingLine>
-                {
-                    PostingLine.Debit(
-                        accounts[AccountCodes.SupplierPayables].Id,
-                        returnObj.TotalAmount,
-                        $"Reduce supplier payables for {returnObj.ReturnNumber}"),
-                    PostingLine.Credit(
-                        accounts[AccountCodes.Inventory].Id,
-                        returnObj.TotalAmount,
-                        $"Inventory reduction for {returnObj.ReturnNumber}")
-                }
+                Lines = BuildPurchaseReturnLines(returnObj, accounts)
             };
 
             var journal = await _postingService.PostJournalAsync(request, ct);
@@ -1523,6 +1609,35 @@ public class CommerceAccountingService : ICommerceAccountingService
         return PostingResult.Failed(
             "Inventory adjustment accounting requires an authoritative SQL adjustment workflow.");
     }
+
+    private static List<PostingLine> BuildPurchaseReturnLines(
+        Return returnObj,
+        IReadOnlyDictionary<string, Account> accounts)
+    {
+        var lines = new List<PostingLine>
+        {
+            PostingLine.Debit(
+                accounts[AccountCodes.SupplierPayables].Id,
+                returnObj.TotalAmount,
+                $"Reduce supplier payables for {returnObj.ReturnNumber}")
+        };
+        var inventoryAmount = returnObj.TotalAmount - returnObj.TaxAmount;
+        if (inventoryAmount > 0m)
+        {
+            lines.Add(PostingLine.Credit(
+                accounts[AccountCodes.Inventory].Id,
+                inventoryAmount,
+                $"Inventory reduction for {returnObj.ReturnNumber}"));
+        }
+        if (returnObj.TaxAmount > 0m)
+        {
+            lines.Add(PostingLine.Credit(
+                accounts[AccountCodes.InputTaxReceivable].Id,
+                returnObj.TaxAmount,
+                $"Input tax reversal {returnObj.ReturnNumber}"));
+        }
+        return lines;
+    }
     
     // ═══════════════════════════════════════════════════════════════════════════
     // HELPER METHODS
@@ -1780,9 +1895,13 @@ public class CommerceAccountingService : ICommerceAccountingService
         var primaryAccount = ResolveCommerceHubPrimaryAccount(entityType, transactionType, bucket);
         var offsetAccount = AccountCodes.TreasurySuspense;
 
-        return direction == CommerceHubFinancialTransactionDirection.Credit
-            ? (offsetAccount, primaryAccount)
-            : (primaryAccount, offsetAccount);
+        var debitPrimaryAccount = bucket == CommerceHubFinancialBucket.Cash
+            ? direction == CommerceHubFinancialTransactionDirection.Credit
+            : direction == CommerceHubFinancialTransactionDirection.Debit;
+
+        return debitPrimaryAccount
+            ? (primaryAccount, offsetAccount)
+            : (offsetAccount, primaryAccount);
     }
 
     private static string ResolveCommerceHubPrimaryAccount(

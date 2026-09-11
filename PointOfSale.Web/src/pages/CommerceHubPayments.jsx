@@ -12,6 +12,7 @@ import {
 } from '../auth/commerceHubVendorFinancialParticipationAuthority'
 import { deriveCommerceHubVendorEligibilityPresentation } from '../auth/posVendorSessionAuthority'
 import { formatDateTime as formatLocalizedDateTime } from '../utils/dateFormat'
+import { deriveCommerceHubAuthorityDiagnostic } from '../utils/commerceHubAuthorityDiagnostics'
 import {
     createCommerceHubPaymentRequest,
     createVendorPaymentIdempotencyKey,
@@ -67,6 +68,8 @@ function formatDebtStatus(status, t) {
     switch (String(status || '').toUpperCase()) {
         case 'ACTIVE':
             return t('CommerceHubPayments.debtStatuses.active')
+        case 'AT_RISK':
+            return t('CommerceHubPayments.debtStatuses.atRisk')
         case 'SUSPENDED':
             return t('CommerceHubPayments.debtStatuses.suspended')
         case 'GRACE_PERIOD':
@@ -154,6 +157,19 @@ export default function CommerceHubPayments() {
         () => deriveCurrentPaymentMethodSelection(form.methodId, dashboard?.paymentMethods || []),
         [dashboard?.paymentMethods, form.methodId],
     )
+
+    useEffect(() => {
+        const diagnostic = deriveCommerceHubAuthorityDiagnostic({
+            surface: 'Payments dashboard',
+            endpoint: '/api/admin/commercehub/payments',
+            query: dashboardQuery,
+            presentation: dashboard,
+        })
+
+        if (diagnostic) {
+            console.error('CommerceHub authority load rejected', diagnostic)
+        }
+    }, [dashboard, dashboardQuery.data, dashboardQuery.error, dashboardQuery.isFetching])
 
     useEffect(() => {
         if (dashboardQuery.isFetching || !form.methodId) {

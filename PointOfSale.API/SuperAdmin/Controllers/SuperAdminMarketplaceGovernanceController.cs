@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.CommerceHub.Handlers;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.Services.Governance;
 using PointOfSale.API.SuperAdmin.DTOs;
 using PointOfSale.API.SuperAdmin.Models;
 using PointOfSale.API.SuperAdmin.Services;
@@ -25,6 +26,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
     private readonly IEventPublisher _eventPublisher;
     private readonly ICommerceHubAutoHealingQueue _autoHealingQueue;
     private readonly ISuperAdminAuditService _auditService;
+    private readonly IUserGovernanceService _userGovernanceService;
     private readonly IMarketplaceEventOutboxService _marketplaceEventOutbox;
     private readonly ILogger<SuperAdminMarketplaceGovernanceController> _logger;
 
@@ -33,6 +35,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
         IEventPublisher eventPublisher,
         ICommerceHubAutoHealingQueue autoHealingQueue,
         ISuperAdminAuditService auditService,
+        IUserGovernanceService userGovernanceService,
         IMarketplaceEventOutboxService marketplaceEventOutbox,
         ILogger<SuperAdminMarketplaceGovernanceController> logger)
     {
@@ -40,6 +43,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
         _eventPublisher = eventPublisher;
         _autoHealingQueue = autoHealingQueue;
         _auditService = auditService;
+        _userGovernanceService = userGovernanceService;
         _marketplaceEventOutbox = marketplaceEventOutbox;
         _logger = logger;
     }
@@ -432,9 +436,17 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
             .IgnoreQueryFilters()
             .FirstOrDefaultAsync(
                 item => item.Id == listing.ProductId && item.TenantId == listing.TenantId,
-                cancellationToken)
-            ?? throw new InvalidOperationException(
-                $"CommerceHub listing {listing.Id} is missing its authoritative product {listing.ProductId}.");
+                cancellationToken);
+
+        if (product == null)
+        {
+            _logger.LogWarning(
+                "Skipped CommerceHub product read-model rebuild because product authority is missing; listing visibility reduction remains authoritative | ListingId: {ListingId} | ProductId: {ProductId} | TenantId: {TenantId}",
+                listing.Id,
+                listing.ProductId,
+                listing.TenantId);
+            return;
+        }
 
         await PublishToCommerceHubHandler.StageMarketplaceProductReadModelRebuildAsync(
             _dbContext,
@@ -446,27 +458,27 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
             cancellationToken);
     }
 
-    [HttpPost("tenants/{tenantId:guid}/suspend")]
+    [HttpPost("vendors/{vendorId:guid}/suspend")]
     [EnableRateLimiting(SuperAdminSecurityConstants.GovernanceWriteRateLimitPolicyName)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public Task<IActionResult> SuspendTenant(
-        Guid tenantId,
+    public Task<IActionResult> SuspendVendor(
+        Guid vendorId,
         [FromBody] SuperAdminMarketplaceGovernanceActionRequestDto request,
         CancellationToken cancellationToken) =>
-        ApplyTenantGovernanceAsync(tenantId, TenantStatus.Suspended, request, cancellationToken);
+        ApplyVendorGovernanceAsync(vendorId, UserGovernanceStatus.Suspended, request, cancellationToken);
 
-    [HttpPost("tenants/{tenantId:guid}/restore")]
+    [HttpPost("vendors/{vendorId:guid}/restore")]
     [EnableRateLimiting(SuperAdminSecurityConstants.GovernanceWriteRateLimitPolicyName)]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public Task<IActionResult> RestoreTenant(
-        Guid tenantId,
+    public Task<IActionResult> RestoreVendor(
+        Guid vendorId,
         [FromBody] SuperAdminMarketplaceGovernanceActionRequestDto request,
         CancellationToken cancellationToken) =>
-        ApplyTenantGovernanceAsync(tenantId, TenantStatus.Active, request, cancellationToken);
+        ApplyVendorGovernanceAsync(vendorId, UserGovernanceStatus.Active, request, cancellationToken);
 
-    private async Task<IActionResult> ApplyTenantGovernanceAsync(
-        Guid tenantId,
-        TenantStatus targetStatus,
+    private async Task<IActionResult> ApplyVendorGovernanceAsync(
+        Guid vendorId,
+        UserGovernanceStatus targetStatus,
         SuperAdminMarketplaceGovernanceActionRequestDto request,
         CancellationToken cancellationToken)
     {
@@ -475,59 +487,74 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
             return ErrorResponse(
                 StatusCodes.Status403Forbidden,
                 "SUPER_ADMIN_CONTEXT_REQUIRED",
-                "A valid Super Admin identity is required for tenant governance actions.");
+                "A valid Super Admin identity is required for vendor governance actions.");
         }
 
-        var tenant = await _dbContext.Tenants
-            .IgnoreQueryFilters()
-            .FirstOrDefaultAsync(item => item.Id == tenantId, cancellationToken);
+        var before = await _dbContext.UserGovernanceProfiles
+            .AsNoTracking()
+            .Where(profile =>
+                profile.SubjectId == vendorId &&
+                profile.Role == UserGovernanceRole.Vendor)
+            .Select(profile => new { profile.Status, profile.StatusReason })
+            .SingleOrDefaultAsync(cancellationToken);
 
-        if (tenant == null || tenant.DeletedAtUtc != null)
+        SuperAdminGovernedUserDetailsDto result;
+        try
         {
-            return ErrorResponse(StatusCodes.Status404NotFound, "TENANT_NOT_FOUND", "Tenant was not found.");
+            result = await _userGovernanceService.ApplyActionAsync(
+                vendorId,
+                UserGovernanceRole.Vendor,
+                targetStatus,
+                request.Reason,
+                CurrentSuperAdminId.Value,
+                CurrentSuperAdminEmail,
+                cancellationToken);
+        }
+        catch (UserGovernanceException exception)
+        {
+            return ErrorResponse(exception.StatusCode, exception.Code, exception.Message);
         }
 
-        var wasActive = tenant.IsActive;
-        var beforeStatus = tenant.Status;
-        var now = DateTime.UtcNow;
-
-        tenant.SetLifecycleStatus(
-            targetStatus,
-            targetStatus == TenantStatus.Suspended ? request.Reason.Trim() : null,
-            now);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        EnqueueTenantListingVerification(tenant.Id, targetStatus == TenantStatus.Active ? "SUPER_ADMIN_TENANT_RESTORE" : "SUPER_ADMIN_TENANT_SUSPENSION");
+        var changed = before == null ||
+                      before.Status != targetStatus ||
+                      !string.Equals(before.StatusReason, request.Reason.Trim(), StringComparison.Ordinal);
 
         await LogMarketplaceGovernanceActionAsync(
-            targetStatus == TenantStatus.Active ? "MARKETPLACE_TENANT_RESTORED" : "MARKETPLACE_TENANT_SUSPENDED",
-            "Tenant",
-            tenant.Id,
-            targetStatus == TenantStatus.Active
-                ? "Super Admin restored tenant marketplace governance status."
-                : "Super Admin suspended tenant marketplace governance status.",
+            targetStatus == UserGovernanceStatus.Active ? "MARKETPLACE_VENDOR_RESTORED" : "MARKETPLACE_VENDOR_SUSPENDED",
+            "VendorGovernance",
+            vendorId,
+            targetStatus == UserGovernanceStatus.Active
+                ? "Super Admin restored vendor governance status; marketplace participation remains subject to current eligibility authority."
+                : "Super Admin suspended vendor marketplace participation.",
             request.Reason,
-            new { beforeStatus, targetStatus, wasActive, tenant.IsActive },
+            new
+            {
+                beforeStatus = before?.Status,
+                targetStatus,
+                changed,
+                result.IsKycVerified,
+                result.IsMarketplaceApproved
+            },
             cancellationToken);
 
         _logger.LogInformation(
-            "Tenant marketplace governance status changed | TenantId: {TenantId} | Before: {BeforeStatus} | After: {AfterStatus} | SuperAdminId: {SuperAdminId}",
-            tenant.Id,
-            beforeStatus,
+            "Vendor marketplace governance status changed | VendorId: {VendorId} | Before: {BeforeStatus} | After: {AfterStatus} | SuperAdminId: {SuperAdminId}",
+            vendorId,
+            before?.Status,
             targetStatus,
             CurrentSuperAdminId);
 
         return OkResponse(new SuperAdminMarketplaceGovernanceActionResultDto
         {
-            EntityId = tenant.Id,
-            EntityType = "Tenant",
-            Action = targetStatus == TenantStatus.Active ? "restore" : "suspend",
-            Changed = beforeStatus != targetStatus || wasActive != tenant.IsActive,
-            VisibilityState = targetStatus == TenantStatus.Active ? "active" : "suspended",
-            Message = targetStatus == TenantStatus.Active
-                ? "Tenant marketplace authority was restored."
-                : "Tenant marketplace authority was suspended.",
-            AppliedAtUtc = now
+            EntityId = vendorId,
+            EntityType = "VendorGovernance",
+            Action = targetStatus == UserGovernanceStatus.Active ? "restore" : "suspend",
+            Changed = changed,
+            VisibilityState = targetStatus == UserGovernanceStatus.Active ? "active" : "suspended",
+            Message = targetStatus == UserGovernanceStatus.Active
+                ? "Vendor governance status was restored; marketplace participation remains subject to current eligibility authority."
+                : "Vendor marketplace participation was suspended without changing tenant business authority.",
+            AppliedAtUtc = DateTime.UtcNow
         });
     }
 
@@ -553,7 +580,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
             from category in categoryJoin.DefaultIfEmpty()
             where !listing.IsDeleted
             let tenantMissing = tenant == null || tenant.DeletedAtUtc != null
-            let tenantSuspended = tenantMissing || tenant.Status == TenantStatus.Suspended
+            let tenantInactive = tenantMissing || !tenant.IsActive || tenant.Status != TenantStatus.Active
             let productInvalid = product == null ||
                                  product.IsDeleted ||
                                  !product.IsActive ||
@@ -568,8 +595,12 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
                                  variant.SemanticSupersededAtUtc != null ||
                                  variant.SemanticReplacementVariantId != null
             let categoryInvalid = category == null || !category.IsActive
-            let vendorStatus = profile == null ? UserGovernanceStatus.Active : profile.Status
-            let governanceHidden = vendorStatus == UserGovernanceStatus.Suspended || vendorStatus == UserGovernanceStatus.Banned || tenantSuspended
+            let vendorStatus = profile == null ? "Missing" : profile.Status.ToString()
+            let vendorIneligible = profile == null ||
+                                   profile.Status != UserGovernanceStatus.Active ||
+                                   !profile.IsKycVerified ||
+                                   !profile.IsMarketplaceApproved
+            let governanceHidden = vendorIneligible || tenantInactive
             let isOrphaned = tenantMissing || productInvalid || variantInvalid || categoryInvalid
             select new SuperAdminMarketplaceGovernanceListingRowDto
             {
@@ -578,7 +609,7 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
                 TenantName = tenant == null ? "(missing tenant)" : tenant.Name,
                 TenantSlug = tenant == null ? null : tenant.Slug,
                 TenantStatus = tenant == null ? "Missing" : tenant.Status.ToString(),
-                VendorGovernanceStatus = vendorStatus.ToString(),
+                VendorGovernanceStatus = vendorStatus,
                 ProductId = listing.ProductId,
                 VariantId = listing.VariantId,
                 ProductName = product == null ? "(missing product)" : product.Name,
@@ -627,34 +658,13 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
         CommerceHubListing listing,
         CancellationToken cancellationToken)
     {
-        var tenantIsActive = await _dbContext.Tenants
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .AnyAsync(
-                tenant =>
-                    tenant.Id == listing.TenantId &&
-                    tenant.Status == TenantStatus.Active &&
-                    tenant.DeletedAtUtc == null,
-                cancellationToken);
-
-        if (!tenantIsActive)
+        var vendorAuthority = await CommerceHubVendorAuthority.LoadAsync(
+            _dbContext,
+            listing.TenantId,
+            cancellationToken);
+        if (!vendorAuthority.IsMarketplaceEligible)
         {
-            return "Tenant SQL authority is not active.";
-        }
-
-        var vendorHidden = await _dbContext.UserGovernanceProfiles
-            .AsNoTracking()
-            .AnyAsync(
-                profile =>
-                    profile.SubjectId == listing.TenantId &&
-                    profile.Role == UserGovernanceRole.Vendor &&
-                    (profile.Status == UserGovernanceStatus.Suspended ||
-                     profile.Status == UserGovernanceStatus.Banned),
-                cancellationToken);
-
-        if (vendorHidden)
-        {
-            return "Vendor governance authority is suspended or banned.";
+            return "Vendor SQL authority is not eligible for marketplace publication.";
         }
 
         var productIsVisible = await _dbContext.Products
@@ -725,17 +735,6 @@ public sealed class SuperAdminMarketplaceGovernanceController : SuperAdminBaseCo
         {
             ListingIds = new List<Guid> { listing.Id },
             TenantId = listing.TenantId,
-            Reason = reason,
-            TriggeredAtUtc = DateTime.UtcNow,
-            IsHighPriority = true
-        });
-    }
-
-    private void EnqueueTenantListingVerification(Guid tenantId, string reason)
-    {
-        _autoHealingQueue.Enqueue(new CommerceHubAutoHealingTask
-        {
-            TenantId = tenantId,
             Reason = reason,
             TriggeredAtUtc = DateTime.UtcNow,
             IsHighPriority = true

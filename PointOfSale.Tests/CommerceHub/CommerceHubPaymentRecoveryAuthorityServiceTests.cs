@@ -110,7 +110,7 @@ public sealed class CommerceHubPaymentRecoveryAuthorityServiceTests : IDisposabl
     }
 
     [Fact]
-    public async Task EvaluateAsync_WhenReservationAuthorityIsMissing_ShouldBlockRetry()
+    public async Task EvaluateAsync_WhenReservationAuthorityIsMissingAndNoPaymentEvidence_ShouldAllowGuardedReacquisition()
     {
         var order = await SeedPendingPaymobOrderWithSqlReservationAuthorityAsync(activeReservation: false);
 
@@ -120,10 +120,153 @@ public sealed class CommerceHubPaymentRecoveryAuthorityServiceTests : IDisposabl
             PaymentStatus.Pending,
             OrderStatus.Pending);
 
+        Assert.True(decision.CanRetryPayment);
+        Assert.True(decision.HasReservationAuthorityLoss);
+        Assert.True(decision.RequiresReservationReacquisition);
+        Assert.False(decision.HasUnresolvedCapturedPayment);
+        Assert.Null(decision.PaymentRecoveryMessage);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenReservationAuthorityIsMissingAndPaymentEvidenceExists_ShouldBlockRetry()
+    {
+        var order = await SeedPendingPaymobOrderWithSqlReservationAuthorityAsync(activeReservation: false);
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            _dbContext.CommerceHubPayments.Add(new CommerceHubPayment
+            {
+                Id = Guid.NewGuid(),
+                OrderId = order.Id,
+                Amount = order.TotalAmount,
+                Currency = order.Currency,
+                Provider = PaymentProvider.Paymob,
+                ProviderReference = $"paymob-{Guid.NewGuid():N}"[..39],
+                ProviderIntentId = $"provider-{Guid.NewGuid():N}",
+                Status = CommerceHubPaymentRecordStatus.Failed,
+                IsProcessed = true
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var decision = await _service.EvaluateAsync(
+            order.Id,
+            CommerceHubPaymentMethods.Paymob,
+            PaymentStatus.Pending,
+            OrderStatus.Pending);
+
         Assert.False(decision.CanRetryPayment);
         Assert.True(decision.HasReservationAuthorityLoss);
-        Assert.False(decision.HasUnresolvedCapturedPayment);
+        Assert.False(decision.RequiresReservationReacquisition);
         Assert.Contains("reservation authority", decision.PaymentRecoveryMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenReservationExpiredAndAllFailedPaymentsAreEvidenceFree_ShouldAllowGuardedReacquisition()
+    {
+        var order = await SeedPendingPaymobOrderWithSqlReservationAuthorityAsync(activeReservation: false);
+        var payment = new CommerceHubPayment
+        {
+            Id = Guid.NewGuid(),
+            OrderId = order.Id,
+            Amount = order.TotalAmount,
+            Currency = order.Currency,
+            Provider = PaymentProvider.Paymob,
+            ProviderReference = $"paymob-{Guid.NewGuid():N}"[..39],
+            ProviderIntentId = $"{CommerceHubPaymentSessionRecoveryAuthority.ProviderSessionReinitFencePrefix}{Guid.NewGuid():N}",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = "PROVIDER_SESSION_RECONCILED_NOT_CREATED: operator confirmed no matching provider session.",
+            IsProcessed = false
+        };
+        payment.Attempts.Add(new CommerceHubPaymentAttempt
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            Provider = PaymentProvider.Paymob,
+            AttemptNumber = 1,
+            ProviderReference = payment.ProviderReference,
+            ProviderIntentId = $"{CommerceHubPaymentSessionRecoveryAuthority.ProviderSessionReinitFencePrefix}{Guid.NewGuid():N}",
+            Status = CommerceHubPaymentRecordStatus.Failed,
+            FailureReason = payment.FailureReason,
+            CompletedAtUtc = DateTime.UtcNow
+        });
+        payment.Logs.Add(new CommerceHubPaymentLog
+        {
+            Id = Guid.NewGuid(),
+            PaymentId = payment.Id,
+            Payment = payment,
+            EventType = "initiate.paymob.outcome_reconciled_not_created",
+            RawResponse = "{}"
+        });
+
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            _dbContext.CommerceHubPayments.Add(payment);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var decision = await _service.EvaluateAsync(
+            order.Id,
+            CommerceHubPaymentMethods.Paymob,
+            PaymentStatus.Pending,
+            OrderStatus.Pending);
+
+        Assert.True(decision.CanRetryPayment);
+        Assert.True(decision.HasReservationAuthorityLoss);
+        Assert.True(decision.RequiresReservationReacquisition);
+        Assert.Null(decision.PaymentRecoveryMessage);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenReservationAuthorityIsMissingAndDeletedPaymentEvidenceExists_ShouldBlockRetry()
+    {
+        var order = await SeedPendingPaymobOrderWithSqlReservationAuthorityAsync(activeReservation: false);
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            _dbContext.CommerceHubPayments.Add(new CommerceHubPayment
+            {
+                Id = Guid.NewGuid(),
+                OrderId = order.Id,
+                Amount = order.TotalAmount,
+                Currency = order.Currency,
+                Provider = PaymentProvider.Paymob,
+                ProviderReference = $"paymob-{Guid.NewGuid():N}"[..39],
+                Status = CommerceHubPaymentRecordStatus.Failed,
+                IsProcessed = true,
+                IsDeleted = true
+            });
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var decision = await _service.EvaluateAsync(
+            order.Id,
+            CommerceHubPaymentMethods.Paymob,
+            PaymentStatus.Pending,
+            OrderStatus.Pending);
+
+        Assert.False(decision.CanRetryPayment);
+        Assert.True(decision.HasReservationAuthorityLoss);
+        Assert.False(decision.RequiresReservationReacquisition);
+    }
+
+    [Fact]
+    public async Task EvaluateAsync_WhenOnlyUndamagedAvailableStockIsInsufficient_ShouldBlockRetry()
+    {
+        var order = await SeedPendingPaymobOrderWithSqlReservationAuthorityAsync(activeReservation: false);
+        var stock = await _dbContext.ProductVariantStocks.IgnoreQueryFilters().SingleAsync();
+        stock.Quantity = 2m;
+        stock.DamagedQuantity = 1m;
+        await _dbContext.SaveChangesAsync();
+
+        var decision = await _service.EvaluateAsync(
+            order.Id,
+            CommerceHubPaymentMethods.Paymob,
+            PaymentStatus.Pending,
+            OrderStatus.Pending);
+
+        Assert.False(decision.CanRetryPayment);
+        Assert.True(decision.HasReservationAuthorityLoss);
+        Assert.False(decision.RequiresReservationReacquisition);
     }
 
     [Fact]
@@ -139,6 +282,7 @@ public sealed class CommerceHubPaymentRecoveryAuthorityServiceTests : IDisposabl
 
         Assert.True(decision.CanRetryPayment);
         Assert.False(decision.HasReservationAuthorityLoss);
+        Assert.False(decision.RequiresReservationReacquisition);
         Assert.False(decision.HasUnresolvedCapturedPayment);
         Assert.Null(decision.PaymentRecoveryMessage);
     }
@@ -298,25 +442,23 @@ public sealed class CommerceHubPaymentRecoveryAuthorityServiceTests : IDisposabl
             CreatedAt = nowUtc
         });
 
-        if (activeReservation)
+        _dbContext.InventoryReservations.Add(new InventoryReservation
         {
-            _dbContext.InventoryReservations.Add(new InventoryReservation
-            {
-                Id = Guid.NewGuid(),
-                TenantId = tenantId,
-                OrderId = order.Id,
-                SubOrderId = subOrder.Id,
-                OrderItemId = orderItemId,
-                ProductId = productId,
-                VariantId = variantId,
-                WarehouseId = warehouseId,
-                ReservedQuantity = 2m,
-                Status = InventoryReservationStatus.Active,
-                ReservationEventId = Guid.NewGuid(),
-                ExpiresAtUtc = nowUtc.AddMinutes(10),
-                CreatedAt = nowUtc
-            });
-        }
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            OrderId = order.Id,
+            SubOrderId = subOrder.Id,
+            OrderItemId = orderItemId,
+            ProductId = productId,
+            VariantId = variantId,
+            WarehouseId = warehouseId,
+            ReservedQuantity = 2m,
+            ReleasedQuantity = activeReservation ? 0m : 2m,
+            Status = activeReservation ? InventoryReservationStatus.Active : InventoryReservationStatus.Released,
+            ReservationEventId = Guid.NewGuid(),
+            ExpiresAtUtc = activeReservation ? nowUtc.AddMinutes(10) : nowUtc.AddMinutes(-1),
+            CreatedAt = nowUtc
+        });
 
         using (CommerceHubBoundaryMutationScope.BeginOrderLifecycle())
         using (CommerceHubBoundaryMutationScope.BeginPayment())

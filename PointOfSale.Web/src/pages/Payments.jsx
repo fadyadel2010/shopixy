@@ -8,6 +8,7 @@ import SOAPaymentModal from '../components/SOAPaymentModal'
 import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
 import { toSafeNumber } from '../utils/financialMath'
+import { getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
 
 const Payments = () => {
     const { t } = useTranslation()
@@ -158,12 +159,6 @@ const Payments = () => {
         }
     }
 
-    const getBalanceColor = (balanceType) => {
-        if (balanceType === 'Debit' || balanceType === t('accounts.debit')) return 'text-red-600'
-        if (balanceType === 'Credit' || balanceType === t('accounts.credit')) return 'text-green-600'
-        return 'text-gray-600'
-    }
-
     return (
         <div className="space-y-6" dir={dir}>
             <div className={`flex items-center justify-between ${isRTL ? 'flex-row-reverse' : ''}`}>
@@ -230,7 +225,7 @@ const Payments = () => {
                                         <p className="text-sm text-gray-600">{t('accounts.currentBalance')}</p>
                                     </div>
                                     <div className={isRTL ? 'text-left' : 'text-right'}>
-                                        <p className={`text-3xl font-bold ${getBalanceColor(partyBalance.balanceType)}`}>
+                                        <p className={`text-3xl font-bold ${getPartyBalanceColorClass(partyType, partyBalance.balanceType)}`}>
                                             {formatCurrency(partyBalance.balance)}
                                         </p>
                                         <p className="text-sm text-gray-600 mt-1">

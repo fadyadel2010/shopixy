@@ -259,6 +259,15 @@ public sealed class PurchaseInvoiceItemResponseDto
     public decimal TotalAmount { get; set; }
 }
 
+public sealed class PurchaseInvoicePaymentResponseDto
+{
+    public Guid Id { get; set; }
+    public DateTime PaymentDate { get; set; }
+    public decimal Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; }
+    public string? ReferenceNumber { get; set; }
+}
+
 public sealed class PurchaseInvoiceResponseDto
 {
     public Guid Id { get; set; }
@@ -279,6 +288,7 @@ public sealed class PurchaseInvoiceResponseDto
     public ContactReferenceDto Supplier { get; set; } = new();
     public WarehouseReferenceDto Warehouse { get; set; } = new();
     public IReadOnlyList<PurchaseInvoiceItemResponseDto> Items { get; set; } = Array.Empty<PurchaseInvoiceItemResponseDto>();
+    public IReadOnlyList<PurchaseInvoicePaymentResponseDto> Payments { get; set; } = Array.Empty<PurchaseInvoicePaymentResponseDto>();
 }
 
 public sealed class ReturnItemResponseDto
@@ -314,6 +324,10 @@ public sealed class ReturnResponseDto
     public decimal Subtotal { get; set; }
     public decimal TaxAmount { get; set; }
     public decimal TotalAmount { get; set; }
+    public RefundMethod? RefundMethod { get; set; }
+    public decimal CashRefundAmount { get; set; }
+    public decimal CardRefundAmount { get; set; }
+    public decimal CustomerCreditAmount { get; set; }
     public string? Reason { get; set; }
     public string? Notes { get; set; }
     public IReadOnlyList<ReturnItemResponseDto> Items { get; set; } = Array.Empty<ReturnItemResponseDto>();

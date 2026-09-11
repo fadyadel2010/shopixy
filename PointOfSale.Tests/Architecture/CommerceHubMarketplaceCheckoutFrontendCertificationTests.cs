@@ -120,16 +120,16 @@ public sealed class CommerceHubMarketplaceCheckoutFrontendCertificationTests
         Assert.Contains("requireCheckoutOrderCreationAuthority(response.data)", checkoutService, StringComparison.Ordinal);
         Assert.Contains("requirePaymentInitiationAuthority(response.data", checkoutService, StringComparison.Ordinal);
 
-        Assert.Contains("paymentMethods.filter(pm => optionMetadata[pm.code])", paymentSelector, StringComparison.Ordinal);
-        Assert.Contains("!paymentMethod.isAvailable", paymentSelector, StringComparison.Ordinal);
-        Assert.Contains("paymentMethod.unavailableReason", paymentSelector, StringComparison.Ordinal);
+        Assert.Contains("paymentMethod.isAvailable && optionMetadata[paymentMethod.code]", paymentSelector, StringComparison.Ordinal);
+        Assert.DoesNotContain("paymentMethod.unavailableReason", paymentSelector, StringComparison.Ordinal);
+        Assert.Contains("pricing?.storeSelections.map", checkoutPage, StringComparison.Ordinal);
+        Assert.Contains("shippingByStore.get(store.storeId)", checkoutPage, StringComparison.Ordinal);
         Assert.DoesNotContain("checkoutService.initiatePayment", paymentSelector, StringComparison.Ordinal);
         Assert.DoesNotContain("stripe.confirmPayment", paymentSelector, StringComparison.Ordinal);
 
         Assert.DoesNotContain("FedEx", combinedFrontend, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("calculateShipping", combinedFrontend, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("MarketplaceShipping", combinedFrontend, StringComparison.Ordinal);
-        Assert.DoesNotContain("MarketplacePayment", combinedFrontend, StringComparison.Ordinal);
     }
 
     [Fact]

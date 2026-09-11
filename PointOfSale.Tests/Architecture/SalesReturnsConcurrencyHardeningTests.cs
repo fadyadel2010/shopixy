@@ -17,7 +17,7 @@ public sealed class SalesReturnsConcurrencyHardeningTests
         Assert.Contains("DistinctBy(target => (target.WarehouseId, target.VariantId))", source, StringComparison.Ordinal);
         Assert.Contains("ProductVariantStockMutationSupport.LockMultipleStocksAsync(", source, StringComparison.Ordinal);
         Assert.Contains(
-            "stockMap.TryGetValue((request.WarehouseId, line.Snapshot.EffectiveVariantId), out var variantStock)",
+            "stockMap.TryGetValue((originalInvoice.WarehouseId, line.Snapshot.EffectiveVariantId), out var variantStock)",
             source,
             StringComparison.Ordinal);
         Assert.Contains("ProductVariantStockMutationSupport.PublishCommittedStockEventsAsync(", source, StringComparison.Ordinal);

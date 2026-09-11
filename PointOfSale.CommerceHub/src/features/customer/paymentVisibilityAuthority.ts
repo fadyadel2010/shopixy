@@ -73,9 +73,15 @@ function assertRefundCommon(refund: CustomerRefund | CustomerOrderItemExistingRe
       !text(refund.payout.maskedAccountIdentifier) ||
       !optionalText(refund.payout.accountHolderName) ||
       !optionalText(refund.payout.transactionReference) ||
-      !optionalDate(refund.payout.paidAt)
+      !optionalDate(refund.payout.paidAt) ||
+      typeof refund.payout.isDevelopmentSimulation !== "boolean" ||
+      typeof refund.payout.externalMoneyMovementConfirmed !== "boolean"
     ) {
       throw new Error("Customer payment visibility authority rejected malformed refund payout evidence.");
+    }
+
+    if (refund.payout.isDevelopmentSimulation && refund.payout.externalMoneyMovementConfirmed) {
+      throw new Error("Customer payment visibility authority rejected contradictory refund payout evidence.");
     }
   }
 

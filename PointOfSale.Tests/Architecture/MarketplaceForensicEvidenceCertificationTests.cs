@@ -69,6 +69,8 @@ public sealed class MarketplaceForensicEvidenceCertificationTests
         Assert.Contains("RequestId", controller, StringComparison.Ordinal);
         Assert.Contains("OperationId", controller, StringComparison.Ordinal);
         Assert.Contains("Configure the receiving SIEM or object store with WORM retention.", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("Take(MaxRowsPerFamily).ToListAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("Take(MaxRowsPerFamily)\n                .Select(entry => new", controller, StringComparison.Ordinal);
     }
 
     [Fact]

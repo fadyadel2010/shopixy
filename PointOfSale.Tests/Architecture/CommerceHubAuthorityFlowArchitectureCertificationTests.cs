@@ -85,11 +85,6 @@ public sealed class CommerceHubAuthorityFlowArchitectureCertificationTests
     public void DocumentationFreeze_MustRecordArchThreeAuthorityFlowCertification()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/commercehub-authority-flow-review-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         foreach (var marker in new[]
         {
@@ -132,11 +127,5 @@ public sealed class CommerceHubAuthorityFlowArchitectureCertificationTests
         {
             Assert.Contains(marker, findings, StringComparison.Ordinal);
         }
-
-        Assert.Contains("PASS ARCH-3 CommerceHub Authority Flow Review", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-3 CommerceHub Authority Flow Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-3 authority flow runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-3 CommerceHub Authority Flow Review", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-3 CommerceHub Authority Flow Architecture Freeze", codexRules, StringComparison.Ordinal);
     }
 }

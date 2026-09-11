@@ -114,5 +114,19 @@ describe('marketplace governance frontend authority', () => {
             ...action,
             visibilityState: 'active',
         }, { entityId: listingId, action: 'suppress' })).toBeNull()
+
+        const vendorAction = {
+            ...action,
+            entityId: tenantId,
+            entityType: 'VendorGovernance',
+            action: 'suspend',
+            visibilityState: 'suspended',
+        }
+        expect(deriveMarketplaceGovernanceActionAuthority(vendorAction, { entityId: tenantId, action: 'suspend' }))
+            .toMatchObject({ entityType: 'VendorGovernance', action: 'suspend' })
+        expect(deriveMarketplaceGovernanceActionAuthority({
+            ...vendorAction,
+            entityType: 'Tenant',
+        }, { entityId: tenantId, action: 'suspend' })).toBeNull()
     })
 })

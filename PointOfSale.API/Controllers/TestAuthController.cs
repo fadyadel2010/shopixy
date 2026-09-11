@@ -383,31 +383,58 @@ public sealed class TestAuthController : ControllerBase
         }
         else if (testUser.TenantId != tenant.Id || !testUser.IsActive || testUser.IsDeleted)
         {
-            return Conflict(new
+            var tenantScopedUsername = $"{TestUsername}-{tenant.Id:N}";
+            testUser = await _dbContext.Users
+                .IgnoreQueryFilters()
+                .FirstOrDefaultAsync(
+                    user => user.TenantId == tenant.Id && user.Username == tenantScopedUsername,
+                    ct);
+
+            if (testUser == null)
             {
-                error = "Test authority user is not active for the requested tenant.",
-                code = "TEST_ACTOR_SCOPE_CONFLICT"
-            });
+                testUser = new User
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = tenant.Id,
+                    Username = tenantScopedUsername,
+                    Email = $"test-reliability-agent-{tenant.Id:N}@testing.invalid",
+                    PasswordHash = "testing-only-token-issuer",
+                    FirstName = "Reliability",
+                    LastName = "Agent",
+                    Role = UserRole.Admin,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow
+                };
+                _dbContext.Users.Add(testUser);
+            }
+            else if (!testUser.IsActive || testUser.IsDeleted)
+            {
+                return Conflict(new
+                {
+                    error = "The tenant-scoped test authority user is inactive.",
+                    code = "TEST_ACTOR_SCOPE_CONFLICT"
+                });
+            }
         }
 
         testUser.RefreshToken = sessionBinding;
         testUser.RefreshTokenExpiryTime = DateTime.UtcNow.AddHours(1);
         await _dbContext.SaveChangesAsync(ct);
 
-        var token = BuildToken(tenant.Id, sessionBinding);
+        var token = BuildToken(tenant.Id, testUser.Id, sessionBinding);
 
         _logger.LogInformation(
             "TestAuthController issued test JWT | TenantId={TenantId} TenantName={TenantName} UserId={UserId}",
             tenant.Id,
             tenant.Name,
-            TestUserId);
+            testUser.Id);
 
         return Ok(new TestTokenResponse(
             Token: token.Token,
             ExpiresAt: token.ExpiresAt,
             TenantId: tenant.Id,
             TenantName: tenant.Name,
-            UserId: TestUserId,
+            UserId: testUser.Id.ToString(),
             Role: TestUserRole));
     }
 
@@ -3462,13 +3489,14 @@ public sealed class TestAuthController : ControllerBase
         var pendingCount   = await _dbContext.AccountingOutboxMessages.CountAsync(m => m.ProcessedAtUtc == null && !m.IsFailed, ct);
         var failedCount    = await _dbContext.AccountingOutboxMessages.CountAsync(m => m.IsFailed, ct);
         var processedCount = await _dbContext.AccountingOutboxMessages.CountAsync(m => m.ProcessedAtUtc != null, ct);
+        var journalCount   = await _dbContext.JournalEntries.IgnoreQueryFilters().CountAsync(ct);
 
         return Ok(new
         {
             processedCount,
             pendingCount,
             failedCount,
-            journalCount    = processedCount,   // proxy: each processed outbox row = one journal batch
+            journalCount,
             stockSyncCount  = pendingCount + processedCount,
             Timestamp       = DateTime.UtcNow
         });
@@ -3542,7 +3570,7 @@ public sealed class TestAuthController : ControllerBase
     // Internal helpers
     // -------------------------------------------------------------------------
 
-    private (string Token, DateTime ExpiresAt) BuildToken(Guid tenantId, string sessionBinding)
+    private (string Token, DateTime ExpiresAt) BuildToken(Guid tenantId, Guid userId, string sessionBinding)
     {
         var secretBytes = Encoding.UTF8.GetBytes(_jwtSettings.Secret);
         var key = new SymmetricSecurityKey(secretBytes);
@@ -3557,7 +3585,7 @@ public sealed class TestAuthController : ControllerBase
             new Claim("tenant_id", tenantId.ToString()),
 
             // NameIdentifier is the user identity claim expected by the POS JWT pipeline
-            new Claim(ClaimTypes.NameIdentifier, TestUserId),
+            new Claim(ClaimTypes.NameIdentifier, userId.ToString()),
 
             // Role claim allows the test token to pass [Authorize(Roles = "...")] guards
             new Claim(ClaimTypes.Role, TestUserRole),

@@ -46,6 +46,28 @@ internal static class CommerceHubPaymentSessionRecoveryAuthority
         !string.IsNullOrWhiteSpace(payment.CheckoutUrl) ||
         !string.IsNullOrWhiteSpace(payment.PaymentToken);
 
+    public static bool HasReservationReacquisitionBlockingEvidence(CommerceHubPayment payment)
+    {
+        if (payment.IsDeleted || payment.Status != CommerceHubPaymentRecordStatus.Failed)
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(payment.CheckoutUrl) ||
+            !string.IsNullOrWhiteSpace(payment.PaymentToken) ||
+            !string.IsNullOrWhiteSpace(payment.ProviderTransactionId) ||
+            HasExternalProviderIdentity(payment.ProviderIntentId) ||
+            payment.Logs.Any(log => !string.IsNullOrWhiteSpace(log.ProviderEventId)))
+        {
+            return true;
+        }
+
+        return payment.Attempts.Any(attempt =>
+            attempt.Status != CommerceHubPaymentRecordStatus.Failed ||
+            !string.IsNullOrWhiteSpace(attempt.ProviderTransactionId) ||
+            HasExternalProviderIdentity(attempt.ProviderIntentId));
+    }
+
     public static bool IsProviderSessionReinitFence(string? value)
     {
         return !string.IsNullOrWhiteSpace(value) &&
@@ -57,4 +79,8 @@ internal static class CommerceHubPaymentSessionRecoveryAuthority
         return !string.IsNullOrWhiteSpace(value) &&
                value.StartsWith(ProviderSessionOutcomeUnknownPrefix, StringComparison.Ordinal);
     }
+
+    private static bool HasExternalProviderIdentity(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        !IsProviderSessionReinitFence(value);
 }

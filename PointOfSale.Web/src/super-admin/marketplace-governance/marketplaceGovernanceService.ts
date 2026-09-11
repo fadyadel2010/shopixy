@@ -158,30 +158,30 @@ export async function restoreMarketplaceListing(
     return result
 }
 
-export async function suspendMarketplaceTenant(
-    tenantId: string,
+export async function suspendMarketplaceVendor(
+    vendorId: string,
     reason: string,
 ): Promise<MarketplaceGovernanceActionResult> {
     const response = await superAdminApiClient.post<MarketplaceGovernanceActionResult, { reason: string }>(
-        `/marketplace-governance/tenants/${tenantId}/suspend`,
+        `/marketplace-governance/vendors/${vendorId}/suspend`,
         { reason },
     )
-    const result = deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: tenantId, action: 'suspend' })
+    const result = deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: vendorId, action: 'suspend' })
     if (!result) {
         throw new Error('Invalid marketplace governance action authority response')
     }
     return result
 }
 
-export async function restoreMarketplaceTenant(
-    tenantId: string,
+export async function restoreMarketplaceVendor(
+    vendorId: string,
     reason: string,
 ): Promise<MarketplaceGovernanceActionResult> {
     const response = await superAdminApiClient.post<MarketplaceGovernanceActionResult, { reason: string }>(
-        `/marketplace-governance/tenants/${tenantId}/restore`,
+        `/marketplace-governance/vendors/${vendorId}/restore`,
         { reason },
     )
-    const result = deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: tenantId, action: 'restore' })
+    const result = deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: vendorId, action: 'restore' })
     if (!result) {
         throw new Error('Invalid marketplace governance action authority response')
     }

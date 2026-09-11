@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
     AlertTriangle,
     ArrowUpRight,
-    CalendarDays,
     CheckCircle2,
     Clock3,
     Loader2,
@@ -20,18 +19,19 @@ import { getSuperAdminOrderTenants, type SuperAdminTenantOption } from '../order
 import { commerceHubRefundGuidanceContent } from '../../shared/content/commerceHubRefundGuidance'
 import {
     SUPER_ADMIN_REFUND_STATUS_OPTIONS,
+    GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID,
     approveSuperAdminRefund,
+    executeDevelopmentCodRefundSimulation,
+    executeDevelopmentOnlineRefundSimulation,
     executeSuperAdminRefund,
     getSuperAdminRefundDetails,
     getSuperAdminRefunds,
-    markSuperAdminReturnFailed,
-    overrideSuperAdminReturnStatus,
     rejectSuperAdminRefund,
+    requeueGate3RAccountingOutbox,
     retrySuperAdminRefund,
     type RefundPayoutMethod,
     type RefundExecutionTrigger,
     type SuperAdminRefundDetails,
-    type SuperAdminOverrideReturnStatus,
     type SuperAdminReturnDetails,
     type SuperAdminReturnStatus,
     type SuperAdminRefundStatus,
@@ -40,11 +40,11 @@ import {
 import {
     requireCurrentSuperAdminRefundSelection,
     requireSuperAdminRefundDetailsForCurrentSelection,
-    requireSuperAdminReturnForCurrentRefund,
 } from './refundLifecycleAuthority'
 
 const DEFAULT_PAGE = 1
 const DEFAULT_PAGE_SIZE = 20
+const GATE3R_REFUND_ID = 'd9ac7cf0-3822-437c-9e66-e8c258c8b633'
 const pageSizeOptions = [20, 50, 100]
 const REFUND_STATUS_LABEL_KEYS: Record<string, string> = {
     Requested: 'superAdmin.refundsPage.statuses.requested',
@@ -454,39 +454,6 @@ function getReturnStatusTone(status: SuperAdminReturnStatus): string {
     }
 }
 
-function formatDateTimeInputValue(value?: string | null): string {
-    const date = value ? new Date(value) : new Date()
-    if (Number.isNaN(date.getTime())) {
-        return ''
-    }
-
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-    return local.toISOString().slice(0, 16)
-}
-
-function getReturnStageTimestamp(
-    returnRequest: SuperAdminReturnDetails,
-    status: SuperAdminOverrideReturnStatus | 'Failed',
-): string | null | undefined {
-    switch (status) {
-        case 'PickupScheduled':
-            return returnRequest.pickupScheduledAt
-        case 'PickedUp':
-            return returnRequest.pickedUpAt
-        case 'InTransit':
-            return returnRequest.inTransitAt
-        case 'DeliveredToVendor':
-            return returnRequest.deliveredAt
-        case 'Confirmed':
-            return returnRequest.confirmedAt
-        case 'Failed':
-            return returnRequest.updatedAt
-        case 'Pending':
-        default:
-            return returnRequest.updatedAt ?? returnRequest.createdAt
-    }
-}
-
 function getRefundUnlockedAt(refund: SuperAdminRefundDetails): string | null {
     const returnRequest = refund.returnRequest
     if (!returnRequest || !returnRequest.isExecutionTriggerReached) {
@@ -758,17 +725,6 @@ function ReturnTimeline({ returnRequest }: { returnRequest: SuperAdminReturnDeta
     )
 }
 
-function getDefaultOverrideStatus(returnRequest: SuperAdminReturnDetails): SuperAdminOverrideReturnStatus | null {
-    if (!returnRequest.canOverrideStatus || returnRequest.allowedOverrideStatuses.length === 0) {
-        return null
-    }
-
-    const currentStatus = returnRequest.status as SuperAdminOverrideReturnStatus
-    return returnRequest.allowedOverrideStatuses.includes(currentStatus)
-        ? currentStatus
-        : returnRequest.allowedOverrideStatuses[0] ?? null
-}
-
 function RefundWorkflowTimeline({ refund }: { refund: SuperAdminRefundDetails }) {
     const { t, i18n } = useTranslation()
     const locale = i18n.resolvedLanguage || i18n.language || 'en'
@@ -823,178 +779,6 @@ function RefundWorkflowTimeline({ refund }: { refund: SuperAdminRefundDetails })
                     <p className="mt-2 text-sm font-medium">{formatDateTime(step.date, locale, unavailable)}</p>
                 </div>
             ))}
-        </div>
-    )
-}
-
-function ReturnTransitionModal({
-    title,
-    description,
-    statusLabel,
-    selectedStatus,
-    statusOptions,
-    timestampLabel,
-    confirmLabel,
-    confirmTone = 'bg-sky-600 hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-400',
-    accentTone = 'text-sky-700',
-    isSubmitting,
-    errorMessage,
-    timestampValue,
-    trackingNumber,
-    courierName,
-    notes,
-    onStatusChange,
-    onTimestampChange,
-    onTrackingNumberChange,
-    onCourierNameChange,
-    onNotesChange,
-    onCancel,
-    onConfirm,
-}: {
-    title: string
-    description: string
-    statusLabel?: string
-    selectedStatus?: string
-    statusOptions?: readonly string[]
-    timestampLabel: string
-    confirmLabel: string
-    confirmTone?: string
-    accentTone?: string
-    isSubmitting: boolean
-    errorMessage?: string | null
-    timestampValue: string
-    trackingNumber: string
-    courierName: string
-    notes: string
-    onStatusChange?: (value: string) => void
-    onTimestampChange: (value: string) => void
-    onTrackingNumberChange: (value: string) => void
-    onCourierNameChange: (value: string) => void
-    onNotesChange: (value: string) => void
-    onCancel: () => void
-    onConfirm: () => void
-}) {
-    const { t } = useTranslation()
-
-    return (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/55 px-4">
-            <div className="w-full max-w-2xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-2xl">
-                <div className="flex items-start justify-between gap-4">
-                    <div>
-                        <p className={`text-xs font-semibold uppercase tracking-[0.24em] ${accentTone}`}>{t('superAdmin.refundsPage.returnTransition.badge')}</p>
-                        <h2 className="mt-2 text-2xl font-semibold text-slate-950">{title}</h2>
-                        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">{description}</p>
-                    </div>
-
-                    <button
-                        type="button"
-                        className="rounded-2xl border border-slate-200 bg-white p-3 text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
-                        aria-label={t('superAdmin.refundsPage.actions.close')}
-                        onClick={onCancel}
-                    >
-                        <X className="h-5 w-5" />
-                    </button>
-                </div>
-
-                <div className="mt-6 grid gap-4 md:grid-cols-2">
-                    {statusOptions && selectedStatus && onStatusChange ? (
-                        <div className="space-y-2 md:col-span-2">
-                            <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                                {statusLabel ?? t('superAdmin.refundsPage.returnTransition.targetStatus')}
-                            </label>
-                            <select
-                                value={selectedStatus}
-                                onChange={(event) => onStatusChange(event.target.value)}
-                                className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                                disabled={isSubmitting}
-                            >
-                                {statusOptions.map((status) => (
-                                    <option key={status} value={status}>
-                                        {formatReturnStatusLabel(status as SuperAdminReturnStatus, t)}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                    ) : null}
-
-                    <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            {timestampLabel}
-                        </label>
-                        <input
-                            type="datetime-local"
-                            value={timestampValue}
-                            onChange={(event) => onTimestampChange(event.target.value)}
-                            className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('superAdmin.refundsPage.returnTransition.trackingNumber')}</label>
-                        <input
-                            type="text"
-                            value={trackingNumber}
-                            onChange={(event) => onTrackingNumberChange(event.target.value)}
-                            placeholder={t('superAdmin.refundsPage.returnTransition.trackingPlaceholder')}
-                            className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-                </div>
-
-                <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('superAdmin.refundsPage.returnTransition.courier')}</label>
-                        <input
-                            type="text"
-                            value={courierName}
-                            onChange={(event) => onCourierNameChange(event.target.value)}
-                            placeholder={t('superAdmin.refundsPage.returnTransition.courierPlaceholder')}
-                            className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-
-                    <div className="space-y-2">
-                        <label className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('superAdmin.refundsPage.execute.notes')}</label>
-                        <textarea
-                            value={notes}
-                            onChange={(event) => onNotesChange(event.target.value)}
-                            rows={3}
-                            placeholder={t('superAdmin.refundsPage.returnTransition.notesPlaceholder')}
-                            className="w-full rounded-[24px] border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-sky-300 focus:ring-4 focus:ring-sky-100"
-                            disabled={isSubmitting}
-                        />
-                    </div>
-                </div>
-
-                {errorMessage ? (
-                    <div className="mt-4 rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-                        {errorMessage}
-                    </div>
-                ) : null}
-
-                <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                    <button
-                        type="button"
-                        className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                        onClick={onCancel}
-                        disabled={isSubmitting}
-                    >
-                        {t('superAdmin.refundsPage.actions.cancel')}
-                    </button>
-                    <button
-                        type="button"
-                        className={`inline-flex items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-white transition ${confirmTone}`}
-                        onClick={onConfirm}
-                        disabled={isSubmitting}
-                    >
-                        {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarDays className="h-4 w-4" />}
-                        {confirmLabel}
-                    </button>
-                </div>
-            </div>
         </div>
     )
 }
@@ -1274,8 +1058,12 @@ function RefundDetailsDrawer({
     onRetryLoad,
     onApprove,
     onExecute,
-    onOverrideReturn,
-    onMarkReturnFailed,
+    onDevelopmentSimulation,
+    isDevelopmentSimulationPending,
+    onDevelopmentAccountingRequeue,
+    isDevelopmentAccountingRequeuePending,
+    developmentAccountingRequeueResult,
+    developmentAccountingRequeueError,
     onReject,
     onRetryExecution,
 }: {
@@ -1288,14 +1076,19 @@ function RefundDetailsDrawer({
     onRetryLoad: () => void
     onApprove: () => void
     onExecute: () => void
-    onOverrideReturn: () => void
-    onMarkReturnFailed: () => void
+    onDevelopmentSimulation: () => void
+    isDevelopmentSimulationPending: boolean
+    onDevelopmentAccountingRequeue: () => void
+    isDevelopmentAccountingRequeuePending: boolean
+    developmentAccountingRequeueResult?: string | null
+    developmentAccountingRequeueError?: string | null
     onReject: () => void
     onRetryExecution: () => void
 }) {
     const { t, i18n } = useTranslation()
     const locale = i18n.resolvedLanguage || i18n.language || 'en'
     const unavailable = t('superAdmin.refundsPage.labels.unavailable')
+    const isDevelopmentSimulation = refund?.execution?.isDevelopmentSimulation === true
 
     if (!isOpen) {
         return null
@@ -1556,29 +1349,6 @@ function RefundDetailsDrawer({
                                         </div>
                                     </div>
 
-                                    <div className="mt-5 flex flex-wrap gap-3">
-                                        {refund.returnRequest.canOverrideStatus ? (
-                                            <button
-                                                type="button"
-                                                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-sky-900 transition hover:border-sky-300 hover:bg-sky-100"
-                                                onClick={onOverrideReturn}
-                                            >
-                                                <CalendarDays className="h-4 w-4" />
-                                                {t('superAdmin.refundsPage.actions.overrideStatus')}
-                                            </button>
-                                        ) : null}
-
-                                        {refund.returnRequest.canMarkFailed ? (
-                                            <button
-                                                type="button"
-                                                className="inline-flex items-center justify-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-900 transition hover:border-rose-300 hover:bg-rose-100"
-                                                onClick={onMarkReturnFailed}
-                                            >
-                                                <AlertTriangle className="h-4 w-4" />
-                                                {t('superAdmin.refundsPage.actions.markFailed')}
-                                            </button>
-                                        ) : null}
-                                    </div>
                                 </DetailSection>
                             ) : null}
 
@@ -1716,8 +1486,12 @@ function RefundDetailsDrawer({
 
                             {refund.execution ? (
                                 <DetailSection
-                                    title={t('superAdmin.refundsPage.sections.payoutConfirmation.title')}
-                                    caption={t('superAdmin.refundsPage.sections.payoutConfirmation.caption')}
+                                    title={t(isDevelopmentSimulation
+                                        ? 'superAdmin.refundsPage.sections.payoutConfirmation.simulationTitle'
+                                        : 'superAdmin.refundsPage.sections.payoutConfirmation.title')}
+                                    caption={t(isDevelopmentSimulation
+                                        ? 'superAdmin.refundsPage.sections.payoutConfirmation.simulationCaption'
+                                        : 'superAdmin.refundsPage.sections.payoutConfirmation.caption')}
                                 >
                                     <div className="grid gap-3 md:grid-cols-2">
                                         <DetailField
@@ -1733,11 +1507,15 @@ function RefundDetailsDrawer({
                                             value={refund.execution.transactionReference || unavailable}
                                         />
                                         <DetailField
-                                            label={t('superAdmin.refundsPage.fields.paidAt')}
+                                            label={t(isDevelopmentSimulation
+                                                ? 'superAdmin.refundsPage.sections.payoutConfirmation.simulationRecordedAt'
+                                                : 'superAdmin.refundsPage.fields.paidAt')}
                                             value={formatDateTime(refund.execution.executedAt, locale, unavailable)}
                                         />
                                         <DetailField
-                                            label={t('superAdmin.refundsPage.fields.payoutResult')}
+                                            label={t(isDevelopmentSimulation
+                                                ? 'superAdmin.refundsPage.sections.payoutConfirmation.simulationResult'
+                                                : 'superAdmin.refundsPage.fields.payoutResult')}
                                             value={refund.execution.isSuccessful ? t('superAdmin.refundsPage.labels.successful') : t('superAdmin.refundsPage.labels.failed')}
                                         />
                                         <DetailField
@@ -1745,12 +1523,18 @@ function RefundDetailsDrawer({
                                             value={formatRefundStatusLabel(refund.execution.status, t)}
                                         />
                                         <DetailField
-                                            label={t('superAdmin.refundsPage.fields.settlementStatus')}
+                                            label={t(isDevelopmentSimulation
+                                                ? 'superAdmin.refundsPage.sections.payoutConfirmation.evidenceType'
+                                                : 'superAdmin.refundsPage.fields.settlementStatus')}
                                             value={refund.execution.gatewayStatus || unavailable}
                                         />
                                         <DetailField
                                             label={t('superAdmin.refundsPage.fields.postPayoutAdjustment')}
                                             value={refund.execution.isPostPayoutAdjustment ? t('superAdmin.refundsPage.labels.yes') : t('superAdmin.refundsPage.labels.no')}
+                                        />
+                                        <DetailField
+                                            label={t('superAdmin.refundsPage.fields.externalMoneyMovementConfirmed')}
+                                            value={refund.execution.externalMoneyMovementConfirmed ? t('superAdmin.refundsPage.labels.yes') : t('superAdmin.refundsPage.labels.no')}
                                         />
                                         <DetailField
                                             label={t('superAdmin.refundsPage.fields.commissionReversal')}
@@ -1773,6 +1557,33 @@ function RefundDetailsDrawer({
 
                 {refund ? (
                     <div className="border-t border-slate-200 bg-white px-6 py-5">
+                        {import.meta.env.DEV && refund.refundId.toLowerCase() === GATE3R_REFUND_ID ? (
+                            <div className="mb-4 rounded-2xl border border-violet-200 bg-violet-50 p-4 text-violet-950">
+                                <p className="text-sm font-semibold">Development accounting outbox requeue</p>
+                                <p className="mt-1 text-xs leading-5 text-violet-800">
+                                    Requeues only message <span className="font-mono">{GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID}</span> for the normal accounting worker. It does not post accounting directly.
+                                </p>
+                                {developmentAccountingRequeueResult ? (
+                                    <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 font-mono text-xs text-emerald-900" role="status">
+                                        {developmentAccountingRequeueResult}
+                                    </p>
+                                ) : null}
+                                {developmentAccountingRequeueError ? (
+                                    <p className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900" role="alert">
+                                        {developmentAccountingRequeueError}
+                                    </p>
+                                ) : null}
+                                <button
+                                    type="button"
+                                    className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl border border-violet-300 bg-white px-4 py-2 text-sm font-semibold text-violet-900 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    onClick={onDevelopmentAccountingRequeue}
+                                    disabled={isDevelopmentAccountingRequeuePending || Boolean(developmentAccountingRequeueResult)}
+                                >
+                                    {isDevelopmentAccountingRequeuePending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                    {isDevelopmentAccountingRequeuePending ? 'Requeueing...' : 'Requeue for normal worker'}
+                                </button>
+                            </div>
+                        ) : null}
                         <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
                             {refund.canReject ? (
                                 <button
@@ -1797,13 +1608,44 @@ function RefundDetailsDrawer({
                             ) : null}
 
                             {refund.canExecute && (isRefundAwaitingPayout(refund.status) || refund.status === 'Approved') ? (
+                                import.meta.env.DEV && (
+                                    refund.financialPreview.executionPath === 'CashOnDeliveryDebtReduction'
+                                    || refund.financialPreview.executionPath === 'OnlineBeforePayout'
+                                ) ? (
+                                    <button
+                                        type="button"
+                                        className="inline-flex items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-5 py-3 text-sm font-semibold text-violet-900 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                        onClick={onDevelopmentSimulation}
+                                        disabled={isDevelopmentSimulationPending}
+                                    >
+                                        {isDevelopmentSimulationPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                                        {t(refund.financialPreview.executionPath === 'OnlineBeforePayout'
+                                            ? 'superAdmin.refundsPage.actions.simulateOnlineRefund'
+                                            : 'superAdmin.refundsPage.actions.simulateCodRefund')}
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-amber-700"
+                                        onClick={onExecute}
+                                    >
+                                        <CheckCircle2 className="h-4 w-4" />
+                                        {t('superAdmin.refundsPage.actions.sendMoneyAndConfirm')}
+                                    </button>
+                                )
+                            ) : null}
+
+                            {import.meta.env.DEV
+                                && isRefundPaid(refund.status)
+                                && refund.execution?.isDevelopmentSimulation === true ? (
                                 <button
                                     type="button"
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-amber-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-amber-700"
-                                    onClick={onExecute}
+                                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-5 py-3 text-sm font-semibold text-violet-900 transition hover:border-violet-300 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
+                                    onClick={onDevelopmentSimulation}
+                                    disabled={isDevelopmentSimulationPending}
                                 >
-                                    <CheckCircle2 className="h-4 w-4" />
-                                    {t('superAdmin.refundsPage.actions.sendMoneyAndConfirm')}
+                                    {isDevelopmentSimulationPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                    {t('superAdmin.refundsPage.actions.replayDevelopmentSimulation')}
                                 </button>
                             ) : null}
 
@@ -1843,14 +1685,9 @@ export default function RefundsPage() {
     const [confirmMoneySent, setConfirmMoneySent] = useState(false)
     const [confirmMethodOverride, setConfirmMethodOverride] = useState(false)
     const [executeError, setExecuteError] = useState<string | null>(null)
-    const [returnModalMode, setReturnModalMode] = useState<'override' | 'failed' | null>(null)
-    const [overrideStatus, setOverrideStatus] = useState<SuperAdminOverrideReturnStatus>('PickupScheduled')
-    const [returnTimestamp, setReturnTimestamp] = useState('')
-    const [returnTrackingNumber, setReturnTrackingNumber] = useState('')
-    const [returnCourierName, setReturnCourierName] = useState('')
-    const [returnNotes, setReturnNotes] = useState('')
-    const [returnError, setReturnError] = useState<string | null>(null)
     const [successMessage, setSuccessMessage] = useState<string | null>(null)
+    const [developmentAccountingRequeueResult, setDevelopmentAccountingRequeueResult] = useState<string | null>(null)
+    const [developmentAccountingRequeueError, setDevelopmentAccountingRequeueError] = useState<string | null>(null)
 
     const updateParams = useCallback(
         (updates: Record<string, string | null | undefined>) => {
@@ -1992,62 +1829,39 @@ export default function RefundsPage() {
         },
     })
 
-    const returnMutation = useMutation({
-        mutationFn: ({
-            returnId,
-            mode,
-            payload,
-        }: {
-            returnId: string
-            mode: 'override' | 'failed'
-            payload: {
-                status?: SuperAdminOverrideReturnStatus
-                timestampUtc?: string
-                trackingNumber?: string
-                courierName?: string
-                notes?: string
-            }
-        }) => {
-            const currentRefundDetails = detailsQuery.data
-            if (!currentRefundDetails) {
-                throw new Error(t('superAdmin.refundsPage.validation.currentRefundRequired'))
-            }
-
-            if (mode === 'override') {
-                if (!payload.status) {
-                    throw new Error(t('superAdmin.refundsPage.validation.overrideStatusRequired'))
-                }
-
-                return overrideSuperAdminReturnStatus(returnId, {
-                    status: payload.status,
-                    timestampUtc: payload.timestampUtc,
-                    trackingNumber: payload.trackingNumber,
-                    courierName: payload.courierName,
-                    notes: payload.notes,
-                }).then((returnRequest) => requireSuperAdminReturnForCurrentRefund(returnRequest, currentRefundDetails))
-            }
-
-            return markSuperAdminReturnFailed(returnId, payload)
-                .then((returnRequest) => requireSuperAdminReturnForCurrentRefund(returnRequest, currentRefundDetails))
-        },
-        onSuccess: async (_, variables) => {
-            if (currentSelectedRefund) {
-                await queryClient.invalidateQueries({ queryKey: ['super-admin', 'refunds', 'details', currentSelectedRefund.refundId] })
-            }
-
-            await queryClient.invalidateQueries({ queryKey: ['super-admin', 'refunds'] })
-            setReturnModalMode(null)
-            setReturnError(null)
-            setSuccessMessage(
-                variables.mode === 'override'
-                    ? t('superAdmin.refundsPage.feedback.returnOverrideSuccess', {
-                        status: formatReturnStatusLabel((variables.payload.status ?? 'Pending') as SuperAdminReturnStatus, t),
-                    })
-                    : t('superAdmin.refundsPage.feedback.returnMarkedFailed'),
-            )
+    const developmentSimulationMutation = useMutation({
+        mutationFn: ({ refundId, executionPath }: { refundId: string; executionPath: string }) =>
+            executionPath === 'OnlineBeforePayout'
+                ? executeDevelopmentOnlineRefundSimulation(refundId)
+                : executeDevelopmentCodRefundSimulation(refundId),
+        onSuccess: (result) => {
+            const accepted = currentSelectedRefund
+                ? requireSuperAdminRefundDetailsForCurrentSelection(result, currentSelectedRefund)
+                : result
+            queryClient.setQueryData(['super-admin', 'refunds', 'details', accepted.refundId], accepted)
+            queryClient.invalidateQueries({ queryKey: ['super-admin', 'refunds'] })
+            setSuccessMessage('Development refund simulation completed. No external money movement was confirmed.')
+            window.alert('Development simulation response validated. Idempotency replay applied no additional financial effect.')
         },
         onError: (error) => {
-            setReturnError(getErrorMessage(error, t('superAdmin.refundsPage.feedback.returnUpdateFailed')))
+            window.alert(getErrorMessage(error, 'Development refund simulation failed.'))
+        },
+    })
+
+    const developmentAccountingRequeueMutation = useMutation({
+        mutationFn: requeueGate3RAccountingOutbox,
+        onSuccess: (result) => {
+            const message = `WasRequeued=${String(result.wasRequeued)}; MessageId=${result.messageId}; Timestamp=${result.timestamp}`
+            setDevelopmentAccountingRequeueError(null)
+            setDevelopmentAccountingRequeueResult(message)
+            setSuccessMessage(message)
+            window.alert(message)
+        },
+        onError: (error) => {
+            const message = getErrorMessage(error, 'Development accounting outbox requeue failed.')
+            setDevelopmentAccountingRequeueResult(null)
+            setDevelopmentAccountingRequeueError(message)
+            window.alert(message)
         },
     })
 
@@ -2124,7 +1938,6 @@ export default function RefundsPage() {
 
         setActionModal(null)
         setExecuteModalOpen(false)
-        setReturnModalMode(null)
     }, [acceptedRefundDetails])
 
     function handleResetFilters() {
@@ -2214,46 +2027,6 @@ export default function RefundsPage() {
         setConfirmMoneySent(false)
         setConfirmMethodOverride(false)
         setExecuteModalOpen(true)
-    }
-
-    function openReturnOverrideModal() {
-        const returnRequest = detailsQuery.data?.returnRequest
-        const defaultOverrideStatus = returnRequest ? getDefaultOverrideStatus(returnRequest) : null
-        if (!returnRequest || !defaultOverrideStatus) {
-            return
-        }
-
-        setActionModal(null)
-        setExecuteModalOpen(false)
-        setActionError(null)
-        setExecuteError(null)
-        setReturnError(null)
-        setSuccessMessage(null)
-        setReturnModalMode('override')
-        setOverrideStatus(defaultOverrideStatus)
-        setReturnTrackingNumber(returnRequest.trackingNumber ?? '')
-        setReturnCourierName(returnRequest.courierName ?? '')
-        setReturnNotes(returnRequest.notes ?? '')
-        setReturnTimestamp(formatDateTimeInputValue(getReturnStageTimestamp(returnRequest, defaultOverrideStatus)))
-    }
-
-    function openReturnFailedModal() {
-        const returnRequest = detailsQuery.data?.returnRequest
-        if (!returnRequest) {
-            return
-        }
-
-        setActionModal(null)
-        setExecuteModalOpen(false)
-        setActionError(null)
-        setExecuteError(null)
-        setReturnError(null)
-        setSuccessMessage(null)
-        setReturnModalMode('failed')
-        setReturnTrackingNumber(returnRequest.trackingNumber ?? '')
-        setReturnCourierName(returnRequest.courierName ?? '')
-        setReturnNotes('')
-        setReturnTimestamp(formatDateTimeInputValue(getReturnStageTimestamp(returnRequest, 'Failed')))
     }
 
     async function requireCurrentRefundMutationAuthority(): Promise<SuperAdminRefundDetails> {
@@ -2378,55 +2151,58 @@ export default function RefundsPage() {
         })
     }
 
-    async function handleReturnConfirm() {
-        if (!returnModalMode) {
-            return
-        }
-
+    async function handleDevelopmentSimulation() {
         let currentRefund: SuperAdminRefundDetails
         try {
             currentRefund = await requireCurrentRefundMutationAuthority()
         } catch (error) {
-            setReturnError(getErrorMessage(error, t('superAdmin.refundsPage.validation.currentRefundRequired')))
+            window.alert(getErrorMessage(error, t('superAdmin.refundsPage.validation.currentRefundRequired')))
             return
         }
 
-        const returnRequest = currentRefund.returnRequest
-        if (!returnRequest) {
-            setReturnError(t('superAdmin.refundsPage.validation.currentRefundRequired'))
-            return
-        }
-
-        if (returnModalMode === 'failed' && !returnNotes.trim()) {
-            setReturnError(t('superAdmin.refundsPage.validation.returnFailureReasonRequired'))
-            return
-        }
-
-        if (returnModalMode === 'failed' && !returnRequest.canMarkFailed) {
-            setReturnError(t('superAdmin.refundsPage.validation.currentRefundRequired'))
-            return
-        }
-
-        if (returnModalMode === 'override' && (
-            !returnRequest.canOverrideStatus ||
-            !returnRequest.allowedOverrideStatuses.includes(overrideStatus)
+        const isSimulationReplay = isRefundPaid(currentRefund.status)
+            && currentRefund.execution?.isDevelopmentSimulation === true
+        if (!isSimulationReplay && (
+            !currentRefund.canExecute
+            || !isRefundAwaitingPayout(currentRefund.status)
+            || !['CashOnDeliveryDebtReduction', 'OnlineBeforePayout'].includes(currentRefund.financialPreview.executionPath)
         )) {
-            setReturnError(t('superAdmin.refundsPage.validation.currentRefundRequired'))
+            window.alert(t('superAdmin.refundsPage.validation.currentRefundRequired'))
             return
         }
 
-        setReturnError(null)
-        returnMutation.mutate({
-            returnId: returnRequest.returnId,
-            mode: returnModalMode,
-            payload: {
-                status: returnModalMode === 'override' ? overrideStatus : undefined,
-                timestampUtc: returnTimestamp ? new Date(returnTimestamp).toISOString() : undefined,
-                trackingNumber: returnTrackingNumber.trim() || undefined,
-                courierName: returnCourierName.trim() || undefined,
-                notes: returnNotes.trim() || undefined,
-            },
+        if (!window.confirm(
+            isSimulationReplay
+                ? 'Replay the Development simulation to verify idempotency? No financial effect will be applied again.'
+                : 'Run the Development-only refund simulation? No external money movement will be confirmed.',
+        )) {
+            return
+        }
+
+        developmentSimulationMutation.mutate({
+            refundId: currentRefund.refundId,
+            executionPath: currentRefund.financialPreview.executionPath,
         })
+    }
+
+    function handleDevelopmentAccountingRequeue() {
+        if (
+            !import.meta.env.DEV
+            || currentSelectedRefundId?.toLowerCase() !== GATE3R_REFUND_ID
+            || developmentAccountingRequeueMutation.isPending
+        ) {
+            return
+        }
+
+        if (!window.confirm(
+            `Development only: requeue accounting outbox ${GATE3R_ACCOUNTING_OUTBOX_MESSAGE_ID} for the normal worker?`,
+        )) {
+            return
+        }
+
+        setDevelopmentAccountingRequeueResult(null)
+        setDevelopmentAccountingRequeueError(null)
+        developmentAccountingRequeueMutation.mutate()
     }
 
     if (refundsQuery.isError && !refundsQuery.data) {
@@ -2739,8 +2515,12 @@ export default function RefundsPage() {
                 onRetryLoad={() => detailsQuery.refetch()}
                 onApprove={() => openActionModal('approve')}
                 onExecute={openExecuteModal}
-                onOverrideReturn={openReturnOverrideModal}
-                onMarkReturnFailed={openReturnFailedModal}
+                onDevelopmentSimulation={handleDevelopmentSimulation}
+                isDevelopmentSimulationPending={developmentSimulationMutation.isPending}
+                onDevelopmentAccountingRequeue={handleDevelopmentAccountingRequeue}
+                isDevelopmentAccountingRequeuePending={developmentAccountingRequeueMutation.isPending}
+                developmentAccountingRequeueResult={developmentAccountingRequeueResult}
+                developmentAccountingRequeueError={developmentAccountingRequeueError}
                 onReject={() => openActionModal('reject')}
                 onRetryExecution={() => openActionModal('retry')}
             />
@@ -2823,65 +2603,6 @@ export default function RefundsPage() {
                 />
             ) : null}
 
-            {returnModalMode && acceptedRefundDetails?.returnRequest ? (
-                <ReturnTransitionModal
-                    title={
-                        returnModalMode === 'override'
-                            ? t('superAdmin.refundsPage.returnTransition.titles.override')
-                            : t('superAdmin.refundsPage.returnTransition.titles.failed')
-                    }
-                    description={
-                        returnModalMode === 'override'
-                            ? t('superAdmin.refundsPage.returnTransition.descriptions.override')
-                            : t('superAdmin.refundsPage.returnTransition.descriptions.failed')
-                    }
-                    statusLabel={t('superAdmin.refundsPage.returnTransition.targetStatus')}
-                    selectedStatus={returnModalMode === 'override' ? overrideStatus : undefined}
-                    statusOptions={returnModalMode === 'override' ? acceptedRefundDetails.returnRequest.allowedOverrideStatuses : undefined}
-                    timestampLabel={
-                        returnModalMode === 'override'
-                            ? t('superAdmin.refundsPage.returnTransition.effectiveAt')
-                            : t('superAdmin.refundsPage.returnTransition.failureRecordedAt')
-                    }
-                    confirmLabel={
-                        returnModalMode === 'override'
-                            ? t('superAdmin.refundsPage.actions.applyOverride')
-                            : t('superAdmin.refundsPage.actions.markFailed')
-                    }
-                    confirmTone={
-                        returnModalMode === 'override'
-                            ? 'bg-sky-600 hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-400'
-                            : 'bg-rose-600 hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-rose-400'
-                    }
-                    accentTone={returnModalMode === 'override' ? 'text-sky-700' : 'text-rose-700'}
-                    isSubmitting={returnMutation.isPending}
-                    errorMessage={returnError}
-                    timestampValue={returnTimestamp}
-                    trackingNumber={returnTrackingNumber}
-                    courierName={returnCourierName}
-                    notes={returnNotes}
-                    onStatusChange={(value) => {
-                        const nextStatus = value as SuperAdminOverrideReturnStatus
-                        if (!acceptedRefundDetails.returnRequest!.allowedOverrideStatuses.includes(nextStatus)) {
-                            return
-                        }
-
-                        setOverrideStatus(nextStatus)
-                        setReturnTimestamp(
-                            formatDateTimeInputValue(getReturnStageTimestamp(acceptedRefundDetails.returnRequest!, nextStatus)),
-                        )
-                    }}
-                    onTimestampChange={setReturnTimestamp}
-                    onTrackingNumberChange={setReturnTrackingNumber}
-                    onCourierNameChange={setReturnCourierName}
-                    onNotesChange={setReturnNotes}
-                    onCancel={() => {
-                        setReturnModalMode(null)
-                        setReturnError(null)
-                    }}
-                    onConfirm={handleReturnConfirm}
-                />
-            ) : null}
         </>
     )
 }

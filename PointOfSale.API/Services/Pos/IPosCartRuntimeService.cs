@@ -16,6 +16,10 @@ public interface IPosCartRuntimeService
         Guid cashierId,
         CancellationToken cancellationToken = default);
 
+    Task<PosCartServiceResult<PosCartResponse>> GetOpenAsync(
+        Guid cashierId,
+        CancellationToken cancellationToken = default);
+
     Task<PosCartServiceResult<PosCartResponse>> AddItemAsync(
         Guid cartId,
         UpsertPosCartItemRequest request,

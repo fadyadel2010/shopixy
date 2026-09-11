@@ -15,6 +15,7 @@ using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Pagination;
+using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Jobs;
@@ -87,6 +88,8 @@ public class AdminCommerceHubController : ControllerBase
         var normalizedProductCurrency = CommerceHubPublicationCurrencyPolicy.Normalize(productCurrency);
         var isCommerceHubCurrencyEligible =
             CommerceHubPublicationCurrencyPolicy.IsEgpPricedProduct(normalizedProductCurrency);
+        var isCommerceHubPriceOverrideEnabled =
+            CommerceHubPriceOverrideRuntimePolicy.IsEnabledForTenant(tenantId);
         var commerceHubCurrencyPolicyMessage = isCommerceHubCurrencyEligible
             ? null
             : CommerceHubPublicationCurrencyPolicy.BuildUnsupportedCurrencyMessage(normalizedProductCurrency);
@@ -119,6 +122,7 @@ public class AdminCommerceHubController : ControllerBase
             .Take(pageSize)
             .Select(p => new CommerceHubAdminProductDto
             {
+                TenantId = p.TenantId,
                 ProductId = p.Id,
                 Name = p.Name,
                 Image = p.Media.OrderBy(m => m.Position).Select(m => m.Url).FirstOrDefault(),
@@ -136,6 +140,25 @@ public class AdminCommerceHubController : ControllerBase
                         ProductCurrency = normalizedProductCurrency,
                         IsCommerceHubCurrencyEligible = isCommerceHubCurrencyEligible,
                         CommerceHubCurrencyPolicyMessage = commerceHubCurrencyPolicyMessage,
+                        IsCommerceHubPriceOverrideEnabled = isCommerceHubPriceOverrideEnabled,
+                        IsCommerceHubPublicationEligible =
+                            p.IsActive &&
+                            p.IsOnlineVisible &&
+                            p.PublishStatus == PublishStatus.Published &&
+                            v.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                            v.SemanticSupersededAtUtc == null &&
+                            v.SemanticReplacementVariantId == null,
+                        CommerceHubPublicationEligibilityMessage = !p.IsActive
+                            ? CommerceHubPublicationEligibilityPolicy.ProductInactiveMessage
+                            : p.PublishStatus != PublishStatus.Published
+                                ? CommerceHubPublicationEligibilityPolicy.ProductNotPublishedMessage
+                                : !p.IsOnlineVisible
+                                    ? CommerceHubPublicationEligibilityPolicy.ProductNotOnlineVisibleMessage
+                                    : v.SemanticLifecycleState != ProductVariantSemanticLifecycleState.Current ||
+                                      v.SemanticSupersededAtUtc != null ||
+                                      v.SemanticReplacementVariantId != null
+                                        ? CommerceHubPublicationEligibilityPolicy.VariantNotCurrentMessage
+                                        : null,
                         AttributeSummary = string.Join(" / ",
                             v.Attributes
                                 .Where(a => !a.IsDeleted)

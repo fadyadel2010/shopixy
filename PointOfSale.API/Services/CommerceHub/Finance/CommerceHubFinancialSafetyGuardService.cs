@@ -64,6 +64,7 @@ public sealed record CommerceHubFinancialStateDelta(
 public sealed class CommerceHubFinancialSafetyGuardService : ICommerceHubFinancialSafetyGuardService
 {
     private const string PlatformCashScope = "PlatformCash";
+    private static readonly Guid PlatformCashLockId = Guid.Parse("7b5b9720-2e31-4d55-808c-6b0dd4d833a1");
 
     private static readonly CommerceHubRefundRequestStatus[] BlockingRefundStatuses =
     [
@@ -216,6 +217,11 @@ public sealed class CommerceHubFinancialSafetyGuardService : ICommerceHubFinanci
         var providerName = _dbContext.Database.ProviderName ?? string.Empty;
         if (providerName.Contains("Sqlite", StringComparison.OrdinalIgnoreCase))
         {
+            await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $@"INSERT OR IGNORE INTO ""CommerceHubFinancialGuardLocks"" (""Id"", ""Scope"", ""CreatedAtUtc"")
+                   VALUES ({PlatformCashLockId}, {PlatformCashScope}, {DateTime.UtcNow})",
+                cancellationToken);
+
             await _dbContext.Tenants
                 .Where(tenant => tenant.Id == vendorId)
                 .Select(_ => 1)
@@ -227,6 +233,12 @@ public sealed class CommerceHubFinancialSafetyGuardService : ICommerceHubFinanci
                 .SingleAsync(cancellationToken);
             return;
         }
+
+        await _dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $@"INSERT INTO ""CommerceHubFinancialGuardLocks"" (""Id"", ""Scope"", ""CreatedAtUtc"")
+               VALUES ({PlatformCashLockId}, {PlatformCashScope}, {DateTime.UtcNow})
+               ON CONFLICT (""Scope"") DO NOTHING",
+            cancellationToken);
 
         await _dbContext.Tenants
             .FromSqlInterpolated($@"SELECT * FROM ""Tenants"" WHERE ""Id"" = {vendorId} FOR UPDATE")

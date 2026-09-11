@@ -29,7 +29,7 @@ public sealed class CommerceHubSessionCreationCertificationTests
 
         var logoutAction = Slice(controller, "[HttpPost(\"logout\")]", "[HttpPost(\"revoke-all-sessions\")]");
         Assert.Contains("RevokeTokenAsync(accessToken, \"logout\"", logoutAction, StringComparison.Ordinal);
-        Assert.Contains("Response.Cookies.Delete", logoutAction, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies()", logoutAction, StringComparison.Ordinal);
         Assert.Contains("ClearCommerceHubRecoveryCookie()", logoutAction, StringComparison.Ordinal);
         Assert.Contains("LoggedOut", logoutAction, StringComparison.Ordinal);
 

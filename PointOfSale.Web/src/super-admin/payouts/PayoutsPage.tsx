@@ -3,9 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Landmark, Loader2, Send, ShieldCheck } from 'lucide-react'
 import { useToast } from '../../components/Toast'
 import {
+    completeSuperAdminVendorPayout,
     createVendorPayoutIdempotencyKey,
-    executeSuperAdminVendorPayout,
     getSuperAdminPayoutQueue,
+    prepareSuperAdminVendorPayout,
     type SuperAdminVendorPayoutQueueCurrencySummary,
     type SuperAdminVendorPayoutMethodChoice,
     type SuperAdminVendorPayoutQueueItem,
@@ -104,9 +105,10 @@ interface ExecuteModalState {
     item: SuperAdminVendorPayoutQueueItem
     amount: string
     payoutMethodId: string
-    transferReference: string
     externalReferenceId: string
     bankTransactionId: string
+    idempotencyKey: string
+    confirmTransferExecuted: boolean
 }
 
 export default function PayoutsPage() {
@@ -126,6 +128,8 @@ export default function PayoutsPage() {
     const currentExecuteItem = executeModal
         ? queue.find((item) => item.vendorId === executeModal.item.vendorId) ?? null
         : null
+    const currentActivePayout = currentExecuteItem?.activePayout ?? null
+    const currentCommittedPayout = currentActivePayout?.status === 'Pending' ? null : currentActivePayout
     const currentExecuteAmount = executeModal && currentExecuteItem
         ? Number(executeModal.amount)
         : null
@@ -142,21 +146,45 @@ export default function PayoutsPage() {
 
     const executeMutation = useMutation({
         mutationFn: () => {
-            if (!executeModal || !currentExecuteItem?.canRecordCompletedPayout) {
+            if (!executeModal || !currentExecuteItem) {
                 throw new Error('Current backend payout authority is no longer available for this vendor.')
             }
 
-            return executeSuperAdminVendorPayout(currentExecuteItem.vendorId, {
-                amount: requireCurrentPayoutExecutionAmount(Number(executeModal.amount), currentExecuteItem),
-                payoutMethodId: requireCurrentPayoutMethodSelection(executeModal.payoutMethodId, currentExecuteItem).id,
-                transferReference: executeModal.transferReference.trim() || undefined,
-                externalReferenceId: executeModal.externalReferenceId.trim() || undefined,
-                bankTransactionId: executeModal.bankTransactionId.trim() || undefined,
-                idempotencyKey: createVendorPayoutIdempotencyKey(),
+            const activePayout = currentExecuteItem.activePayout
+            if (activePayout && activePayout.status !== 'Pending') {
+                if (!currentExecuteItem.canCompletePayout) {
+                    throw new Error('Current backend payout completion authority is no longer available for this vendor.')
+                }
+
+                return completeSuperAdminVendorPayout(
+                    currentExecuteItem.vendorId,
+                    activePayout.payoutId,
+                    activePayout.amount,
+                    {
+                        externalReferenceId: executeModal.externalReferenceId.trim() || undefined,
+                        bankTransactionId: executeModal.bankTransactionId.trim() || undefined,
+                        externalTransferHandoffToken: activePayout.externalTransferHandoffToken,
+                        externalTransferConfirmedExecuted: executeModal.confirmTransferExecuted,
+                    },
+                )
+            }
+
+            if (!currentExecuteItem.canPreparePayout) {
+                throw new Error('Current backend payout preparation authority is no longer available for this vendor.')
+            }
+
+            return prepareSuperAdminVendorPayout(currentExecuteItem.vendorId, {
+                amount: activePayout
+                    ? activePayout.amount
+                    : requireCurrentPayoutExecutionAmount(Number(executeModal.amount), currentExecuteItem),
+                payoutMethodId: activePayout?.payoutMethodId ?? requireCurrentPayoutMethodSelection(executeModal.payoutMethodId, currentExecuteItem).id,
+                idempotencyKey: activePayout?.idempotencyKey ?? executeModal.idempotencyKey,
             })
         },
-        onSuccess: () => {
-            showSuccess('Completed payout evidence recorded and posted to the CommerceHub ledger.')
+        onSuccess: (payout) => {
+            showSuccess(payout.status === 'Processing'
+                ? 'Payout handoff committed. External transfer may now be executed using the displayed payout intent.'
+                : 'Completed payout evidence recorded and posted to the CommerceHub ledger.')
             setExecuteModal(null)
             queryClient.invalidateQueries({ queryKey: ['super-admin-payout-queue'] })
         },
@@ -178,7 +206,7 @@ export default function PayoutsPage() {
             return
         }
 
-        if (!currentExecuteItem?.canRecordCompletedPayout) {
+        if (!currentExecuteItem || (!currentExecuteItem.canPreparePayout && !currentExecuteItem.canCompletePayout)) {
             setExecuteModal(null)
         }
     }, [currentExecuteItem, executeModal, queueQuery.isFetching])
@@ -187,11 +215,14 @@ export default function PayoutsPage() {
         const defaultMethod = item.payoutMethods.find((method) => method.isDefault) ?? item.payoutMethods[0]
         setExecuteModal({
             item,
-            amount: item.eligibleAmount > 0 ? item.eligibleAmount.toFixed(2) : item.totalPayable.toFixed(2),
-            payoutMethodId: defaultMethod?.id ?? '',
-            transferReference: '',
+            amount: item.activePayout
+                ? item.activePayout.amount.toFixed(2)
+                : item.eligibleAmount > 0 ? item.eligibleAmount.toFixed(2) : item.totalPayable.toFixed(2),
+            payoutMethodId: item.activePayout?.payoutMethodId ?? defaultMethod?.id ?? '',
             externalReferenceId: '',
             bankTransactionId: '',
+            idempotencyKey: item.activePayout?.idempotencyKey ?? createVendorPayoutIdempotencyKey(),
+            confirmTransferExecuted: false,
         })
     }
 
@@ -242,9 +273,9 @@ export default function PayoutsPage() {
                         <Landmark className="h-4 w-4" />
                         CommerceHub vendor payout queue
                     </div>
-                    <h1 className="mt-5 text-3xl font-semibold tracking-tight text-slate-950">Vendor liabilities ready for payout planning and completed-transfer recognition</h1>
+                    <h1 className="mt-5 text-3xl font-semibold tracking-tight text-slate-950">Vendor liabilities ready for durable payout handoff and transfer reconciliation</h1>
                     <p className="mt-4 text-sm leading-7 text-slate-600">
-                        Eligible amounts are calculated from delivered online orders, refund-window holds, active refund blockers, and prior payout reservations. Recording a completed payout recognizes already executed external transfer evidence and posts the cash and payable movements into the immutable CommerceHub ledger.
+                        Prepare a payout before sending money to commit its reservation, transfer intent, and handoff token. After the external transfer finishes, reconcile its immutable bank or provider evidence to post cash and payable movements.
                     </p>
                     {hasCurrencyMix ? (
                         <p className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
@@ -361,13 +392,15 @@ export default function PayoutsPage() {
                                         <td className="px-6 py-5 text-right">
                                             <button
                                                 type="button"
-                                                disabled={!item.canRecordCompletedPayout}
+                                                disabled={!item.canPreparePayout && !item.canCompletePayout}
                                                 onClick={() => openExecuteModal(item)}
                                                 className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                                                 title={item.executionBlockedReason ?? undefined}
                                             >
                                                 <Send className="h-4 w-4" />
-                                                Record completed payout
+                                                {item.activePayout?.status === 'Pending'
+                                                    ? 'Resume payout preparation'
+                                                    : item.activePayout ? 'Record transfer outcome' : 'Prepare payout'}
                                             </button>
                                         </td>
                                     </tr>
@@ -412,13 +445,19 @@ export default function PayoutsPage() {
                     <div className="w-full max-w-2xl rounded-[32px] border border-slate-200 bg-white p-6 shadow-2xl">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Record completed payout</p>
+                                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+                                    {currentCommittedPayout ? 'Reconcile external transfer' : 'Prepare payout handoff'}
+                                </p>
                                 <h3 className="mt-2 text-2xl font-semibold text-slate-950">{currentExecuteItem.vendorName}</h3>
                                 <p className="mt-2 text-sm text-slate-600">
-                                    Eligible now: {formatCurrency(currentExecuteItem.eligibleAmount, currentExecuteItem.currency)}
+                                    {currentActivePayout
+                                        ? `Prepared amount: ${formatCurrency(currentActivePayout.amount, currentActivePayout.currency)}`
+                                        : `Eligible now: ${formatCurrency(currentExecuteItem.eligibleAmount, currentExecuteItem.currency)}`}
                                 </p>
                                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
-                                    Use this only after the external transfer has already been executed. Immutable provider or bank evidence is required before POS can recognize the payout in ledger truth.
+                                    {currentCommittedPayout
+                                        ? 'The payout handoff is durably committed. Record completion only after verifying the external transfer executed and capturing immutable bank or provider evidence.'
+                                        : 'Commit this payout before sending money. POS will reserve the earnings and issue the transfer intent and handoff token required for later reconciliation.'}
                                 </p>
                             </div>
                             <button type="button" onClick={() => setExecuteModal(null)} className="rounded-2xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700">
@@ -435,11 +474,12 @@ export default function PayoutsPage() {
                                     step="0.01"
                                     value={executeModal.amount}
                                     onChange={(event) => setExecuteModal((current) => current ? { ...current, amount: event.target.value } : current)}
+                                    disabled={!!currentActivePayout}
                                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
                                 />
                             </label>
 
-                            <label className="block space-y-2">
+                            {!currentActivePayout ? <label className="block space-y-2">
                                 <span className="text-sm font-medium text-slate-700">Payout method</span>
                                 <select
                                     value={executeModal.payoutMethodId}
@@ -452,20 +492,24 @@ export default function PayoutsPage() {
                                         </option>
                                     ))}
                                 </select>
-                            </label>
+                            </label> : null}
 
-                            <label className="block space-y-2">
-                                <span className="text-sm font-medium text-slate-700">Transfer reference</span>
-                                <input
-                                    type="text"
-                                    value={executeModal.transferReference}
-                                    onChange={(event) => setExecuteModal((current) => current ? { ...current, transferReference: event.target.value } : current)}
-                                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-emerald-300 focus:ring-4 focus:ring-emerald-100"
-                                    placeholder="Bank or wallet transfer reference"
-                                />
-                            </label>
+                            {currentCommittedPayout ? (
+                                <div className="rounded-[24px] border border-sky-200 bg-sky-50 px-4 py-4 text-sm text-sky-950">
+                                    <p className="font-semibold">Committed payout {currentCommittedPayout.payoutId}</p>
+                                    <p className="mt-2 break-all">Transfer intent: {currentCommittedPayout.externalTransferIdempotencyKey}</p>
+                                    <p className="mt-2">Committed: {formatDateTime(currentCommittedPayout.externalTransferHandoffCommittedAtUtc)}</p>
+                                    <p className="mt-2">Destination: {currentCommittedPayout.destinationValueSnapshot}</p>
+                                </div>
+                            ) : null}
 
-                            <div className="grid gap-4 md:grid-cols-2">
+                            {currentActivePayout?.status === 'Pending' ? (
+                                <div className="rounded-[24px] border border-sky-200 bg-sky-50 px-4 py-4 text-sm text-sky-950">
+                                    Resuming pending payout {currentActivePayout.payoutId} for {currentActivePayout.destinationValueSnapshot}. No external transfer is authorized until this handoff commits.
+                                </div>
+                            ) : null}
+
+                            {currentCommittedPayout ? <div className="grid gap-4 md:grid-cols-2">
                                 <label className="block space-y-2">
                                     <span className="text-sm font-medium text-slate-700">External reference ID</span>
                                     <input
@@ -487,21 +531,33 @@ export default function PayoutsPage() {
                                         placeholder="Bank confirmation or ledger transaction ID"
                                     />
                                 </label>
-                            </div>
+                            </div> : null}
 
-                            <div className={`rounded-[24px] border px-4 py-4 text-sm ${executeModalHasExternalEvidence ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
+                            {currentCommittedPayout ? <div className={`rounded-[24px] border px-4 py-4 text-sm ${executeModalHasExternalEvidence ? 'border-emerald-200 bg-emerald-50 text-emerald-950' : 'border-amber-200 bg-amber-50 text-amber-950'}`}>
                                 {executeModalHasExternalEvidence
                                     ? 'Execution evidence captured. POS can use this to recognize the already completed transfer.'
                                     : 'Provide at least one immutable evidence field: external reference ID or bank transaction ID.'}
-                            </div>
+                            </div> : null}
 
-                            {currentExecuteAmount != null && currentExecuteItem && currentExecuteAmount - currentExecuteItem.eligibleAmount > 0.005 ? (
+                            {currentCommittedPayout ? (
+                                <label className="flex items-start gap-3 rounded-[24px] border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-950">
+                                    <input
+                                        type="checkbox"
+                                        checked={executeModal.confirmTransferExecuted}
+                                        onChange={(event) => setExecuteModal((current) => current ? { ...current, confirmTransferExecuted: event.target.checked } : current)}
+                                        className="mt-1 h-4 w-4"
+                                    />
+                                    <span>I verified that this external transfer executed. Completing the payout will post immutable cash and vendor-payable movements.</span>
+                                </label>
+                            ) : null}
+
+                            {!currentActivePayout && currentExecuteAmount != null && currentExecuteAmount - currentExecuteItem.eligibleAmount > 0.005 ? (
                                 <div className="rounded-[24px] border border-rose-200 bg-rose-50 px-4 py-4 text-sm text-rose-950">
                                     Amount exceeds current backend eligible payout authority.
                                 </div>
                             ) : null}
 
-                            {resolveSelectedMethod() ? (
+                            {!currentActivePayout && resolveSelectedMethod() ? (
                                 <div className="rounded-[24px] border border-sky-200 bg-sky-50 px-4 py-4 text-sm text-sky-950">
                                     Recording payout to {formatMethodLabel(resolveSelectedMethod()!.methodType)} at {resolveSelectedMethod()!.destinationValue}
                                 </div>
@@ -513,20 +569,19 @@ export default function PayoutsPage() {
                                 type="button"
                                 disabled={
                                     executeMutation.isPending ||
-                                    !currentExecuteItem.canRecordCompletedPayout ||
-                                    !executeModal.payoutMethodId ||
-                                    !resolveSelectedMethod() ||
+                                    (!currentExecuteItem.canPreparePayout && !currentExecuteItem.canCompletePayout) ||
+                                    (!currentActivePayout && (!executeModal.payoutMethodId || !resolveSelectedMethod())) ||
                                     currentExecuteAmount == null ||
                                     !Number.isFinite(currentExecuteAmount) ||
                                     currentExecuteAmount <= 0 ||
-                                    currentExecuteAmount - currentExecuteItem.eligibleAmount > 0.005 ||
-                                    !executeModalHasExternalEvidence
+                                    (!currentActivePayout && currentExecuteAmount - currentExecuteItem.eligibleAmount > 0.005) ||
+                                    (!!currentCommittedPayout && (!executeModalHasExternalEvidence || !executeModal.confirmTransferExecuted))
                                 }
                                 onClick={() => executeMutation.mutate()}
                                 className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                             >
                                 {executeMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                                Record completed payout
+                                {currentCommittedPayout ? 'Record completed transfer' : 'Commit payout handoff'}
                             </button>
                         </div>
                     </div>

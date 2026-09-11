@@ -7,6 +7,7 @@ import AdjustmentModal from '../components/AdjustmentModal'
 import { toSafeNumber } from '../utils/financialMath'
 import { useFormatting } from '../hooks/useFormatting'
 import { stableStringify } from '../utils/requestSafety'
+import { getAdjustmentEffectTranslationKey, getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
 
 const createAdjustmentIdempotencyKey = () => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -142,12 +143,6 @@ const Adjustments = () => {
         }
     }
 
-    const getBalanceColor = (balanceType) => {
-        if (balanceType === 'Debit' || balanceType === t('accounts.debit')) return 'text-red-600'
-        if (balanceType === 'Credit' || balanceType === t('accounts.credit')) return 'text-green-600'
-        return 'text-gray-600'
-    }
-
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center">
@@ -210,7 +205,7 @@ const Adjustments = () => {
                                     <p className="text-sm text-gray-600">{t('accounts.currentBalance')}</p>
                                 </div>
                                 <div className="text-right">
-                                    <p className={`text-3xl font-bold ${getBalanceColor(partyBalance.balanceType)}`}>
+                                    <p className={`text-3xl font-bold ${getPartyBalanceColorClass(partyType, partyBalance.balanceType)}`}>
                                         {formatCurrency(partyBalance.balance)}
                                     </p>
                                     <p className="text-sm text-gray-600 mt-1">
@@ -231,16 +226,16 @@ const Adjustments = () => {
                         <h4 className="font-semibold text-blue-900 mb-2">{t('accounts.adjustmentTypes')}:</h4>
                         <ul className="space-y-2 text-sm text-blue-800">
                             <li>
-                                <strong>{t('accounts.creditNote')}:</strong> {t('accounts.creditNoteDesc')}
+                                <strong>{t('accounts.creditNote')}:</strong> {t(getAdjustmentEffectTranslationKey(partyType, 'CreditNote'))}
                             </li>
                             <li>
-                                <strong>{t('accounts.debitNote')}:</strong> {t('accounts.debitNoteDesc')}
+                                <strong>{t('accounts.debitNote')}:</strong> {t(getAdjustmentEffectTranslationKey(partyType, 'DebitNote'))}
                             </li>
                             <li>
-                                <strong>{t('accounts.creditAdjustment')}:</strong> {t('accounts.creditAdjustmentDesc')}
+                                <strong>{t('accounts.creditAdjustment')}:</strong> {t(getAdjustmentEffectTranslationKey(partyType, 'CreditAdjustment'))}
                             </li>
                             <li>
-                                <strong>{t('accounts.debitAdjustment')}:</strong> {t('accounts.debitAdjustmentDesc')}
+                                <strong>{t('accounts.debitAdjustment')}:</strong> {t(getAdjustmentEffectTranslationKey(partyType, 'DebitAdjustment'))}
                             </li>
                         </ul>
                     </div>

@@ -73,6 +73,7 @@ import CommerceHubSettings from './pages/CommerceHubSettings'
 import CommerceHubFinance from './pages/CommerceHubFinance'
 import CommerceHubEarnings from './pages/CommerceHubEarnings'
 import CommerceHubPayments from './pages/CommerceHubPayments'
+import CommerceHubOrders from './pages/CommerceHubOrders'
 import PaymentMethods from './pages/PaymentMethods'
 import ManualPayments from './pages/ManualPayments'
 import Coupons from './pages/Coupons'
@@ -424,6 +425,10 @@ function App() {
                                         </Route>
 
                                         {/* CommerceHub Admin (Global Marketplace Publishing) */}
+                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
+                                            <Route path="commercehub/orders" element={<CommerceHubOrders />} />
+                                            <Route path="commercehub/orders/:subOrderId" element={<CommerceHubOrders />} />
+                                        </Route>
                                         <Route element={<CommerceHubVendorRouteGuard capability="commercehub.catalog.manage" />}>
                                             <Route path="admin/commercehub" element={<CommerceHubSettings />} />
                                         </Route>

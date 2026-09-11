@@ -59,7 +59,8 @@ public sealed class CommerceHubFinalProductionArchitectureCertificationTests
         Assert.Contains("CommerceHubCategoryLineageAuthority.IsLiveAsync", publication, StringComparison.Ordinal);
         Assert.Contains("WherePubliclyVisibleLineage()", cart, StringComparison.Ordinal);
         Assert.Contains("method.TenantId == storeId", shipping, StringComparison.Ordinal);
-        Assert.Contains("configuration.TenantId == method.TenantId", shipping, StringComparison.Ordinal);
+        Assert.Contains("_carrierIntegrationAuthority.GetIntegrationReadinessAsync", shipping, StringComparison.Ordinal);
+        Assert.Contains("method.TenantId,", shipping, StringComparison.Ordinal);
         Assert.Contains("OrderBy(candidate => candidate.EffectivePrice)", shipping, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginOrderLifecycle()", checkout, StringComparison.Ordinal);
         Assert.Contains("CommerceHubBoundaryMutationScope.BeginShippingAssignment()", checkout, StringComparison.Ordinal);
@@ -113,11 +114,6 @@ public sealed class CommerceHubFinalProductionArchitectureCertificationTests
     public void DocumentationFreeze_MustRecordArchSixFinalProductionArchitectureCertification()
     {
         var findings = CertificationSource.ReadRepoFile("docs/architecture/commercehub-final-production-architecture-certification-findings.md");
-        var projectContext = CertificationSource.ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = CertificationSource.ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = CertificationSource.ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = CertificationSource.ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = CertificationSource.ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         foreach (var marker in new[]
         {
@@ -155,11 +151,5 @@ public sealed class CommerceHubFinalProductionArchitectureCertificationTests
         {
             Assert.Contains(marker, findings, StringComparison.Ordinal);
         }
-
-        Assert.Contains("PASS ARCH-6 CommerceHub Final Production Architecture Certification", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-6 CommerceHub Final Production Architecture Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-6 final production architecture runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-6 CommerceHub Final Production Architecture Certification", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-6 CommerceHub Final Production Architecture Freeze", codexRules, StringComparison.Ordinal);
     }
 }

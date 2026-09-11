@@ -53,6 +53,8 @@ public sealed class MarketplaceOperationsConsoleCertificationTests
         Assert.Contains("SUPER_ADMIN_TENANT_VERIFY", controller, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", autoHealing, StringComparison.Ordinal);
         Assert.Contains("document.TenantId != queuedItem.TenantId.Value", autoHealing, StringComparison.Ordinal);
+        Assert.Contains("mongoDbContext.CommerceHubProducts.InsertOneAsync", autoHealing, StringComparison.Ordinal);
+        Assert.Contains("ProjectionConvergedAtUtc = recoveredAtUtc", autoHealing, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -3,6 +3,7 @@ using PointOfSale.Core.Pricing;
 
 namespace PointOfSale.Tests.Architecture;
 
+[Collection("CommerceHubPriceOverrideRuntimePolicy")]
 public sealed class CommerceHubPriceOverridePersistenceCertificationTests
 {
     [Fact]
@@ -30,7 +31,7 @@ public sealed class CommerceHubPriceOverridePersistenceCertificationTests
         var entity = ReadRepoFile("PointOfSale.Core/Entities/CommerceHubListing.cs");
         var config = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubListingConfiguration.cs");
         var dbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260531134000_CommerceHubPriceOverridePersistenceAudit.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("CommerceHubPrice { get; private set; }", entity, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPriceOverrideUpdatedAtUtc", entity, StringComparison.Ordinal);
@@ -44,11 +45,12 @@ public sealed class CommerceHubPriceOverridePersistenceCertificationTests
         Assert.Contains("HasMaxLength(1024)", config, StringComparison.Ordinal);
         Assert.Contains("GuardCommerceHubPriceAuthority", dbContext, StringComparison.Ordinal);
 
-        Assert.Contains("ADD COLUMN IF NOT EXISTS \"CommerceHubPriceOverrideUpdatedAtUtc\"", migration, StringComparison.Ordinal);
-        Assert.Contains("ADD COLUMN IF NOT EXISTS \"CommerceHubPriceOverrideUpdatedBy\"", migration, StringComparison.Ordinal);
-        Assert.Contains("ADD COLUMN IF NOT EXISTS \"CommerceHubPriceOverrideReason\"", migration, StringComparison.Ordinal);
-        Assert.Contains("UPDATE \"CommerceHubListings\"\n                SET \"CommerceHubPrice\" = NULL", migration, StringComparison.Ordinal);
-        Assert.Contains("IX_CommerceHubListings_PriceOverrideAudit", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPrice = table.Column<decimal>", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPriceOverrideUpdatedAtUtc = table.Column<DateTime>", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPriceOverrideUpdatedBy = table.Column<Guid>", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPriceOverrideReason = table.Column<string>", migration, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubPriceOverrideMutationVersion = table.Column<int>", migration, StringComparison.Ordinal);
+        Assert.Contains("CK_CommerceHubListings_CommerceHubPrice_Positive", migration, StringComparison.Ordinal);
     }
 
     [Fact]

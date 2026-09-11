@@ -1,3 +1,17 @@
+# 2026-09-06 CommerceHub Payment Configuration Authority Freeze
+
+- Do not use vendor-owned Storefront `TenantPaymentMethods` to grant or revoke CommerceHub payment-provider authority.
+- CommerceHub COD is platform policy. CommerceHub online providers require a registered platform adapter with executable session creation and webhook verification; Paymob also requires callback parsing.
+- Reject unavailable CommerceHub providers before reservation checks, locks, payment writes, inventory mutation, or provider execution.
+- Storefront payment configuration and its tenant readiness checks remain tenant-owned and must not be repurposed as CommerceHub readiness.
+
+# 2026-08-30 Affiliate Attribution Authority Freeze
+
+- PASS AF-PA4.4 Preserve backend-owned, tenant-scoped promotion-link admission; frontend referral state is never authority.
+- PASS AF-PA5.1 Preserve protected first-click attribution evidence and fail closed when current SQL authority no longer matches.
+- PASS AF-PA5.2 Preserve backend line-owned affiliate cart admission and mixed-cart support.
+- PASS AF-PA5.3 Preserve final-transaction SQL revalidation and per-order-line commission-candidate snapshots.
+
 # 2026-07-22 Storefront / Builder Runtime Certification Registration
 
 - PASS SF-ADM2.3 Builder Section Composition Authority Freeze.

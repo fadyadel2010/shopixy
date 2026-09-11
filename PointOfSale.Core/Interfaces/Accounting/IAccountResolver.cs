@@ -53,6 +53,7 @@ public static class AccountCodes
     public const string CodClearing = "1130";
     public const string WalletClearing = "1140";
     public const string Inventory = "1310";
+    public const string InputTaxReceivable = "1320";
     public const string AccountsReceivable = "1410";
     public const string MarketplaceVendorReceivable = "1420"; // CommerceHub: vendor debt owed back to the platform
     
@@ -61,6 +62,7 @@ public static class AccountCodes
     public const string CustomerDeposits = "2020";
     public const string TreasurySuspense = "2030";
     public const string MarketplaceVendorPayable = "2040"; // CommerceHub: vendor payable (earnings owed to vendors)
+    public const string SalesTaxPayable = "2050";
     public const string AffiliatePayable = "2105";  // AF-14: Affiliate commission payable
 
     // Equity

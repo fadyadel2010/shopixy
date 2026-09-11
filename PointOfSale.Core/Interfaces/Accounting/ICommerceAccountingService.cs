@@ -92,6 +92,13 @@ public interface ICommerceAccountingService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Posts a customer account payment by debiting received funds and crediting receivables.
+    /// </summary>
+    Task<PostingResult> PostCustomerPaymentAsync(
+        CustomerPayment payment,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Posts journal entry for a supplier opening balance import.
     ///
     /// Debit opening balance:
@@ -449,4 +456,3 @@ public record PostingResult
     public static PostingResult Failed(string error)
         => new() { Success = false, ErrorMessage = error };
 }
-

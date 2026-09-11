@@ -241,6 +241,15 @@ public static class SystemAccountTemplates
         Type = AccountType.Asset,
         Description = "Value of goods held for sale"
     };
+
+    public static readonly SystemAccountTemplate InputTaxReceivable = new()
+    {
+        Code = "1320",
+        Name = "Input Tax Receivable",
+        NameAr = "ضريبة المدخلات المستحقة",
+        Type = AccountType.Asset,
+        Description = "Recoverable tax paid on purchases"
+    };
     
     // ═══════════════════════════════════════════════════════════════════════
     // RECEIVABLES (14xx)
@@ -335,6 +344,15 @@ public static class SystemAccountTemplates
         NameAr = "حساب تعليق الخزينة",
         Type = AccountType.Liability,
         Description = "Temporary offset account for manual treasury adjustments"
+    };
+
+    public static readonly SystemAccountTemplate SalesTaxPayable = new()
+    {
+        Code = "2050",
+        Name = "Sales Tax Payable",
+        NameAr = "ضريبة المبيعات المستحقة",
+        Type = AccountType.Liability,
+        Description = "Tax collected from customers and owed to the tax authority"
     };
     
     /// <summary>
@@ -526,6 +544,7 @@ public static class SystemAccountTemplates
         
         // Other Assets
         Inventory,
+        InputTaxReceivable,
         AccountsReceivable,
         MarketplaceVendorReceivable,
         
@@ -534,6 +553,7 @@ public static class SystemAccountTemplates
         CustomerDeposits,
         TreasurySuspense,
         MarketplaceVendorPayable,      // CommerceHub: vendor payable
+        SalesTaxPayable,
         AffiliatePayable,              // AF-14
 
         // Equity

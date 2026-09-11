@@ -25,12 +25,32 @@ public sealed class CommerceHubAuthenticationAuthorityCertificationTests
     public void CustomerProtectedAuthEndpoints_MustUseCustomerJwtScheme()
     {
         var controller = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/CustomersAuthController.cs");
+        var constants = CertificationSource.ReadRepoFile("PointOfSale.API/Security/CustomerSecurityConstants.cs");
+        var program = CertificationSource.ReadRepoFile("PointOfSale.API/Program.cs");
+        var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCustomerAuthService.cs");
+        var customerAuthStore = CertificationSource.ReadRepoFile("PointOfSale.CommerceHub/src/store/customer-auth-store.ts");
+        var customerJwtScheme = Slice(
+            program,
+            ".AddJwtBearer(PointOfSale.API.Security.CustomerSecurityConstants.AuthenticationScheme",
+            "// AFFILIATE JWT AUTHENTICATION");
 
         Assert.Contains("[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]", MeAction(controller), StringComparison.Ordinal);
+        Assert.Contains("[EnableRateLimiting(\"PublicReadRateLimit\")]", MeAction(controller), StringComparison.Ordinal);
+        Assert.DoesNotContain("PublicRegisterRateLimit", MeAction(controller), StringComparison.Ordinal);
         Assert.Contains("[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]", RevokeAllAction(controller), StringComparison.Ordinal);
         Assert.Contains("[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]", UpdateProfileAction(controller), StringComparison.Ordinal);
         Assert.Contains("[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]", ChangePasswordAction(controller), StringComparison.Ordinal);
         Assert.Contains("[Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]", ChangeEmailAction(controller), StringComparison.Ordinal);
+        Assert.Contains("public const string RoleClaimType = \"role\";", constants, StringComparison.Ordinal);
+        Assert.Contains("new(CustomerSecurityConstants.RoleClaimType, CustomerSecurityConstants.Role)", service, StringComparison.Ordinal);
+        Assert.Contains("RoleClaimType = CustomerSecurityConstants.RoleClaimType", customerJwtScheme, StringComparison.Ordinal);
+        Assert.DoesNotContain("RoleClaimType = System.Security.Claims.ClaimTypes.Role", customerJwtScheme, StringComparison.Ordinal);
+        Assert.Contains("CustomerApiCookiePath = \"/api/customers\"", controller, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubApiCookiePath = \"/api/commercehub\"", controller, StringComparison.Ordinal);
+        Assert.Contains("foreach (var path in new[] { CustomerApiCookiePath, CommerceHubApiCookiePath })", controller, StringComparison.Ordinal);
+        Assert.Contains("ClearCustomerAccessCookies();", controller, StringComparison.Ordinal);
+        Assert.Contains("apiError.status === 401 || apiError.status === 403", customerAuthStore, StringComparison.Ordinal);
+        Assert.Contains("return get().customer;", customerAuthStore, StringComparison.Ordinal);
     }
 
     [Fact]

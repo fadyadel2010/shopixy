@@ -2,13 +2,13 @@
 
 Date: 2026-06-22
 
-Status: Return Authority is production-certifiable for the inspected runtime after final DTO hardening.
+Status: Updated 2026-09-03. Return logistics authority belongs to the owning POS vendor; Super Admin return access is read-only.
 
 ## Final Findings
 
 - Backend owns Return Identity, Ownership, Lifecycle, Visibility, Action, Financial, Scope Isolation, Transition, Tenant, and Governance Authority.
 - Frontend owns display, formatting, selection, dialogs, navigation, filtering, sorting, presentation, validation, withholding, refetching, and backend-bound intent only.
-- Final runtime reinspection covered CommerceHub customer refund/order paths, POS vendor refund-impact presentation, Super Admin refund/return presentation and actions, POS Admin backend return endpoints, POS sales/purchase returns, cross-domain refund/order/payment/settlement/inventory evidence, bootstrap/cache/replay, tenant isolation, and failure/adversarial paths.
+- Final runtime reinspection covered CommerceHub customer refund/order paths, POS vendor refund-impact and return-action presentation, Super Admin refund actions/read-only return presentation, POS Admin backend return endpoints, POS sales/purchase returns, cross-domain evidence, cache/replay, tenant isolation, and adversarial paths.
 
 ## Findings By Domain
 
@@ -16,7 +16,7 @@ Status: Return Authority is production-certifiable for the inspected runtime aft
 - Ownership findings: customer ownership, vendor ownership, and admin visibility are endpoint/current-detail derived. Frontend cannot create, replay, transfer, or leak ownership.
 - Lifecycle findings: implemented lifecycle remains exactly `Pending`, `PickupScheduled`, `PickedUp`, `InTransit`, `DeliveredToVendor`, `Confirmed`, and `Failed`. Frontend cannot advance, regress, repair, replay, or restore lifecycle.
 - Visibility findings: customer, vendor, and admin visibility remain backend scoped. Frontend selection, filters, dialogs, caches, and malformed DTOs cannot widen or restore visibility.
-- Action findings: override and mark-failed require current backend grants; vendor receipt confirmation is backend tenant-scoped; platform logistics transitions are backend policy-gated. Frontend cannot create, replay, or preserve revoked actions.
+- Action findings: vendor logistics, failure, and receipt require current backend grants, current tenant scope, and locked transition preconditions. Super Admin has no return mutation endpoint. Frontend cannot create, replay, or preserve revoked actions.
 - Financial findings: amounts, refund impacts, inventory impacts, settlement impacts, and `financialRefundId` remain backend/refund/ledger evidence. Frontend cannot create, replay, recompute, or restore return money.
 - Scope findings: customer, vendor, admin, and tenant scopes remain current-backend-derived. Frontend cannot transfer, merge, widen, leak, or replay scope.
 - Cross-domain findings: refund, order, payment, settlement, inventory, execution, and provider evidence cannot become return authority.
@@ -27,10 +27,15 @@ Status: Return Authority is production-certifiable for the inspected runtime aft
 
 ## Runtime Hardening Performed
 
-- Super Admin return DTO validation now requires `canOverrideStatus` to be an explicit backend boolean for both standalone and embedded return evidence before `allowedOverrideStatuses` can be accepted.
+- Removed override fields and Super Admin return mutation controls; added coherent vendor return-grant validation and current-order re-entry.
 
 ## Exact Runtime Files Modified
 
+- `PointOfSale.API/Controllers/PosAdminReturnsController.cs`
+- `PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs`
+- `PointOfSale.API/SuperAdmin/Controllers/SuperAdminReturnsController.cs`
+- `PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js`
+- `PointOfSale.Web/src/pages/CommerceHubOrders.jsx`
 - `PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts`
 
 ## Regression Freezes Added

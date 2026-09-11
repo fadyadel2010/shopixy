@@ -66,12 +66,20 @@ public class AffiliateReferralMiddleware
         IAffiliateModeMetricsService metricsService,
         IAffiliateAttributionEvidenceTokenService attributionEvidenceTokens)
     {
+        var downstreamInvoked = false;
+
+        async Task InvokeNextAsync()
+        {
+            downstreamInvoked = true;
+            await _next(context);
+        }
+
         try
         {
             var tenantId = tenantContext.TenantId;
             if (!tenantId.HasValue || tenantId.Value == Guid.Empty)
             {
-                await _next(context);
+                await InvokeNextAsync();
                 return;
             }
             var currentTenantId = tenantId.Value;
@@ -151,7 +159,7 @@ public class AffiliateReferralMiddleware
 
             if (string.IsNullOrWhiteSpace(rawRef))
             {
-                await _next(context);
+                await InvokeNextAsync();
                 return;
             }
 
@@ -222,7 +230,7 @@ public class AffiliateReferralMiddleware
                     tenantId,
                         promotionLink.ProductId,
                         referralCode);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -255,7 +263,7 @@ public class AffiliateReferralMiddleware
                     _logger.LogWarning(
                         "[AF-15:V2] PromotionLink found but no AffiliateAccountId resolvable | LinkId: {LinkId} | AffiliateUserId: {AffiliateUserId}",
                         promotionLink.Id, promotionLink.AffiliateUserId);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -268,7 +276,7 @@ public class AffiliateReferralMiddleware
                         "[Affiliate:Referral] Protected promotion-link evidence no longer matches SQL authority | TenantId: {TenantId} | PromotionLinkId: {PromotionLinkId}",
                         tenantId,
                         promotionLink.Id);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -289,7 +297,7 @@ public class AffiliateReferralMiddleware
                     _logger.LogWarning(
                         "[AF-15:V2] Affiliate account missing or inactive after PromotionLink resolution | AffiliateAccountId: {AffiliateAccountId}",
                         affiliateAccountId.Value);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -353,7 +361,7 @@ public class AffiliateReferralMiddleware
                         "[Affiliate:Referral] Protected promotion-link evidence has no current active SQL link | TenantId: {TenantId} | PromotionLinkId: {PromotionLinkId}",
                         tenantId,
                         protectedEvidence.PromotionLinkId.Value);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -389,7 +397,7 @@ public class AffiliateReferralMiddleware
                     _logger.LogDebug(
                         "[Affiliate:Referral] Invalid referral code: {Code} | CurrentTenantId: {TenantId}",
                         referralCode, tenantId);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -402,7 +410,7 @@ public class AffiliateReferralMiddleware
                         "[Affiliate:Referral] Protected affiliate evidence no longer matches SQL authority | TenantId: {TenantId} | AffiliateAccountId: {AffiliateAccountId}",
                         tenantId,
                         affiliateAccount.Id);
-                    await _next(context);
+                    await InvokeNextAsync();
                     return;
                 }
 
@@ -462,13 +470,13 @@ public class AffiliateReferralMiddleware
                     context.RequestAborted);
             }
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        catch (OperationCanceledException) when (!downstreamInvoked && context.RequestAborted.IsCancellationRequested)
         {
             _logger.LogDebug(
                 "[Affiliate:Referral] Request canceled while processing referral | Path: {Path}",
                 context.Request.Path.Value ?? "unknown");
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!downstreamInvoked)
         {
             // NEVER block the request — analytics failure is non-critical
             _logger.LogWarning(ex,

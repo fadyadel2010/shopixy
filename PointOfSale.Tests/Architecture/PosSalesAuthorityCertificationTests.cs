@@ -40,8 +40,9 @@ public sealed class PosSalesAuthorityCertificationTests
     {
         var source = ReadRepoFile("PointOfSale.API", "Controllers", "SalesReturnsController.cs");
 
-        Assert.Contains("LoadActiveWarehouseAsync(request.WarehouseId)", source, StringComparison.Ordinal);
-        Assert.Contains("originalInvoice.Status != InvoiceStatus.Completed", source, StringComparison.Ordinal);
+        Assert.Contains("request.WarehouseId != originalInvoice.WarehouseId", source, StringComparison.Ordinal);
+        Assert.Contains("originalInvoice.Warehouse == null || !originalInvoice.Warehouse.IsActive", source, StringComparison.Ordinal);
+        Assert.Contains("originalInvoice.Status is not (InvoiceStatus.Completed or InvoiceStatus.PartiallyReturned)", source, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE", source, StringComparison.Ordinal);
         Assert.Contains("UPDLOCK, ROWLOCK, HOLDLOCK", source, StringComparison.Ordinal);
         Assert.Contains("Cannot return more than sold quantity", source, StringComparison.Ordinal);

@@ -13,7 +13,7 @@ Status: Refund Ownership Authority is production-certifiable for inspected front
 - `customerId`: Super Admin refund monitoring/detail/return binding.
 - `tenantId`: POS vendor current financial scope evidence via current backend-hydrated vendor session.
 - `paymentId`: Super Admin financial preview/execution evidence only.
-- `returnId`: Super Admin return/refund lifecycle and mutation target evidence.
+- `returnId`: owning-vendor return mutation target and Super Admin read-only return/refund lifecycle evidence.
 - `financialRefundId`: Super Admin execution financial lineage evidence.
 
 Not found as frontend refund ownership authority fields in inspected runtime: `RefundOwnerId`, `RefundCustomerOwnerId`, `RefundVendorOwnerId`, `RefundTenantId`, `SplitRefundOwnerId`, `ProviderRefundOwnerId`, `RefundOwnershipToken`.

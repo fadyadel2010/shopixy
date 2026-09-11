@@ -25,7 +25,7 @@ public sealed class CommerceHubMerchantBalanceCertificationTests
         Assert.Contains("EnsureSingleCurrency", dashboard, StringComparison.Ordinal);
 
         Assert.Contains("FinancialBucket", transaction, StringComparison.Ordinal);
-        Assert.Contains("FinancialCurrencyGuard.RequireCurrency", transaction, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", transaction, StringComparison.Ordinal);
         Assert.Contains("Amount must be greater than zero", transaction, StringComparison.Ordinal);
     }
 

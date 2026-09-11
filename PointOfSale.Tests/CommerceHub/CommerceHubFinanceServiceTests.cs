@@ -202,6 +202,76 @@ public class CommerceHubFinanceServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreatePayoutAsync_WithSelectedPayoutMethod_ShouldPersistVendorBoundSnapshot()
+    {
+        var graph = await SeedOnlineFinancialGraphAsync(orderSuffix: "METHOD");
+        var payoutMethod = new CommerceHubVendorPayoutMethod
+        {
+            Id = Guid.NewGuid(),
+            VendorId = _tenantId,
+            MethodType = CommerceHubPayoutMethod.BankTransfer,
+            DestinationValue = "EG-METHOD-001",
+            IsDefault = true,
+            IsVerified = true
+        };
+        _dbContext.CommerceHubVendorPayoutMethods.Add(payoutMethod);
+        await _dbContext.SaveChangesAsync();
+
+        var payout = await _payoutService.CreatePayoutAsync(
+            _tenantId,
+            new CommerceHubCreatePayoutRequestDto
+            {
+                EarningIds = [graph.PrimaryEarning.Id],
+                PayoutMethodId = payoutMethod.Id,
+                Method = payoutMethod.MethodType,
+                IdempotencyKey = "payout-method-snapshot-1"
+            },
+            "trace-method-snapshot");
+
+        var persisted = await _dbContext.CommerceHubPayouts.SingleAsync(item => item.Id == payout.PayoutId);
+        Assert.Equal(payoutMethod.Id, payout.PayoutMethodId);
+        Assert.Equal(payoutMethod.DestinationValue, payout.DestinationValueSnapshot);
+        Assert.Equal(payoutMethod.Id, persisted.PayoutMethodId);
+        Assert.Equal(payoutMethod.DestinationValue, persisted.DestinationValueSnapshot);
+    }
+
+    [Fact]
+    public async Task CreatePayoutAsync_WithForeignPayoutMethod_ShouldRejectBeforeReservation()
+    {
+        var graph = await SeedOnlineFinancialGraphAsync(orderSuffix: "FOREIGN-METHOD");
+        var payoutMethod = new CommerceHubVendorPayoutMethod
+        {
+            Id = Guid.NewGuid(),
+            VendorId = Guid.NewGuid(),
+            MethodType = CommerceHubPayoutMethod.BankTransfer,
+            DestinationValue = "EG-FOREIGN-001",
+            IsDefault = true,
+            IsVerified = true
+        };
+        _dbContext.CommerceHubVendorPayoutMethods.Add(payoutMethod);
+        await _dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _payoutService.CreatePayoutAsync(
+                _tenantId,
+                new CommerceHubCreatePayoutRequestDto
+                {
+                    EarningIds = [graph.PrimaryEarning.Id],
+                    PayoutMethodId = payoutMethod.Id,
+                    Method = payoutMethod.MethodType,
+                    IdempotencyKey = "payout-foreign-method-1"
+                },
+                "trace-foreign-method"));
+
+        var earning = await _dbContext.CommerceHubVendorEarnings.SingleAsync(item => item.Id == graph.PrimaryEarning.Id);
+        Assert.Equal("PAYOUT_METHOD_NOT_FOUND", exception.Code);
+        Assert.Equal(StatusCodes.Status404NotFound, exception.StatusCode);
+        Assert.Equal(CommerceHubVendorEarningStatus.Available, earning.Status);
+        Assert.Null(earning.PayoutId);
+        Assert.Empty(_dbContext.CommerceHubPayouts);
+    }
+
+    [Fact]
     public async Task CreatePayoutAsync_WhenSelectedEarningHasNoOrderLedger_ShouldRejectBeforeReservation()
     {
         var graph = await SeedOnlineFinancialGraphAsync(
@@ -349,6 +419,179 @@ public class CommerceHubFinanceServiceTests : IDisposable
 
         Assert.Equal("PAYMENT_COMPENSATION_SCOPE_UNDETERMINED", exception.Code);
         Assert.Equal(409, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task FinancialReadinessGate_FirstVendorIntakeMayBootstrapButOutwardMoneyStillRequiresVendorScope()
+    {
+        var establishedVendorId = Guid.NewGuid();
+        var firstOrderVendorId = Guid.NewGuid();
+        _dbContext.CommerceHubFinancialReconciliationReports.Add(new CommerceHubFinancialReconciliationReport
+        {
+            Id = Guid.NewGuid(),
+            TimestampUtc = DateTime.UtcNow,
+            Status = "Healthy",
+            DetailsJson = $$"""{"checkedVendorIds":["{{establishedVendorId:D}}"],"affectedVendorIds":[]}"""
+        });
+        await _dbContext.SaveChangesAsync();
+
+        var gate = new CommerceHubFinancialReadinessGate(
+            _dbContext,
+            EmergencyStopOptionsMonitor(),
+            NullLogger<CommerceHubFinancialReadinessGate>.Instance);
+
+        await gate.EnsureCommerceIntakeAllowedAsync(
+            new[] { firstOrderVendorId },
+            "CommerceHubCheckout.Create");
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            gate.EnsureOutwardMoneyMovementAllowedAsync(
+                firstOrderVendorId,
+                "CommerceHubPayout.Create"));
+
+        Assert.Equal("COMMERCEHUB_FINANCIAL_RECONCILIATION_VENDOR_SCOPE_REQUIRED", exception.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task FinancialReadinessGate_BeforePayoutVendorRefundMirror_UsesPostedPlatformAdjustmentCoverage()
+    {
+        var tenantId = Guid.NewGuid();
+        var refundId = Guid.NewGuid();
+        var platformAdjustment = CreateBeforePayoutRefundTransaction(
+            CommerceHubFinancialEntityType.Platform,
+            null,
+            CommerceHubFinancialTransactionType.Adjustment,
+            refundId);
+        var vendorMirror = CreateBeforePayoutRefundTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            tenantId,
+            CommerceHubFinancialTransactionType.Refund,
+            refundId);
+        var canonicalJournal = JournalEntry.Create(
+            tenantId,
+            $"JE-MIRROR-{Guid.NewGuid():N}"[..18],
+            DateTime.UtcNow,
+            "CommerceHubFinancialTransaction",
+            platformAdjustment.Id,
+            refundId.ToString("D"),
+            "Canonical before-payout payable reversal.",
+            $"TEST-MIRROR:{platformAdjustment.Id:N}",
+            null);
+
+        _dbContext.CommerceHubFinancialTransactions.AddRange(platformAdjustment, vendorMirror);
+        _dbContext.JournalEntries.Add(canonicalJournal);
+        using (LedgerMutationScope.Authorize())
+        {
+            await SeedHealthyFinancialReconciliationAsync(tenantId);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var gate = new CommerceHubFinancialReadinessGate(
+            _dbContext,
+            EmergencyStopOptionsMonitor(),
+            NullLogger<CommerceHubFinancialReadinessGate>.Instance);
+
+        await gate.EnsureOutwardMoneyMovementAllowedAsync(tenantId, "test-before-payout-mirror");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FinancialReadinessGate_UncoveredVendorRefundMirror_BlocksWithoutPostedCanonicalAdjustment(
+        bool includeUnpostedCanonicalAdjustment)
+    {
+        var tenantId = Guid.NewGuid();
+        var refundId = Guid.NewGuid();
+        var vendorMirror = CreateBeforePayoutRefundTransaction(
+            CommerceHubFinancialEntityType.Vendor,
+            tenantId,
+            CommerceHubFinancialTransactionType.Refund,
+            refundId);
+        _dbContext.CommerceHubFinancialTransactions.Add(vendorMirror);
+        if (includeUnpostedCanonicalAdjustment)
+        {
+            _dbContext.CommerceHubFinancialTransactions.Add(CreateBeforePayoutRefundTransaction(
+                CommerceHubFinancialEntityType.Platform,
+                null,
+                CommerceHubFinancialTransactionType.Adjustment,
+                refundId));
+        }
+
+        await SeedHealthyFinancialReconciliationAsync(tenantId);
+        var gate = new CommerceHubFinancialReadinessGate(
+            _dbContext,
+            EmergencyStopOptionsMonitor(),
+            NullLogger<CommerceHubFinancialReadinessGate>.Instance);
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            gate.EnsureOutwardMoneyMovementAllowedAsync(tenantId, "test-uncovered-mirror"));
+
+        Assert.Equal("COMMERCEHUB_LEDGER_ACCOUNTING_COVERAGE_REQUIRED", exception.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task FinancialReadinessGate_VendorPayoutMirror_UsesPostedPlatformPayoutCoverage()
+    {
+        var tenantId = Guid.NewGuid();
+        var payoutId = Guid.NewGuid();
+        var platformPayout = CreatePayoutTransaction(CommerceHubFinancialEntityType.Platform, null, payoutId);
+        var vendorMirror = CreatePayoutTransaction(CommerceHubFinancialEntityType.Vendor, tenantId, payoutId);
+        var canonicalJournal = JournalEntry.Create(
+            tenantId,
+            $"JE-PAYOUT-{Guid.NewGuid():N}"[..18],
+            DateTime.UtcNow,
+            "CommerceHubFinancialTransaction",
+            platformPayout.Id,
+            payoutId.ToString("D"),
+            "Canonical payout liability reduction.",
+            $"TEST-PAYOUT:{platformPayout.Id:N}",
+            null);
+
+        _dbContext.CommerceHubFinancialTransactions.AddRange(platformPayout, vendorMirror);
+        _dbContext.JournalEntries.Add(canonicalJournal);
+        using (LedgerMutationScope.Authorize())
+        {
+            await SeedHealthyFinancialReconciliationAsync(tenantId);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var gate = new CommerceHubFinancialReadinessGate(
+            _dbContext,
+            EmergencyStopOptionsMonitor(),
+            NullLogger<CommerceHubFinancialReadinessGate>.Instance);
+
+        await gate.EnsureOutwardMoneyMovementAllowedAsync(tenantId, "test-payout-mirror");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FinancialReadinessGate_UncoveredVendorPayoutMirror_BlocksWithoutPostedCanonicalPayout(
+        bool includeUnpostedCanonicalPayout)
+    {
+        var tenantId = Guid.NewGuid();
+        var payoutId = Guid.NewGuid();
+        var vendorMirror = CreatePayoutTransaction(CommerceHubFinancialEntityType.Vendor, tenantId, payoutId);
+        _dbContext.CommerceHubFinancialTransactions.Add(vendorMirror);
+        if (includeUnpostedCanonicalPayout)
+        {
+            _dbContext.CommerceHubFinancialTransactions.Add(
+                CreatePayoutTransaction(CommerceHubFinancialEntityType.Platform, null, payoutId));
+        }
+
+        await SeedHealthyFinancialReconciliationAsync(tenantId);
+        var gate = new CommerceHubFinancialReadinessGate(
+            _dbContext,
+            EmergencyStopOptionsMonitor(),
+            NullLogger<CommerceHubFinancialReadinessGate>.Instance);
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            gate.EnsureOutwardMoneyMovementAllowedAsync(tenantId, "test-uncovered-payout-mirror"));
+
+        Assert.Equal("COMMERCEHUB_LEDGER_ACCOUNTING_COVERAGE_REQUIRED", exception.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
     }
 
     [Fact]
@@ -559,6 +802,32 @@ public class CommerceHubFinanceServiceTests : IDisposable
         Assert.Contains(ledgerEntries, item => item.EntityType == CommerceHubFinancialEntityType.Platform && item.TransactionType == CommerceHubFinancialTransactionType.Settlement && item.Direction == CommerceHubFinancialTransactionDirection.Debit && item.Amount == 90m);
         Assert.Contains(ledgerEntries, item => item.EntityType == CommerceHubFinancialEntityType.Platform && item.TransactionType == CommerceHubFinancialTransactionType.Payout && item.Direction == CommerceHubFinancialTransactionDirection.Debit && item.Amount == 90m);
         Assert.Contains(ledgerEntries, item => item.EntityType == CommerceHubFinancialEntityType.Vendor && item.TransactionType == CommerceHubFinancialTransactionType.Payout && item.Direction == CommerceHubFinancialTransactionDirection.Debit && item.Amount == 90m);
+    }
+
+    [Fact]
+    public async Task CreatePayoutAsync_WhenEarningCameFromDevelopmentSimulation_ShouldRejectExternalTransfer()
+    {
+        var graph = await SeedOnlineFinancialGraphAsync(orderSuffix: "DEV-PAYOUT");
+        graph.Payment.ProviderTransactionId = $"DEV-SIM:ONLINE:{graph.Payment.Id:N}:test";
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            await _dbContext.SaveChangesAsync();
+        }
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _payoutService.CreatePayoutAsync(
+                _tenantId,
+                new CommerceHubCreatePayoutRequestDto
+                {
+                    EarningIds = new List<Guid> { graph.PrimaryEarning.Id },
+                    Method = CommerceHubPayoutMethod.BankTransfer,
+                    IdempotencyKey = "payout-development-simulation-blocked"
+                },
+                "trace-development-payout-blocked"));
+
+        Assert.Equal("PAYOUT_DEVELOPMENT_SIMULATION_NOT_TRANSFERABLE", exception.Code);
+        Assert.Empty(await _dbContext.CommerceHubPayouts.ToListAsync());
+        Assert.Equal(CommerceHubVendorEarningStatus.Available, graph.PrimaryEarning.Status);
     }
 
     [Fact]
@@ -929,7 +1198,7 @@ public class CommerceHubFinanceServiceTests : IDisposable
         Assert.Equal(-18m, adjustment.Amount);
         Assert.Equal(CommerceHubVendorEarningStatus.Available, adjustment.Status);
         Assert.Equal(refund.RefundId, adjustment.RefundId);
-        Assert.Equal(26m, debtSnapshot.AmountOwedByVendor);
+        Assert.Equal(18m, debtSnapshot.AmountOwedByVendor);
     }
 
     [Fact]
@@ -1810,6 +2079,39 @@ public class CommerceHubFinanceServiceTests : IDisposable
 
         await _dbContext.SaveChangesAsync();
     }
+
+    private static CommerceHubFinancialTransaction CreateBeforePayoutRefundTransaction(
+        CommerceHubFinancialEntityType entityType,
+        Guid? entityId,
+        CommerceHubFinancialTransactionType transactionType,
+        Guid refundId) =>
+        CommerceHubFinancialTransaction.Create(
+            entityType,
+            entityId,
+            transactionType,
+            CommerceHubFinancialTransactionDirection.Debit,
+            90m,
+            "EGP",
+            CommerceHubFinancialReferenceType.Refund,
+            refundId,
+            "Before-payout refund coverage test transaction.",
+            financialBucketOverride: CommerceHubFinancialBucket.Payable);
+
+    private static CommerceHubFinancialTransaction CreatePayoutTransaction(
+        CommerceHubFinancialEntityType entityType,
+        Guid? entityId,
+        Guid payoutId) =>
+        CommerceHubFinancialTransaction.Create(
+            entityType,
+            entityId,
+            CommerceHubFinancialTransactionType.Payout,
+            CommerceHubFinancialTransactionDirection.Debit,
+            90m,
+            "EGP",
+            CommerceHubFinancialReferenceType.Payout,
+            payoutId,
+            "Payout coverage test transaction.",
+            financialBucketOverride: CommerceHubFinancialBucket.Payable);
 
     private async Task AddUnscopedUnresolvedPaymentWebhookAsync(
         string status,

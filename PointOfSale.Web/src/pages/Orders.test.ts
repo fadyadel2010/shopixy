@@ -9,6 +9,7 @@ import {
     isPaymentActionExecutableFromOrdersDrawer,
     normalizeFilters,
     validateManualDeliveryEvidence,
+    validateReturnReceiptEvidence,
 } from './Orders.jsx'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -172,5 +173,30 @@ describe('Admin Orders lifecycle UI contract', () => {
         expect(source).toContain('cancel-shipment')
         expect(source).toContain('A refund changes payment state only')
         expect(source).toContain('shouldRefund: false')
+    })
+
+    it('renders item refund and return evidence while keeping vendor authority receipt-only', () => {
+        const source = readFileSync(ordersPath, 'utf8')
+        const service = readFileSync(adminOrdersApiPath, 'utf8')
+
+        expect(source).toContain('item.refunds?.length')
+        expect(source).toContain('Customer refund')
+        expect(source).toContain('Physical return')
+        expect(source).toContain('returnRequest.canConfirmReceipt')
+        expect(source).toContain('This records vendor receipt only. It does not execute the customer refund.')
+        expect(service).toContain('`/pos-admin/returns/${returnId}/confirm-receipt`')
+        expect(source).not.toContain('returnRequest.canSchedulePickup')
+        expect(source).not.toContain('returnRequest.canMarkPickedUp')
+        expect(source).not.toContain('returnRequest.canMarkDelivered')
+    })
+
+    it('validates vendor receipt quantities against backend-approved return quantity', () => {
+        expect(validateReturnReceiptEvidence({ resellableQuantity: '1', damagedQuantity: '0' }, 1)).toBeNull()
+        expect(validateReturnReceiptEvidence({ resellableQuantity: '0', damagedQuantity: '0' }, 1))
+            .toBe('At least one received item is required.')
+        expect(validateReturnReceiptEvidence({ resellableQuantity: '1.5', damagedQuantity: '0' }, 2))
+            .toBe('Receipt quantities must be whole numbers.')
+        expect(validateReturnReceiptEvidence({ resellableQuantity: '1', damagedQuantity: '1' }, 1))
+            .toBe('Receipt quantities cannot exceed the approved return quantity.')
     })
 })

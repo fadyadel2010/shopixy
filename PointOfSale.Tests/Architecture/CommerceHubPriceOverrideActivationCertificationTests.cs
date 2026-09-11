@@ -3,6 +3,7 @@ using PointOfSale.Core.Pricing;
 
 namespace PointOfSale.Tests.Architecture;
 
+[Collection("CommerceHubPriceOverrideRuntimePolicy")]
 public sealed class CommerceHubPriceOverrideActivationCertificationTests
 {
     [Fact]

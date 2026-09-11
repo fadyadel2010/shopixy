@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: Return Visibility Authority is production-certifiable for the inspected frontend runtime.
+Status: Updated 2026-09-03. Vendor order detail now presents vendor-scoped return lifecycle actions; Super Admin return visibility remains read-only.
 
 ## Visibility surfaces
 
@@ -10,11 +10,11 @@ Actual implemented return visibility surfaces:
 
 - CommerceHub customer refund history and status presentation, including refund evidence dialog and order navigation.
 - CommerceHub customer order details, including order-item existing refund rows and refund request entry.
-- POS vendor CommerceHub finance dashboard refund impacts (`recentRefundImpacts` and `totalRefunds`) as read-only financial evidence.
-- Super Admin refund monitoring list, filtering, selected refund detail drawer, embedded return details, return override dialog, and return failure dialog.
+- POS vendor CommerceHub finance dashboard refund impacts as read-only financial evidence, plus vendor order detail return lifecycle and receipt controls.
+- Super Admin refund monitoring list, filtering, selected refund detail drawer, and embedded read-only return details.
 - POS sales return and purchase return list/create screens, which are separate POS return workflows bound to backend controllers.
 
-No standalone customer return tracking page, standalone vendor return detail page, vendor return mutation surface, customer return mutation surface, return import/repair tool, cached return projection screen, or frontend return visibility transfer/merge/restore surface was implemented in the inspected runtime.
+No standalone customer return mutation surface, return import/repair tool, cached return projection authority, or frontend return visibility transfer/merge/restore surface is implemented.
 
 ## Visibility findings
 
@@ -26,11 +26,11 @@ Customer return visibility is refund/order-derived and current-backend-bound. Re
 
 ## Vendor findings
 
-The implemented vendor path is read-only financial refund impact presentation. `deriveVendorFinancialDashboardPresentation` requires the current backend POS user/tenant scope and rejects scope mismatch before presenting `recentRefundImpacts`. Refund impact rows carry refund IDs, impact type, amount, currency, and timestamp only; they do not expose return IDs or return transition authority. Vendor A cannot see Vendor B returns through the inspected frontend runtime.
+The vendor finance path remains read-only. The vendor order detail path validates current backend POS user/tenant scope and exact return identity before presenting backend-granted return actions. Mutation re-fetches the current scoped order and the backend rejects foreign returns as `404`. Vendor A cannot see or act on Vendor B returns.
 
 ## Admin findings
 
-Super Admin monitoring is visibility only. Selected refund IDs are candidates re-derived from the current validated monitoring list. The detail drawer and return dialogs render only accepted current detail, and accepted detail is withheld while list or detail authority is fetching, failed, absent, or mismatched. Embedded return evidence must match the current refund, order item, customer, and vendor lineage. Standalone return reads and mutation responses must match the exact requested `returnId`. Monitoring, selected rows, dialogs, and filters cannot preserve or widen return visibility.
+Super Admin monitoring is visibility only. Selected refund IDs are candidates re-derived from the current validated monitoring list. The detail drawer renders only accepted current detail, which is withheld while list or detail authority is fetching, failed, absent, or mismatched. Embedded return evidence must match the current refund, order item, customer, and vendor lineage. Standalone return reads must match the exact requested `returnId`; no Super Admin return mutation control exists.
 
 ## Refund consistency findings
 
@@ -46,7 +46,7 @@ Payment visibility cannot create return visibility. Payment status, payment reco
 
 ## Tenant findings
 
-Customer surfaces are bounded by backend customer order/refund endpoints. Vendor finance surfaces require current vendor tenant scope. Super Admin surfaces require current platform endpoint authorization plus current list/detail validation. POS sales/purchase return controllers derive tenant and original invoice lineage server-side under `RequiredTenantId`. No inspected frontend path widens tenant scope or leaks cross-tenant return visibility.
+Customer surfaces are bounded by backend customer order/refund endpoints. Vendor finance and CommerceHub order-return surfaces require current vendor tenant scope. Super Admin surfaces require current platform endpoint authorization plus current list/detail validation. POS sales/purchase return controllers derive tenant and original invoice lineage server-side under `RequiredTenantId`. No inspected frontend path widens tenant scope or leaks cross-tenant return visibility.
 
 ## Bootstrap findings
 
@@ -54,7 +54,7 @@ Initial load, refresh, reconnect, focus, visibility, history, route changes, and
 
 ## Cache findings
 
-React Query, component stores, contexts, selected rows, dialogs, route state, history state, localStorage, and sessionStorage are visibility candidates only. Customer refund/order surfaces withhold during fetch/error. Super Admin return dialogs require accepted current detail. Cache cannot restore return visibility after authority loss.
+React Query, component stores, contexts, selected rows, dialogs, route state, history state, localStorage, and sessionStorage are visibility candidates only. Customer refund/order and vendor return surfaces withhold or refetch current authority. Cache cannot restore return visibility after authority loss.
 
 ## Failure findings
 
@@ -66,11 +66,14 @@ Visibility replay, storage replay, history replay, route replay, selection repla
 
 ## Runtime hardening performed
 
-No runtime code change was required in M5-D. Existing M4-D, M5-A, M5-B, and M5-C runtime boundaries already enforce current customer refund/order validation, current vendor scope validation, Super Admin current-list/current-detail binding, exact return target validation, stale dialog withholding, and POS backend tenant/invoice derivation.
+The 2026-09-03 correction added vendor return visibility/action validation to CommerceHub order detail and removed Super Admin return transition dialogs while retaining exact read-only return binding.
 
 ## Exact runtime files modified
 
-None.
+- `PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js`
+- `PointOfSale.Web/src/pages/CommerceHubOrders.jsx`
+- `PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx`
+- `PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts`
 
 ## Regression freezes added
 
@@ -90,7 +93,7 @@ None.
 - Who owns return visibility authority? Backend return/refund/order/payment/customer/vendor/admin/tenant/actor SQL and endpoint authorization authorities.
 - Can frontend fabricate visibility? No.
 - Can Customer A see Customer B returns? No inspected frontend path bypasses backend customer/order/refund authorization.
-- Can Vendor A see Vendor B returns? No; vendor refund impacts are current vendor/session scoped and read-only.
+- Can Vendor A see Vendor B returns? No; vendor order/return evidence is current tenant scoped and exact-return bound.
 - Can monitoring become visibility authority? No; monitoring rows are visibility evidence only and selections are re-derived from current backend list/detail authority.
 - Can selected rows widen visibility? No.
 - Can refund visibility create return visibility? No.
@@ -100,5 +103,5 @@ None.
 - Can cache restore visibility? No.
 - Can replay restore visibility? No.
 - Can tenant leakage occur? No inspected frontend path widens tenant scope or bypasses backend tenant authority.
-- Were runtime changes required? No.
+- Were runtime changes required? Yes, to expose vendor-owned returns without widening tenant visibility and to remove Super Admin mutation presentation.
 - Is Return Visibility Authority production-certifiable? Yes, for the inspected frontend runtime.

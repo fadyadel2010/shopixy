@@ -38,14 +38,6 @@ public static class CommerceHubReturnMapper
             CanMarkFailed = CommerceHubReturnPolicy.CanMarkFailed(returnRequest.Status) &&
                             !CommerceHubRefundRequestWorkflowPolicy.IsExecuted(refundRequest.Status),
             CanConfirmReceipt = CommerceHubReturnPolicy.CanConfirmReceipt(returnRequest.Status),
-            CanOverrideStatus = CommerceHubReturnPolicy.CanOverrideStatus(
-                returnRequest.Status,
-                refundRequest.Status,
-                refundRequest.RefundExecutionTrigger),
-            AllowedOverrideStatuses = CommerceHubReturnPolicy.GetAllowedOverrideStatuses(
-                returnRequest.Status,
-                refundRequest.Status,
-                refundRequest.RefundExecutionTrigger),
             IsExecutionTriggerReached = CommerceHubReturnPolicy.IsExecutionTriggerReached(
                 refundRequest.RefundExecutionTrigger,
                 returnRequest.Status)

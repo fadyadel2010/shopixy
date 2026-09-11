@@ -126,6 +126,28 @@ public class DebugController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// DIAGNOSTIC: Requeue an unprocessed message after deploying a remediation.
+    /// </summary>
+    [HttpPost("outbox/requeue/{messageId}")]
+    public async Task<IActionResult> RequeueMessage(Guid messageId, CancellationToken ct)
+    {
+        var developmentOnlyResult = RequireDevelopment();
+        if (developmentOnlyResult is not null)
+        {
+            return developmentOnlyResult;
+        }
+
+        var requeued = await _processor.RequeueMessageAsync(messageId, ct);
+
+        return Ok(new
+        {
+            MessageId = messageId,
+            WasRequeued = requeued,
+            Timestamp = DateTime.UtcNow
+        });
+    }
+
     private IActionResult? RequireDevelopment()
     {
         return _environment.IsDevelopment() ? null : NotFound();

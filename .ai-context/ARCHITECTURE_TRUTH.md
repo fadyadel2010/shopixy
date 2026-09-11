@@ -1,3 +1,10 @@
+# 2026-08-30 Affiliate Attribution Authority Truth
+
+- PASS AF-PA4.4 Promotion-link admission remains tenant-scoped, lifecycle-qualified, and backend-owned.
+- PASS AF-PA5.1 Customer-journey attribution persists protected backend evidence while frontend state remains a candidate hint only.
+- PASS AF-PA5.2 Cart attribution remains backend line-owned and mixed-cart safe.
+- PASS AF-PA5.3 Checkout revalidates attribution from SQL authority and snapshots commission eligibility per admitted order line.
+
 # 2026-07-22 Storefront / Builder Runtime Certification Registration
 
 - PASS SF-ADM2.3 Builder Section Composition Authority Truth.
@@ -320,8 +327,8 @@ Important implications:
 - The current CommerceHub implementation enforces that rule by persisting a `CommerceHubUnresolvedPaymentWebhook` row even when the payment-initiation lock is busy or its infrastructure is temporarily unavailable. In that degraded branch, the system preserves durable unresolved evidence plus any safe frozen order/store scope and explicitly defers suspense routing, marketplace hold, or payment linkage to reconciliation rather than dropping the callback.
 - Customer-facing CommerceHub online checkout must distinguish order creation from payment completion. When checkout returns a payment session with `requires_initiation` or another non-terminal payment state, the UI must preserve a server-authorized initiate/resume-payment path and must not present the order as fully completed payment authority.
 - Customer-facing CommerceHub payment initiation must honor the authoritative provider handoff contract. Some providers complete through a redirect URL and others through a provider token or client secret; the UI must preserve a server-authorized continue-payment path for either shape instead of treating non-redirect sessions as initiation failure.
-- CommerceHub checkout must validate the exact requested online provider against every store's enabled payment-method authority. A tenant having some `SupportsOnline` method is not sufficient proof that `PAYMOB` and `STRIPE` are interchangeable.
-- For CommerceHub checkout, zero enabled `TenantPaymentMethod` rows is a fail-closed "provider unavailable" state, not a permissive compatibility fallback. Absence of store payment-method authority must not be interpreted as support for COD or any online provider.
+- CommerceHub checkout must validate the exact requested online provider against platform `IPaymentProviderAdapter` registration and executable capabilities. Vendor-owned Storefront `TenantPaymentMethods` do not grant or revoke CommerceHub provider authority, and `PAYMOB` and `STRIPE` are not interchangeable.
+- For CommerceHub checkout, missing payment-session, webhook-verification, or provider-specific callback capability is a fail-closed online-provider-unavailable state. COD is CommerceHub platform policy and does not require vendor Storefront COD rows.
 - CommerceHub cart pricing for a multi-store checkout currently carries the authoritative payment-method capability contract for that exact store set. The customer payment selector must consume that backend capability surface; a local hardcoded provider list is not authority.
 - CommerceHub payment initiation is not a public lookup surface. Creating or reusing an online payment session must require authenticated customer ownership or a signed order-access token bound to the marketplace order before order/payment metadata or provider-session details are returned.
 - When CommerceHub browser recovery uses signed order-access authority, that authority may arrive through an explicit request token or the server-issued HttpOnly recovery cookie. Controllers may normalize either source before fail-closed access checks, but service-layer authorization must still re-check against SQL order authority after order resolution and before any payment-session reuse or creation returns metadata.

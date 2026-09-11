@@ -9,7 +9,7 @@ public sealed class CommerceHubFulfillmentAuthorityCertificationTests
         var service = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubOrderManagementService.cs");
         var stateHelper = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubOrderStateHelper.cs");
 
-        Assert.Contains("[Authorize]", controller, StringComparison.Ordinal);
+        Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", controller, StringComparison.Ordinal);
         Assert.Contains("_tenantContext.TenantId", controller, StringComparison.Ordinal);
         Assert.Contains("UpdateSubOrderStatusAsync(", controller, StringComparison.Ordinal);
 
@@ -17,12 +17,18 @@ public sealed class CommerceHubFulfillmentAuthorityCertificationTests
         Assert.Contains("BeginTransactionAsync(System.Data.IsolationLevel.Serializable", service, StringComparison.Ordinal);
         Assert.Contains("subOrder.StoreId != storeId", service, StringComparison.Ordinal);
         Assert.Contains("\"SUBORDER_FORBIDDEN\"", service, StringComparison.Ordinal);
+        Assert.Contains("expectedVersion.HasValue && subOrder.ProjectionMutationVersion != expectedVersion.Value", service, StringComparison.Ordinal);
+        Assert.Contains("\"SUBORDER_VERSION_CONFLICT\"", service, StringComparison.Ordinal);
         Assert.Contains("LoadSubOrderForLifecycleUpdateAsync", service, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE", service, StringComparison.Ordinal);
         Assert.Contains("CommerceHubOrderStateHelper.CanTransition", service, StringComparison.Ordinal);
         Assert.Contains("CommerceHubOrderStateHelper.RequiresPaymentReadiness", service, StringComparison.Ordinal);
         Assert.Contains("ReleaseOrderItemReservationsAsync", service, StringComparison.Ordinal);
         Assert.Contains("CommitDeliveryAsync", service, StringComparison.Ordinal);
+        Assert.Contains("using var commerceHubFinancialBoundary", service, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubBoundaryMutationScope.BeginFinancialWorkflow()", service, StringComparison.Ordinal);
+        Assert.Contains("using var paymentLifecycleBoundary", service, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubBoundaryMutationScope.BeginPaymentLifecycle()", service, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSubOrderStatusHistory", service, StringComparison.Ordinal);
         Assert.Contains("PublishStatusEventsAsync", service, StringComparison.Ordinal);
 
@@ -55,6 +61,7 @@ public sealed class CommerceHubFulfillmentAuthorityCertificationTests
     public void ReturnAndRefundAuthority_MustRequireLineageLocksAuditAndExecutionMilestones()
     {
         var returnService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs");
+        var returnPolicy = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubReturnPolicy.cs");
         var refundService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubRefundService.cs");
         var refundExecution = ReadRepoFile("PointOfSale.API/Services/CommerceHub/RefundExecutionService.cs");
 
@@ -67,7 +74,8 @@ public sealed class CommerceHubFulfillmentAuthorityCertificationTests
         Assert.Contains("CommerceHubReturnPolicy.CanMarkDelivered", returnService, StringComparison.Ordinal);
         Assert.Contains("ConfirmReceiptAsync", returnService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubReturnPolicy.CanConfirmReceipt", returnService, StringComparison.Ordinal);
-        Assert.Contains("RETURN_OVERRIDE_CONFIRMED_NOT_ALLOWED", returnService, StringComparison.Ordinal);
+        Assert.Contains("status == CommerceHubReturnStatus.DeliveredToVendor", returnPolicy, StringComparison.Ordinal);
+        Assert.Contains("status is CommerceHubReturnStatus.Confirmed or CommerceHubReturnStatus.Failed", returnPolicy, StringComparison.Ordinal);
         Assert.Contains("AppendAuditLog", returnService, StringComparison.Ordinal);
 
         foreach (var source in new[] { refundService, refundExecution })

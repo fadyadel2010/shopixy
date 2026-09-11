@@ -219,6 +219,16 @@ export default function CustomerSelectModal({ onSelect, onClose }) {
                                     >
                                         {loading ? t('common.loading') : (t('common.loadMore') || 'Load more')}
                                     </button>
+                                ) : !loading && !error ? (
+                                    <div role="status" className="border-t border-gray-100 px-4 py-2 text-center text-xs text-gray-500">
+                                        {t('common.endOfResults')}
+                                    </div>
+                                ) : null}
+
+                                {error && customers.length > 0 ? (
+                                    <div role="alert" className="border-t border-red-100 bg-red-50 px-4 py-3 text-center text-sm text-red-700">
+                                        {error}
+                                    </div>
                                 ) : null}
                             </div>
                         )}

@@ -20,6 +20,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Redis.Services;
 using PointOfSale.Tests.TestDoubles;
 using PointOfSale.Core.Interfaces;
@@ -440,7 +441,7 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
     }
 
     [Fact]
-    public async Task CheckoutAsync_WhenStoreHasNoEnabledPaymentMethodAuthority_ShouldFailClosed()
+    public async Task CheckoutAsync_WhenStorefrontStripeIsEnabledButPlatformStripeIsUnavailable_ShouldFailClosed()
     {
         var customerId = Guid.NewGuid();
         var vendorId = Guid.NewGuid();
@@ -448,10 +449,16 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
         var variantId = Guid.NewGuid();
         var listingId = await SeedActiveVendorListingAsync(vendorId, productId, variantId);
         await SeedAuthenticatedCustomerCartAsync(customerId, vendorId, productId, variantId, listingId);
+        await SeedPaymentMethodAsync(vendorId, CommerceHubPaymentMethods.Stripe, supportsOnline: true);
 
         var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
             _service.CheckoutAsync(
-                BuildCheckoutRequest(vendorId, productId, variantId, listingId),
+                BuildCheckoutRequest(
+                    vendorId,
+                    productId,
+                    variantId,
+                    listingId,
+                    paymentMethod: CommerceHubPaymentMethods.Stripe),
                 customerId,
                 "corr-no-payment-method",
                 "idem-no-payment-method"));
@@ -497,6 +504,8 @@ public sealed class CommerceHubCheckoutFinancialControlTests : IDisposable
             lockService.Object,
             eventPublisher ?? Mock.Of<IEventPublisher>(),
             new CommerceHubPriceAuthority(),
+            Array.Empty<PointOfSale.API.Services.Payments.ProviderContracts.IPaymentProviderAdapter>(),
+            new TenantContext(),
             NullLogger<CommerceHubCheckoutService>.Instance);
     }
 

@@ -300,7 +300,7 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
     }
 
     [Fact]
-    public void CommerceHubCheckout_MustLockSqlAuthorityCompositionRows_InsideFinalTransaction()
+    public void CommerceHubCheckout_MustLockSqlOrderAuthorityAndValidatePlatformPaymentAuthority_InsideFinalTransaction()
     {
         var source = ReadRepoFile(
             "PointOfSale.API",
@@ -314,8 +314,8 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         var variantLoadIndex = source.IndexOf("LoadProductVariantsForCheckoutAuthorityAsync(", listingLoadIndex, StringComparison.Ordinal);
         var productLoadIndex = source.IndexOf("LoadProductsForCheckoutAuthorityAsync(", variantLoadIndex, StringComparison.Ordinal);
         var tenantLoadIndex = source.IndexOf("LoadTenantsForCheckoutAuthorityAsync(", productLoadIndex, StringComparison.Ordinal);
-        var paymentMethodLoadIndex = source.IndexOf("LoadTenantPaymentMethodsForCheckoutAuthorityAsync(", tenantLoadIndex, StringComparison.Ordinal);
-        var promoValidationIndex = source.IndexOf("ValidatePromoForCheckoutAsync(", paymentMethodLoadIndex, StringComparison.Ordinal);
+        var paymentMethodValidationIndex = source.IndexOf("ValidateRequestedPaymentMethod(", tenantLoadIndex, StringComparison.Ordinal);
+        var promoValidationIndex = source.IndexOf("ValidatePromoForCheckoutAsync(", paymentMethodValidationIndex, StringComparison.Ordinal);
         var shippingRecalcIndex = source.IndexOf("bypassCache: true", promoValidationIndex, StringComparison.Ordinal);
         var buildOrderIndex = source.IndexOf("BuildMarketplaceOrder(", shippingRecalcIndex, StringComparison.Ordinal);
         var reservationIndex = source.IndexOf("ReserveOrderItemAsync(", buildOrderIndex, StringComparison.Ordinal);
@@ -326,8 +326,8 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         Assert.True(variantLoadIndex > listingLoadIndex, "CommerceHub checkout must reload variant authority from SQL.");
         Assert.True(productLoadIndex > variantLoadIndex, "CommerceHub checkout must reload product authority from SQL.");
         Assert.True(tenantLoadIndex > productLoadIndex, "CommerceHub checkout must reload store/tenant authority from SQL.");
-        Assert.True(paymentMethodLoadIndex > tenantLoadIndex, "CommerceHub checkout must reload payment-method authority from SQL.");
-        Assert.True(promoValidationIndex > paymentMethodLoadIndex, "CommerceHub checkout must revalidate promo authority after SQL catalog/payment authority is loaded.");
+        Assert.True(paymentMethodValidationIndex > tenantLoadIndex, "CommerceHub checkout must validate platform payment authority after store authority is loaded.");
+        Assert.True(promoValidationIndex > paymentMethodValidationIndex, "CommerceHub checkout must revalidate promo authority after catalog/payment authority is loaded.");
         Assert.True(shippingRecalcIndex > promoValidationIndex, "CommerceHub checkout must recalculate shipping without cache before order creation.");
         Assert.True(buildOrderIndex > shippingRecalcIndex, "CommerceHub checkout must build the order only from final SQL-derived authority.");
         Assert.True(reservationIndex > buildOrderIndex, "CommerceHub checkout must reserve stock only after final order authority is composed.");
@@ -337,7 +337,8 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         Assert.Contains("private async Task LockProductVariantAttributesForCheckoutAuthorityAsync", source, StringComparison.Ordinal);
         Assert.Contains("private async Task<Dictionary<Guid, Product>> LoadProductsForCheckoutAuthorityAsync", source, StringComparison.Ordinal);
         Assert.Contains("private async Task<Dictionary<Guid, Tenant>> LoadTenantsForCheckoutAuthorityAsync", source, StringComparison.Ordinal);
-        Assert.Contains("private async Task<List<TenantPaymentMethod>> LoadTenantPaymentMethodsForCheckoutAuthorityAsync", source, StringComparison.Ordinal);
+        Assert.Contains("IEnumerable<IPaymentProviderAdapter> paymentProviderAdapters", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", source, StringComparison.Ordinal);
         Assert.Contains("FOR UPDATE", source, StringComparison.Ordinal);
         Assert.Contains("UPDLOCK, ROWLOCK, HOLDLOCK", source, StringComparison.Ordinal);
         Assert.Contains("\"ProductVariantAttributes\"", source, StringComparison.Ordinal);
@@ -536,7 +537,7 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
     }
 
     [Fact]
-    public void CommerceHubPaymentInitiation_MustRecheckReservationsAfterPaymentLock()
+    public void CommerceHubPaymentInitiation_MustRecomposeReservationsAfterPaymentLock()
     {
         var source = ReadRepoFile(
             "PointOfSale.API",
@@ -547,14 +548,22 @@ public sealed class CheckoutConcurrencyHardeningSourceTests
         var lockAcquiredIndex = source.IndexOf("if (!paymentLockResult.IsAcquired)", StringComparison.Ordinal);
         var tryIndex = source.IndexOf("try", lockAcquiredIndex, StringComparison.Ordinal);
         var unresolvedIndex = source.IndexOf("await EnsureNoUnresolvedPaymentAsync(marketplaceOrder, providerCode, cancellationToken);", tryIndex, StringComparison.Ordinal);
-        var reservationRecheckIndex = source.IndexOf(
-            "await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(",
-            unresolvedIndex,
+        var paymentRowsIndex = source.IndexOf("var payments = await _dbContext.CommerceHubPayments", unresolvedIndex, StringComparison.Ordinal);
+        var reacquisitionIndex = source.IndexOf(
+            "await _inventoryConsistencyService.ReacquireMarketplaceOrderReservationsForPaymentAsync(",
+            paymentRowsIndex,
             StringComparison.Ordinal);
-        var paymentRowsIndex = source.IndexOf("var payments = await _dbContext.CommerceHubPayments", reservationRecheckIndex, StringComparison.Ordinal);
+        var existingReservationRecheckIndex = source.IndexOf(
+            "await _inventoryConsistencyService.EnsureMarketplaceOrderReservationsActiveAsync(",
+            paymentRowsIndex,
+            StringComparison.Ordinal);
+        var paidCheckIndex = source.IndexOf("if (payments.Any(payment => payment.Status == CommerceHubPaymentRecordStatus.Paid))", paymentRowsIndex, StringComparison.Ordinal);
 
-        Assert.True(reservationRecheckIndex > unresolvedIndex, "CommerceHub payment initiation must recheck reservation authority after the payment lock is acquired.");
-        Assert.True(reservationRecheckIndex < paymentRowsIndex, "CommerceHub payment rows/provider session selection must happen only after the locked reservation recheck.");
+        Assert.True(paymentRowsIndex > unresolvedIndex, "CommerceHub payment initiation must inspect payment evidence after the payment lock is acquired.");
+        Assert.True(reacquisitionIndex > paymentRowsIndex, "Orders without payment evidence must reacquire reservation authority under the payment lock.");
+        Assert.True(existingReservationRecheckIndex > paymentRowsIndex, "Orders with payment evidence must recheck existing reservation authority under the payment lock.");
+        Assert.True(reacquisitionIndex < paidCheckIndex, "Provider session selection must not begin before zero-evidence reservation authority is recomposed.");
+        Assert.True(existingReservationRecheckIndex < paidCheckIndex, "Provider session selection must not begin before existing reservation authority is recomposed.");
     }
 
     [Fact]

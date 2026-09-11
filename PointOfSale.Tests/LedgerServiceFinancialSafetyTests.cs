@@ -79,6 +79,115 @@ public sealed class LedgerServiceFinancialSafetyTests
     }
 
     [Fact]
+    public async Task CreateLedgerEntry_RecalculatesBalances_WhenPaymentDatePrecedesExistingSale()
+    {
+        var tenantId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+
+        await using var context = new ApplicationDbContext(options, new StubTenantContext(tenantId));
+        var customerId = Guid.NewGuid();
+        context.Customers.Add(new Customer
+        {
+            Id = customerId,
+            TenantId = tenantId,
+            Name = "Backdated Payment Customer",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        var ledgerService = new LedgerService(
+            context,
+            new StubTenantContext(tenantId),
+            NullLogger<LedgerService>.Instance,
+            Mock.Of<IAuditService>());
+        var saleTime = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+
+        Assert.Equal(21m, await ledgerService.ApplyCustomerTransaction(
+            customerId, saleTime, TransactionType.Sale, "INV-2001", 21m, 0m,
+            Guid.NewGuid(), "Credit sale"));
+        Assert.Equal(11m, await ledgerService.ApplyCustomerTransaction(
+            customerId, saleTime.Date, TransactionType.PaymentReceived, "CPAY-2001", 0m, 10m,
+            Guid.NewGuid(), "Date-only payment"));
+        Assert.Equal(-10m, await ledgerService.ApplyCustomerTransaction(
+            customerId, saleTime.AddMinutes(30), TransactionType.SalesReturn, "SR-2001", 0m, 21m,
+            Guid.NewGuid(), "Full account-credit return"));
+
+        await context.SaveChangesAsync();
+        var orderedBalances = await context.AccountLedgers
+            .OrderBy(entry => entry.TransactionDate)
+            .ThenBy(entry => entry.CreatedAt)
+            .ThenBy(entry => entry.Id)
+            .Select(entry => entry.RunningBalance)
+            .ToListAsync();
+
+        Assert.Equal([-10m, 11m, -10m], orderedBalances);
+        Assert.Equal(-10m, context.Customers.Single().Balance);
+    }
+
+    [Fact]
+    public async Task RebuildPartyTransactionBalancesAsync_RecalculatesTrackedBackdatedCustomerHistory()
+    {
+        var tenantId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString("N"))
+            .Options;
+        await using var context = new ApplicationDbContext(options, new StubTenantContext(tenantId));
+        var customerId = Guid.NewGuid();
+        var saleDate = new DateTime(2026, 9, 11, 12, 0, 0, DateTimeKind.Utc);
+        context.Customers.Add(new Customer
+        {
+            Id = customerId,
+            TenantId = tenantId,
+            Name = "Transaction Projection Customer",
+            CreatedAt = saleDate
+        });
+        context.CustomerTransactions.Add(new CustomerTransaction
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CustomerId = customerId,
+            TransactionDate = saleDate,
+            TransactionType = TransactionType.Sale,
+            DebitAmount = 42m,
+            BalanceAfter = 42m,
+            CreatedAt = saleDate
+        });
+        await context.SaveChangesAsync();
+
+        var payment = new CustomerTransaction
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CustomerId = customerId,
+            TransactionDate = saleDate.Date,
+            TransactionType = TransactionType.PaymentReceived,
+            CreditAmount = 12m,
+            BalanceAfter = 30m,
+            CreatedAt = saleDate.AddMinutes(1)
+        };
+        context.CustomerTransactions.Add(payment);
+        var ledgerService = new LedgerService(
+            context,
+            new StubTenantContext(tenantId),
+            NullLogger<LedgerService>.Instance,
+            Mock.Of<IAuditService>());
+
+        var closingBalance = await ledgerService.RebuildPartyTransactionBalancesAsync(
+            PartyType.Customer,
+            customerId);
+
+        Assert.Equal(30m, closingBalance);
+        var ordered = context.CustomerTransactions.Local
+            .OrderBy(transaction => transaction.TransactionDate)
+            .ThenBy(transaction => transaction.CreatedAt)
+            .ToList();
+        Assert.Equal(-12m, ordered[0].BalanceAfter);
+        Assert.Equal(30m, ordered[1].BalanceAfter);
+    }
+
+    [Fact]
     public void CreateLedgerEntry_UsesPessimisticRowLocks_ForRelationalProviders()
     {
         var source = File.ReadAllText(Path.Combine(

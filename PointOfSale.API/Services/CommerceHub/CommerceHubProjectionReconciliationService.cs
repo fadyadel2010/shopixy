@@ -170,6 +170,25 @@ public class CommerceHubProjectionReconciliationService : BackgroundService
             }
             catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
             {
+                var document = CommerceHubOrderProjectionRepairSupport.BuildProjectionDocument(order);
+                var replacedOrphan = await CommerceHubOrderProjectionRepairSupport.TryReplaceOrphanedOrderNumberCollisionAsync(
+                    dbContext,
+                    collection,
+                    order,
+                    document,
+                    cancellationToken);
+
+                if (replacedOrphan)
+                {
+                    _logger.LogWarning(
+                        "[ProjectionRecovery] Replaced orphaned order-number projection from SQL authority | OrderId: {OrderId} | OrderNumber: {OrderNumber}",
+                        order.Id,
+                        order.OrderNumber);
+                    await MarkProjectedAsync(dbContext, order.Id, cancellationToken);
+                    recoveredCount++;
+                    continue;
+                }
+
                 _logger.LogInformation(
                     ex,
                     "[ProjectionRecovery] Marketplace order projection repair collapsed a concurrent upsert race | OrderId: {OrderId}",
@@ -188,7 +207,6 @@ public class CommerceHubProjectionReconciliationService : BackgroundService
                         })
                         .FirstOrDefaultAsync(cancellationToken);
 
-                var document = CommerceHubOrderProjectionRepairSupport.BuildProjectionDocument(order);
                 if (CommerceHubOrderProjectionRepairSupport.ProjectionProvesSqlAuthority(
                     existing,
                     order.CustomerId,

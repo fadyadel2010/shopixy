@@ -34,8 +34,8 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             CategoryId = Guid.NewGuid(),
             IsPublished = true
         };
-        var searchReadService = new Mock<ICommerceHubSearchReadService>();
-        searchReadService
+        var readRepository = new Mock<ICommerceHubReadRepository>();
+        readRepository
             .Setup(service => service.SearchPublishedProductsAsync(
                 It.IsAny<CommerceHubSearchRequest>(),
                 It.IsAny<CancellationToken>()))
@@ -48,7 +48,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
         var service = CreateService(
             dbContext,
             suspendedVendorIds: Array.Empty<Guid>(),
-            searchReadService: searchReadService.Object);
+            readRepository: readRepository.Object);
 
         var response = await service.GetProductsAsync(new CommerceHubProductsQuery
         {
@@ -244,13 +244,21 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
         var tenantId = Guid.NewGuid();
         await SeedVisibleListingAsync(dbContext, tenantId, "Runner", "Running");
 
-        var searchReadService = new Mock<ICommerceHubSearchReadService>();
+        var readRepository = new Mock<ICommerceHubReadRepository>();
+        readRepository
+            .Setup(service => service.SearchPublishedProductsAsync(
+                It.IsAny<CommerceHubSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CommerceHubSearchRequest request, CancellationToken _) =>
+            {
+                Assert.Contains(tenantId, request.ExcludedTenantIds);
+                return new CommerceHubSearchReadResult();
+            });
 
         var service = CreateService(
             dbContext,
             suspendedVendorIds: new[] { tenantId },
-            searchReadService: searchReadService.Object,
-            currentTenantId: null);
+            readRepository: readRepository.Object);
 
         var response = await service.GetProductsAsync(new CommerceHubProductsQuery
         {
@@ -259,45 +267,197 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
 
         Assert.Empty(response.Items);
         Assert.Equal(0, response.TotalCount);
-        searchReadService.Verify(
+        readRepository.Verify(
             service => service.SearchPublishedProductsAsync(
                 It.IsAny<CommerceHubSearchRequest>(),
                 It.IsAny<CancellationToken>()),
-            Times.Never);
+            Times.Once);
     }
 
     [Fact]
-    public async Task GetProductsAsync_PaginatesAfterSqlAdmission_AndKeepsSparseValidListingsReachable()
+    public async Task GetProductsAsync_PreservesProjectionPaging_AndRevalidatesEachPageAgainstSqlAuthority()
     {
         await using var dbContext = CreateDbContext();
         var firstEligibleTenant = Guid.NewGuid();
         var secondEligibleTenant = Guid.NewGuid();
-        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected first", "Running");
-        await SeedVisibleListingAsync(dbContext, firstEligibleTenant, "Eligible one", "Running");
-        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected middle", "Running");
-        await SeedVisibleListingAsync(dbContext, secondEligibleTenant, "Eligible two", "Running");
-        await SeedVisibleListingAsync(dbContext, Guid.NewGuid(), "Rejected last", "Running");
+        var firstListingId = await SeedVisibleListingAsync(dbContext, firstEligibleTenant, "Eligible one", "Running");
+        var secondListingId = await SeedVisibleListingAsync(dbContext, secondEligibleTenant, "Eligible two", "Running");
         AddEligibleVendorProfile(dbContext, firstEligibleTenant);
         AddEligibleVendorProfile(dbContext, secondEligibleTenant);
         await dbContext.SaveChangesAsync();
 
-        var searchReadService = new Mock<ICommerceHubSearchReadService>(MockBehavior.Strict);
+        var readRepository = new Mock<ICommerceHubReadRepository>(MockBehavior.Strict);
+        readRepository
+            .Setup(service => service.SearchPublishedProductsAsync(
+                It.IsAny<CommerceHubSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CommerceHubSearchRequest request, CancellationToken _) => new CommerceHubSearchReadResult
+            {
+                Items =
+                [
+                    Projection(
+                        request.Page == 1 ? firstListingId : secondListingId,
+                        request.Page == 1 ? firstEligibleTenant : secondEligibleTenant)
+                ],
+                TotalCount = 2
+            });
         var service = CreateService(
             dbContext,
             suspendedVendorIds: Array.Empty<Guid>(),
-            searchReadService: searchReadService.Object,
-            currentTenantId: null);
+            readRepository: readRepository.Object);
 
         var firstPage = await service.GetProductsAsync(new CommerceHubProductsQuery { Page = 1, PageSize = 1 });
         var secondPage = await service.GetProductsAsync(new CommerceHubProductsQuery { Page = 2, PageSize = 1 });
 
-        Assert.Equal(2, firstPage.TotalCount);
-        Assert.Equal(2, secondPage.TotalCount);
+        Assert.Equal(1, firstPage.TotalCount);
+        Assert.Equal(1, secondPage.TotalCount);
         Assert.Single(firstPage.Items);
         Assert.Single(secondPage.Items);
         Assert.NotEqual(firstPage.Items[0].Id, secondPage.Items[0].Id);
         Assert.Contains(firstPage.Items[0].TenantId, new[] { firstEligibleTenant, secondEligibleTenant });
         Assert.Contains(secondPage.Items[0].TenantId, new[] { firstEligibleTenant, secondEligibleTenant });
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_FiltersByCurrentSqlListingCategory()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = Guid.NewGuid();
+        var listingId = await SeedVisibleListingAsync(dbContext, tenantId, "Runner", "Running");
+        AddEligibleVendorProfile(dbContext, tenantId);
+        await dbContext.SaveChangesAsync();
+        var categoryId = await dbContext.CommerceHubListings
+            .IgnoreQueryFilters()
+            .Where(listing => listing.Id == listingId)
+            .Select(listing => listing.CommerceHubCategoryId)
+            .SingleAsync();
+        var readRepository = RepositoryReturning(Projection(listingId, tenantId));
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            readRepository: readRepository.Object);
+
+        var response = await service.GetProductsAsync(new CommerceHubProductsQuery
+        {
+            CategoryId = categoryId
+        });
+
+        var item = Assert.Single(response.Items);
+        Assert.Equal(listingId, item.Id);
+        Assert.Equal(categoryId, item.CategoryId);
+        readRepository.Verify(service => service.SearchPublishedProductsAsync(
+            It.Is<CommerceHubSearchRequest>(request => request.CategoryId == categoryId),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_MatchesCurrentSqlVariantSku()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = Guid.NewGuid();
+        var listingId = await SeedVisibleListingAsync(dbContext, tenantId, "Runner", "Running");
+        AddEligibleVendorProfile(dbContext, tenantId);
+        var listing = await dbContext.CommerceHubListings
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.Id == listingId);
+        var variant = await dbContext.ProductVariants
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.Id == listing.VariantId);
+        variant.SKU = "RUNNER-BLUE-42";
+        await dbContext.SaveChangesAsync();
+        var readRepository = RepositoryReturning(Projection(listingId, tenantId));
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            readRepository: readRepository.Object);
+
+        var response = await service.GetProductsAsync(new CommerceHubProductsQuery
+        {
+            Search = "RUNNER-BLUE-42"
+        });
+
+        Assert.Equal(listingId, Assert.Single(response.Items).Id);
+        readRepository.Verify(service => service.SearchPublishedProductsAsync(
+            It.Is<CommerceHubSearchRequest>(request => !string.IsNullOrWhiteSpace(request.Query)),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_FiltersByRequestedTenant()
+    {
+        await using var dbContext = CreateDbContext();
+        var requestedTenantId = Guid.NewGuid();
+        var requestedListingId = await SeedVisibleListingAsync(dbContext, requestedTenantId, "Runner", "Running");
+        var otherTenantId = Guid.NewGuid();
+        await SeedVisibleListingAsync(dbContext, otherTenantId, "Other runner", "Running");
+        AddEligibleVendorProfile(dbContext, requestedTenantId);
+        AddEligibleVendorProfile(dbContext, otherTenantId);
+        await dbContext.SaveChangesAsync();
+        var readRepository = RepositoryReturning(Projection(requestedListingId, requestedTenantId));
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            readRepository: readRepository.Object);
+
+        var response = await service.GetProductsAsync(new CommerceHubProductsQuery
+        {
+            TenantId = requestedTenantId
+        });
+
+        var item = Assert.Single(response.Items);
+        Assert.Equal(requestedListingId, item.Id);
+        Assert.Equal(requestedTenantId, item.TenantId);
+        readRepository.Verify(service => service.SearchPublishedProductsAsync(
+            It.Is<CommerceHubSearchRequest>(request => request.TenantId == requestedTenantId),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_IgnoresAmbientTenantForGlobalCatalog()
+    {
+        var ambientTenantId = Guid.NewGuid();
+        var otherTenantId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(ambientTenantId);
+        var ambientListingId = await SeedVisibleListingAsync(dbContext, ambientTenantId, "Ambient runner", "Running");
+        var otherListingId = await SeedVisibleListingAsync(dbContext, otherTenantId, "Other runner", "Running");
+        AddEligibleVendorProfile(dbContext, ambientTenantId);
+        AddEligibleVendorProfile(dbContext, otherTenantId);
+        await dbContext.SaveChangesAsync();
+        var readRepository = RepositoryReturning(
+            Projection(ambientListingId, ambientTenantId),
+            Projection(otherListingId, otherTenantId));
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            readRepository: readRepository.Object);
+
+        var response = await service.GetProductsAsync(new CommerceHubProductsQuery());
+
+        Assert.Equal(2, response.TotalCount);
+        Assert.Equal(
+            new[] { ambientTenantId, otherTenantId }.Order(),
+            response.Items.Select(item => item.TenantId).Order());
+    }
+
+    [Fact]
+    public async Task GetProductsAsync_ReturnsEmptyForIneligibleRequestedTenant()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = Guid.NewGuid();
+        var listingId = await SeedVisibleListingAsync(dbContext, tenantId, "Runner", "Running");
+        var readRepository = RepositoryReturning(Projection(listingId, tenantId));
+        var service = CreateService(
+            dbContext,
+            suspendedVendorIds: Array.Empty<Guid>(),
+            readRepository: readRepository.Object);
+
+        var response = await service.GetProductsAsync(new CommerceHubProductsQuery
+        {
+            TenantId = tenantId
+        });
+
+        Assert.Empty(response.Items);
+        Assert.Equal(0, response.TotalCount);
     }
 
     [Fact]
@@ -344,8 +504,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
         var service = CreateService(
             dbContext,
             suspendedVendorIds: Array.Empty<Guid>(),
-            searchReadService: searchReadService.Object,
-            currentTenantId: null);
+            searchReadService: searchReadService.Object);
 
         var response = await service.GetSuggestionsAsync(new CommerceHubSearchSuggestionsQuery
         {
@@ -407,8 +566,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             dbContext,
             suspendedVendorIds: Array.Empty<Guid>(),
             searchReadService: searchReadService.Object,
-            intentDetector: intentDetector.Object,
-            currentTenantId: null);
+            intentDetector: intentDetector.Object);
 
         var response = await service.GetAutocompleteAsync(new CommerceHubSearchAutocompleteQuery
         {
@@ -423,7 +581,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
         IReadOnlyCollection<Guid> suspendedVendorIds,
         ICommerceHubSearchReadService? searchReadService = null,
         ICommerceHubSearchIntentDetector? intentDetector = null,
-        Guid? currentTenantId = null)
+        ICommerceHubReadRepository? readRepository = null)
     {
         var vendorFinancialControlService = new Mock<ICommerceHubVendorFinancialControlService>();
         vendorFinancialControlService
@@ -454,7 +612,7 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             NullLogger<MongoDbContext>.Instance);
 
         return new CommerceHubQueryService(
-            Mock.Of<ICommerceHubReadRepository>(),
+            readRepository ?? Mock.Of<ICommerceHubReadRepository>(),
             searchReadService ?? Mock.Of<ICommerceHubSearchReadService>(),
             searchIntelligenceService.Object,
             intentDetector ?? Mock.Of<ICommerceHubSearchIntentDetector>(),
@@ -463,18 +621,44 @@ public sealed class CommerceHubQueryServiceSuggestionVisibilityTests
             dbContext,
             vendorFinancialControlService.Object,
             governanceCacheInvalidationService.Object,
-            new TestTenantContext(currentTenantId),
             new MemoryCache(new MemoryCacheOptions()),
             NullLogger<CommerceHubQueryService>.Instance);
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    private static Mock<ICommerceHubReadRepository> RepositoryReturning(
+        params PointOfSale.Infrastructure.MongoDB.Documents.CommerceHubProductDocument[] documents)
+    {
+        var service = new Mock<ICommerceHubReadRepository>();
+        service
+            .Setup(item => item.SearchPublishedProductsAsync(
+                It.IsAny<CommerceHubSearchRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CommerceHubSearchReadResult
+            {
+                Items = documents.ToList(),
+                TotalCount = documents.Length
+            });
+        return service;
+    }
+
+    private static PointOfSale.Infrastructure.MongoDB.Documents.CommerceHubProductDocument Projection(
+        Guid listingId,
+        Guid tenantId) => new()
+        {
+            Id = listingId,
+            TenantId = tenantId,
+            IsPublished = true
+        };
+
+    private static ApplicationDbContext CreateDbContext(Guid? currentTenantId = null)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        return new ApplicationDbContext(options);
+        return currentTenantId.HasValue
+            ? new ApplicationDbContext(options, new TestTenantContext(currentTenantId))
+            : new ApplicationDbContext(options);
     }
 
     private static CommerceHubListing CreateListing(

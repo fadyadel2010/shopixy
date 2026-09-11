@@ -183,6 +183,44 @@ public sealed class CommerceHubVendorDebtService : ICommerceHubVendorDebtService
             .Distinct()
             .ToList();
 
+        var codOrderReferences = await _dbContext.CommerceHubSubOrders
+            .AsNoTracking()
+            .Where(subOrder =>
+                normalizedVendorIds.Contains(subOrder.StoreId) &&
+                subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery &&
+                referenceIds.Contains(subOrder.Id))
+            .Select(subOrder => new VendorReferenceRow
+            {
+                VendorId = subOrder.StoreId,
+                ReferenceType = CommerceHubFinancialReferenceType.Order,
+                ReferenceId = subOrder.Id
+            })
+            .ToListAsync(cancellationToken);
+
+        var codRefundReferences = await (
+                from refund in _dbContext.CommerceHubRefunds.AsNoTracking()
+                join subOrder in _dbContext.CommerceHubSubOrders.AsNoTracking()
+                    on refund.SubOrderId equals subOrder.Id
+                where normalizedVendorIds.Contains(refund.TenantId) &&
+                      refund.TenantId == subOrder.StoreId &&
+                      subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery &&
+                      referenceIds.Contains(refund.Id)
+                select new VendorReferenceRow
+                {
+                    VendorId = refund.TenantId,
+                    ReferenceType = CommerceHubFinancialReferenceType.Refund,
+                    ReferenceId = refund.Id
+                })
+            .ToListAsync(cancellationToken);
+
+        var codLegacyCommissionReferenceKeys = codOrderReferences
+            .Concat(codRefundReferences)
+            .Select(reference => new VendorReferenceKey(
+                reference.VendorId,
+                reference.ReferenceType,
+                reference.ReferenceId))
+            .ToHashSet();
+
         var platformCommissionRows = referenceIds.Count == 0
             ? new List<PlatformCommissionRow>()
             : await _dbContext.CommerceHubFinancialTransactions
@@ -224,7 +262,7 @@ public sealed class CommerceHubVendorDebtService : ICommerceHubVendorDebtService
             foreach (var vendorId in linkedVendorIds)
             {
                 var key = new VendorReferenceKey(vendorId, platformRow.ReferenceType, platformRow.ReferenceId);
-                if (directCommissionReferenceKeys.Contains(key))
+                if (!codLegacyCommissionReferenceKeys.Contains(key) || directCommissionReferenceKeys.Contains(key))
                 {
                     continue;
                 }

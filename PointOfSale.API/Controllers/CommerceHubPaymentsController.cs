@@ -171,8 +171,9 @@ public class CommerceHubPaymentsController : ControllerBase
                 traceId));
         }
 
-        // The callback is only a browser-routing signal. CommerceHub reads the
-        // canonical backend order/payment state after navigation.
+        // Captured success still waits for the server webhook as the collection
+        // authority. A verified terminal failure is applied by the orchestration
+        // service so its reservation can be released before browser navigation.
         if (!Uri.TryCreate(_customerIdentityOptions.PublicBaseUrl, UriKind.Absolute, out var publicBaseUrl) ||
             (!string.Equals(publicBaseUrl.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(publicBaseUrl.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)))
@@ -188,9 +189,10 @@ public class CommerceHubPaymentsController : ControllerBase
         var redirectBase = publicBaseUrl.AbsoluteUri.EndsWith("/", StringComparison.Ordinal)
             ? publicBaseUrl
             : new Uri(publicBaseUrl.AbsoluteUri + "/");
+        var paymentSignal = result.IsTerminalFailure ? "failed" : "pending";
         var redirectUrl = new Uri(
             redirectBase,
-            $"orders/{result.OrderId.Value:D}?payment=pending");
+            $"orders/{result.OrderId.Value:D}?payment={paymentSignal}");
         return Redirect(redirectUrl.ToString());
     }
 

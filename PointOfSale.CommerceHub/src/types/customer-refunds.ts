@@ -60,6 +60,8 @@ export type CustomerRefundPayoutSnapshot = {
   accountHolderName?: string | null;
   transactionReference?: string | null;
   paidAt?: string | null;
+  isDevelopmentSimulation: boolean;
+  externalMoneyMovementConfirmed: boolean;
 };
 
 export type CustomerRefundUploadRequest = {

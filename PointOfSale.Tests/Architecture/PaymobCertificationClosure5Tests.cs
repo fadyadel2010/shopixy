@@ -80,6 +80,8 @@ public sealed class PaymobCertificationClosure5Tests
         var tenantId = Guid.NewGuid();
         var orderId = Guid.NewGuid();
         var intentId = Guid.NewGuid();
+        var commerceHubPaymentId = Guid.NewGuid();
+        var commerceHubLogId = Guid.NewGuid();
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
@@ -114,7 +116,30 @@ public sealed class PaymobCertificationClosure5Tests
                 RawPayload = RawPayload,
                 Signature = RawSignature
             });
-            await setup.SaveChangesAsync();
+            var commerceHubPayment = new CommerceHubPayment
+            {
+                Id = commerceHubPaymentId,
+                OrderId = orderId,
+                Amount = 100m,
+                Currency = "EGP",
+                Provider = PaymentProvider.Paymob,
+                ProviderReference = "PAYMOB-CLOSURE-5",
+                Status = CommerceHubPaymentRecordStatus.Failed
+            };
+            commerceHubPayment.Logs.Add(new CommerceHubPaymentLog
+            {
+                Id = commerceHubLogId,
+                PaymentId = commerceHubPaymentId,
+                Payment = commerceHubPayment,
+                EventType = "paymob.legacy",
+                RawResponse = RawPayload
+            });
+            setup.CommerceHubPayments.Add(commerceHubPayment);
+
+            using (CommerceHubBoundaryMutationScope.BeginPayment())
+            {
+                await setup.SaveChangesAsync();
+            }
         }
 
         var protector = CreateProtector();
@@ -132,6 +157,9 @@ public sealed class PaymobCertificationClosure5Tests
         var intent = await verify.PaymentIntents.IgnoreQueryFilters().SingleAsync(x => x.Id == intentId);
         var metadata = PaymentIntentRoutingMetadataSerializer.Deserialize(intent.ProviderMetadata);
         var log = await verify.PaymentWebhookLogs.IgnoreQueryFilters().SingleAsync();
+        var commerceHubLog = await verify.CommerceHubPaymentLogs
+            .IgnoreQueryFilters()
+            .SingleAsync(x => x.Id == commerceHubLogId);
 
         Assert.Null(intent.RedirectUrl);
         Assert.Null(metadata?.PaymentKey);
@@ -144,6 +172,54 @@ public sealed class PaymobCertificationClosure5Tests
         Assert.DoesNotContain(RawPayload, log.RawPayload, StringComparison.Ordinal);
         Assert.StartsWith(PaymobSensitiveArtifactProtector.SignatureDigestPrefix, log.Signature, StringComparison.Ordinal);
         Assert.DoesNotContain(RawSignature, log.Signature, StringComparison.Ordinal);
+        Assert.Equal(RawPayload, protector.UnprotectWebhookPayload(commerceHubLog.RawResponse));
+        Assert.DoesNotContain("provider-auth-value", commerceHubLog.RawResponse, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CommerceHubPaymentLog_RawResponseMustRemainImmutableOutsideSensitiveBackfillScope()
+    {
+        var paymentId = Guid.NewGuid();
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+
+        await using (var setup = new ApplicationDbContext(options))
+        {
+            var payment = new CommerceHubPayment
+            {
+                Id = paymentId,
+                OrderId = Guid.NewGuid(),
+                Amount = 100m,
+                Currency = "EGP",
+                Provider = PaymentProvider.Paymob,
+                ProviderReference = "PAYMOB-IMMUTABLE",
+                Status = CommerceHubPaymentRecordStatus.Failed
+            };
+            payment.Logs.Add(new CommerceHubPaymentLog
+            {
+                Id = Guid.NewGuid(),
+                PaymentId = paymentId,
+                Payment = payment,
+                EventType = "paymob.immutable",
+                RawResponse = RawPayload
+            });
+            setup.CommerceHubPayments.Add(payment);
+            using (CommerceHubBoundaryMutationScope.BeginPayment())
+            {
+                await setup.SaveChangesAsync();
+            }
+        }
+
+        await using var mutate = new ApplicationDbContext(options);
+        var log = await mutate.CommerceHubPaymentLogs.SingleAsync();
+        log.RawResponse = "arbitrary-rewrite";
+
+        using (CommerceHubBoundaryMutationScope.BeginPayment())
+        {
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => mutate.SaveChangesAsync());
+            Assert.Contains("CommerceHubPaymentLog records are immutable", exception.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]

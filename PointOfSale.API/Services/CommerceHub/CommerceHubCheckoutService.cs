@@ -10,12 +10,14 @@ using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Governance;
 using PointOfSale.API.Services.CommerceHub.Finance;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Financial;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
+using PointOfSale.Infrastructure.MultiTenancy;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Redis.Services;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
@@ -79,6 +81,8 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
     private readonly IDistributedLockService _lockService;
     private readonly IEventPublisher _eventPublisher;
     private readonly ICommerceHubPriceAuthority _priceAuthority;
+    private readonly IReadOnlyCollection<IPaymentProviderAdapter> _paymentProviderAdapters;
+    private readonly TenantContext _tenantContext;
     private readonly ILogger<CommerceHubCheckoutService> _logger;
 
     public CommerceHubCheckoutService(
@@ -96,6 +100,8 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         IDistributedLockService lockService,
         IEventPublisher eventPublisher,
         ICommerceHubPriceAuthority priceAuthority,
+        IEnumerable<IPaymentProviderAdapter> paymentProviderAdapters,
+        TenantContext tenantContext,
         ILogger<CommerceHubCheckoutService> logger)
     {
         _dbContext = dbContext;
@@ -112,6 +118,8 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         _lockService = lockService;
         _eventPublisher = eventPublisher;
         _priceAuthority = priceAuthority;
+        _paymentProviderAdapters = paymentProviderAdapters.ToList();
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -128,6 +136,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         string idempotencyKey,
         CancellationToken cancellationToken = default)
     {
+        using var globalTenantScope = _tenantContext.BeginGlobalScope();
         using var commerceHubBoundary = CommerceHubBoundaryMutationScope.BeginOrderLifecycle();
         using var shippingAssignmentBoundary = CommerceHubBoundaryMutationScope.BeginShippingAssignment();
         using var financialBoundary = CommerceHubBoundaryMutationScope.BeginFinancialWorkflow();
@@ -510,11 +519,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                 }
             }
 
-            var paymentMethods = await LoadTenantPaymentMethodsForCheckoutAuthorityAsync(
-                tenantIds,
-                cancellationToken);
-
-            ValidateRequestedPaymentMethod(request.PaymentMethod, tenantIds, paymentMethods);
+            ValidateRequestedPaymentMethod(request.PaymentMethod, tenantIds, _paymentProviderAdapters);
 
             var currency = ResolveCommerceHubAuthorityCurrency();
             var lineSnapshots = new List<ValidatedCheckoutLine>();
@@ -733,7 +738,9 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
             {
                 foreach (var item in subOrder.Items)
                 {
-                    var reservationExpiresAtUtc = DateTime.UtcNow.Add(InventoryReservationTtl);
+                    DateTime? reservationExpiresAtUtc = subOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery
+                        ? null
+                        : DateTime.UtcNow.Add(InventoryReservationTtl);
                     var reserved = await _inventoryConsistencyService.ReserveOrderItemAsync(
                         new InventoryReservationRequest(
                             TenantId: subOrder.StoreId,
@@ -939,7 +946,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         {
             query = _dbContext.ProductVariants
                 .FromSqlRaw($@"
-                    SELECT *
+                    SELECT *, xmin
                     FROM ""ProductVariants""
                     WHERE ""Id"" IN ({FormatSqlGuidList(orderedIds)})
                       AND ""IsDeleted"" = false
@@ -1026,7 +1033,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         {
             query = _dbContext.Products
                 .FromSqlRaw($@"
-                    SELECT *
+                    SELECT *, xmin
                     FROM ""Products""
                     WHERE ""Id"" IN ({FormatSqlGuidList(orderedIds)})
                       AND ""IsDeleted"" = false
@@ -1106,55 +1113,6 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         }
 
         return await query.ToDictionaryAsync(tenant => tenant.Id, cancellationToken);
-    }
-
-    private async Task<List<TenantPaymentMethod>> LoadTenantPaymentMethodsForCheckoutAuthorityAsync(
-        IReadOnlyCollection<Guid> tenantIds,
-        CancellationToken cancellationToken)
-    {
-        var orderedIds = NormalizeGuidAuthoritySet(tenantIds);
-        if (orderedIds.Count == 0)
-        {
-            return new List<TenantPaymentMethod>();
-        }
-
-        IQueryable<TenantPaymentMethod> query;
-        if (IsPostgresProvider())
-        {
-            query = _dbContext.TenantPaymentMethods
-                .FromSqlRaw($@"
-                    SELECT *
-                    FROM ""TenantPaymentMethods""
-                    WHERE ""TenantId"" IN ({FormatSqlGuidList(orderedIds)})
-                      AND ""IsDeleted"" = false
-                      AND ""IsEnabled"" = true
-                    ORDER BY ""TenantId"", ""Code"", ""Id""
-                    FOR UPDATE")
-                .IgnoreQueryFilters();
-        }
-        else if (IsSqlServerProvider())
-        {
-            query = _dbContext.TenantPaymentMethods
-                .FromSqlRaw($@"
-                    SELECT *
-                    FROM [TenantPaymentMethods] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
-                    WHERE [TenantId] IN ({FormatSqlGuidList(orderedIds)})
-                      AND [IsDeleted] = CAST(0 AS bit)
-                      AND [IsEnabled] = CAST(1 AS bit)
-                    ORDER BY [TenantId], [Code], [Id]")
-                .IgnoreQueryFilters();
-        }
-        else
-        {
-            query = _dbContext.TenantPaymentMethods
-                .IgnoreQueryFilters()
-                .Where(method => orderedIds.Contains(method.TenantId) && !method.IsDeleted && method.IsEnabled)
-                .OrderBy(method => method.TenantId)
-                .ThenBy(method => method.Code)
-                .ThenBy(method => method.Id);
-        }
-
-        return await query.ToListAsync(cancellationToken);
     }
 
     private static List<Guid> NormalizeGuidAuthoritySet(IReadOnlyCollection<Guid> ids) =>
@@ -1704,13 +1662,16 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
     private static void ValidateRequestedPaymentMethod(
         string paymentMethod,
         IReadOnlyCollection<Guid> tenantIds,
-        IReadOnlyCollection<TenantPaymentMethod> paymentMethods)
+        IEnumerable<IPaymentProviderAdapter> paymentProviderAdapters)
     {
-        if (!CommerceHubPaymentMethodAuthority.IsRequestedMethodAvailable(paymentMethod, tenantIds, paymentMethods))
+        if (!CommerceHubPaymentMethodAuthority.IsRequestedMethodAvailable(
+                paymentMethod,
+                tenantIds,
+                paymentProviderAdapters))
         {
             throw new CommerceHubCheckoutException(
                 "PAYMENT_METHOD_NOT_AVAILABLE",
-                "The selected payment method is not available for every store in this order.",
+                "The selected payment method is not available from the CommerceHub platform.",
                 StatusCodes.Status400BadRequest);
         }
     }

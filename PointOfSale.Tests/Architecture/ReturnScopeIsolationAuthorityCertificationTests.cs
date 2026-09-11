@@ -6,6 +6,7 @@ public sealed class ReturnScopeIsolationAuthorityCertificationTests
     public void SuperAdminReturnScope_MustRemainCurrentListDetailAndCurrentRefundBound()
     {
         var authority = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts");
+        var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundsService.ts");
         var page = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
 
         Assert.Contains("requireCurrentSuperAdminRefundSelection", page, StringComparison.Ordinal);
@@ -16,8 +17,9 @@ public sealed class ReturnScopeIsolationAuthorityCertificationTests
         Assert.Contains("async function requireCurrentRefundMutationAuthority()", page, StringComparison.Ordinal);
         Assert.Contains("const refreshedRefunds = await refundsQuery.refetch()", page, StringComparison.Ordinal);
         Assert.Contains("return getSuperAdminRefundDetails(currentRefund.refundId, currentRefund)", page, StringComparison.Ordinal);
-        Assert.Contains("const currentRefundDetails = detailsQuery.data", page, StringComparison.Ordinal);
-        Assert.Contains("requireSuperAdminReturnForCurrentRefund(returnRequest, currentRefundDetails)", page, StringComparison.Ordinal);
+        Assert.Contains("return requireSuperAdminRefundDetailsForCurrentSelection(response.data, currentSelection)", service, StringComparison.Ordinal);
+        Assert.Contains("requireSuperAdminReturnForCurrentRefund(refund.returnRequest, refund)", authority, StringComparison.Ordinal);
+        Assert.DoesNotContain("returnMutation", page, StringComparison.Ordinal);
 
         Assert.Contains("returnRequest.refundId.toLowerCase() !== currentRefund.refundId.toLowerCase()", authority, StringComparison.Ordinal);
         Assert.Contains("returnRequest.orderItemId.toLowerCase() !== currentRefund.item.orderItemId.toLowerCase()", authority, StringComparison.Ordinal);
@@ -35,6 +37,7 @@ public sealed class ReturnScopeIsolationAuthorityCertificationTests
         var customerRefundModal = CertificationSource.ReadRepoFile("PointOfSale.CommerceHub/src/features/customer/components/RefundRequestModal.tsx");
         var customerRefundService = CertificationSource.ReadRepoFile("PointOfSale.CommerceHub/src/services/customer-refunds-service.ts");
         var vendorFinance = CertificationSource.ReadRepoFile("PointOfSale.Web/src/auth/commerceHubVendorFinancialParticipationAuthority.js");
+        var vendorReturns = CertificationSource.ReadRepoFile("PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js");
         var purchaseReturns = CertificationSource.ReadRepoFile("PointOfSale.Web/src/pages/PurchaseReturns.jsx");
 
         Assert.Contains("refundsQuery.isFetching || refundsQuery.isError ? []", customerRefundsPage, StringComparison.Ordinal);
@@ -42,7 +45,10 @@ public sealed class ReturnScopeIsolationAuthorityCertificationTests
         Assert.Contains("const currentItem = await resolveCurrentItem(item.orderItemId)", customerRefundModal, StringComparison.Ordinal);
         Assert.Contains("requireCustomerCreatedRefundForCurrentOrderItem", customerRefundService, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorFinance, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorFinance, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorFinance, StringComparison.Ordinal);
+        Assert.Contains("const currentOrder = await getCommerceHubVendorOrder(subOrderId)", vendorReturns, StringComparison.Ordinal);
+        Assert.Contains("requireCommerceHubVendorReturnAuthority(", vendorReturns, StringComparison.Ordinal);
+        Assert.Contains("expectedStatus: acceptedReturn.status", vendorReturns, StringComparison.Ordinal);
         Assert.Contains("purchaseInvoicesRequestIdRef.current += 1", purchaseReturns, StringComparison.Ordinal);
         Assert.Contains("invoiceRequestIdRef.current += 1", purchaseReturns, StringComparison.Ordinal);
         Assert.Contains("if (requestId !== invoiceRequestIdRef.current)", purchaseReturns, StringComparison.Ordinal);

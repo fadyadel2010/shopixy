@@ -14,6 +14,8 @@ using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums.CommerceHubFinance;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Events;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.TestDoubles;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
@@ -184,6 +186,242 @@ public sealed class RefundExecutionServiceTests : IDisposable
         Assert.Equal(20m, operationAudit.BeforeVendorDebt);
         Assert.Equal(10m, operationAudit.AfterVendorDebt);
         Assert.All(ledgerEntries, item => Assert.Equal(trackedRefund.Id.ToString("D"), item.CorrelationId));
+    }
+
+    [Fact]
+    public async Task ExecuteDevelopmentCodDebtReductionAsync_ShouldUseCanonicalServiceAndRemainIdempotentWithoutExternalTransferClaim()
+    {
+        var graph = await SeedRefundRequestAsync(
+            CommerceHubRefundRequestStatus.AwaitingPayout,
+            RefundPayoutMethod.VodafoneCash,
+            "ENC:test-account",
+            "010****678");
+        await _financialLedgerService.RecordOrderAsync(graph.Order, graph.SubOrder);
+        await SeedPostedCommerceHubJournalsAsync(graph.SubOrder.StoreId);
+        await SeedHealthyFinancialReconciliationAsync(graph.SubOrder.StoreId);
+        var actorId = Guid.NewGuid();
+        const string idempotencyKey = "M1D-R2-refund-vendor-b-001";
+
+        await _service.ExecuteDevelopmentCodDebtReductionAsync(
+            graph.RefundRequest.Id,
+            idempotencyKey,
+            actorId,
+            "root@development.local",
+            "corr-m1d-development");
+
+        using (CommerceHubBoundaryMutationScope.BeginOrderLifecycle())
+        {
+            graph.Order.Status = OrderStatus.Shipped;
+            await _dbContext.SaveChangesAsync();
+        }
+
+        await _service.ExecuteDevelopmentCodDebtReductionAsync(
+            graph.RefundRequest.Id,
+            idempotencyKey,
+            actorId,
+            "root@development.local",
+            "corr-m1d-development-replay");
+
+        var refundRequest = await _dbContext.CommerceHubRefundRequests.SingleAsync();
+        var trackedRefund = await _dbContext.CommerceHubRefunds.SingleAsync();
+        var execution = await _dbContext.CommerceHubRefundExecutions.SingleAsync();
+        var ledgerEntries = await _dbContext.CommerceHubFinancialTransactions
+            .Where(transaction => transaction.ReferenceId == trackedRefund.Id)
+            .ToListAsync();
+        var auditActions = await _dbContext.AuditLogs.Select(audit => audit.ActionType).ToListAsync();
+
+        Assert.Equal(CommerceHubRefundRequestStatus.Paid, refundRequest.Status);
+        Assert.Equal(1, refundRequest.ExecutionAttempts);
+        Assert.Equal(OrderStatus.Delivered, graph.Order.Status);
+        Assert.Equal(CommerceHubRefundStatus.Completed, trackedRefund.Status);
+        Assert.Equal("development-simulated-cod-refund", trackedRefund.GatewayStatus);
+        Assert.Equal($"DEV-SIM:{idempotencyKey}", execution.TransactionReference);
+        Assert.Contains("No external money movement occurred", execution.Notes, StringComparison.Ordinal);
+        Assert.Equal(2, ledgerEntries.Count);
+        Assert.Contains("REFUND_COD_DEBT_REDUCTION_SIMULATION_INITIATED", auditActions);
+        Assert.Contains("REFUND_COD_DEBT_REDUCTION_SIMULATION_COMPLETED", auditActions);
+        Assert.DoesNotContain("REFUND_PAYOUT_CONFIRMED", auditActions);
+        _publishEndpoint.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<CommerceHubRefundFinanciallyExecutedEvent>(@event =>
+                    @event.MarketplaceOrderId == graph.Order.Id &&
+                    @event.SubOrderId == graph.SubOrder.Id &&
+                    @event.VendorId == graph.SubOrder.StoreId &&
+                    @event.RefundRequestId == graph.RefundRequest.Id &&
+                    @event.FinancialRefundId == trackedRefund.Id &&
+                    @event.Amount == trackedRefund.Amount &&
+                    @event.VendorDebtDelta == -trackedRefund.CommissionReversalAmount &&
+                    @event.VendorDebtIncreaseAmount == 0m &&
+                    @event.VendorDebtReductionAmount == trackedRefund.CommissionReversalAmount &&
+                    @event.IdempotencyKey == idempotencyKey &&
+                    @event.IsDevelopmentSimulation &&
+                    !@event.ExternalMoneyMovementConfirmed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_OnlineAfterPayoutEvent_ShouldDescribeDebtIncreaseWithoutMislabelingReduction()
+    {
+        var graph = await SeedRefundRequestAsync(
+            CommerceHubRefundRequestStatus.AwaitingPayout,
+            RefundPayoutMethod.VodafoneCash,
+            "ENC:test-account",
+            "010****678",
+            CommerceHubPaymentMethod.Online);
+        var earning = await _dbContext.CommerceHubVendorEarnings.SingleAsync();
+        using (CommerceHubBoundaryMutationScope.BeginPayout())
+        {
+            earning.Status = CommerceHubVendorEarningStatus.PaidOut;
+            earning.PaidOutAmount = earning.Amount;
+            earning.PaidOutAtUtc = DateTime.UtcNow.AddHours(-1);
+            await _dbContext.SaveChangesAsync();
+        }
+
+        await _financialLedgerService.RecordOrderAsync(graph.Order, graph.SubOrder);
+        await SeedPostedCommerceHubJournalsAsync(graph.SubOrder.StoreId);
+        await SeedHealthyFinancialReconciliationAsync(graph.SubOrder.StoreId);
+
+        await _service.ExecuteAsync(
+            graph.RefundRequest.Id,
+            new SuperAdminExecuteRefundRequest
+            {
+                Method = RefundPayoutMethod.VodafoneCash,
+                TransactionReference = "POST-PAYOUT-REFUND-001",
+                ConfirmMoneySent = true
+            },
+            Guid.NewGuid(),
+            "owner@commercehub.local",
+            "corr-post-payout-refund");
+
+        var trackedRefund = await _dbContext.CommerceHubRefunds.SingleAsync();
+        Assert.True(trackedRefund.IsPostPayoutAdjustment);
+        _publishEndpoint.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<CommerceHubRefundFinanciallyExecutedEvent>(@event =>
+                    @event.ExecutionPath == "OnlineAfterPayout" &&
+                    @event.VendorDebtDelta == trackedRefund.VendorEarningReversalAmount &&
+                    @event.VendorDebtIncreaseAmount == trackedRefund.VendorEarningReversalAmount &&
+                    @event.VendorDebtReductionAmount == 0m &&
+                    !@event.IsDevelopmentSimulation &&
+                    @event.ExternalMoneyMovementConfirmed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteDevelopmentOnlineBeforePayoutAsync_ShouldPersistExplicitSimulationEvidence_WithoutExternalTransferClaim()
+    {
+        var graph = await SeedRefundRequestAsync(
+            CommerceHubRefundRequestStatus.AwaitingPayout,
+            RefundPayoutMethod.VodafoneCash,
+            "ENC:test-account",
+            "010****678",
+            CommerceHubPaymentMethod.Online);
+        await _financialLedgerService.RecordOrderAsync(graph.Order, graph.SubOrder);
+        await SeedPostedCommerceHubJournalsAsync(graph.SubOrder.StoreId);
+        await SeedHealthyFinancialReconciliationAsync(graph.SubOrder.StoreId);
+        var actorId = Guid.NewGuid();
+        const string idempotencyKey = "GATE-3R-online-refund-001";
+
+        var result = await _service.ExecuteDevelopmentOnlineBeforePayoutAsync(
+            graph.RefundRequest.Id,
+            idempotencyKey,
+            "Gate 3R online before-payout certification",
+            actorId,
+            "root@development.local",
+            "corr-gate-3r-online-refund");
+
+        var replay = await _service.ExecuteDevelopmentOnlineBeforePayoutAsync(
+            graph.RefundRequest.Id,
+            idempotencyKey,
+            "Gate 3R online before-payout certification",
+            actorId,
+            "root@development.local",
+            "corr-gate-3r-online-refund-replay");
+
+        var refundRequest = await _dbContext.CommerceHubRefundRequests.SingleAsync();
+        var trackedRefund = await _dbContext.CommerceHubRefunds.SingleAsync();
+        var execution = await _dbContext.CommerceHubRefundExecutions.SingleAsync();
+        var ledgerEntries = await _dbContext.CommerceHubFinancialTransactions
+            .Where(transaction => transaction.ReferenceId == trackedRefund.Id)
+            .ToListAsync();
+        var auditActions = await _dbContext.AuditLogs.Select(audit => audit.ActionType).ToListAsync();
+
+        Assert.Equal(CommerceHubRefundRequestStatus.Paid, refundRequest.Status);
+        Assert.Equal(1, refundRequest.ExecutionAttempts);
+        Assert.Equal(CommerceHubRefundStatus.Completed, trackedRefund.Status);
+        Assert.False(trackedRefund.IsPostPayoutAdjustment);
+        Assert.Equal("development-simulated-online-refund", trackedRefund.GatewayStatus);
+        Assert.Equal($"DEV-SIM:ONLINE-REFUND:{idempotencyKey}", execution.TransactionReference);
+        Assert.Contains("No external money movement occurred", execution.Notes, StringComparison.Ordinal);
+        Assert.Equal(4, ledgerEntries.Count);
+        Assert.Contains(ledgerEntries, transaction =>
+            transaction.EntityType == CommerceHubFinancialEntityType.Platform &&
+            transaction.TransactionType == CommerceHubFinancialTransactionType.Adjustment &&
+            transaction.FinancialBucket == CommerceHubFinancialBucket.Payable);
+        Assert.Contains(ledgerEntries, transaction =>
+            transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+            transaction.TransactionType == CommerceHubFinancialTransactionType.Refund &&
+            transaction.FinancialBucket == CommerceHubFinancialBucket.Payable);
+        Assert.Contains("REFUND_ONLINE_BEFORE_PAYOUT_SIMULATION_INITIATED", auditActions);
+        Assert.Contains("REFUND_ONLINE_BEFORE_PAYOUT_SIMULATION_COMPLETED", auditActions);
+        Assert.DoesNotContain("REFUND_PAYOUT_CONFIRMED", auditActions);
+        Assert.True(result.IsDevelopmentSimulation);
+        Assert.False(result.ExternalMoneyMovementConfirmed);
+        Assert.Equal("OnlineBeforePayout", result.ExecutionPath);
+        Assert.Equal("DevelopmentSimulatedOnlineCustomerRefund", result.EvidenceType);
+        Assert.Equal(result, replay);
+        _publishEndpoint.Verify(
+            publisher => publisher.PublishAsync(
+                It.Is<CommerceHubRefundFinanciallyExecutedEvent>(@event =>
+                    @event.RefundRequestId == graph.RefundRequest.Id &&
+                    @event.FinancialRefundId == trackedRefund.Id &&
+                    @event.ExecutionPath == "OnlineBeforePayout" &&
+                    @event.ExecutionEvidenceType == "DevelopmentSimulatedOnlineCustomerRefund" &&
+                    @event.IsDevelopmentSimulation &&
+                    !@event.ExternalMoneyMovementConfirmed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteDevelopmentSimulationAsync_ShouldRejectRelabelingOrdinaryCompletedRefund()
+    {
+        var graph = await SeedRefundRequestAsync(
+            CommerceHubRefundRequestStatus.Approved,
+            RefundPayoutMethod.VodafoneCash,
+            "ENC:test-account",
+            "010****678");
+        await _financialLedgerService.RecordOrderAsync(graph.Order, graph.SubOrder);
+        await SeedPostedCommerceHubJournalsAsync(graph.SubOrder.StoreId);
+        await SeedHealthyFinancialReconciliationAsync(graph.SubOrder.StoreId);
+        var actorId = Guid.NewGuid();
+
+        await _service.ExecuteAsync(
+            graph.RefundRequest.Id,
+            new SuperAdminExecuteRefundRequest
+            {
+                Method = RefundPayoutMethod.VodafoneCash,
+                TransactionReference = "EXTERNAL-TXN-001",
+                ConfirmMoneySent = true
+            },
+            actorId,
+            "owner@commercehub.local",
+            "corr-external-refund");
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.ExecuteDevelopmentCodDebtReductionAsync(
+                graph.RefundRequest.Id,
+                "attempted-relabel",
+                actorId,
+                "root@development.local",
+                "corr-attempted-relabel"));
+
+        Assert.Equal("DEVELOPMENT_REFUND_SIMULATION_EVIDENCE_MISMATCH", exception.Code);
+        var trackedRefund = await _dbContext.CommerceHubRefunds.SingleAsync();
+        Assert.Equal("manual-confirmed", trackedRefund.GatewayStatus);
+        Assert.Equal("EXTERNAL-TXN-001", trackedRefund.Reference);
     }
 
     [Fact]
@@ -378,7 +616,8 @@ public sealed class RefundExecutionServiceTests : IDisposable
         CommerceHubRefundRequestStatus status,
         RefundPayoutMethod? payoutMethod,
         string? payoutAccountSnapshot,
-        string? payoutMaskedSnapshot)
+        string? payoutMaskedSnapshot,
+        CommerceHubPaymentMethod paymentMethod = CommerceHubPaymentMethod.CashOnDelivery)
     {
         var customer = CommerceHubCustomer.Create("refund-exec@example.com", "Refund Exec Test", "01011111111", "hash");
 
@@ -393,8 +632,8 @@ public sealed class RefundExecutionServiceTests : IDisposable
             AddressLine = "123 Refund Street",
             City = "Cairo",
             Currency = "EGP",
-            PaymentMethodCode = "COD",
-            PaymentMethodName = "Cash on delivery",
+            PaymentMethodCode = paymentMethod == CommerceHubPaymentMethod.Online ? "ONLINE" : "COD",
+            PaymentMethodName = paymentMethod == CommerceHubPaymentMethod.Online ? "Online" : "Cash on delivery",
             Subtotal = 400m,
             ShippingTotal = 20m,
             TotalAmount = 420m,
@@ -413,9 +652,9 @@ public sealed class RefundExecutionServiceTests : IDisposable
             Currency = "EGP",
             Subtotal = 400m,
             Shipping = 20m,
-            PaymentMethod = CommerceHubPaymentMethod.CashOnDelivery,
-            PaymentMethodCode = "COD",
-            PaymentMethodName = "Cash on delivery",
+            PaymentMethod = paymentMethod,
+            PaymentMethodCode = paymentMethod == CommerceHubPaymentMethod.Online ? "ONLINE" : "COD",
+            PaymentMethodName = paymentMethod == CommerceHubPaymentMethod.Online ? "Online" : "Cash on delivery",
             PlatformCommissionAmount = 20m,
             VendorEarningAmount = 400m,
             PlatformCommissionRate = 0.05m,
@@ -472,6 +711,36 @@ public sealed class RefundExecutionServiceTests : IDisposable
         _dbContext.CommerceHubCustomers.Add(customer);
         _dbContext.CommerceHubMarketplaceOrders.Add(order);
         _dbContext.CommerceHubRefundRequests.Add(refundRequest);
+        if (paymentMethod == CommerceHubPaymentMethod.Online)
+        {
+            var payment = new CommerceHubPayment
+            {
+                Id = Guid.NewGuid(),
+                OrderId = order.Id,
+                Order = order,
+                Amount = order.TotalAmount,
+                Currency = order.Currency,
+                Status = CommerceHubPaymentRecordStatus.Paid,
+                Provider = PaymentProvider.Paymob,
+                ProviderReference = $"DEV-SIM:ONLINE:{order.Id:N}",
+                ProviderTransactionId = $"DEV-SIM:ONLINE:{order.Id:N}",
+                IsProcessed = true,
+                PaidAtUtc = DateTime.UtcNow.AddDays(-1)
+            };
+            _dbContext.CommerceHubPayments.Add(payment);
+            _dbContext.CommerceHubVendorEarnings.Add(new CommerceHubVendorEarning
+            {
+                Id = Guid.NewGuid(),
+                SubOrderId = subOrder.Id,
+                SubOrder = subOrder,
+                PaymentId = payment.Id,
+                Payment = payment,
+                TenantId = subOrder.StoreId,
+                Amount = subOrder.VendorEarningAmount,
+                Status = CommerceHubVendorEarningStatus.Available,
+                AvailableAtUtc = DateTime.UtcNow.AddDays(-1)
+            });
+        }
         await SaveCommerceHubFixtureAsync();
 
         return new RefundGraph(customer, order, subOrder, item, refundRequest);
@@ -547,6 +816,7 @@ public sealed class RefundExecutionServiceTests : IDisposable
             outboxMessage.MarkProcessed(journal.Id);
         }
 
+        using var ledgerAuthority = LedgerMutationScope.Authorize();
         await _dbContext.SaveChangesAsync();
     }
 

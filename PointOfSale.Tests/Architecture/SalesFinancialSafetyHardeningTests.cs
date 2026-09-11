@@ -199,6 +199,11 @@ public sealed class SalesFinancialSafetyHardeningTests
             "await PostUpdatedSaleAccountingSynchronouslyAsync",
             "await MarkSynchronousSaleAccountingOutboxProcessedAsync",
             "CompleteSalesIdempotencyAsync");
+        AssertContainsInOrder(
+            updateMethod,
+            "invoice.Status != InvoiceStatus.Draft",
+            "invoice.Status = InvoiceStatus.Completed",
+            "await PostUpdatedSaleAccountingSynchronouslyAsync");
         Assert.Contains("candidate.IdempotencyKey == idempotencyKey", helperMethod, StringComparison.Ordinal);
         Assert.Contains("candidate.AggregateVersion == mutationVersion", helperMethod, StringComparison.Ordinal);
         Assert.Contains("message.MarkProcessed(journalId.Value)", helperMethod, StringComparison.Ordinal);
@@ -272,6 +277,10 @@ public sealed class SalesFinancialSafetyHardeningTests
 
         Assert.Contains("FOR UPDATE", source, StringComparison.Ordinal);
         Assert.Contains("UPDLOCK", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT * FROM \"\"LedgerJournalEntries\"\"", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT * FROM [LedgerJournalEntries]", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT *, xmin FROM \"\"AccountingOutboxMessages\"\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECT * FROM \"\"JournalEntries\"\"", source, StringComparison.Ordinal);
         Assert.Contains("AccountingOutboxMessages", source, StringComparison.Ordinal);
         Assert.Contains("PostedJournalsExistException", source, StringComparison.Ordinal);
         Assert.Contains("SaleReversalEventType", source, StringComparison.Ordinal);
@@ -284,6 +293,27 @@ public sealed class SalesFinancialSafetyHardeningTests
         Assert.DoesNotContain("CashboxTransactions", source, StringComparison.Ordinal);
         Assert.DoesNotContain("VisaTransactions", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TreasuryTransactions", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PurchaseFinancialIntegrityService_MustLockTheMappedLedgerJournalTable()
+    {
+        var servicePath = Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "PointOfSale.API",
+            "Services",
+            "PurchaseFinancialIntegrityService.cs");
+
+        var source = File.ReadAllText(Path.GetFullPath(servicePath));
+
+        Assert.Contains("SELECT * FROM \"\"LedgerJournalEntries\"\"", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT * FROM [LedgerJournalEntries]", source, StringComparison.Ordinal);
+        Assert.Contains("SELECT *, xmin FROM \"\"AccountingOutboxMessages\"\"", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("SELECT * FROM \"\"JournalEntries\"\"", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -368,6 +398,27 @@ public sealed class SalesFinancialSafetyHardeningTests
         Assert.Contains("START WITH 1000", migrationSql);
         Assert.Contains("setval('purchase_invoice_seq'", migrationSql);
         Assert.Contains("20260408103000_AddPurchaseInvoiceSequence", migrationSql);
+    }
+
+    [Fact]
+    public void PosSalesInvoiceSequenceMigration_MustCreateAndBackfillSequence()
+    {
+        var migrationPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "PointOfSale.Infrastructure",
+            "Migrations",
+            "20260910003000_POS_SalesInvoiceNumberSequenceAuthority.cs");
+
+        var migrationSource = File.ReadAllText(Path.GetFullPath(migrationPath));
+
+        Assert.Contains("CREATE SEQUENCE IF NOT EXISTS public.\"PosSalesInvoiceNumberSeq\"", migrationSource);
+        Assert.Contains("FROM \"SalesInvoices\"", migrationSource);
+        Assert.Contains("setval(", migrationSource);
+        Assert.Contains("max_invoice_suffix", migrationSource);
     }
 
     [Fact]

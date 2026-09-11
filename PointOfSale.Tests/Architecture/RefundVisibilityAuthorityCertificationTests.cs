@@ -16,7 +16,7 @@ public sealed class RefundVisibilityAuthorityCertificationTests
         Assert.Contains("const activeRefund = acceptedRefunds.find((refund) => refund.refundId === activeRefundId) ?? null", customerRefundPage, StringComparison.Ordinal);
 
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorFinanceAuthority, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorFinanceAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorFinanceAuthority, StringComparison.Ordinal);
 
         Assert.Contains("requireRefundMediaPresentation", superAdminAuthority, StringComparison.Ordinal);
         Assert.Contains("requireSuperAdminRefundDetailsForCurrentSelection", superAdminAuthority, StringComparison.Ordinal);
@@ -25,6 +25,7 @@ public sealed class RefundVisibilityAuthorityCertificationTests
         Assert.Contains("!detailsQuery.isFetching", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("refund={acceptedRefundDetails}", superAdminPage, StringComparison.Ordinal);
         Assert.Contains("executeModalOpen && acceptedRefundDetails", superAdminPage, StringComparison.Ordinal);
-        Assert.Contains("returnModalMode && acceptedRefundDetails?.returnRequest", superAdminPage, StringComparison.Ordinal);
+        Assert.Contains("<ReturnTimeline returnRequest={refund.returnRequest} />", superAdminPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReturnTransitionModal", superAdminPage, StringComparison.Ordinal);
     }
 }

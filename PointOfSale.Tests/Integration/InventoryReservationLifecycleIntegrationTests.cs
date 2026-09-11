@@ -141,6 +141,73 @@ public sealed class InventoryReservationLifecycleIntegrationTests
     }
 
     [Fact]
+    public async Task PaymentSuccess_AfterCatalogAndWarehouseDeactivation_CommitsHistoricalReservation()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        await using var context = await CreateDbContextAsync(connection, tenantId);
+        var repository = CreateStockRepository(context);
+        var outbox = CreateAccountingOutboxMock();
+        var service = CreateLifecycleService(context, repository, outbox);
+        var scenario = await SeedReservedOrderAsync(
+            context,
+            repository,
+            tenantId,
+            paymentMethodCode: "STRIPE",
+            paymentMethodName: "Stripe",
+            paymentMethod: PaymentMethod.Card,
+            paymentStatus: PaymentStatus.Pending,
+            fulfillmentStatus: FulfillmentStatus.Created,
+            orderStatus: OrderStatus.Pending,
+            quantity: 2);
+
+        var variant = await context.ProductVariants
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.Id == scenario.VariantId);
+        var product = await context.Products
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.Id == variant.ProductId);
+        var stock = await context.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.VariantId == scenario.VariantId);
+        var warehouse = await context.Warehouses
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.Id == stock.WarehouseId);
+        product.IsActive = false;
+        variant.IsActive = false;
+        warehouse.IsActive = false;
+        await context.SaveChangesAsync();
+
+        var result = await service.CaptureOnlinePaymentAsync(
+            scenario.OrderId,
+            gateway: "stripe",
+            paymentIntentId: "pi_inventory_historical_commit",
+            providerAmount: scenario.Total,
+            providerCurrency: "EGP");
+
+        Assert.True(result.Success, result.ErrorMessage);
+
+        await using var verifyContext = await CreateDbContextAsync(connection, tenantId);
+        var persistedStock = await verifyContext.ProductVariantStocks
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.VariantId == scenario.VariantId);
+        var reservation = await verifyContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.OrderId == scenario.OrderId);
+        var order = await verifyContext.Orders
+            .IgnoreQueryFilters()
+            .SingleAsync(item => item.TenantId == tenantId && item.Id == scenario.OrderId);
+
+        Assert.Equal(7m, persistedStock.Quantity);
+        Assert.Equal(0m, persistedStock.ReservedQuantity);
+        Assert.Equal(2m, reservation.CommittedQuantity);
+        Assert.Equal(InventoryReservationStatus.Committed, reservation.Status);
+        Assert.Equal(PaymentStatus.Collected, order.PaymentStatus);
+    }
+
+    [Fact]
     public async Task PaymentSuccess_WhenCallerAlreadyOwnsTransaction_ShouldJoinAmbientTransaction()
     {
         var tenantId = Guid.NewGuid();

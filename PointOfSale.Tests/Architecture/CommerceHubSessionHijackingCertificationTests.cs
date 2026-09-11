@@ -31,7 +31,10 @@ public sealed class CommerceHubSessionHijackingCertificationTests
         AssertContains(setCookie,
             "CommerceHubCustomerAccessTokenCookieName",
             "CreateHttpOnlyOptions",
-            "\"/api/customers\"",
+            "CustomerApiCookiePath",
+            "CommerceHubApiCookiePath",
+            "Response.Cookies.Delete",
+            "CreateExpiredOptions(path)",
             "AuthCookieConfiguration.EnsureCsrfCookie(HttpContext)");
 
         AssertSecurityEventClearsCustomerCookie(controller, "[HttpPost(\"logout\")]", "[HttpPost(\"revoke-all-sessions\")]");
@@ -95,7 +98,7 @@ public sealed class CommerceHubSessionHijackingCertificationTests
             "RevokeTokenAsync(accessToken, \"logout\"",
             "RevokeAllTokensAsync(",
             "logout_blacklist_persistence_fallback",
-            "CreateExpiredOptions(\"/api/customers\")");
+            "ClearCustomerAccessCookies()");
 
         AssertContains(Slice(service, "public async Task<CommerceHubCustomerAuthResult> ResetPasswordAsync", "public async Task<CommerceHubCustomerAuthResult> VerifyEmailAsync"),
             "customer.RevokeAllSessions(now)",
@@ -198,9 +201,7 @@ public sealed class CommerceHubSessionHijackingCertificationTests
     {
         var action = Slice(controller, startMarker, endMarker);
         AssertContains(action,
-            "Response.Cookies.Delete",
-            "CommerceHubCustomerAccessTokenCookieName",
-            "CreateExpiredOptions(\"/api/customers\")");
+            "ClearCustomerAccessCookies()");
         Assert.Contains("ClearCommerceHubRecoveryCookie()", action, StringComparison.Ordinal);
     }
 

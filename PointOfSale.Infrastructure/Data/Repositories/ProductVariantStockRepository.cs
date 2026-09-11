@@ -561,7 +561,7 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
 
             var nowUtc = DateTime.UtcNow;
             var stockCache = new Dictionary<(Guid VariantId, Guid WarehouseId), ProductVariantStock>();
-            var consumableReservations = await ProductVariantInventoryLineageAuthority.FilterCurrentConsumableReservationsAsync(
+            var consumableReservations = await ProductVariantInventoryLineageAuthority.FilterHistoricallyConsumableReservationsAsync(
                 _dbContext,
                 tenantId,
                 reservations
@@ -671,7 +671,7 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
             var pendingChanges = new List<PendingRepositoryStockSyncChange>();
 
             var nowUtc = DateTime.UtcNow;
-            var openReservations = await ProductVariantInventoryLineageAuthority.FilterCurrentConsumableReservationsAsync(
+            var openReservations = await ProductVariantInventoryLineageAuthority.FilterHistoricallyConsumableReservationsAsync(
                 _dbContext,
                 tenantId,
                 reservations
@@ -1261,7 +1261,7 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
         {
             query = _dbContext.ProductVariants
                 .FromSqlInterpolated($@"
-                    SELECT * FROM ""ProductVariants""
+                    SELECT *, xmin FROM ""ProductVariants""
                     WHERE ""TenantId"" = {tenantId}
                       AND ""Id"" = {variantId}
                       AND ""IsDeleted"" = false
@@ -1303,8 +1303,13 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
         var strategy = _dbContext.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
+            // Mutation queries take deterministic row-level update locks before they
+            // validate availability. ReadCommitted lets PostgreSQL lock waiters re-read
+            // the committed row instead of aborting valid competing requests with 40001;
+            // the explicit locks still serialize every write to the affected stock and
+            // reservation rows.
             await using var transaction = await _dbContext.Database.BeginTransactionAsync(
-                IsolationLevel.Serializable,
+                IsolationLevel.ReadCommitted,
                 cancellationToken);
 
             try

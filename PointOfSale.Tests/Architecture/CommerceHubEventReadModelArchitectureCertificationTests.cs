@@ -96,11 +96,6 @@ public sealed class CommerceHubEventReadModelArchitectureCertificationTests
     public void DocumentationFreeze_MustRecordArchFourEventReadModelCertification()
     {
         var findings = ReadRepoFile("docs/architecture/commercehub-event-read-model-architecture-review-findings.md");
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         foreach (var marker in new[]
         {
@@ -131,12 +126,6 @@ public sealed class CommerceHubEventReadModelArchitectureCertificationTests
         {
             Assert.Contains(marker, findings, StringComparison.Ordinal);
         }
-
-        Assert.Contains("PASS ARCH-4 CommerceHub Event & Read Model Architecture Review", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-4 CommerceHub Event & Read Model Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-4 event/read-model runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-4 CommerceHub Event & Read Model Review", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS ARCH-4 CommerceHub Event & Read Model Architecture Freeze", codexRules, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

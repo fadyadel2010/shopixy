@@ -775,6 +775,7 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
             new NoOpEventPublisher(),
             accountingOutbox,
             commerceAccounting,
+            postingService,
             accountResolver,
             Mock.Of<ITreasuryReadService>(),
             cashboxLedgerAccountService,

@@ -16,6 +16,8 @@ namespace PointOfSale.API.Controllers;
 [Route("api/customers/auth")]
 public class CustomersAuthController : ControllerBase
 {
+    private const string CustomerApiCookiePath = "/api/customers";
+    private const string CommerceHubApiCookiePath = "/api/commercehub";
     private readonly ICommerceHubCustomerAuthService _authService;
     private readonly ICustomerTokenRevocationService _tokenRevocationService;
     private readonly IWebHostEnvironment _env;
@@ -96,7 +98,7 @@ public class CustomersAuthController : ControllerBase
 
     [HttpGet("me")]
     [Authorize(AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme, Roles = CustomerSecurityConstants.Role)]
-    [EnableRateLimiting("PublicRegisterRateLimit")]
+    [EnableRateLimiting("PublicReadRateLimit")]
     [ProducesResponseType(typeof(CustomerProfileDto), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
@@ -164,9 +166,7 @@ public class CustomersAuthController : ControllerBase
         // SECURITY: Always clear browser cookie authority, even if the access-token cookie
         // is already missing or revocation fails. The HttpOnly recovery cookie is server-
         // controlled and must not survive an auth-boundary logout attempt.
-        Response.Cookies.Delete(
-            AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-            AuthCookieConfiguration.CreateExpiredOptions("/api/customers"));
+        ClearCustomerAccessCookies();
         ClearCommerceHubRecoveryCookie();
 
         // Return 503 if revocation failed, but cookie is already cleared
@@ -220,9 +220,7 @@ public class CustomersAuthController : ControllerBase
         {
             // SECURITY: Always clear the cookie, even if revocation fails
             // This ensures fail-closed behavior - the browser won't keep sending the token
-            Response.Cookies.Delete(
-                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-                AuthCookieConfiguration.CreateExpiredOptions("/api/customers"));
+            ClearCustomerAccessCookies();
             ClearCommerceHubRecoveryCookie();
         }
 
@@ -273,9 +271,7 @@ public class CustomersAuthController : ControllerBase
         if (result.Success)
         {
             // SECURITY: Clear any existing session cookie after password reset
-            Response.Cookies.Delete(
-                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-                AuthCookieConfiguration.CreateExpiredOptions("/api/customers"));
+            ClearCustomerAccessCookies();
             ClearCommerceHubRecoveryCookie();
             return Ok(new { message = result.Message });
         }
@@ -362,9 +358,7 @@ public class CustomersAuthController : ControllerBase
         if (result.Success)
         {
             // SECURITY: Clear the cookie after password change so user must re-authenticate
-            Response.Cookies.Delete(
-                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-                AuthCookieConfiguration.CreateExpiredOptions("/api/customers"));
+            ClearCustomerAccessCookies();
             ClearCommerceHubRecoveryCookie();
             return Ok(new { message = result.Message });
         }
@@ -392,9 +386,7 @@ public class CustomersAuthController : ControllerBase
         var result = await _authService.ChangeEmailAsync(customerId.Value, request, cancellationToken);
         if (result.Success)
         {
-            Response.Cookies.Delete(
-                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-                AuthCookieConfiguration.CreateExpiredOptions("/api/customers"));
+            ClearCustomerAccessCookies();
             ClearCommerceHubRecoveryCookie();
             return Ok(new { message = result.Message });
         }
@@ -415,16 +407,29 @@ public class CustomersAuthController : ControllerBase
 
     private void SetCustomerAccessCookie(CustomerAuthResponseDto response)
     {
-        Response.Cookies.Append(
-            AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
-            response.AccessToken,
-            AuthCookieConfiguration.CreateHttpOnlyOptions(
-                response.ExpiresAt - DateTime.UtcNow > TimeSpan.Zero
-                    ? response.ExpiresAt - DateTime.UtcNow
-                    : TimeSpan.FromMinutes(1),
-                "/api/customers"));
+        var lifetime = response.ExpiresAt - DateTime.UtcNow > TimeSpan.Zero
+            ? response.ExpiresAt - DateTime.UtcNow
+            : TimeSpan.FromMinutes(1);
+
+        foreach (var path in new[] { CustomerApiCookiePath, CommerceHubApiCookiePath })
+        {
+            Response.Cookies.Append(
+                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
+                response.AccessToken,
+                AuthCookieConfiguration.CreateHttpOnlyOptions(lifetime, path));
+        }
 
         AuthCookieConfiguration.EnsureCsrfCookie(HttpContext);
+    }
+
+    private void ClearCustomerAccessCookies()
+    {
+        foreach (var path in new[] { CustomerApiCookiePath, CommerceHubApiCookiePath })
+        {
+            Response.Cookies.Delete(
+                AuthCookieConfiguration.CommerceHubCustomerAccessTokenCookieName,
+                AuthCookieConfiguration.CreateExpiredOptions(path));
+        }
     }
 
     private void ClearCommerceHubRecoveryCookie()

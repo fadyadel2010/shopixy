@@ -28,9 +28,25 @@ export interface SuperAdminVendorPayoutQueueItem {
     defaultPayoutDestinationValue?: string | null
     payoutMethods: SuperAdminVendorPayoutMethodChoice[]
     riskFlags: string[]
-    canRecordCompletedPayout: boolean
+    activePayout?: SuperAdminActiveVendorPayout | null
+    canPreparePayout: boolean
+    canCompletePayout: boolean
     executionBlockedCode?: string | null
     executionBlockedReason?: string | null
+}
+
+export interface SuperAdminActiveVendorPayout {
+    payoutId: string
+    amount: number
+    currency: string
+    status: 'Pending' | 'Processing' | 'ReconciliationRequired'
+    payoutMethodId?: string | null
+    method: string
+    destinationValueSnapshot?: string | null
+    idempotencyKey: string
+    externalTransferIdempotencyKey: string
+    externalTransferHandoffToken?: string | null
+    externalTransferHandoffCommittedAtUtc?: string | null
 }
 
 export interface SuperAdminVendorPayoutQueueCurrencySummary {
@@ -40,13 +56,17 @@ export interface SuperAdminVendorPayoutQueueCurrencySummary {
     totalHeldAmount: number
 }
 
-export interface SuperAdminExecuteVendorPayoutRequest {
+export interface SuperAdminPrepareVendorPayoutRequest {
     amount: number
     payoutMethodId: string
-    transferReference?: string
+    idempotencyKey: string
+}
+
+export interface SuperAdminCompleteVendorPayoutRequest {
     externalReferenceId?: string
     bankTransactionId?: string
-    idempotencyKey: string
+    externalTransferHandoffToken: string
+    externalTransferConfirmedExecuted: boolean
 }
 
 export interface SuperAdminVendorPayoutQueueMeta extends SuperAdminApiMeta {
@@ -66,6 +86,11 @@ export interface SuperAdminPayoutDto {
     method: string
     destinationValueSnapshot?: string | null
     reference?: string | null
+    externalReferenceId?: string | null
+    bankTransactionId?: string | null
+    externalTransferIdempotencyKey?: string | null
+    externalTransferHandoffToken?: string | null
+    externalTransferHandoffCommittedAtUtc?: string | null
     processedBy?: string | null
     idempotencyKey: string
     createdAtUtc: string
@@ -118,10 +143,20 @@ export async function getSuperAdminPayoutQueue(page: number, pageSize: number): 
     })
 }
 
-export async function executeSuperAdminVendorPayout(
+export async function prepareSuperAdminVendorPayout(
     vendorId: string,
-    payload: SuperAdminExecuteVendorPayoutRequest,
+    payload: SuperAdminPrepareVendorPayoutRequest,
 ): Promise<SuperAdminPayoutDto> {
-    const response = await superAdminApiClient.post<SuperAdminPayoutDto>(`/payouts/${vendorId}/execute`, payload)
-    return requireSuperAdminPayoutExecutionPresentation(response.data, vendorId, payload.amount)
+    const response = await superAdminApiClient.post<SuperAdminPayoutDto>(`/payouts/${vendorId}/prepare`, payload)
+    return requireSuperAdminPayoutExecutionPresentation(response.data, vendorId, payload.amount, ['Processing', 'Completed'])
+}
+
+export async function completeSuperAdminVendorPayout(
+    vendorId: string,
+    payoutId: string,
+    amount: number,
+    payload: SuperAdminCompleteVendorPayoutRequest,
+): Promise<SuperAdminPayoutDto> {
+    const response = await superAdminApiClient.post<SuperAdminPayoutDto>(`/payouts/${vendorId}/${payoutId}/complete`, payload)
+    return requireSuperAdminPayoutExecutionPresentation(response.data, vendorId, amount, ['Completed'])
 }

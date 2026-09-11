@@ -59,7 +59,9 @@ public sealed class CommerceHubProductDiscoveryCertificationTests
         var queryService = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubQueryService.cs");
 
         Assert.Contains("formatCurrency(product.price, product.currency)", productCard, StringComparison.Ordinal);
-        Assert.Contains("product.inStock ? \"In stock\" : \"Out of stock\"", productCard, StringComparison.Ordinal);
+        Assert.Contains("product.availableStock > 0", productCard, StringComparison.Ordinal);
+        Assert.Contains("? \"In stock\"", productCard, StringComparison.Ordinal);
+        Assert.Contains(": \"Out of stock\"", productCard, StringComparison.Ordinal);
         Assert.Contains("to={`/product/${product.id}`}", productCard, StringComparison.Ordinal);
         Assert.Contains("useProductDetail(id)", productDetailsPage, StringComparison.Ordinal);
         Assert.Contains("sanitizePriceSnapshot", productDetailsPage, StringComparison.Ordinal);

@@ -17,6 +17,8 @@ import { formatDate } from '../utils/dateFormat'
 import { searchCustomers } from '../services/entityLookup'
 
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value))
+export const roundQuantity = (value) => Math.round(toSafeNumber(value) * 1_000_000) / 1_000_000
+const toQuantityUnits = (value) => Math.round(toSafeNumber(value) * 1_000_000)
 
 const buildRequestId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -66,20 +68,31 @@ const calculateReturnLine = (item) => {
     const taxAmount = roundCurrency(lineSubtotal * (taxRate / 100))
     const lineSubtotalMinor = toCurrencyMinorUnits(lineSubtotal)
     const computedTaxMinor = toCurrencyMinorUnits(taxAmount)
-    const quantityUnits = toCurrencyMinorUnits(qty)
-    const originalQuantityUnits = toCurrencyMinorUnits(Math.max(0, toSafeNumber(item?.originalQuantity)))
+    const quantityUnits = toQuantityUnits(qty)
+    const originalQuantityUnits = toQuantityUnits(Math.max(0, toSafeNumber(item?.originalQuantity)))
+    const previouslyReturnedQuantityUnits = toQuantityUnits(
+        Math.max(0, toSafeNumber(item?.previouslyReturnedQuantity)),
+    )
     const hasOriginalTaxAmount = item?.originalTaxAmount != null && item?.originalTaxAmount !== ''
     const lineDiscountMinor = quantityUnits > 0 && originalQuantityUnits > 0
         ? prorateMinorUnits(
             toCurrencyMinorUnits(item?.originalDiscountAmount),
-            quantityUnits,
+            previouslyReturnedQuantityUnits + quantityUnits,
+            originalQuantityUnits,
+        ) - prorateMinorUnits(
+            toCurrencyMinorUnits(item?.originalDiscountAmount),
+            previouslyReturnedQuantityUnits,
             originalQuantityUnits,
         )
         : 0
     const taxMinor = quantityUnits > 0 && originalQuantityUnits > 0 && hasOriginalTaxAmount
         ? prorateMinorUnits(
             toCurrencyMinorUnits(item.originalTaxAmount),
-            quantityUnits,
+            previouslyReturnedQuantityUnits + quantityUnits,
+            originalQuantityUnits,
+        ) - prorateMinorUnits(
+            toCurrencyMinorUnits(item.originalTaxAmount),
+            previouslyReturnedQuantityUnits,
             originalQuantityUnits,
         )
         : computedTaxMinor
@@ -88,27 +101,55 @@ const calculateReturnLine = (item) => {
         quantity: qty,
         lineSubtotalMinor,
         lineDiscountMinor,
+        discountBasisMinor: lineSubtotalMinor - lineDiscountMinor,
         taxMinor,
     }
 }
 
-const calculateReturnTotals = (items, originalInvoice) => {
+export const calculateReturnTotals = (items, originalInvoice) => {
     const lineInputs = items.map(item => calculateReturnLine(item))
 
     const activeLines = lineInputs.filter(line => line.quantity > 0)
-    const currentReturnGrossSubtotalMinor = activeLines.reduce(
-        (total, line) => total + line.lineSubtotalMinor,
+    const currentReturnDiscountBasisMinor = activeLines.reduce(
+        (total, line) => total + line.discountBasisMinor,
+        0,
+    )
+    const previouslyReturnedDiscountBasisMinor = items.reduce((total, item) => {
+        const previousQuantityUnits = toQuantityUnits(
+            Math.max(0, toSafeNumber(item?.previouslyReturnedQuantity)),
+        )
+        const originalQuantityUnits = toQuantityUnits(
+            Math.max(0, toSafeNumber(item?.originalQuantity)),
+        )
+        const previousGrossSubtotalMinor = toCurrencyMinorUnits(
+            Math.max(0, toSafeNumber(item?.previouslyReturnedQuantity)) *
+            Math.max(0, toSafeNumber(item?.originalUnitPrice ?? item?.unitPrice)),
+        )
+        const previousLineDiscountMinor = prorateMinorUnits(
+            toCurrencyMinorUnits(item?.originalDiscountAmount),
+            previousQuantityUnits,
+            originalQuantityUnits,
+        )
+        return total + previousGrossSubtotalMinor - previousLineDiscountMinor
+    }, 0)
+    const originalInvoiceDiscountMinor = toCurrencyMinorUnits(originalInvoice?.discountAmount)
+    const originalInvoiceDiscountBasisMinor = toCurrencyMinorUnits(originalInvoice?.subtotal) - items.reduce(
+        (total, item) => total + toCurrencyMinorUnits(item?.originalDiscountAmount),
         0,
     )
     const currentInvoiceDiscountMinor = prorateMinorUnits(
-        toCurrencyMinorUnits(originalInvoice?.discountAmount),
-        currentReturnGrossSubtotalMinor,
-        toCurrencyMinorUnits(originalInvoice?.subtotal),
+        originalInvoiceDiscountMinor,
+        previouslyReturnedDiscountBasisMinor + currentReturnDiscountBasisMinor,
+        originalInvoiceDiscountBasisMinor,
+    ) - prorateMinorUnits(
+        originalInvoiceDiscountMinor,
+        previouslyReturnedDiscountBasisMinor,
+        originalInvoiceDiscountBasisMinor,
     )
     const invoiceDiscountSharesMinor = allocateMinorUnitsAcrossLines(
         activeLines,
         currentInvoiceDiscountMinor,
-        line => line.lineSubtotalMinor,
+        line => line.discountBasisMinor,
     )
 
     let activeLineIndex = 0
@@ -161,8 +202,8 @@ const calculateReturnTotals = (items, originalInvoice) => {
 }
 
 const formatVariantDisplayName = (item, t) => {
-    const productName = item?.product?.name || t('common.unknown')
-    const variantAttributes = item?.productVariant?.attributes
+    const productName = item.productName
+    const variantAttributes = item.variantAttributes
 
     if (Array.isArray(variantAttributes) && variantAttributes.length > 0) {
         return `${productName} - ${variantAttributes.map(attribute => attribute.value).join(' / ')}`
@@ -172,8 +213,8 @@ const formatVariantDisplayName = (item, t) => {
         return `${productName} - ${Object.values(variantAttributes).join(' / ')}`
     }
 
-    if (item?.productVariant?.sku) {
-        return `${productName} (${item.productVariant.sku})`
+    if (item.variantSku) {
+        return `${productName} (${item.variantSku})`
     }
 
     return productName
@@ -199,6 +240,9 @@ export default function SalesReturns() {
     // Form State
     const [warehouses, setWarehouses] = useState([])
     const [salesInvoices, setSalesInvoices] = useState([])
+    const [invoicesLoading, setInvoicesLoading] = useState(false)
+    const [invoicesError, setInvoicesError] = useState('')
+    const [invoiceLoading, setInvoiceLoading] = useState(false)
 
     const [selectedCustomer, setSelectedCustomer] = useState(null)
     const [warehouseId, setWarehouseId] = useState('')
@@ -229,6 +273,11 @@ export default function SalesReturns() {
     const subtotal = returnSummary.subtotal
     const tax = returnSummary.tax
     const total = returnSummary.total
+    const remainingCashRefundable = Math.max(0, toSafeNumber(originalInvoice?.remainingCashRefundableAmount))
+    const remainingCardRefundable = Math.max(0, toSafeNumber(originalInvoice?.remainingCardRefundableAmount))
+    const hasLegacySettlementGap = Boolean(originalInvoice?.hasLegacySettlementGap)
+    const cashRefundUnavailable = hasLegacySettlementGap || remainingCashRefundable <= 0 || total > remainingCashRefundable
+    const cardRefundUnavailable = hasLegacySettlementGap || remainingCardRefundable <= 0 || total > remainingCardRefundable
     const returnItems = items.filter(item => toSafeNumber(item.quantity) > 0)
     const hasDraftChanges = Boolean(
         customerId ||
@@ -283,6 +332,7 @@ export default function SalesReturns() {
             if (!warehouseId && warehousesData.length > 0) {
                 setWarehouseId(warehousesData[0].id)
             }
+            await fetchSalesInvoices(null)
         } catch (error) {
             console.error('Error loading initial data:', error)
             showError(t('salesReturns.failedToLoadData'))
@@ -293,16 +343,19 @@ export default function SalesReturns() {
         setRefundMethod(nextRefundMethod)
     }
 
-    const fetchSalesInvoices = async (customerId) => {
+    const fetchSalesInvoices = async (nextCustomerId = null) => {
         const requestId = salesInvoicesRequestIdRef.current + 1
         salesInvoicesRequestIdRef.current = requestId
+        setInvoicesLoading(true)
+        setInvoicesError('')
 
         try {
-            const response = await api.get(`/sales?customerId=${customerId}&pageSize=50`)
+            const query = nextCustomerId ? `?customerId=${nextCustomerId}&pageSize=50` : '?pageSize=50'
+            const response = await api.get(`/salesreturns/eligible-invoices${query}`)
             if (requestId !== salesInvoicesRequestIdRef.current) {
                 return
             }
-            const invoicesData = response.data.items || response.data || []
+            const invoicesData = response.data || []
             setSalesInvoices(invoicesData)
         } catch (error) {
             if (requestId !== salesInvoicesRequestIdRef.current) {
@@ -310,6 +363,11 @@ export default function SalesReturns() {
             }
             console.error('Error fetching sales invoices:', error)
             setSalesInvoices([])
+            setInvoicesError(t('salesReturns.failedToLoadEligibleInvoices'))
+        } finally {
+            if (requestId === salesInvoicesRequestIdRef.current) {
+                setInvoicesLoading(false)
+            }
         }
     }
 
@@ -323,11 +381,7 @@ export default function SalesReturns() {
         setOriginalInvoice(null)
         setItems([])
         resetRefundSelection()
-        if (nextCustomerId) {
-            fetchSalesInvoices(nextCustomerId)
-        } else {
-            setSalesInvoices([])
-        }
+        fetchSalesInvoices(nextCustomerId || null)
     }
 
     const handleInvoiceSelect = async (invoiceId) => {
@@ -341,24 +395,39 @@ export default function SalesReturns() {
             return
         }
 
+        setInvoiceLoading(true)
         try {
             const response = await api.get(`/salesreturns/invoice/${invoiceId}`)
             if (requestId !== invoiceRequestIdRef.current) {
                 return
             }
             setOriginalInvoice(response.data)
+            setSelectedCustomer(response.data.customer || null)
+            setWarehouseId(response.data.warehouse.id)
+            resetRefundSelection(
+                response.data.customer
+                    ? 'accountCredit'
+                    : toSafeNumber(response.data.remainingCashRefundableAmount) > 0
+                        ? 'cash'
+                        : 'card',
+            )
 
             const returnItems = response.data.items.map(item => {
                 return {
                     productId: item.productId,
                     productVariantId: item.productVariantId,
-                    name: item.product?.name || t('common.unknown'),
+                    name: item.productName,
+                    productName: item.productName,
                     variantDisplayName: formatVariantDisplayName(item, t),
-                    variantSku: item.productVariant?.sku || '',
-                    variantAttributes: item.productVariant?.attributes || null,
+                    variantSku: item.variantSku,
+                    variantAttributes: item.variantAttributes,
                     unitId: item.unitId,
-                    unitName: item.unit?.name || t('common.unit'),
-                    originalQuantity: roundCurrency(item.quantity),
+                    unitName: item.unitName || t('common.unit'),
+                    conversionFactor: item.conversionFactor,
+                    originalQuantity: roundQuantity(item.soldQuantity),
+                    soldQuantity: roundQuantity(item.soldQuantity),
+                    previouslyReturnedQuantity: roundQuantity(item.previouslyReturnedQuantity),
+                    remainingQuantity: roundQuantity(item.remainingQuantity),
                     quantity: 0,
                     unitPrice: roundCurrency(item.unitPrice),
                     originalUnitPrice: roundCurrency(item.unitPrice),
@@ -379,6 +448,10 @@ export default function SalesReturns() {
             setOriginalInvoice(null)
             setItems([])
             showError(t('salesReturns.failedToLoadInvoice'))
+        } finally {
+            if (requestId === invoiceRequestIdRef.current) {
+                setInvoiceLoading(false)
+            }
         }
     }
 
@@ -391,7 +464,7 @@ export default function SalesReturns() {
             if (field === 'quantity') {
                 return {
                     ...item,
-                    quantity: clampNumber(roundCurrency(value), 0, toSafeNumber(item.originalQuantity)),
+                    quantity: clampNumber(roundQuantity(value), 0, toSafeNumber(item.remainingQuantity)),
                 }
             }
 
@@ -416,6 +489,9 @@ export default function SalesReturns() {
         setNotes('')
         resetRefundSelection()
         setSalesInvoices([])
+        setInvoicesError('')
+        setInvoicesLoading(false)
+        setInvoiceLoading(false)
         submissionLockRef.current = false
         lastSubmissionRef.current = null
     }
@@ -460,14 +536,14 @@ export default function SalesReturns() {
         }
 
         for (const item of returnItems) {
-            const quantity = roundCurrency(item.quantity)
-            const originalQuantity = roundCurrency(item.originalQuantity)
+            const quantity = roundQuantity(item.quantity)
+            const remainingQuantity = roundQuantity(item.remainingQuantity)
 
             if (!Number.isFinite(quantity) || quantity <= 0) {
                 return t('salesReturns.invalidReturnQuantity', { product: item.name })
             }
 
-            if (quantity > originalQuantity) {
+            if (quantity > remainingQuantity) {
                 return t('salesReturns.cannotReturnMore', { product: item.name })
             }
 
@@ -482,6 +558,26 @@ export default function SalesReturns() {
 
         if (total <= 0) {
             return t('salesReturns.totalMustBePositive')
+        }
+
+        if (refundMethod === 'accountCredit' && !customerId) {
+            return t('salesReturns.customerAccountRequired')
+        }
+
+        if (refundMethod !== 'accountCredit' && hasLegacySettlementGap) {
+            return t('salesReturns.legacySettlementGap')
+        }
+
+        if (refundMethod === 'cash' && cashRefundUnavailable) {
+            return t('salesReturns.cashRefundExceedsCollected', {
+                amount: formatCurrency(remainingCashRefundable),
+            })
+        }
+
+        if (refundMethod === 'card' && cardRefundUnavailable) {
+            return t('salesReturns.cardRefundExceedsCollected', {
+                amount: formatCurrency(remainingCardRefundable),
+            })
         }
 
         return ''
@@ -510,7 +606,7 @@ export default function SalesReturns() {
                 productId: item.productId,
                 productVariantId: item.productVariantId,
                 unitId: item.unitId,
-                quantity: roundCurrency(item.quantity),
+                quantity: roundQuantity(item.quantity),
                 reason: item.reason || null,
             })),
             reason: reason.trim() || null,
@@ -525,6 +621,12 @@ export default function SalesReturns() {
             toSafeNumber(item.quantity) > 0
                 ? [{
                     productName: item.name,
+                    variantDescription: Array.isArray(item.variantAttributes)
+                        ? item.variantAttributes.map(attribute => `${attribute.name}: ${attribute.value}`).join(' / ')
+                        : '',
+                    variantSku: item.variantSku,
+                    unitName: item.unitName,
+                    conversionFactor: item.conversionFactor,
                     quantity: item.quantity,
                     unitPrice: item.originalUnitPrice,
                     total: returnSummary.lines[index]?.total || 0,
@@ -556,6 +658,7 @@ export default function SalesReturns() {
                     setReceiptData({
                         receipt: {
                             invoiceNumber: returnData.returnNumber,
+                            originalInvoiceNumber: originalInvoice.invoiceNumber,
                             invoiceDate: returnDate,
                             customerName: selectedCustomer?.name || t('salesHistory.walkInCustomer'),
                             warehouseName: warehouses.find(w => w.id === warehouseId)?.name || t('common.unknown'),
@@ -571,6 +674,8 @@ export default function SalesReturns() {
                                     : t('salesReturns.refundFromVisa'),
                             paid: returnData.refundAmount || 0,
                             change: 0,
+                            reason: reason.trim() || null,
+                            notes: notes.trim() || null,
                         },
                     })
                     setShowReceiptModal(true)
@@ -684,9 +789,9 @@ export default function SalesReturns() {
 
     return (
         <div className="h-full flex flex-col gap-6" dir={isRTL ? 'rtl' : 'ltr'}>
-            <div className={`flex justify-between items-center ${isRTL ? 'flex-row-reverse' : ''}`}>
+            <div className={`flex flex-wrap justify-between items-center gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
                 <h1 className="text-2xl font-bold text-gray-800">{t('salesReturns.newReturnTitle')}</h1>
-                <div className={`flex items-center gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
+                <div className={`flex flex-wrap items-center gap-3 ${isRTL ? 'flex-row-reverse' : ''}`}>
                     <div className="flex bg-gray-100 rounded-lg p-1">
                         <button
                             type="button"
@@ -717,9 +822,9 @@ export default function SalesReturns() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full overflow-hidden">
-                <div className={`lg:col-span-2 flex flex-col gap-6 overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
-                    <div className="bg-white p-4 rounded-lg shadow grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-full lg:overflow-hidden">
+                <div className={`lg:col-span-2 flex flex-col gap-6 lg:overflow-y-auto ${isRTL ? 'lg:pl-2' : 'lg:pr-2'}`}>
+                    <div className="bg-white p-4 rounded-lg shadow grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('salesReturns.customerOptional')}</label>
                             <AsyncEntitySelect
@@ -728,7 +833,7 @@ export default function SalesReturns() {
                                 loadOptions={searchCustomers}
                                 placeholder={t('salesHistory.walkInCustomer')}
                                 emptyText={t('customers.noCustomers')}
-                                disabled={loading}
+                                disabled={loading || Boolean(originalInvoice)}
                                 renderOption={(customerOption) => (
                                     <div>
                                         <div className="font-medium text-gray-900">{customerOption.name}</div>
@@ -743,7 +848,7 @@ export default function SalesReturns() {
                                 value={warehouseId}
                                 onChange={(e) => setWarehouseId(e.target.value)}
                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
-                                disabled={loading}
+                                disabled={loading || Boolean(originalInvoice)}
                             >
                                 {warehouses?.map(w => (
                                     <option key={w.id} value={w.id}>{w.name}</option>
@@ -766,17 +871,37 @@ export default function SalesReturns() {
                                 value={originalInvoiceId}
                                 onChange={(e) => handleInvoiceSelect(e.target.value)}
                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
-                                disabled={!customerId || loading}
+                                disabled={loading || invoicesLoading || invoiceLoading}
                             >
-                                <option value="">{t('salesReturns.selectInvoiceOptional')}</option>
+                                <option value="">
+                                    {invoicesLoading
+                                        ? t('common.loading')
+                                        : t('salesReturns.selectInvoiceOptional')}
+                                </option>
                                 {salesInvoices?.map(inv => (
                                     <option key={inv.id} value={inv.id}>
                                         {inv.invoiceNumber} - {formatCurrency(inv.totalAmount)}
+                                        {inv.customer?.name ? ` - ${inv.customer.name}` : ''}
                                     </option>
                                 ))}
                             </select>
+                            {invoicesError ? (
+                                <div className="mt-2 flex items-center justify-between gap-2 text-sm text-red-700">
+                                    <span>{invoicesError}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => fetchSalesInvoices(customerId || null)}
+                                        className="font-medium underline"
+                                    >
+                                        {t('common.retry')}
+                                    </button>
+                                </div>
+                            ) : null}
+                            {!invoicesLoading && !invoicesError && salesInvoices.length === 0 ? (
+                                <div className="mt-2 text-sm text-gray-500">{t('salesReturns.noEligibleInvoices')}</div>
+                            ) : null}
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('salesReturns.reasonForReturn')}</label>
                             <input
                                 type="text"
@@ -787,7 +912,7 @@ export default function SalesReturns() {
                                 disabled={loading}
                             />
                         </div>
-                        <div className="col-span-2">
+                        <div className="sm:col-span-2">
                             <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('common.description')}</label>
                             <textarea
                                 value={notes}
@@ -811,17 +936,24 @@ export default function SalesReturns() {
                                         <th className={`px-4 py-2 text-xs font-medium text-gray-500 uppercase ${isRTL ? 'text-right' : 'text-left'}`}>{t('salesReturns.product')}</th>
                                         <th className={`px-4 py-2 text-xs font-medium text-gray-500 uppercase ${isRTL ? 'text-right' : 'text-left'}`}>{t('units.unit')}</th>
                                         <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('salesReturns.sold')}</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('salesReturns.returnQty')}</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-32">{t('salesReturns.unitPrice')}</th>
-                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-20">{t('salesReturns.taxPercent')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('salesReturns.previouslyReturned')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24">{t('salesReturns.remaining')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-28 min-w-28">{t('salesReturns.returnQty')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24 min-w-24">{t('salesReturns.conversion')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-36 min-w-36">{t('salesReturns.unitPrice')}</th>
+                                        <th className="px-4 py-2 text-center text-xs font-medium text-gray-500 uppercase w-24 min-w-24">{t('salesReturns.taxPercent')}</th>
                                         <th className={`px-4 py-2 text-xs font-medium text-gray-500 uppercase w-32 ${isRTL ? 'text-left' : 'text-right'}`}>{t('common.total')}</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">
                                     {items.length === 0 ? (
                                         <tr>
-                                            <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
-                                                {originalInvoiceId ? t('salesReturns.noItemsInInvoice') : t('salesReturns.selectInvoiceToLoad')}
+                                            <td colSpan="10" className="px-4 py-8 text-center text-gray-500">
+                                                {invoiceLoading
+                                                    ? t('common.loading')
+                                                    : originalInvoiceId
+                                                        ? t('salesReturns.noItemsInInvoice')
+                                                        : t('salesReturns.selectInvoiceToLoad')}
                                             </td>
                                         </tr>
                                     ) : (
@@ -839,24 +971,33 @@ export default function SalesReturns() {
                                                 <td className="px-4 py-2 text-center text-sm text-gray-600">
                                                     {item.originalQuantity}
                                                 </td>
+                                                <td className="px-4 py-2 text-center text-sm text-gray-600">
+                                                    {item.previouslyReturnedQuantity}
+                                                </td>
+                                                <td className="px-4 py-2 text-center text-sm font-medium text-gray-700">
+                                                    {item.remainingQuantity}
+                                                </td>
                                                 <td className="px-4 py-2">
                                                     <input
                                                         type="number"
                                                         value={item.quantity}
                                                         onChange={(e) => updateItem(index, 'quantity', e.target.value)}
-                                                        className="input w-full text-center p-1"
+                                                        className="input w-full min-w-24 text-center p-1"
                                                         min="0"
-                                                        max={item.originalQuantity}
-                                                        step="0.01"
+                                                        max={item.remainingQuantity}
+                                                        step="0.000001"
                                                         disabled={loading}
                                                     />
+                                                </td>
+                                                <td className="px-4 py-2 min-w-24 text-center text-sm text-gray-600">
+                                                    x{item.conversionFactor}
                                                 </td>
                                                 <td className="px-4 py-2">
                                                     <input
                                                         type="number"
                                                         value={item.originalUnitPrice}
                                                         readOnly
-                                                        className="input w-full bg-gray-50 text-center p-1 text-gray-600"
+                                                        className="input w-full min-w-32 bg-gray-50 text-center p-1 text-gray-600"
                                                         tabIndex={-1}
                                                     />
                                                 </td>
@@ -865,7 +1006,7 @@ export default function SalesReturns() {
                                                         type="number"
                                                         value={item.originalTaxRate}
                                                         readOnly
-                                                        className="input w-full bg-gray-50 text-center p-1 text-gray-600"
+                                                        className="input w-full min-w-20 bg-gray-50 text-center p-1 text-gray-600"
                                                         tabIndex={-1}
                                                     />
                                                 </td>
@@ -903,6 +1044,14 @@ export default function SalesReturns() {
                         <div className="space-y-4 border-t border-gray-200 pt-6">
                             <div className="space-y-4">
                                 <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('salesReturns.refundMethod')}</label>
+                                {originalInvoice ? (
+                                    <div className={`rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600 ${isRTL ? 'text-right' : 'text-left'}`}>
+                                        {t('salesReturns.remainingTenderCapacity', {
+                                            cash: formatCurrency(remainingCashRefundable),
+                                            card: formatCurrency(remainingCardRefundable),
+                                        })}
+                                    </div>
+                                ) : null}
                                 <div className="flex flex-col gap-2">
                                     <label className={`flex items-center gap-2 cursor-pointer ${isRTL ? 'flex-row-reverse justify-end' : ''}`}>
                                         <input
@@ -912,7 +1061,7 @@ export default function SalesReturns() {
                                             checked={refundMethod === 'accountCredit'}
                                             onChange={() => resetRefundSelection('accountCredit')}
                                             className="text-blue-600 focus:ring-blue-500"
-                                            disabled={loading}
+                                            disabled={loading || !customerId}
                                         />
                                         <span className="text-sm font-medium">{t('salesReturns.creditToAccount')}</span>
                                     </label>
@@ -924,7 +1073,7 @@ export default function SalesReturns() {
                                             checked={refundMethod === 'cash'}
                                             onChange={() => resetRefundSelection('cash')}
                                             className="text-blue-600 focus:ring-blue-500"
-                                            disabled={loading}
+                                            disabled={loading || cashRefundUnavailable}
                                         />
                                         <span className="text-sm font-medium">{t('salesReturns.refundFromCash')}</span>
                                     </label>
@@ -936,7 +1085,7 @@ export default function SalesReturns() {
                                             checked={refundMethod === 'card'}
                                             onChange={() => resetRefundSelection('card')}
                                             className="text-blue-600 focus:ring-blue-500"
-                                            disabled={loading}
+                                            disabled={loading || cardRefundUnavailable}
                                         />
                                         <span className="text-sm font-medium">{t('salesReturns.refundFromVisa')}</span>
                                     </label>

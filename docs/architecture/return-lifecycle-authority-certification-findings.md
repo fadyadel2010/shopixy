@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: Return Lifecycle Authority is production-certifiable for the inspected frontend runtime.
+Status: Updated 2026-09-03. The owning POS vendor controls policy-bounded return logistics; Super Admin return monitoring is read-only.
 
 ## Lifecycle vocabulary
 
@@ -34,11 +34,11 @@ CommerceHub customer runtime exposes refund request/history/order-linked evidenc
 
 ## Vendor findings
 
-The inspected vendor runtime presents current-session-scoped financial refund impacts only. Vendor refund-impact rows do not carry CommerceHub return lifecycle transitions and cannot repair, override, advance, or restore return lifecycle. POS Admin vendor receipt confirmation is backend-authorized outside frontend lifecycle authority and remains endpoint/policy controlled.
+Vendor financial refund impacts remain read-only. The separate vendor order detail surface presents backend-granted schedule, pickup, transit, delivery, failure, and receipt actions. Every mutation re-enters current vendor/order/return authority and remains endpoint/policy controlled.
 
 ## Admin findings
 
-Super Admin monitoring is visibility only. Selected rows are re-derived from the current accepted refund list. Return details must match current refund, order item, customer, and vendor lineage and pass the exact lifecycle vocabulary, trigger, timestamp, action-boolean, and identity boundary. Return override and failure dialogs are shown only from accepted current detail and close during refresh, failure, or current authority loss.
+Super Admin return monitoring is visibility only. Selected rows are re-derived from the current accepted refund list. Return details must match current refund, order item, customer, and vendor lineage and pass the exact lifecycle vocabulary, trigger, timestamp, action-boolean, and identity boundary. No Super Admin return transition dialog or mutation endpoint exists.
 
 ## Refund consistency findings
 
@@ -54,7 +54,7 @@ Payment lifecycle cannot create or repair return lifecycle. Payment status, paym
 
 ## Transition findings
 
-Frontend cannot create, skip, jump, replay, or locally advance return transitions. Super Admin return mutation submission refetches current backend monitoring authority and current detail authority, uses the refreshed backend `returnId`, and only then sends backend-bound intent. Mark-failed additionally requires current `canMarkFailed` evidence.
+Frontend cannot create, skip, jump, replay, or locally advance return transitions. POS vendor submission refetches current vendor order authority, uses the refreshed backend `returnId` and status, and only then sends backend-bound intent. Failure additionally requires current `canMarkFailed` evidence and a reason.
 
 ## Bootstrap findings
 
@@ -74,11 +74,16 @@ Lifecycle replay, storage replay, history replay, route replay, selection replay
 
 ## Runtime hardening performed
 
-No runtime code change was required in M5-C. Existing M4-A/M4-C/M5-A/M5-B boundaries already enforce exact return target validation, current-list/current-detail mutation re-entry, stale dialog closure, and fail-closed DTO validation.
+The 2026-09-03 correction moved runtime return transitions from Super Admin to tenant-scoped POS vendor endpoints, added expected-status fencing, and removed Super Admin return mutation controls.
 
 ## Exact runtime files modified
 
-None.
+- `PointOfSale.API/Controllers/PosAdminReturnsController.cs`
+- `PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs`
+- `PointOfSale.API/SuperAdmin/Controllers/SuperAdminReturnsController.cs`
+- `PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js`
+- `PointOfSale.Web/src/pages/CommerceHubOrders.jsx`
+- `PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx`
 
 ## Regression freezes added
 
@@ -98,7 +103,7 @@ None.
 - Who owns return lifecycle authority? Backend return/refund/order/payment/tenant/actor workflow, SQL, lock, idempotency, and endpoint authorization authorities.
 - Can frontend fabricate lifecycle? No.
 - Can customer advance lifecycle? No.
-- Can vendor advance lifecycle? No.
+- Can vendor advance lifecycle? Yes, only for its own return and only through the current backend-granted next transition.
 - Can monitoring become lifecycle authority? No.
 - Can refund lifecycle create return lifecycle? No.
 - Can order lifecycle create return lifecycle? No.
@@ -109,5 +114,5 @@ None.
 - Can cache restore lifecycle? No.
 - Can replay restore lifecycle? No.
 - Can tenant leakage occur? No inspected frontend path bypasses backend tenant/actor authority.
-- Were runtime changes required? No.
+- Were runtime changes required? Yes, to align lifecycle authority with vendor ownership.
 - Is Return Lifecycle Authority production-certifiable? Yes, for the inspected frontend runtime.

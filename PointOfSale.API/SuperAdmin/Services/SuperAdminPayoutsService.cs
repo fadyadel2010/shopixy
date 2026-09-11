@@ -4,6 +4,7 @@ using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.CommerceHub.Finance;
 using PointOfSale.API.SuperAdmin.DTOs;
 using PointOfSale.Core.Constants;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Pagination;
 using PointOfSale.Infrastructure.Data;
@@ -105,12 +106,61 @@ public sealed class SuperAdminPayoutsService : ISuperAdminPayoutsService
         var payoutMethodsLookup = payoutMethods
             .GroupBy(row => row.VendorId)
             .ToDictionary(group => group.Key, group => group.Select(row => row.Method).ToList());
+        var activePayoutRows = await _dbContext.CommerceHubPayouts
+            .AsNoTracking()
+            .Where(payout =>
+                vendorIds.Contains(payout.TenantId) &&
+                !payout.IsDeleted &&
+                (payout.Status == CommerceHubPayoutStatus.Pending ||
+                 payout.Status == CommerceHubPayoutStatus.Processing ||
+                 payout.Status == CommerceHubPayoutStatus.ReconciliationRequired))
+            .Select(payout => new
+            {
+                payout.TenantId,
+                payout.Id,
+                payout.Amount,
+                payout.Currency,
+                payout.Status,
+                payout.PayoutMethodId,
+                payout.Method,
+                payout.DestinationValueSnapshot,
+                payout.IdempotencyKey,
+                payout.ExternalTransferIdempotencyKey,
+                payout.ExternalTransferHandoffToken,
+                payout.ExternalTransferHandoffCommittedAtUtc,
+                payout.CreatedAt
+            })
+            .ToListAsync(cancellationToken);
+        var activePayoutLookup = activePayoutRows
+            .GroupBy(payout => payout.TenantId)
+            .ToDictionary(
+            group => group.Key,
+            group => group
+                .OrderByDescending(payout => payout.Status == CommerceHubPayoutStatus.ReconciliationRequired)
+                .ThenByDescending(payout => payout.Status == CommerceHubPayoutStatus.Processing)
+                .ThenBy(payout => payout.CreatedAt)
+                .Select(payout => new SuperAdminActiveVendorPayoutDto
+                {
+                    PayoutId = payout.Id,
+                    Amount = payout.Amount,
+                    Currency = payout.Currency,
+                    Status = payout.Status.ToString(),
+                    PayoutMethodId = payout.PayoutMethodId,
+                    Method = payout.Method.ToString(),
+                    DestinationValueSnapshot = payout.DestinationValueSnapshot,
+                    IdempotencyKey = payout.IdempotencyKey,
+                    ExternalTransferIdempotencyKey = payout.ExternalTransferIdempotencyKey,
+                    ExternalTransferHandoffToken = payout.ExternalTransferHandoffToken,
+                    ExternalTransferHandoffCommittedAtUtc = payout.ExternalTransferHandoffCommittedAtUtc
+                })
+                .First());
 
         var items = pageSnapshots
             .Select(snapshot =>
             {
                 var payoutMethodChoices = payoutMethodsLookup.GetValueOrDefault(snapshot.VendorId) ?? new List<SuperAdminVendorPayoutMethodChoiceDto>();
-                var executionState = BuildQueueExecutionState(snapshot, payoutMethodChoices.Count);
+                var activePayout = activePayoutLookup.GetValueOrDefault(snapshot.VendorId);
+                var executionState = BuildQueueExecutionState(snapshot, payoutMethodChoices.Count, activePayout);
 
                 return new SuperAdminVendorPayoutQueueItemDto
                 {
@@ -128,7 +178,9 @@ public sealed class SuperAdminPayoutsService : ISuperAdminPayoutsService
                     DefaultPayoutDestinationValue = snapshot.DefaultPayoutDestinationValue,
                     PayoutMethods = payoutMethodChoices,
                     RiskFlags = snapshot.RiskFlags.ToList(),
-                    CanRecordCompletedPayout = executionState.CanRecordCompletedPayout,
+                    ActivePayout = activePayout,
+                    CanPreparePayout = executionState.CanPreparePayout,
+                    CanCompletePayout = executionState.CanCompletePayout,
                     ExecutionBlockedCode = executionState.ExecutionBlockedCode,
                     ExecutionBlockedReason = executionState.ExecutionBlockedReason
                 };
@@ -153,36 +205,61 @@ public sealed class SuperAdminPayoutsService : ISuperAdminPayoutsService
 
     private static QueueExecutionState BuildQueueExecutionState(
         CommerceHubVendorPayoutSnapshot snapshot,
-        int payoutMethodCount)
+        int payoutMethodCount,
+        SuperAdminActiveVendorPayoutDto? activePayout)
     {
+        if (activePayout != null)
+        {
+            var isPending = string.Equals(activePayout.Status, nameof(CommerceHubPayoutStatus.Pending), StringComparison.Ordinal);
+            if (isPending &&
+                (!activePayout.PayoutMethodId.HasValue || string.IsNullOrWhiteSpace(activePayout.DestinationValueSnapshot)))
+            {
+                return new QueueExecutionState(
+                    CanPreparePayout: false,
+                    CanCompletePayout: false,
+                    ExecutionBlockedCode: "PAYOUT_METHOD_NOT_FOUND",
+                    ExecutionBlockedReason: "The pending payout has no immutable payout destination and cannot be handed off.");
+            }
+
+            return new QueueExecutionState(
+                CanPreparePayout: isPending,
+                CanCompletePayout: !isPending,
+                ExecutionBlockedCode: null,
+                ExecutionBlockedReason: null);
+        }
+
         if (snapshot.RiskFlags.Contains(PayoutRiskFlags.ExternalTransferReconciliationRequired, StringComparer.Ordinal))
         {
             return new QueueExecutionState(
-                CanRecordCompletedPayout: false,
+                CanPreparePayout: false,
+                CanCompletePayout: false,
                 ExecutionBlockedCode: "PAYOUT_EXTERNAL_TRANSFER_RECONCILIATION_REQUIRED",
-                ExecutionBlockedReason: "A prior payout for this vendor is quarantined for external-transfer reconciliation. Resolve that payout before recording another completed payout.");
+                ExecutionBlockedReason: "A prior payout for this vendor is quarantined for external-transfer reconciliation, but its committed handoff could not be loaded.");
         }
 
         if (snapshot.RiskFlags.Contains(PayoutRiskFlags.StaleExternalTransferProcessing, StringComparer.Ordinal))
         {
             return new QueueExecutionState(
-                CanRecordCompletedPayout: false,
+                CanPreparePayout: false,
+                CanCompletePayout: false,
                 ExecutionBlockedCode: "PAYOUT_EXTERNAL_TRANSFER_RECONCILIATION_REQUIRED",
-                ExecutionBlockedReason: "A prior payout for this vendor is still stuck in processing beyond the safe reconciliation window. Quarantine and reconcile that payout before recording another completed payout.");
+                ExecutionBlockedReason: "A prior payout is stuck in processing, but its committed handoff could not be loaded.");
         }
 
         if (payoutMethodCount <= 0)
         {
             return new QueueExecutionState(
-                CanRecordCompletedPayout: false,
+                CanPreparePayout: false,
+                CanCompletePayout: false,
                 ExecutionBlockedCode: "PAYOUT_METHOD_NOT_FOUND",
-                ExecutionBlockedReason: "No payout method is configured for this vendor. Add a payout destination before recording a completed payout.");
+                ExecutionBlockedReason: "No payout method is configured for this vendor. Add a payout destination before preparing a payout.");
         }
 
         if (snapshot.TotalPayable <= 0m)
         {
             return new QueueExecutionState(
-                CanRecordCompletedPayout: false,
+                CanPreparePayout: false,
+                CanCompletePayout: false,
                 ExecutionBlockedCode: "NO_VENDOR_PAYABLE",
                 ExecutionBlockedReason: "This vendor does not currently have a payable balance available for payout.");
         }
@@ -193,19 +270,22 @@ public sealed class SuperAdminPayoutsService : ISuperAdminPayoutsService
             if (authorityBlockingRisk != null)
             {
                 return new QueueExecutionState(
-                    CanRecordCompletedPayout: false,
+                    CanPreparePayout: false,
+                    CanCompletePayout: false,
                     ExecutionBlockedCode: "PAYOUT_AUTHORITY_CONFLICT",
-                    ExecutionBlockedReason: $"Financial authority checks reported {authorityBlockingRisk}. Resolve the conflict before recording a completed payout.");
+                    ExecutionBlockedReason: $"Financial authority checks reported {authorityBlockingRisk}. Resolve the conflict before preparing a payout.");
             }
 
             return new QueueExecutionState(
-                CanRecordCompletedPayout: false,
+                CanPreparePayout: false,
+                CanCompletePayout: false,
                 ExecutionBlockedCode: "PAYOUT_NOT_YET_ELIGIBLE",
-                ExecutionBlockedReason: "This vendor still has delivery, refund-window, or refund-request holds. Wait until eligible balance becomes available before recording a completed payout.");
+                ExecutionBlockedReason: "This vendor still has delivery, refund-window, or refund-request holds. Wait until eligible balance becomes available before preparing a payout.");
         }
 
         return new QueueExecutionState(
-            CanRecordCompletedPayout: true,
+            CanPreparePayout: true,
+            CanCompletePayout: false,
             ExecutionBlockedCode: null,
             ExecutionBlockedReason: null);
     }
@@ -257,7 +337,8 @@ public sealed class SuperAdminPayoutsService : ISuperAdminPayoutsService
     }
 
     private sealed record QueueExecutionState(
-        bool CanRecordCompletedPayout,
+        bool CanPreparePayout,
+        bool CanCompletePayout,
         string? ExecutionBlockedCode,
         string? ExecutionBlockedReason);
 }

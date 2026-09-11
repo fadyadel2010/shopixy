@@ -17,7 +17,7 @@ public sealed class RefundFinancialAuthorityCertificationTests
         Assert.DoesNotContain("amount:", customerRefundModal, StringComparison.Ordinal);
         Assert.Contains("requireCustomerRefundFinancialAuthority", customerRefundService, StringComparison.Ordinal);
 
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorFinancialAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
 
         Assert.Contains("function requireRefundFinancialPresentation", superAdminAuthority, StringComparison.Ordinal);

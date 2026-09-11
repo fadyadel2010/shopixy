@@ -60,6 +60,13 @@ internal static class CommerceHubOrderStateHelper
             return OrderStatus.Delivered;
         }
 
+        if (statuses.All(status => status is OrderStatus.Delivered or OrderStatus.Completed or OrderStatus.Refunded))
+        {
+            return statuses.Any(status => status == OrderStatus.Delivered)
+                ? OrderStatus.Delivered
+                : OrderStatus.Completed;
+        }
+
         if (statuses.Any(status => status is OrderStatus.Shipped or OrderStatus.Delivered or OrderStatus.Completed))
         {
             return OrderStatus.Shipped;

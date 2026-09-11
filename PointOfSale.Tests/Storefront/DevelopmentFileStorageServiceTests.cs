@@ -139,6 +139,77 @@ public sealed class DevelopmentFileStorageServiceTests
         }
     }
 
+    [Fact]
+    public async Task DownloadLease_RoundTripsPrivateObjectThroughOpaqueExpiringUrl()
+    {
+        var contentRoot = Path.Combine(Path.GetTempPath(), $"shopixy-storage-{Guid.NewGuid():N}");
+
+        try
+        {
+            var environment = new Mock<IHostEnvironment>();
+            environment.SetupGet(item => item.ContentRootPath).Returns(contentRoot);
+            var service = new DevelopmentFileStorageService(environment.Object);
+            var bytes = new byte[] { 0x89, 0x50, 0x4e, 0x47, 0x01, 0x02 };
+            await using var upload = new MemoryStream(bytes);
+            var stored = await service.UploadFileAsync(upload, "image/png", "commercehub/refunds/test");
+
+            var downloadUrl = await service.CreateDownloadUrlAsync(
+                stored.ObjectKey,
+                TimeSpan.FromMinutes(5));
+
+            Assert.Contains("/api/storefront/checkout/attachments/development-download?token=", downloadUrl, StringComparison.Ordinal);
+            Assert.DoesNotContain(stored.ObjectKey, downloadUrl, StringComparison.Ordinal);
+
+            var download = await service.OpenPresignedDownloadAsync(ExtractToken(downloadUrl));
+            await using var content = download.Content;
+            using var buffer = new MemoryStream();
+            await content.CopyToAsync(buffer);
+
+            Assert.Equal("image/png", download.ContentType);
+            Assert.Equal(bytes, buffer.ToArray());
+        }
+        finally
+        {
+            if (Directory.Exists(contentRoot))
+            {
+                Directory.Delete(contentRoot, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DownloadLease_RejectsInvalidAndExpiredTokens()
+    {
+        var contentRoot = Path.Combine(Path.GetTempPath(), $"shopixy-storage-{Guid.NewGuid():N}");
+
+        try
+        {
+            var environment = new Mock<IHostEnvironment>();
+            environment.SetupGet(item => item.ContentRootPath).Returns(contentRoot);
+            var service = new DevelopmentFileStorageService(environment.Object);
+
+            var invalid = await Assert.ThrowsAsync<DevelopmentPresignedDownloadException>(() =>
+                service.OpenPresignedDownloadAsync("not-a-token"));
+            Assert.Equal("DEVELOPMENT_DOWNLOAD_TOKEN_INVALID", invalid.ErrorCode);
+
+            await using var upload = new MemoryStream(new byte[] { 0x89, 0x50, 0x4e, 0x47 });
+            var stored = await service.UploadFileAsync(upload, "image/png", "commercehub/refunds/test");
+            var expiredUrl = await service.CreateDownloadUrlAsync(stored.ObjectKey, TimeSpan.FromTicks(1));
+            await Task.Delay(5);
+
+            var expired = await Assert.ThrowsAsync<DevelopmentPresignedDownloadException>(() =>
+                service.OpenPresignedDownloadAsync(ExtractToken(expiredUrl)));
+            Assert.Equal("DEVELOPMENT_DOWNLOAD_LEASE_EXPIRED", expired.ErrorCode);
+        }
+        finally
+        {
+            if (Directory.Exists(contentRoot))
+            {
+                Directory.Delete(contentRoot, recursive: true);
+            }
+        }
+    }
+
     private static string ExtractToken(string uploadUrl)
     {
         var index = uploadUrl.IndexOf("token=", StringComparison.Ordinal);

@@ -26,6 +26,8 @@ public sealed class AffiliateCheckoutRuntimeCertificationTests
         Assert.DoesNotContain("AffiliateCheckoutController", program, StringComparison.Ordinal);
         Assert.DoesNotContain("BeginTransactionAsync", middleware, StringComparison.Ordinal);
         Assert.DoesNotContain("_dbContext.Orders.Add", middleware, StringComparison.Ordinal);
+        Assert.Contains("var downstreamInvoked = false", middleware, StringComparison.Ordinal);
+        Assert.Contains("catch (Exception ex) when (!downstreamInvoked)", middleware, StringComparison.Ordinal);
     }
 
     [Fact]

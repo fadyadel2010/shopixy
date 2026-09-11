@@ -159,10 +159,53 @@ public class PurchaseReturnsController : ControllerBase
     }
 
     /// <summary>
-    /// Get purchase invoice details for creating a return
+    /// Get purchase invoices that can still accept returns for a supplier.
+    /// </summary>
+    [HttpGet("eligible-invoices")]
+    public async Task<ActionResult<IReadOnlyList<PurchaseReturnEligibleInvoiceResponseDto>>> GetEligiblePurchaseInvoices(
+        [FromQuery] Guid supplierId,
+        [FromQuery] int pageSize = 50,
+        CancellationToken cancellationToken = default)
+    {
+        if (supplierId == Guid.Empty)
+        {
+            return BadRequest(new { message = "Supplier is required." });
+        }
+
+        pageSize = Math.Clamp(pageSize, 1, MaxPurchaseReturnPageSize);
+
+        var invoices = await _context.PurchaseInvoices
+            .AsNoTracking()
+            .Where(invoice =>
+                invoice.SupplierId == supplierId &&
+                (invoice.Status == InvoiceStatus.Completed || invoice.Status == InvoiceStatus.PartiallyReturned) &&
+                invoice.Warehouse.IsActive &&
+                invoice.Items.Any(item => !item.IsDeleted))
+            .OrderByDescending(invoice => invoice.InvoiceDate)
+            .ThenByDescending(invoice => invoice.CreatedAt)
+            .Take(pageSize)
+            .Select(invoice => new PurchaseReturnEligibleInvoiceResponseDto
+            {
+                Id = invoice.Id,
+                InvoiceNumber = invoice.InvoiceNumber,
+                InvoiceDate = invoice.InvoiceDate,
+                TotalAmount = invoice.TotalAmount,
+                Status = invoice.Status,
+                WarehouseId = invoice.WarehouseId,
+                WarehouseName = invoice.Warehouse.Name
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(invoices);
+    }
+
+    /// <summary>
+    /// Get authoritative remaining purchase invoice quantities for creating a return.
     /// </summary>
     [HttpGet("invoice/{invoiceId}")]
-    public async Task<ActionResult<PurchaseInvoiceResponseDto>> GetPurchaseInvoiceForReturn(Guid invoiceId, CancellationToken cancellationToken)
+    public async Task<ActionResult<PurchaseReturnInvoiceResponseDto>> GetPurchaseInvoiceForReturn(
+        Guid invoiceId,
+        CancellationToken cancellationToken)
     {
         var invoice = await _context.PurchaseInvoices
             .AsNoTracking()
@@ -174,9 +217,6 @@ public class PurchaseReturnsController : ControllerBase
                 .ThenInclude(i => i.ProductVariant)
                     .ThenInclude(v => v!.Attributes)
             .Include(p => p.Items)
-                .ThenInclude(i => i.ProductVariant)
-                    .ThenInclude(v => v!.Stocks)
-            .Include(p => p.Items)
                 .ThenInclude(i => i.Unit)
             .AsSplitQuery()
             .FirstOrDefaultAsync(p => p.Id == invoiceId, cancellationToken);
@@ -184,7 +224,112 @@ public class PurchaseReturnsController : ControllerBase
         if (invoice == null)
             return NotFound();
 
-        return Ok(invoice.ToResponseDto());
+        if (invoice.Status is not (InvoiceStatus.Completed or InvoiceStatus.PartiallyReturned))
+        {
+            return Conflict(new { message = "This purchase invoice cannot accept another return." });
+        }
+
+        if (!invoice.Warehouse.IsActive)
+        {
+            return Conflict(new { message = "The original purchase warehouse is not active." });
+        }
+
+        var returnedQuantities = await _context.ReturnItems
+            .AsNoTracking()
+            .Where(returnItem =>
+                !returnItem.IsDeleted &&
+                !returnItem.Return.IsDeleted &&
+                returnItem.Return.TenantId == _tenantContext.RequiredTenantId &&
+                returnItem.Return.ReturnType == ReturnType.PurchaseReturn &&
+                returnItem.Return.OriginalPurchaseInvoiceId == invoice.Id)
+            .GroupBy(returnItem => new { returnItem.ProductId, returnItem.ProductVariantId })
+            .Select(group => new
+            {
+                group.Key.ProductId,
+                group.Key.ProductVariantId,
+                BaseQuantity = group.Sum(item => item.BaseQuantity)
+            })
+            .ToListAsync(cancellationToken);
+
+        var returnedByAuthority = returnedQuantities.ToDictionary(
+            item => (item.ProductId, item.ProductVariantId),
+            item => item.BaseQuantity);
+        var returnableItems = new List<PurchaseReturnInvoiceItemResponseDto>();
+
+        foreach (var group in invoice.Items
+                     .Where(item => !item.IsDeleted)
+                     .GroupBy(item => (item.ProductId, item.ProductVariantId)))
+        {
+            var authorityItem = group
+                .OrderBy(item => item.CreatedAt)
+                .ThenBy(item => item.Id)
+                .First();
+            var purchasedBaseQuantity = group.Sum(ResolveOriginalInvoiceBaseQuantity);
+            returnedByAuthority.TryGetValue(group.Key, out var returnedBaseQuantity);
+            returnedBaseQuantity = Math.Min(returnedBaseQuantity, purchasedBaseQuantity);
+            var remainingBaseQuantity = purchasedBaseQuantity - returnedBaseQuantity;
+            if (remainingBaseQuantity <= 0m)
+            {
+                continue;
+            }
+
+            var conversionFactor = authorityItem.ConversionFactor > 0m
+                ? authorityItem.ConversionFactor
+                : 1m;
+            var originalSubtotal = group.Sum(item => item.TotalAmount - item.TaxAmount);
+            var originalTax = group.Sum(item => item.TaxAmount);
+            var subtotalPerBaseUnit = originalSubtotal / purchasedBaseQuantity;
+            var taxPerBaseUnit = originalTax / purchasedBaseQuantity;
+            var unitPrice = RoundCurrency(subtotalPerBaseUnit * conversionFactor);
+            var taxRate = originalSubtotal > 0m
+                ? RoundRate(originalTax * 100m / originalSubtotal)
+                : 0m;
+
+            returnableItems.Add(new PurchaseReturnInvoiceItemResponseDto
+            {
+                OriginalInvoiceItemIds = group.Select(item => item.Id).OrderBy(id => id).ToList(),
+                ProductId = authorityItem.ProductId,
+                ProductName = authorityItem.Product.Name,
+                ProductVariantId = authorityItem.ProductVariantId,
+                VariantSku = authorityItem.ProductVariant?.SKU,
+                VariantAttributes = authorityItem.ProductVariant?.Attributes
+                    .Where(attribute => !attribute.IsDeleted)
+                    .OrderBy(attribute => attribute.SortOrder)
+                    .Select(attribute => new ProductVariantAttributeResponseDto
+                    {
+                        Name = attribute.Name,
+                        Value = attribute.Value
+                    })
+                    .ToList() ?? new List<ProductVariantAttributeResponseDto>(),
+                UnitId = authorityItem.UnitId,
+                UnitName = authorityItem.Unit?.Name,
+                UnitSymbol = authorityItem.Unit?.Symbol,
+                ConversionFactor = conversionFactor,
+                PurchasedQuantity = purchasedBaseQuantity / conversionFactor,
+                ReturnedQuantity = returnedBaseQuantity / conversionFactor,
+                RemainingQuantity = remainingBaseQuantity / conversionFactor,
+                UnitPrice = unitPrice,
+                TaxRate = taxRate
+            });
+        }
+
+        if (returnableItems.Count == 0)
+        {
+            return Conflict(new { message = "This purchase invoice has no remaining returnable quantity." });
+        }
+
+        return Ok(new PurchaseReturnInvoiceResponseDto
+        {
+            Id = invoice.Id,
+            InvoiceNumber = invoice.InvoiceNumber,
+            InvoiceDate = invoice.InvoiceDate,
+            Status = invoice.Status,
+            SupplierId = invoice.SupplierId,
+            SupplierName = invoice.Supplier.Name,
+            WarehouseId = invoice.WarehouseId,
+            WarehouseName = invoice.Warehouse.Name,
+            Items = returnableItems
+        });
     }
 
     /// <summary>
@@ -263,7 +408,7 @@ public class PurchaseReturnsController : ControllerBase
                 return BadRequest(new { message = "Original purchase invoice not found" });
             }
 
-            if (originalInvoice.Status is InvoiceStatus.Cancelled or InvoiceStatus.FullyReturned)
+            if (originalInvoice.Status is not (InvoiceStatus.Completed or InvoiceStatus.PartiallyReturned))
             {
                 await transaction.RollbackAsync();
                 return Conflict(new { message = "This purchase invoice cannot accept another return." });
@@ -1024,7 +1169,7 @@ public class PurchaseReturnsController : ControllerBase
             {
                 query = _context.Products
                     .FromSqlInterpolated($@"
-                        SELECT *
+                        SELECT *, xmin
                         FROM ""Products""
                         WHERE ""TenantId"" = {_tenantContext.RequiredTenantId}
                           AND ""Id"" = {productId}

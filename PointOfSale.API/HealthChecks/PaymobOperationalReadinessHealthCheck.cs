@@ -115,15 +115,16 @@ public sealed class PaymobOperationalReadinessHealthCheck : IHealthCheck
             persistenceError = exception.GetType().Name;
         }
 
+        var credentialsAvailable = credentials.CredentialsConfigured || tenantConfigurationHealth;
         var checks = new Dictionary<string, bool>
         {
             ["enabledHealth"] = configuration.Enabled,
             ["foundationHealth"] = foundation.Healthy,
             ["providerEnabledHealth"] = configuration.Enabled,
             ["environmentHealth"] = EnvironmentConfigured(configuration),
-            ["credentialHealth"] = credentials.IsValid,
-            ["merchantIdentifierHealth"] = tenantConfigurationHealth,
-            ["hmacSecretHealth"] = tenantConfigurationHealth,
+            ["credentialHealth"] = credentialsAvailable,
+            ["merchantIdentifierHealth"] = credentialsAvailable,
+            ["hmacSecretHealth"] = credentialsAvailable,
             ["callbackUrlHealth"] = credentials.CallbackConfigured,
             ["featureFlagHealth"] = FeatureFlagsConsistent(configuration),
             ["capabilityConsistencyHealth"] = CapabilitiesConsistent(configuration.Capabilities),
@@ -143,7 +144,8 @@ public sealed class PaymobOperationalReadinessHealthCheck : IHealthCheck
         data["enabled"] = configuration.Enabled;
         data["environment"] = configuration.Environment.ToString();
         data["sandboxMode"] = configuration.SandboxMode;
-        data["credentialsConfigured"] = credentials.CredentialsConfigured;
+        data["credentialsConfigured"] = credentialsAvailable;
+        data["globalCredentialsConfigured"] = credentials.CredentialsConfigured;
         data["callbackConfigured"] = credentials.CallbackConfigured;
         if (persistenceError is not null)
         {

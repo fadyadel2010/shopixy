@@ -23,11 +23,12 @@ public sealed class CommerceHubOrderCurrencyAuthorityCertificationTests
     {
         var marketplaceOrderConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubMarketplaceOrderConfiguration.cs");
         var subOrderConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubSubOrderConfiguration.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260623120000_CommerceHubOrderCurrencyAuthorityHardening.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("CK_CommerceHubMarketplaceOrders_Currency_EGP", marketplaceOrderConfiguration, StringComparison.Ordinal);
         Assert.Contains("CK_CommerceHubSubOrders_Currency_EGP", subOrderConfiguration, StringComparison.Ordinal);
-        Assert.Contains("CHECK (\"Currency\" = 'EGP') NOT VALID", migration, StringComparison.Ordinal);
+        Assert.Contains("CK_CommerceHubMarketplaceOrders_Currency_EGP", migration, StringComparison.Ordinal);
+        Assert.Contains("CK_CommerceHubSubOrders_Currency_EGP", migration, StringComparison.Ordinal);
         Assert.Contains("CommerceHubMarketplaceOrders", migration, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSubOrders", migration, StringComparison.Ordinal);
     }

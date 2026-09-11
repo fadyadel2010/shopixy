@@ -150,9 +150,9 @@ public sealed class CommerceHubFinancialDashboardServiceTests : IDisposable
         var overview = await _dashboardService.GetPlatformOverviewAsync();
 
         Assert.Equal(12m, overview.CashBalance);
-        Assert.Equal(3m, overview.ReceivablesBalance);
+        Assert.Equal(0m, overview.ReceivablesBalance);
         Assert.Equal(120m, overview.PayablesBalance);
-        Assert.Equal(-105m, overview.NetPosition);
+        Assert.Equal(-108m, overview.NetPosition);
         Assert.Equal(12m, overview.PlatformBalance);
         Assert.Equal(20m, overview.TotalCommissions);
         Assert.Equal(5m, overview.CommissionReversals);
@@ -169,7 +169,7 @@ public sealed class CommerceHubFinancialDashboardServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetVendorDashboardAsync_ShouldDeriveDebtAndSettlementHistoryFromLedgerReferences()
+    public async Task GetVendorDashboardAsync_ShouldExcludeOnlineCommissionFromDebtAndDeriveActivity()
     {
         var vendorId = Guid.NewGuid();
         var otherVendorId = Guid.NewGuid();
@@ -317,9 +317,9 @@ public sealed class CommerceHubFinancialDashboardServiceTests : IDisposable
 
         Assert.Equal(vendorId, dashboard.VendorId);
         Assert.Equal(33m, dashboard.CurrentBalance);
-        Assert.Equal(7m, dashboard.AmountOwedByVendor);
-        Assert.Equal("AT_RISK", dashboard.DebtStatus);
-        Assert.True(dashboard.IsAtRisk);
+        Assert.Equal(0m, dashboard.AmountOwedByVendor);
+        Assert.Equal("ACTIVE", dashboard.DebtStatus);
+        Assert.False(dashboard.IsAtRisk);
         Assert.False(dashboard.IsSuspendedFromNewOrders);
         Assert.False(dashboard.IsGracePeriodActive);
         Assert.False(dashboard.IsNearThreshold);

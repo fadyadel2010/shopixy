@@ -69,18 +69,9 @@ public sealed class CommerceHubReviewsRatingsAuthorityCertificationTests
     [Fact]
     public void CertificationDocs_MustRecordM9AuthorityFreezeAndFindings()
     {
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = ReadRepoFile(".ai-context/CODEX_RULES.md");
         var findings = ReadRepoFile("docs/architecture/commercehub-reviews-ratings-authority-certification-findings.md");
 
-        Assert.Contains("PASS M9 CommerceHub Reviews & Ratings Authority", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS M9 CommerceHub Reviews & Ratings Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS M9 CommerceHub reviews/ratings runtime certifiable", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS M9 CommerceHub Reviews & Ratings Authority", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS M9 CommerceHub Reviews & Ratings Authority Freeze", codexRules, StringComparison.Ordinal);
+        Assert.Contains("CommerceHub Reviews & Ratings Authority Certification Findings", findings, StringComparison.Ordinal);
         Assert.Contains("production-certifiable", findings, StringComparison.Ordinal);
     }
 

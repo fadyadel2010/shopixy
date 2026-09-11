@@ -198,6 +198,29 @@ public sealed class ProductAuthoringProducerCompletenessIntegrationTests
         Assert.Empty(await harness.Context.Products.ToListAsync());
     }
 
+    [Fact]
+    public async Task PublicVariantCreate_PreservesRequestedStockTrackingPolicy()
+    {
+        await using var harness = CreateHarness();
+        var command = harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            PublishStatus.Published,
+            isOnlineVisible: true,
+            hasVariants: true,
+            variants:
+            [
+                new ProductAuthoringVariant(Guid.NewGuid(), "VAR-1", null, 15m, 14m, 5m, IsActive: true, IsDefault: true, new Dictionary<string, string>())
+            ],
+            metadata: Metadata(productUnitsSubmitted: false, variantsSubmitted: true));
+
+        var result = await harness.Orchestrator.AuthorAsync(command);
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, result.Status);
+        var product = await harness.Context.Products.SingleAsync();
+        Assert.True(product.HasVariants);
+        Assert.True(product.TrackStock);
+    }
+
     private static ProductAuthoringMetadata Metadata(
         bool productUnitsSubmitted,
         bool variantsSubmitted,

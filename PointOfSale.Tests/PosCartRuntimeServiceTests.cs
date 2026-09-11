@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.PosCart;
 using PointOfSale.API.Services.Pos;
@@ -8,6 +10,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.Infrastructure;
+using System.Security.Claims;
 
 namespace PointOfSale.Tests;
 
@@ -183,6 +186,81 @@ public sealed class PosCartRuntimeServiceTests
     }
 
     [Fact]
+    public async Task GetOpen_ReturnsOnlyTheCurrentCashiersTenantScopedCart()
+    {
+        var fixture = await CreateFixtureAsync();
+        var service = CreateService(fixture.Db, fixture.TenantId);
+        var created = (await service.CreateAsync(
+            new CreatePosCartRequest { WarehouseId = fixture.WarehouseId },
+            fixture.CashierId,
+            "cart-create-open-read")).Value!;
+
+        var currentCashier = await service.GetOpenAsync(fixture.CashierId);
+        var otherCashier = await service.GetOpenAsync(Guid.NewGuid());
+
+        Assert.Equal(StatusCodes.Status200OK, currentCashier.StatusCode);
+        Assert.Equal(created.CartId, currentCashier.Value!.CartId);
+        Assert.Equal(StatusCodes.Status404NotFound, otherCashier.StatusCode);
+    }
+
+    [Fact]
+    public async Task GetOpenEndpoint_ReturnsOkNullWhenCurrentCashierHasNoOpenCart()
+    {
+        var cashierId = Guid.NewGuid();
+        var runtime = new Mock<IPosCartRuntimeService>();
+        runtime
+            .Setup(service => service.GetOpenAsync(cashierId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PosCartServiceResult<PosCartResponse>.NotFound("Open POS cart not found."));
+
+        var controller = new PosCartsController(runtime.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.NameIdentifier, cashierId.ToString())],
+                        "test"))
+                }
+            }
+        };
+
+        var result = await controller.GetOpen(CancellationToken.None);
+
+        var json = Assert.IsType<JsonResult>(result.Result);
+        Assert.Equal(StatusCodes.Status200OK, json.StatusCode);
+        Assert.Null(json.Value);
+        runtime.Verify(
+            service => service.GetOpenAsync(cashierId, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task Create_AutoExpiresStaleOpenCartBeforeCreatingReplacement()
+    {
+        var fixture = await CreateFixtureAsync();
+        var service = CreateService(fixture.Db, fixture.TenantId);
+        var stale = (await service.CreateAsync(
+            new CreatePosCartRequest { WarehouseId = fixture.WarehouseId },
+            fixture.CashierId,
+            "cart-create-stale")).Value!;
+
+        var staleEntity = await fixture.Db.PosCarts.SingleAsync(cart => cart.Id == stale.CartId);
+        staleEntity.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1);
+        await fixture.Db.SaveChangesAsync();
+
+        var replacement = await service.CreateAsync(
+            new CreatePosCartRequest { WarehouseId = fixture.WarehouseId },
+            fixture.CashierId,
+            "cart-create-replacement");
+
+        Assert.Equal(StatusCodes.Status201Created, replacement.StatusCode);
+        Assert.NotEqual(stale.CartId, replacement.Value!.CartId);
+        Assert.Equal(PosCartStatus.Expired, staleEntity.Status);
+        Assert.NotNull(staleEntity.ExpiredAtUtc);
+    }
+
+    [Fact]
     public async Task CheckoutPreparation_UsesAuthoritativeCartLinesAndCompletionMarksCartComplete()
     {
         var fixture = await CreateFixtureAsync();
@@ -255,6 +333,42 @@ public sealed class PosCartRuntimeServiceTests
 
         Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
         Assert.Empty(fixture.Db.PosCartItems);
+    }
+
+    [Fact]
+    public async Task AddVariantItem_UsesVariantPriceAndImplicitBaseQuantityWhenProductHasNoUnits()
+    {
+        var fixture = await CreateFixtureAsync();
+        var product = await fixture.Db.Products.SingleAsync(item => item.Id == fixture.ProductId);
+        product.HasVariants = true;
+        fixture.Db.ProductUnits.RemoveRange(fixture.Db.ProductUnits.Where(unit => unit.ProductId == fixture.ProductId));
+        await fixture.Db.SaveChangesAsync();
+
+        var service = CreateService(fixture.Db, fixture.TenantId);
+        var cart = (await service.CreateAsync(
+            new CreatePosCartRequest { WarehouseId = fixture.WarehouseId },
+            fixture.CashierId,
+            "cart-create-variant-no-unit")).Value!;
+
+        var result = await service.AddItemAsync(
+            cart.CartId,
+            new UpsertPosCartItemRequest
+            {
+                ProductId = fixture.ProductId,
+                ProductVariantId = fixture.VariantId,
+                UnitId = null,
+                Quantity = 2m,
+                ExpectedVersion = cart.Version
+            },
+            fixture.CashierId,
+            "cart-add-variant-no-unit");
+
+        Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
+        var line = Assert.Single(result.Value!.Items);
+        Assert.Null(line.UnitId);
+        Assert.Equal(1m, line.ConversionFactor);
+        Assert.Equal(2m, line.BaseQuantity);
+        Assert.Equal(12m, line.UnitPriceSnapshot);
     }
 
     private static PosCartRuntimeService CreateService(ApplicationDbContext db, Guid tenantId) =>

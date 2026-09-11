@@ -80,7 +80,10 @@ export const soaApi = {
 export const paymentsApi = {
     // Receive payment from customer
     receivePayment: async (data, options = {}) => {
-        const response = await api.post('/Payments/receive', data, {
+        const response = await api.post(`/Customers/${data.customerId}/payments`, data, {
+            headers: {
+                'Idempotency-Key': options.idempotencyKey ?? buildMutationKey('customer-payment', data),
+            },
             signal: options.signal,
         })
         return response.data
@@ -88,7 +91,10 @@ export const paymentsApi = {
 
     // Make payment to supplier
     makePayment: async (data, options = {}) => {
-        const response = await api.post('/Payments/make', data, {
+        const response = await api.post(`/Suppliers/${data.supplierId}/payments`, data, {
+            headers: {
+                'Idempotency-Key': options.idempotencyKey ?? buildMutationKey('supplier-payment', data),
+            },
             signal: options.signal,
         })
         return response.data
@@ -96,7 +102,7 @@ export const paymentsApi = {
 
     // Get customer payment history
     getCustomerPayments: async (customerId, options = {}) => {
-        const response = await api.get(`/Payments/customer/${customerId}`, {
+        const response = await api.get(`/Customers/${customerId}/payments`, {
             signal: options.signal,
         })
         return response.data
@@ -104,7 +110,7 @@ export const paymentsApi = {
 
     // Get supplier payment history
     getSupplierPayments: async (supplierId, options = {}) => {
-        const response = await api.get(`/Payments/supplier/${supplierId}`, {
+        const response = await api.get(`/Suppliers/${supplierId}/payments`, {
             signal: options.signal,
         })
         return response.data

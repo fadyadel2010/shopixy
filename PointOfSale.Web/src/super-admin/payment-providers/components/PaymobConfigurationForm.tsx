@@ -61,6 +61,7 @@ function validatePaymobDraft(
     const currency = textValue(provider, 'currency')
     const integrationId = textValue(provider, 'integrationId')
     const publicKey = textValue(provider, 'publicKey')
+    const merchantIdentifier = textValue(provider, 'merchantIdentifier')
 
     if (!textValue(provider, 'displayName', provider.displayName).trim()) {
         errors.push('Display Name is required.')
@@ -82,9 +83,17 @@ function validatePaymobDraft(
         errors.push('Invalid Integration ID.')
     }
 
+    if (!/^[1-9]\d*$/.test(merchantIdentifier)) {
+        errors.push('Invalid Merchant Identifier.')
+    }
+
     const keyEnvironment = environment === 'Sandbox' ? 'test' : 'live'
     if (!publicKey.startsWith(`egy_pk_${keyEnvironment}_`)) {
         errors.push('Invalid Public Key for the selected environment.')
+    }
+
+    if (!hasConfiguredCredential(provider, 'apiKeyConfigured') && !secretReplacementDirty.apiKey) {
+        errors.push('Missing API Key.')
     }
 
     if (!hasConfiguredCredential(provider, 'secretKeyConfigured') && !secretReplacementDirty.secretKey) {

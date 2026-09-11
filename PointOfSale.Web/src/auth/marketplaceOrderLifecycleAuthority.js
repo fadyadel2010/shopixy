@@ -61,10 +61,12 @@ export function requireMarketplaceOrderLifecycleAuthority(order) {
             throw new Error('Marketplace order lifecycle authority rejected malformed payment lifecycle evidence.')
         }
 
-        assertLifecyclePaymentConsistency(status, paymentStatus)
+        if (isMarketplaceOrder) {
+            assertLifecyclePaymentConsistency(status, paymentStatus)
+        }
     }
 
-    if (Array.isArray(order?.subOrders)) {
+    if (isMarketplaceOrder && Array.isArray(order?.subOrders)) {
         for (const subOrder of order.subOrders) {
             const childStatus = normalizeString(subOrder?.status)
             const childPaymentStatus = normalizeString(subOrder?.paymentStatus)

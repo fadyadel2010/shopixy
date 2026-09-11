@@ -7,6 +7,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Core.Models.Accounting;
+using PointOfSale.Core.Models.Refunds;
 using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
 using Xunit;
@@ -35,6 +36,10 @@ public class CommerceAccountingServiceTests : IDisposable
     private readonly Guid _posSalesId = Guid.NewGuid();
     private readonly Guid _ecomSalesId = Guid.NewGuid();
     private readonly Guid _inventoryId = Guid.NewGuid();
+    private readonly Guid _inputTaxReceivableId = Guid.NewGuid();
+    private readonly Guid _salesTaxPayableId = Guid.NewGuid();
+    private readonly Guid _treasurySuspenseId = Guid.NewGuid();
+    private readonly Guid _marketplaceVendorPayableId = Guid.NewGuid();
     private readonly Guid _marketplaceVendorReceivableId = Guid.NewGuid();
     private readonly Guid _cogsId = Guid.NewGuid();
     private readonly Guid _bankId = Guid.NewGuid();
@@ -93,6 +98,10 @@ public class CommerceAccountingServiceTests : IDisposable
             [AccountCodes.PosSales] = CreateAccount(_posSalesId, AccountCodes.PosSales),
             [AccountCodes.EcommerceSales] = CreateAccount(_ecomSalesId, AccountCodes.EcommerceSales),
             [AccountCodes.Inventory] = CreateAccount(_inventoryId, AccountCodes.Inventory),
+            [AccountCodes.InputTaxReceivable] = CreateAccount(_inputTaxReceivableId, AccountCodes.InputTaxReceivable),
+            [AccountCodes.SalesTaxPayable] = CreateAccount(_salesTaxPayableId, AccountCodes.SalesTaxPayable),
+            [AccountCodes.TreasurySuspense] = CreateAccount(_treasurySuspenseId, AccountCodes.TreasurySuspense),
+            [AccountCodes.MarketplaceVendorPayable] = CreateAccount(_marketplaceVendorPayableId, AccountCodes.MarketplaceVendorPayable),
             [AccountCodes.MarketplaceVendorReceivable] = CreateAccount(_marketplaceVendorReceivableId, AccountCodes.MarketplaceVendorReceivable),
             [AccountCodes.CostOfGoodsSold] = CreateAccount(_cogsId, AccountCodes.CostOfGoodsSold),
             [AccountCodes.BankAccount] = CreateAccount(_bankId, AccountCodes.BankAccount),
@@ -171,6 +180,53 @@ public class CommerceAccountingServiceTests : IDisposable
     public void Dispose()
     {
         _db.Dispose();
+    }
+
+    [Fact]
+    public async Task PostCustomerPaymentAsync_MixedPayment_DebitsExactFundingAndCreditsReceivable()
+    {
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(service => service.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync((PostingRequest request, CancellationToken _) => JournalEntry.Create(
+                request.TenantId,
+                "JE-CUSTOMER-PAYMENT",
+                request.JournalDate,
+                request.SourceType,
+                request.SourceId,
+                request.SourceReference,
+                request.Description,
+                request.IdempotencyKey,
+                request.UserId));
+        var payment = new CustomerPayment
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            CustomerId = Guid.NewGuid(),
+            PaymentDate = DateTime.UtcNow,
+            Amount = 100m,
+            PaymentMethod = PaymentMethodEnum.Mixed,
+            CashAmount = 40m,
+            CardAmount = 60m,
+            BankTransferAmount = 0m,
+            IdempotencyKey = "customer-payment-test",
+            ReferenceNumber = "CPAY-TEST"
+        };
+
+        var result = await _service.PostCustomerPaymentAsync(payment);
+
+        Assert.True(result.Success);
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("CustomerPayment", capturedRequest.SourceType);
+        Assert.Equal($"CUSTOMER_PAYMENT:{_tenantId}:{payment.Id}", capturedRequest.IdempotencyKey);
+        Assert.Contains(capturedRequest.Lines, line =>
+            line.AccountId == _cashboxId && line.DebitAmount == 40m && line.CreditAmount == 0m);
+        Assert.Contains(capturedRequest.Lines, line =>
+            line.AccountId == _visaClearingId && line.DebitAmount == 60m && line.CreditAmount == 0m);
+        Assert.Contains(capturedRequest.Lines, line =>
+            line.AccountId == _accountsReceivableId && line.DebitAmount == 0m && line.CreditAmount == 100m);
+        Assert.Equal(capturedRequest.Lines.Sum(line => line.DebitAmount), capturedRequest.Lines.Sum(line => line.CreditAmount));
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -264,6 +320,110 @@ public class CommerceAccountingServiceTests : IDisposable
         
         var credit = capturedRequest.Lines.First(l => l.CreditAmount > 0);
         Assert.Equal(300m, credit.CreditAmount);
+    }
+
+    [Fact]
+    public async Task PostPosSaleAsync_WithTax_SeparatesRevenueAndSalesTaxPayable()
+    {
+        var invoice = CreateSalesInvoice(PaymentMethodEnum.Credit, 105m);
+        invoice.TaxAmount = 5m;
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPosSaleAsync(invoice);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _posSalesId && line.CreditAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _salesTaxPayableId && line.CreditAmount == 5m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _accountsReceivableId && line.DebitAmount == 105m);
+    }
+
+    [Fact]
+    public async Task PostPosPurchaseAsync_WithTax_SeparatesInventoryAndInputTax()
+    {
+        var invoice = new PurchaseInvoice
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            InvoiceNumber = "PUR-TAX",
+            InvoiceDate = DateTime.UtcNow,
+            PaymentMethod = PaymentMethodEnum.Credit,
+            Subtotal = 100m,
+            TaxAmount = 5m,
+            TotalAmount = 105m,
+            PaidAmount = 0m
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPosPurchaseAsync(invoice);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _inventoryId && line.DebitAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inputTaxReceivableId && line.DebitAmount == 5m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _supplierPayablesId && line.CreditAmount == 105m);
+    }
+
+    [Fact]
+    public async Task PostPosRefundAsync_WithTax_ReversesRevenueAndSalesTaxPayable()
+    {
+        var returnObj = new Return
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            ReturnNumber = "SR-TAX",
+            ReturnDate = DateTime.UtcNow,
+            ReturnType = ReturnType.SalesReturn,
+            Subtotal = 100m,
+            TaxAmount = 5m,
+            TotalAmount = 105m
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPosRefundAsync(returnObj, RefundAllocation.AccountCredit);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _posSalesId && line.DebitAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _salesTaxPayableId && line.DebitAmount == 5m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _accountsReceivableId && line.CreditAmount == 105m);
+    }
+
+    [Fact]
+    public async Task PostPurchaseReturnAsync_WithTax_ReversesInventoryAndInputTax()
+    {
+        var returnObj = new Return
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            ReturnNumber = "PR-TAX",
+            ReturnDate = DateTime.UtcNow,
+            ReturnType = ReturnType.PurchaseReturn,
+            Subtotal = 100m,
+            TaxAmount = 5m,
+            TotalAmount = 105m
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPurchaseReturnAsync(returnObj);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _supplierPayablesId && line.DebitAmount == 105m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inventoryId && line.CreditAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inputTaxReceivableId && line.CreditAmount == 5m);
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -551,6 +711,41 @@ public class CommerceAccountingServiceTests : IDisposable
                 Assert.Equal(0m, credit.DebitAmount);
                 Assert.Equal(210m, credit.CreditAmount);
             });
+    }
+
+    [Theory]
+    [InlineData("Credit", true)]
+    [InlineData("Debit", false)]
+    public async Task PostCommerceHubFinancialTransactionAsync_CashDirection_UsesAssetNormalBalance(
+        string direction,
+        bool cashIsDebit)
+    {
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostCommerceHubFinancialTransactionAsync(
+            _tenantId,
+            Guid.NewGuid(),
+            cashIsDebit ? "OrderPayment" : "Refund",
+            direction,
+            "Vendor",
+            "Cash",
+            400m,
+            "EGP",
+            "CommerceHub cash posting",
+            DateTime.UtcNow);
+
+        Assert.True(result.Success);
+        Assert.NotNull(capturedRequest);
+        var cashLine = Assert.Single(capturedRequest!.Lines, line => line.AccountId == _bankId);
+        var offsetLine = Assert.Single(capturedRequest.Lines, line => line.AccountId == _treasurySuspenseId);
+        Assert.Equal(cashIsDebit ? 400m : 0m, cashLine.DebitAmount);
+        Assert.Equal(cashIsDebit ? 0m : 400m, cashLine.CreditAmount);
+        Assert.Equal(cashIsDebit ? 0m : 400m, offsetLine.DebitAmount);
+        Assert.Equal(cashIsDebit ? 400m : 0m, offsetLine.CreditAmount);
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

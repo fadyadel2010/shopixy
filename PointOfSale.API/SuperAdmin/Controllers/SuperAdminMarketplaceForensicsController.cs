@@ -86,9 +86,65 @@ public sealed class SuperAdminMarketplaceForensicsController : SuperAdminBaseCon
         var response = new
         {
             query = request,
-            lifecycle = await lifecycle.OrderByDescending(entry => entry.OccurredAtUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
-            recovery = await recovery.OrderByDescending(entry => entry.StartedAtUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
-            audit = await audit.OrderByDescending(entry => entry.TimestampUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken)
+            lifecycle = await lifecycle.OrderByDescending(entry => entry.OccurredAtUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.TenantId,
+                    entry.ListingId,
+                    entry.ProductId,
+                    entry.VariantId,
+                    entry.EventType,
+                    entry.ActorUserId,
+                    entry.ActorIdentity,
+                    entry.OccurredAtUtc,
+                    entry.CorrelationId,
+                    entry.RequestId,
+                    entry.Reason,
+                    entry.DetailsJson
+                })
+                .ToListAsync(cancellationToken),
+            recovery = await recovery.OrderByDescending(entry => entry.StartedAtUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.OperationId,
+                    entry.OperationType,
+                    entry.ActorIdentity,
+                    entry.ActorUserId,
+                    entry.TenantId,
+                    entry.ListingId,
+                    entry.Scope,
+                    entry.Outcome,
+                    entry.StartedAtUtc,
+                    entry.EndedAtUtc,
+                    entry.CorrelationId,
+                    entry.RequestId,
+                    entry.Reason,
+                    entry.DetailsJson
+                })
+                .ToListAsync(cancellationToken),
+            audit = await audit.OrderByDescending(entry => entry.TimestampUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.LogId,
+                    entry.TenantId,
+                    entry.TimestampUtc,
+                    entry.UserId,
+                    entry.UserNameSnapshot,
+                    entry.ActionType,
+                    entry.EntityType,
+                    entry.EntityId,
+                    entry.Description,
+                    entry.BeforeDataJson,
+                    entry.AfterDataJson,
+                    entry.IpAddress,
+                    entry.UserAgent,
+                    entry.ReferenceNumber,
+                    entry.Source,
+                    entry.SuccessFlag
+                })
+                .ToListAsync(cancellationToken)
         };
 
         await AuditAccessAsync("MARKETPLACE_FORENSIC_SEARCH_EXECUTED", request, cancellationToken);
@@ -115,19 +171,109 @@ public sealed class SuperAdminMarketplaceForensicsController : SuperAdminBaseCon
             immutabilityBoundary = "Transfer artifact only. Configure the receiving SIEM or object store with WORM retention.",
             lifecycle = await _dbContext.CommerceHubMerchantLifecycleLedgerEntries.AsNoTracking()
                 .Where(entry => entry.OccurredAtUtc >= from && entry.OccurredAtUtc <= to)
-                .OrderBy(entry => entry.OccurredAtUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
+                .OrderBy(entry => entry.OccurredAtUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.TenantId,
+                    entry.ListingId,
+                    entry.ProductId,
+                    entry.VariantId,
+                    entry.EventType,
+                    entry.ActorUserId,
+                    entry.ActorIdentity,
+                    entry.OccurredAtUtc,
+                    entry.CorrelationId,
+                    entry.RequestId,
+                    entry.Reason,
+                    entry.DetailsJson
+                })
+                .ToListAsync(cancellationToken),
             recovery = await _dbContext.CommerceHubRecoveryOperationLedgerEntries.AsNoTracking()
                 .Where(entry => entry.StartedAtUtc >= from && entry.StartedAtUtc <= to)
-                .OrderBy(entry => entry.StartedAtUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
+                .OrderBy(entry => entry.StartedAtUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.OperationId,
+                    entry.OperationType,
+                    entry.ActorIdentity,
+                    entry.ActorUserId,
+                    entry.TenantId,
+                    entry.ListingId,
+                    entry.Scope,
+                    entry.Outcome,
+                    entry.StartedAtUtc,
+                    entry.EndedAtUtc,
+                    entry.CorrelationId,
+                    entry.RequestId,
+                    entry.Reason,
+                    entry.DetailsJson
+                })
+                .ToListAsync(cancellationToken),
             audit = await _dbContext.AuditLogs.AsNoTracking()
                 .Where(entry => entry.TimestampUtc >= from && entry.TimestampUtc <= to)
-                .OrderBy(entry => entry.TimestampUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
+                .OrderBy(entry => entry.TimestampUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.LogId,
+                    entry.TenantId,
+                    entry.TimestampUtc,
+                    entry.UserId,
+                    entry.UserNameSnapshot,
+                    entry.ActionType,
+                    entry.EntityType,
+                    entry.EntityId,
+                    entry.Description,
+                    entry.BeforeDataJson,
+                    entry.AfterDataJson,
+                    entry.IpAddress,
+                    entry.UserAgent,
+                    entry.ReferenceNumber,
+                    entry.Source,
+                    entry.SuccessFlag
+                })
+                .ToListAsync(cancellationToken),
             governance = await _dbContext.UserGovernanceAuditLogs.AsNoTracking()
                 .Where(entry => entry.TimestampUtc >= from && entry.TimestampUtc <= to)
-                .OrderBy(entry => entry.TimestampUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken),
+                .OrderBy(entry => entry.TimestampUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.TargetUserId,
+                    entry.TargetRole,
+                    entry.AdminId,
+                    entry.ActorType,
+                    entry.ActionType,
+                    entry.Reason,
+                    entry.BeforeState,
+                    entry.AfterState,
+                    entry.Metadata,
+                    entry.TimestampUtc
+                })
+                .ToListAsync(cancellationToken),
             financial = await _dbContext.CommerceHubFinancialAuditLogs.AsNoTracking()
                 .Where(entry => entry.CreatedAtUtc >= from && entry.CreatedAtUtc <= to)
-                .OrderBy(entry => entry.CreatedAtUtc).Take(MaxRowsPerFamily).ToListAsync(cancellationToken)
+                .OrderBy(entry => entry.CreatedAtUtc).Take(MaxRowsPerFamily)
+                .Select(entry => new
+                {
+                    entry.Id,
+                    entry.TenantId,
+                    entry.MarketplaceOrderId,
+                    entry.SubOrderId,
+                    entry.PaymentId,
+                    entry.EarningId,
+                    entry.PayoutId,
+                    entry.RefundId,
+                    entry.Type,
+                    entry.Debit,
+                    entry.Credit,
+                    entry.Currency,
+                    entry.Description,
+                    entry.CorrelationId,
+                    entry.CreatedAtUtc
+                })
+                .ToListAsync(cancellationToken)
         };
 
         await AuditAccessAsync("MARKETPLACE_FORENSIC_EXPORT_GENERATED", new { exportId, from, to }, cancellationToken);

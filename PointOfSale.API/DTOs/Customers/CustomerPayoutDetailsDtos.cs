@@ -34,4 +34,6 @@ public sealed class CustomerRefundPayoutSnapshotDto
     public string? AccountHolderName { get; set; }
     public string? TransactionReference { get; set; }
     public DateTime? PaidAt { get; set; }
+    public bool IsDevelopmentSimulation { get; set; }
+    public bool ExternalMoneyMovementConfirmed { get; set; }
 }

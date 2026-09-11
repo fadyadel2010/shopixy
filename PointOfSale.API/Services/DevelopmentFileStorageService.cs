@@ -15,6 +15,13 @@ public interface IDevelopmentPresignedUploadStorage
         CancellationToken cancellationToken = default);
 }
 
+public interface IDevelopmentPresignedDownloadStorage
+{
+    Task<R2DownloadObjectResult> OpenPresignedDownloadAsync(
+        string token,
+        CancellationToken cancellationToken = default);
+}
+
 public sealed class DevelopmentPresignedUploadException : Exception
 {
     public DevelopmentPresignedUploadException(string errorCode, string message)
@@ -26,13 +33,27 @@ public sealed class DevelopmentPresignedUploadException : Exception
     public string ErrorCode { get; }
 }
 
+public sealed class DevelopmentPresignedDownloadException : Exception
+{
+    public DevelopmentPresignedDownloadException(string errorCode, string message)
+        : base(message)
+    {
+        ErrorCode = errorCode;
+    }
+
+    public string ErrorCode { get; }
+}
+
 /// <summary>
 /// Private, development-only object storage for server-mediated uploads.
 /// Production registrations continue to require configured R2 storage.
-/// Generic attachment leases are represented by opaque, single-use application
-/// URLs instead of public filesystem paths.
+/// Upload and download leases are represented by opaque application URLs instead
+/// of public filesystem paths; uploads are single-use and downloads are expiring.
 /// </summary>
-public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopmentPresignedUploadStorage
+public sealed class DevelopmentFileStorageService :
+    IR2StorageService,
+    IDevelopmentPresignedUploadStorage,
+    IDevelopmentPresignedDownloadStorage
 {
     private const long MaxLeasedUploadBytes = 50 * 1024 * 1024;
 
@@ -55,6 +76,7 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
 
     private readonly string _storageRoot;
     private readonly string _leaseRoot;
+    private readonly string _downloadLeaseRoot;
     private readonly IHttpContextAccessor? _httpContextAccessor;
     private readonly IFileValidationService _fileValidationService;
 
@@ -68,6 +90,7 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
             "secure-uploads",
             "development-object-storage"));
         _leaseRoot = Path.Combine(_storageRoot, "_leases");
+        _downloadLeaseRoot = Path.Combine(_storageRoot, "_download-leases");
         _httpContextAccessor = httpContextAccessor;
         _fileValidationService = fileValidationService ?? new FileValidationService();
     }
@@ -117,14 +140,58 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
             normalizedContentType);
     }
 
-    public Task<string> CreateDownloadUrlAsync(
+    public async Task<string> CreateDownloadUrlAsync(
         string objectKey,
         TimeSpan expiresIn,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        throw new InvalidOperationException(
-            "Presigned download URLs require configured object storage and are unavailable in local file-storage mode.");
+        if (expiresIn <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(expiresIn), "Download leases must have a positive lifetime.");
+        }
+
+        _ = ResolvePath(objectKey);
+        Directory.CreateDirectory(_downloadLeaseRoot);
+
+        var leaseId = Guid.NewGuid();
+        var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var lease = new DevelopmentDownloadLease(
+            leaseId,
+            HashTokenSecret(secret),
+            objectKey,
+            DateTime.UtcNow.Add(expiresIn));
+
+        await File.WriteAllTextAsync(
+            ResolveDownloadLeasePath(leaseId),
+            JsonSerializer.Serialize(lease, JsonOptions),
+            cancellationToken);
+
+        return BuildDownloadUrl($"{leaseId:N}.{secret}");
+    }
+
+    public async Task<R2DownloadObjectResult> OpenPresignedDownloadAsync(
+        string token,
+        CancellationToken cancellationToken = default)
+    {
+        var parsed = ParseDownloadToken(token);
+        var lease = await ReadDownloadLeaseAsync(parsed.LeaseId, cancellationToken);
+
+        if (!string.Equals(lease.SecretSha256, HashTokenSecret(parsed.Secret), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DevelopmentPresignedDownloadException(
+                "DEVELOPMENT_DOWNLOAD_TOKEN_INVALID",
+                "Download lease token is invalid.");
+        }
+
+        if (lease.ExpiresAtUtc <= DateTime.UtcNow)
+        {
+            throw new DevelopmentPresignedDownloadException(
+                "DEVELOPMENT_DOWNLOAD_LEASE_EXPIRED",
+                "Download lease has expired.");
+        }
+
+        return await DownloadObjectAsync(lease.ObjectKey, null, cancellationToken);
     }
 
     public async Task<R2UploadResult> UploadFileAsync(
@@ -411,6 +478,18 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
         return path;
     }
 
+    private string ResolveDownloadLeasePath(Guid leaseId)
+    {
+        var path = Path.GetFullPath(Path.Combine(_downloadLeaseRoot, $"{leaseId:N}.json"));
+        var requiredPrefix = Path.GetFullPath(_downloadLeaseRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!path.StartsWith(requiredPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Download lease key resolved outside the development lease root.");
+        }
+
+        return path;
+    }
+
     private static string BuildObjectKey(string path, string fileName) =>
         string.Join('/', NormalizeSegments(path).Append(fileName));
 
@@ -424,6 +503,18 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
         }
 
         return $"{request.Scheme}://{request.Host}{request.PathBase}{uploadPath}";
+    }
+
+    private string BuildDownloadUrl(string token)
+    {
+        var downloadPath = $"/api/storefront/checkout/attachments/development-download?token={Uri.EscapeDataString(token)}";
+        var request = _httpContextAccessor?.HttpContext?.Request;
+        if (request == null)
+        {
+            return downloadPath;
+        }
+
+        return $"{request.Scheme}://{request.Host}{request.PathBase}{downloadPath}";
     }
 
     private static string[] NormalizeSegments(string value)
@@ -507,6 +598,22 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
         return (leaseId, parts[1].ToLowerInvariant());
     }
 
+    private static (Guid LeaseId, string Secret) ParseDownloadToken(string token)
+    {
+        var parts = (token ?? string.Empty).Split('.', 2, StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            !Guid.TryParseExact(parts[0], "N", out var leaseId) ||
+            parts[1].Length != 64 ||
+            parts[1].Any(ch => !Uri.IsHexDigit(ch)))
+        {
+            throw new DevelopmentPresignedDownloadException(
+                "DEVELOPMENT_DOWNLOAD_TOKEN_INVALID",
+                "Download lease token is invalid.");
+        }
+
+        return (leaseId, parts[1].ToLowerInvariant());
+    }
+
     private static SemaphoreSlim GetLeaseLock(Guid leaseId)
     {
         lock (LeaseLocksGate)
@@ -537,6 +644,25 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
             ?? throw new DevelopmentPresignedUploadException(
                 "CHECKOUT_ATTACHMENT_UPLOAD_LEASE_INVALID",
                 "Upload lease metadata is invalid.");
+    }
+
+    private async Task<DevelopmentDownloadLease> ReadDownloadLeaseAsync(
+        Guid leaseId,
+        CancellationToken cancellationToken)
+    {
+        var path = ResolveDownloadLeasePath(leaseId);
+        if (!File.Exists(path))
+        {
+            throw new DevelopmentPresignedDownloadException(
+                "DEVELOPMENT_DOWNLOAD_LEASE_NOT_FOUND",
+                "Download lease was not found.");
+        }
+
+        var json = await File.ReadAllTextAsync(path, cancellationToken);
+        return JsonSerializer.Deserialize<DevelopmentDownloadLease>(json, JsonOptions)
+            ?? throw new DevelopmentPresignedDownloadException(
+                "DEVELOPMENT_DOWNLOAD_LEASE_INVALID",
+                "Download lease metadata is invalid.");
     }
 
     private Task WriteLeaseAsync(DevelopmentUploadLease lease, CancellationToken cancellationToken) =>
@@ -645,4 +771,10 @@ public sealed class DevelopmentFileStorageService : IR2StorageService, IDevelopm
         DateTime ExpiresAtUtc,
         string Status,
         DateTime? UsedAtUtc = null);
+
+    private sealed record DevelopmentDownloadLease(
+        Guid LeaseId,
+        string SecretSha256,
+        string ObjectKey,
+        DateTime ExpiresAtUtc);
 }

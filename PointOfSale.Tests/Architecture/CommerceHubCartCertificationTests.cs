@@ -113,12 +113,13 @@ public sealed class CommerceHubCartCertificationTests
         // Checkout must lock the cart row with FOR UPDATE
         Assert.Contains("FOR UPDATE", checkoutService, StringComparison.Ordinal);
 
-        // Checkout must lock listings, variants, products, tenants, and payment methods
+        // Checkout must lock mutable catalog/store rows and use platform provider authority.
         Assert.Contains("LoadCommerceHubListingsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("LoadProductVariantsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("LoadProductsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
         Assert.Contains("LoadTenantsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
-        Assert.Contains("LoadTenantPaymentMethodsForCheckoutAuthorityAsync", checkoutService, StringComparison.Ordinal);
+        Assert.Contains("IEnumerable<IPaymentProviderAdapter> paymentProviderAdapters", checkoutService, StringComparison.Ordinal);
+        Assert.DoesNotContain("TenantPaymentMethods", checkoutService, StringComparison.Ordinal);
 
         // Checkout must enforce vendor governance and financial readiness
         Assert.Contains("EnsureCommerceIntakeAllowedAsync", checkoutService, StringComparison.Ordinal);

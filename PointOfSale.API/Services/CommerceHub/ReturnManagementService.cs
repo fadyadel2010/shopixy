@@ -38,6 +38,8 @@ public interface IReturnManagementService
 
     Task<CommerceHubReturnDetailsDto> SchedulePickupAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? pickupScheduledAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -45,11 +47,13 @@ public interface IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
     Task<CommerceHubReturnDetailsDto> MarkPickedUpAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? pickedUpAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -57,11 +61,13 @@ public interface IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
     Task<CommerceHubReturnDetailsDto> MarkInTransitAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? inTransitAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -69,11 +75,13 @@ public interface IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
     Task<CommerceHubReturnDetailsDto> MarkDeliveredAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? deliveredAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -81,11 +89,13 @@ public interface IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
     Task<CommerceHubReturnDetailsDto> MarkFailedAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? failedAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -93,7 +103,7 @@ public interface IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
     Task<CommerceHubReturnDetailsDto> ConfirmReceiptAsync(
@@ -109,18 +119,6 @@ public interface IReturnManagementService
         string source = "PosAdminAPI",
         CancellationToken cancellationToken = default);
 
-    Task<CommerceHubReturnDetailsDto> OverrideStatusAsync(
-        Guid returnId,
-        CommerceHubReturnStatus status,
-        DateTime? timestampUtc,
-        string? trackingNumber,
-        string? courierName,
-        string? notes,
-        Guid? actorId,
-        string? actorEmail,
-        string correlationId,
-        string source = "SuperAdminAPI",
-        CancellationToken cancellationToken = default);
 }
 
 public sealed class ReturnManagementService : IReturnManagementService
@@ -293,6 +291,8 @@ public sealed class ReturnManagementService : IReturnManagementService
 
     public async Task<CommerceHubReturnDetailsDto> SchedulePickupAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? pickupScheduledAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -300,14 +300,14 @@ public sealed class ReturnManagementService : IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default)
     {
         var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
         var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
         var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
         var scheduledAtUtc = NormalizeTimestamp(pickupScheduledAtUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "schedule pickup");
+        EnsureVendorReturnLogisticsAuthority(source, "schedule pickup");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken);
@@ -315,6 +315,9 @@ public sealed class ReturnManagementService : IReturnManagementService
         {
             throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
         }
+
+        EnsureVendorOwnership(returnRequest, vendorId);
+        EnsureExpectedStatus(returnRequest.Status, expectedStatus);
 
         if (!CommerceHubReturnPolicy.CanSchedulePickup(returnRequest.Status))
         {
@@ -353,6 +356,8 @@ public sealed class ReturnManagementService : IReturnManagementService
 
     public async Task<CommerceHubReturnDetailsDto> MarkPickedUpAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? pickedUpAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -360,14 +365,14 @@ public sealed class ReturnManagementService : IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default)
     {
         var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
         var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
         var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
         var pickedUpAt = NormalizeTimestamp(pickedUpAtUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "mark as picked up");
+        EnsureVendorReturnLogisticsAuthority(source, "mark as picked up");
 
         CommerceHubReturnDetailsDto result;
         CommerceHubRefundRequest refundRequest;
@@ -377,6 +382,9 @@ public sealed class ReturnManagementService : IReturnManagementService
         {
             returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken)
                 ?? throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
+
+            EnsureVendorOwnership(returnRequest, vendorId);
+            EnsureExpectedStatus(returnRequest.Status, expectedStatus);
 
             if (!CommerceHubReturnPolicy.CanMarkPickedUp(returnRequest.Status))
             {
@@ -425,6 +433,8 @@ public sealed class ReturnManagementService : IReturnManagementService
 
     public async Task<CommerceHubReturnDetailsDto> MarkInTransitAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? inTransitAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -432,18 +442,21 @@ public sealed class ReturnManagementService : IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default)
     {
         var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
         var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
         var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
         var inTransitAt = NormalizeTimestamp(inTransitAtUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "mark in transit");
+        EnsureVendorReturnLogisticsAuthority(source, "mark in transit");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken)
             ?? throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
+
+        EnsureVendorOwnership(returnRequest, vendorId);
+        EnsureExpectedStatus(returnRequest.Status, expectedStatus);
 
         if (!CommerceHubReturnPolicy.CanMarkInTransit(returnRequest.Status))
         {
@@ -482,6 +495,8 @@ public sealed class ReturnManagementService : IReturnManagementService
 
     public async Task<CommerceHubReturnDetailsDto> MarkDeliveredAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? deliveredAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -489,14 +504,14 @@ public sealed class ReturnManagementService : IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default)
     {
         var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
         var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
         var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
         var deliveredAt = NormalizeTimestamp(deliveredAtUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "mark delivered");
+        EnsureVendorReturnLogisticsAuthority(source, "mark delivered");
 
         CommerceHubReturnDetailsDto result;
         CommerceHubRefundRequest refundRequest;
@@ -506,6 +521,9 @@ public sealed class ReturnManagementService : IReturnManagementService
         {
             returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken)
                 ?? throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
+
+            EnsureVendorOwnership(returnRequest, vendorId);
+            EnsureExpectedStatus(returnRequest.Status, expectedStatus);
 
             if (!CommerceHubReturnPolicy.CanMarkDelivered(returnRequest.Status))
             {
@@ -704,104 +722,10 @@ public sealed class ReturnManagementService : IReturnManagementService
         return result;
     }
 
-    public async Task<CommerceHubReturnDetailsDto> OverrideStatusAsync(
-        Guid returnId,
-        CommerceHubReturnStatus status,
-        DateTime? timestampUtc,
-        string? trackingNumber,
-        string? courierName,
-        string? notes,
-        Guid? actorId,
-        string? actorEmail,
-        string correlationId,
-        string source = "SuperAdminAPI",
-        CancellationToken cancellationToken = default)
-    {
-        if (status == CommerceHubReturnStatus.Failed)
-        {
-            throw new CommerceHubCheckoutException(
-                "RETURN_OVERRIDE_STATUS_NOT_ALLOWED",
-                "Use the mark failed action for failed returns.",
-                StatusCodes.Status400BadRequest);
-        }
-
-        var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
-        var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
-        var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
-        var overriddenAt = NormalizeTimestamp(timestampUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "override return status");
-
-        CommerceHubReturnDetailsDto result;
-        CommerceHubRefundRequest refundRequest;
-        CommerceHubReturnRequest returnRequest;
-
-        await using (var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken))
-        {
-            returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken)
-                ?? throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
-
-            refundRequest = await LoadRefundForUpdateAsync(returnRequest.RefundId, cancellationToken)
-                ?? returnRequest.Refund;
-
-            if (!CommerceHubReturnPolicy.CanOverrideStatusTo(
-                    returnRequest.Status,
-                    status,
-                    refundRequest.Status,
-                    refundRequest.RefundExecutionTrigger))
-            {
-                throw new CommerceHubCheckoutException(
-                    "RETURN_OVERRIDE_STATUS_NOT_ALLOWED",
-                    "The current backend return authority does not allow this override target.",
-                    StatusCodes.Status409Conflict);
-            }
-
-            var previousStatus = returnRequest.Status;
-
-            ApplySharedFields(returnRequest, normalizedTrackingNumber, normalizedCourierName, normalizedNotes, actorId);
-            ApplyOverrideStatus(returnRequest, status, overriddenAt);
-
-            AppendAuditLog(
-                action: "RETURN_STATUS_OVERRIDDEN",
-                description: "CommerceHub return status was overridden by platform operations.",
-                returnRequest: returnRequest,
-                refundRequest: refundRequest,
-                actorId: actorId,
-                actorEmail: actorEmail,
-                source: source,
-                success: true,
-                details: new
-                {
-                    ReturnId = returnRequest.Id,
-                    RefundId = refundRequest.Id,
-                    PreviousStatus = previousStatus.ToString(),
-                    OverriddenStatus = returnRequest.Status.ToString(),
-                    OverriddenAt = overriddenAt,
-                    returnRequest.PickupScheduledAt,
-                    returnRequest.PickedUpAt,
-                    returnRequest.InTransitAt,
-                    returnRequest.DeliveredAt,
-                    returnRequest.ConfirmedAt,
-                    returnRequest.TrackingNumber,
-                    returnRequest.CourierName,
-                    returnRequest.Notes,
-                    RefundStatus = refundRequest.Status.ToString()
-                });
-
-            SyncRefundAwaitingPayoutStatus(
-                refundRequest,
-                returnRequest,
-                correlationId);
-
-            await _dbContext.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            result = CommerceHubReturnMapper.MapDetails(returnRequest, refundRequest);
-        }
-
-        return result;
-    }
-
     public async Task<CommerceHubReturnDetailsDto> MarkFailedAsync(
         Guid returnId,
+        Guid vendorId,
+        CommerceHubReturnStatus expectedStatus,
         DateTime? failedAtUtc,
         string? trackingNumber,
         string? courierName,
@@ -809,18 +733,21 @@ public sealed class ReturnManagementService : IReturnManagementService
         Guid? actorId,
         string? actorEmail,
         string correlationId,
-        string source = "SuperAdminAPI",
+        string source = "PosAdminAPI",
         CancellationToken cancellationToken = default)
     {
         var normalizedTrackingNumber = NormalizeOptional(trackingNumber, 200, "Tracking number cannot exceed 200 characters.");
         var normalizedCourierName = NormalizeOptional(courierName, 200, "Courier name cannot exceed 200 characters.");
         var normalizedNotes = NormalizeOptional(notes, 1000, "Return notes cannot exceed 1000 characters.");
         var failedAt = NormalizeTimestamp(failedAtUtc);
-        EnsurePlatformReturnLogisticsAuthority(source, "mark as failed");
+        EnsureVendorReturnLogisticsAuthority(source, "mark as failed");
 
         await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var returnRequest = await LoadReturnForUpdateAsync(returnId, cancellationToken)
             ?? throw new CommerceHubCheckoutException("RETURN_NOT_FOUND", "Return request was not found.", StatusCodes.Status404NotFound);
+
+        EnsureVendorOwnership(returnRequest, vendorId);
+        EnsureExpectedStatus(returnRequest.Status, expectedStatus);
 
         if (!CommerceHubReturnPolicy.CanMarkFailed(returnRequest.Status))
         {
@@ -1002,68 +929,6 @@ public sealed class ReturnManagementService : IReturnManagementService
         returnRequest.UpdatedBy = actorId;
     }
 
-    private static void ApplyOverrideStatus(
-        CommerceHubReturnRequest returnRequest,
-        CommerceHubReturnStatus targetStatus,
-        DateTime overriddenAt)
-    {
-        returnRequest.Status = targetStatus;
-        returnRequest.UpdatedAt = overriddenAt;
-
-        switch (targetStatus)
-        {
-            case CommerceHubReturnStatus.Pending:
-                returnRequest.PickupScheduledAt = null;
-                returnRequest.PickedUpAt = null;
-                returnRequest.InTransitAt = null;
-                returnRequest.DeliveredAt = null;
-                returnRequest.ConfirmedAt = null;
-                break;
-            case CommerceHubReturnStatus.PickupScheduled:
-                returnRequest.PickupScheduledAt = overriddenAt;
-                returnRequest.PickedUpAt = null;
-                returnRequest.InTransitAt = null;
-                returnRequest.DeliveredAt = null;
-                returnRequest.ConfirmedAt = null;
-                break;
-            case CommerceHubReturnStatus.PickedUp:
-                returnRequest.PickupScheduledAt ??= overriddenAt;
-                returnRequest.PickedUpAt = overriddenAt;
-                returnRequest.InTransitAt = null;
-                returnRequest.DeliveredAt = null;
-                returnRequest.ConfirmedAt = null;
-                break;
-            case CommerceHubReturnStatus.InTransit:
-                returnRequest.PickupScheduledAt ??= overriddenAt;
-                returnRequest.PickedUpAt ??= overriddenAt;
-                returnRequest.InTransitAt = overriddenAt;
-                returnRequest.DeliveredAt = null;
-                returnRequest.ConfirmedAt = null;
-                break;
-            case CommerceHubReturnStatus.DeliveredToVendor:
-                returnRequest.PickupScheduledAt ??= overriddenAt;
-                returnRequest.PickedUpAt ??= overriddenAt;
-                returnRequest.InTransitAt ??= overriddenAt;
-                returnRequest.DeliveredAt = overriddenAt;
-                returnRequest.ConfirmedAt = null;
-                break;
-            case CommerceHubReturnStatus.Confirmed:
-                returnRequest.PickupScheduledAt ??= overriddenAt;
-                returnRequest.PickedUpAt ??= overriddenAt;
-                returnRequest.InTransitAt ??= overriddenAt;
-                returnRequest.DeliveredAt ??= overriddenAt;
-                returnRequest.ConfirmedAt = overriddenAt;
-                break;
-            case CommerceHubReturnStatus.Failed:
-                break;
-            default:
-                throw new CommerceHubCheckoutException(
-                    "RETURN_OVERRIDE_STATUS_NOT_SUPPORTED",
-                    $"Return status {targetStatus} is not supported for manual override.",
-                    StatusCodes.Status400BadRequest);
-        }
-    }
-
     private void SyncRefundAwaitingPayoutStatus(
         CommerceHubRefundRequest refundRequest,
         CommerceHubReturnRequest returnRequest,
@@ -1206,16 +1071,44 @@ public sealed class ReturnManagementService : IReturnManagementService
             StatusCodes.Status409Conflict);
     }
 
-    private static void EnsurePlatformReturnLogisticsAuthority(string source, string attemptedAction)
+    private static void EnsureExpectedStatus(
+        CommerceHubReturnStatus currentStatus,
+        CommerceHubReturnStatus expectedStatus)
     {
-        if (source.StartsWith("SuperAdmin", StringComparison.OrdinalIgnoreCase))
+        if (currentStatus == expectedStatus)
         {
             return;
         }
 
         throw new CommerceHubCheckoutException(
-            "RETURN_LOGISTICS_WORKFLOW_REQUIRED",
-            $"Only platform return logistics authority can {attemptedAction}. Vendor authority is limited to receipt confirmation after delivery.",
+            "RETURN_STATUS_CONFLICT",
+            $"Return request status changed from {expectedStatus} to {currentStatus} before this action was applied.",
+            StatusCodes.Status409Conflict);
+    }
+
+    private static void EnsureVendorOwnership(CommerceHubReturnRequest returnRequest, Guid vendorId)
+    {
+        if (returnRequest.VendorId == vendorId)
+        {
+            return;
+        }
+
+        throw new CommerceHubCheckoutException(
+            "RETURN_NOT_FOUND",
+            "Return request was not found.",
+            StatusCodes.Status404NotFound);
+    }
+
+    private static void EnsureVendorReturnLogisticsAuthority(string source, string attemptedAction)
+    {
+        if (source.StartsWith("PosAdmin", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        throw new CommerceHubCheckoutException(
+            "RETURN_VENDOR_LOGISTICS_AUTHORITY_REQUIRED",
+            $"Only the vendor that owns the return can {attemptedAction}.",
             StatusCodes.Status403Forbidden);
     }
 

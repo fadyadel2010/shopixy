@@ -102,6 +102,56 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
             userId);
     }
 
+    public async Task<decimal> RebuildPartyTransactionBalancesAsync(
+        PartyType partyType,
+        Guid partyId,
+        CancellationToken cancellationToken = default)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        if (partyType == PartyType.Customer)
+        {
+            var transactionsById = (await _context.CustomerTransactions
+                    .Where(transaction =>
+                        transaction.TenantId == tenantId &&
+                        transaction.CustomerId == partyId)
+                    .ToListAsync(cancellationToken))
+                .ToDictionary(transaction => transaction.Id);
+
+            foreach (var trackedEntry in _context.ChangeTracker.Entries<CustomerTransaction>()
+                         .Where(entry =>
+                             entry.State != EntityState.Detached &&
+                             entry.State != EntityState.Deleted &&
+                             !entry.Entity.IsDeleted &&
+                             entry.Entity.TenantId == tenantId &&
+                             entry.Entity.CustomerId == partyId))
+            {
+                transactionsById[trackedEntry.Entity.Id] = trackedEntry.Entity;
+            }
+
+            return RebuildCustomerTransactionBalances(transactionsById.Values);
+        }
+
+        var supplierTransactionsById = (await _context.SupplierTransactions
+                .Where(transaction =>
+                    transaction.TenantId == tenantId &&
+                    transaction.SupplierId == partyId)
+                .ToListAsync(cancellationToken))
+            .ToDictionary(transaction => transaction.Id);
+
+        foreach (var trackedEntry in _context.ChangeTracker.Entries<SupplierTransaction>()
+                     .Where(entry =>
+                         entry.State != EntityState.Detached &&
+                         entry.State != EntityState.Deleted &&
+                         !entry.Entity.IsDeleted &&
+                         entry.Entity.TenantId == tenantId &&
+                         entry.Entity.SupplierId == partyId))
+        {
+            supplierTransactionsById[trackedEntry.Entity.Id] = trackedEntry.Entity;
+        }
+
+        return RebuildSupplierTransactionBalances(supplierTransactionsById.Values);
+    }
+
     public async Task<decimal> RebuildPartyBalanceAsync(
         PartyType partyType,
         Guid partyId,
@@ -214,8 +264,6 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
         {
             var lockedParty = await LockPartyForUpdateAsync(partyType, partyId);
             await EnsureOpeningBalanceNotAlreadyAppliedAsync(partyType, partyId, transactionType);
-            var currentBalance = await GetCurrentBalanceAsync(partyType, partyId);
-            var newBalance = currentBalance + debitAmount - creditAmount;
 
             var ledger = new AccountLedger
             {
@@ -228,7 +276,6 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
                 DocumentNumber = documentNumber,
                 DebitAmount = debitAmount,
                 CreditAmount = creditAmount,
-                RunningBalance = newBalance,
                 ReferenceId = referenceId,
                 Notes = notes,
                 UserId = userId,
@@ -236,6 +283,7 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
             };
 
             _context.AccountLedgers.Add(ledger);
+            var newBalance = await RecalculateLedgerBalancesAsync(partyType, partyId);
             SetTrackedPartyBalance(lockedParty, partyType, newBalance);
 
             if (ownsTransaction)
@@ -277,43 +325,40 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
         }
     }
 
-    private async Task<decimal> GetCurrentBalanceAsync(PartyType partyType, Guid partyId)
+    private async Task<decimal> RecalculateLedgerBalancesAsync(PartyType partyType, Guid partyId)
     {
         var tenantId = _tenantContext.RequiredTenantId;
-
-        // Prefer in-flight balances so multiple ledger entries in the same unit of work remain additive.
-        var pendingLedgerBalance = _context.ChangeTracker.Entries<AccountLedger>()
-            .Where(entry =>
-                (entry.State == EntityState.Added || entry.State == EntityState.Modified) &&
-                entry.Entity.TenantId == tenantId &&
-                entry.Entity.PartyType == partyType &&
-                entry.Entity.PartyId == partyId)
-            .Select(entry => entry.Entity)
-            .OrderByDescending(entry => entry.TransactionDate)
-            .ThenByDescending(entry => entry.CreatedAt)
-            .Select(entry => (decimal?)entry.RunningBalance)
-            .FirstOrDefault();
-
-        if (pendingLedgerBalance.HasValue)
-        {
-            return pendingLedgerBalance.Value;
-        }
-
-        var lastTransaction = await _context.AccountLedgers
+        var ledgersById = (await _context.AccountLedgers
             .Where(a =>
                 a.TenantId == tenantId &&
                 a.PartyType == partyType &&
                 a.PartyId == partyId)
-            .OrderByDescending(a => a.TransactionDate)
-            .ThenByDescending(a => a.CreatedAt)
-            .FirstOrDefaultAsync();
+            .ToListAsync())
+            .ToDictionary(entry => entry.Id);
 
-        if (lastTransaction != null)
+        foreach (var trackedEntry in _context.ChangeTracker.Entries<AccountLedger>()
+                     .Where(entry =>
+                         entry.State != EntityState.Detached &&
+                         entry.State != EntityState.Deleted &&
+                         !entry.Entity.IsDeleted &&
+                         entry.Entity.TenantId == tenantId &&
+                         entry.Entity.PartyType == partyType &&
+                         entry.Entity.PartyId == partyId))
         {
-            return lastTransaction.RunningBalance;
+            ledgersById[trackedEntry.Entity.Id] = trackedEntry.Entity;
         }
 
-        return 0m;
+        decimal runningBalance = 0m;
+        foreach (var entry in ledgersById.Values
+                     .OrderBy(entry => entry.TransactionDate)
+                     .ThenBy(entry => entry.CreatedAt)
+                     .ThenBy(entry => entry.Id))
+        {
+            runningBalance += entry.DebitAmount - entry.CreditAmount;
+            entry.RunningBalance = runningBalance;
+        }
+
+        return runningBalance;
     }
 
     private async Task EnsureOpeningBalanceNotAlreadyAppliedAsync(
@@ -369,62 +414,40 @@ public class LedgerService : ILedgerService, IPartyBalanceMaintenanceService
         LockedParty lockedParty)
     {
         var tenantId = _tenantContext.RequiredTenantId;
-        var orderedLedgers = await _context.AccountLedgers
-            .Where(entry =>
-                entry.TenantId == tenantId &&
-                entry.PartyType == partyType &&
-                entry.PartyId == partyId)
-            .OrderBy(entry => entry.TransactionDate)
-            .ThenBy(entry => entry.CreatedAt)
-            .ThenBy(entry => entry.Id)
-            .ToListAsync();
+        var runningBalance = await RecalculateLedgerBalancesAsync(partyType, partyId);
 
-        decimal runningBalance = 0;
-        foreach (var entry in orderedLedgers)
-        {
-            runningBalance += entry.DebitAmount - entry.CreditAmount;
-            entry.RunningBalance = runningBalance;
-        }
-
-        if (partyType == PartyType.Customer)
-        {
-            var orderedTransactions = await _context.CustomerTransactions
-                .Where(transaction =>
-                    transaction.TenantId == tenantId &&
-                    transaction.CustomerId == partyId)
-                .OrderBy(transaction => transaction.TransactionDate)
-                .ThenBy(transaction => transaction.CreatedAt)
-                .ThenBy(transaction => transaction.Id)
-                .ToListAsync();
-
-            decimal transactionBalance = 0;
-            foreach (var transaction in orderedTransactions)
-            {
-                transactionBalance += transaction.DebitAmount - transaction.CreditAmount;
-                transaction.BalanceAfter = transactionBalance;
-            }
-        }
-        else
-        {
-            var orderedTransactions = await _context.SupplierTransactions
-                .Where(transaction =>
-                    transaction.TenantId == tenantId &&
-                    transaction.SupplierId == partyId)
-                .OrderBy(transaction => transaction.TransactionDate)
-                .ThenBy(transaction => transaction.CreatedAt)
-                .ThenBy(transaction => transaction.Id)
-                .ToListAsync();
-
-            decimal transactionBalance = 0;
-            foreach (var transaction in orderedTransactions)
-            {
-                transactionBalance += transaction.DebitAmount - transaction.CreditAmount;
-                transaction.BalanceAfter = transactionBalance;
-            }
-        }
+        await RebuildPartyTransactionBalancesAsync(partyType, partyId);
 
         SetTrackedPartyBalance(lockedParty, partyType, runningBalance);
         return runningBalance;
+    }
+
+    private static decimal RebuildCustomerTransactionBalances(IEnumerable<CustomerTransaction> transactions)
+    {
+        decimal balance = 0m;
+        foreach (var transaction in transactions
+                     .OrderBy(transaction => transaction.TransactionDate)
+                     .ThenBy(transaction => transaction.CreatedAt)
+                     .ThenBy(transaction => transaction.Id))
+        {
+            balance += transaction.DebitAmount - transaction.CreditAmount;
+            transaction.BalanceAfter = balance;
+        }
+        return balance;
+    }
+
+    private static decimal RebuildSupplierTransactionBalances(IEnumerable<SupplierTransaction> transactions)
+    {
+        decimal balance = 0m;
+        foreach (var transaction in transactions
+                     .OrderBy(transaction => transaction.TransactionDate)
+                     .ThenBy(transaction => transaction.CreatedAt)
+                     .ThenBy(transaction => transaction.Id))
+        {
+            balance += transaction.DebitAmount - transaction.CreditAmount;
+            transaction.BalanceAfter = balance;
+        }
+        return balance;
     }
 
     private static void SetTrackedPartyBalance(LockedParty lockedParty, PartyType partyType, decimal balance)

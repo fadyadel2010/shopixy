@@ -7,6 +7,7 @@ import {
     downloadAdminOrderCheckoutAttachment,
     cancelAdminOrder,
     cancelAdminShipment,
+    confirmAdminReturnReceipt,
     getAdminOrderDetails,
     getAdminOrderFulfillmentActions,
     getAdminOrderPaymentActions,
@@ -260,6 +261,27 @@ export function validateManualDeliveryEvidence(evidence) {
     return null
 }
 
+export function validateReturnReceiptEvidence(evidence, requestedQuantity) {
+    const resellableQuantity = Number(evidence?.resellableQuantity)
+    const damagedQuantity = Number(evidence?.damagedQuantity)
+    const maximumQuantity = Number(requestedQuantity)
+
+    if (!Number.isInteger(resellableQuantity) || !Number.isInteger(damagedQuantity)) {
+        return 'Receipt quantities must be whole numbers.'
+    }
+    if (resellableQuantity < 0 || damagedQuantity < 0) {
+        return 'Receipt quantities cannot be negative.'
+    }
+    if (resellableQuantity + damagedQuantity <= 0) {
+        return 'At least one received item is required.'
+    }
+    if (!Number.isInteger(maximumQuantity) || maximumQuantity <= 0 || resellableQuantity + damagedQuantity > maximumQuantity) {
+        return 'Receipt quantities cannot exceed the approved return quantity.'
+    }
+
+    return null
+}
+
 export function getLifecycleMutationErrorMessage(error) {
     return error?.status === 409
         ? 'The order changed. Canonical data was refreshed; review it before trying again.'
@@ -315,6 +337,9 @@ function OrderDetailsPanel({
     onAdministrativeAction,
     isAdministrativeActionUpdating,
     administrativeActionError,
+    onConfirmReturnReceipt,
+    isReturnReceiptUpdating,
+    returnReceiptError,
 }) {
     const { t } = useTranslation()
     const closeButtonRef = useRef(null)
@@ -339,6 +364,12 @@ function OrderDetailsPanel({
     })
     const [pendingAdministrativeAction, setPendingAdministrativeAction] = useState(null)
     const [administrativeReason, setAdministrativeReason] = useState('')
+    const [pendingReturnReceipt, setPendingReturnReceipt] = useState(null)
+    const [returnReceiptEvidence, setReturnReceiptEvidence] = useState({
+        resellableQuantity: '0',
+        damagedQuantity: '0',
+        notes: '',
+    })
 
     const directStatusOptions = getDirectOrderStatusMutationOptions(order)
     const canSubmitStatusCandidate = Boolean(
@@ -472,6 +503,35 @@ function OrderDetailsPanel({
         })
     }
 
+    function handleReturnReceiptSelection(returnRequest) {
+        setPendingReturnReceipt(returnRequest)
+        setReturnReceiptEvidence({
+            resellableQuantity: String(returnRequest.requestedQuantity || 0),
+            damagedQuantity: '0',
+            notes: '',
+        })
+    }
+
+    function handleSubmitReturnReceipt(event) {
+        event.preventDefault()
+        if (!pendingReturnReceipt || validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity)) {
+            return
+        }
+
+        onConfirmReturnReceipt({
+            returnId: pendingReturnReceipt.returnId,
+            payload: {
+                resellableQuantity: Number(returnReceiptEvidence.resellableQuantity),
+                damagedQuantity: Number(returnReceiptEvidence.damagedQuantity),
+                notes: returnReceiptEvidence.notes.trim() || null,
+            },
+        })
+    }
+
+    const returnReceiptEvidenceError = pendingReturnReceipt
+        ? validateReturnReceiptEvidence(returnReceiptEvidence, pendingReturnReceipt.requestedQuantity)
+        : null
+
     useEffect(() => {
         setStatusCandidate(order?.status || '')
         setStatusReason('')
@@ -489,7 +549,9 @@ function OrderDetailsPanel({
         setPaymentEvidence({ amount: '', reason: '', deliveryReference: '', refundId: '' })
         setPendingAdministrativeAction(null)
         setAdministrativeReason('')
-    }, [order?.orderId, order?.status, order?.paymentStatus, order?.fulfillmentStatus, order?.shipmentStatus])
+        setPendingReturnReceipt(null)
+        setReturnReceiptEvidence({ resellableQuantity: '0', damagedQuantity: '0', notes: '' })
+    }, [order?.orderId, order?.status, order?.paymentStatus, order?.fulfillmentStatus, order?.shipmentStatus, order?.items])
 
     useEffect(() => {
         closeButtonRef.current?.focus()
@@ -553,7 +615,7 @@ function OrderDetailsPanel({
 
                     {!isLoading && !isError && order ? (
                         <div className="space-y-5">
-                            <SectionCard title="Lifecycle">
+                            {!order.isMarketplaceOrder ? <SectionCard title="Lifecycle">
                                 <div className="grid gap-4 md:grid-cols-2">
                                     <div>
                                         <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Order status</p>
@@ -733,7 +795,12 @@ function OrderDetailsPanel({
                                         </form>
                                     ) : null}
                                 </div>
-                            </SectionCard>
+                            </SectionCard> : <section className="rounded-3xl border border-blue-200 bg-blue-50 p-5">
+                                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700">CommerceHub vendor sub-order</p>
+                                <h3 className="mt-2 text-lg font-semibold text-slate-950">Marketplace fulfillment is isolated from Storefront order authority.</h3>
+                                <p className="mt-2 text-sm leading-6 text-slate-600">Use the dedicated CommerceHub surface for backend-authorized vendor fulfillment, return receipt, and marketplace lifecycle history.</p>
+                                <Link to={`/commercehub/orders/${order.orderId}`} className="mt-4 inline-flex rounded-full bg-blue-700 px-4 py-2 text-sm font-semibold text-white">Open CommerceHub order</Link>
+                            </section>}
 
                             {!order.isMarketplaceOrder ? (
                                 <SectionCard title="Payment lifecycle">
@@ -994,6 +1061,109 @@ function OrderDetailsPanel({
                                                         <p className="mt-1 text-xs text-slate-500">Qty {item.quantity}</p>
                                                     </div>
                                                 </div>
+                                                {item.refunds?.length ? (
+                                                    <div className="mt-4 space-y-3 border-t border-slate-200 pt-4">
+                                                        {item.refunds.map((refund) => {
+                                                            const returnRequest = refund.returnRequest
+                                                            const isReceiptOpen = pendingReturnReceipt?.returnId === returnRequest?.returnId
+
+                                                            return (
+                                                                <div key={refund.refundId} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                                                                    <div className="flex flex-wrap items-start justify-between gap-3">
+                                                                        <div>
+                                                                            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-800">Customer refund</p>
+                                                                            <p className="mt-2 text-sm font-medium text-slate-950">{refund.reason || 'No reason provided'}</p>
+                                                                            <p className="mt-1 text-xs text-slate-600">Requested {formatDateTime(refund.createdAt)}</p>
+                                                                        </div>
+                                                                        <div className="text-right">
+                                                                            <StatusBadge value={refund.status} tone="amber" />
+                                                                            <p className="mt-2 text-sm font-semibold text-slate-950">
+                                                                                {formatCurrency(refund.amount, order.totals?.currency)} | Qty {refund.quantity}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {returnRequest ? (
+                                                                        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+                                                                            <div className="grid gap-3 md:grid-cols-2">
+                                                                                <div>
+                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Physical return</p>
+                                                                                    <p className="mt-2 text-sm font-semibold text-slate-950">{returnRequest.status}</p>
+                                                                                </div>
+                                                                                <div>
+                                                                                    <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Approved quantity</p>
+                                                                                    <p className="mt-2 text-sm font-semibold text-slate-950">{returnRequest.requestedQuantity}</p>
+                                                                                </div>
+                                                                                {returnRequest.courierName || returnRequest.trackingNumber ? (
+                                                                                    <div className="md:col-span-2">
+                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Return tracking</p>
+                                                                                        <p className="mt-2 text-sm text-slate-700">
+                                                                                            {[returnRequest.courierName, returnRequest.trackingNumber].filter(Boolean).join(' | ')}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                ) : null}
+                                                                                {returnRequest.status === 'Confirmed' ? (
+                                                                                    <div className="md:col-span-2">
+                                                                                        <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Received condition</p>
+                                                                                        <p className="mt-2 text-sm text-slate-700">
+                                                                                            Resellable {returnRequest.receivedResellableQuantity} | Damaged {returnRequest.receivedDamagedQuantity}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                ) : null}
+                                                                            </div>
+
+                                                                            {returnRequest.canConfirmReceipt ? (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    onClick={() => handleReturnReceiptSelection(returnRequest)}
+                                                                                    disabled={isReturnReceiptUpdating}
+                                                                                    className="mt-4 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300"
+                                                                                >
+                                                                                    Confirm received condition
+                                                                                </button>
+                                                                            ) : returnRequest.status !== 'Confirmed' ? (
+                                                                                <p className="mt-4 text-sm text-slate-600">
+                                                                                    Receipt confirmation becomes available after platform logistics delivers the return to this vendor.
+                                                                                </p>
+                                                                            ) : null}
+
+                                                                            {isReceiptOpen ? (
+                                                                                <form className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 p-4" onSubmit={handleSubmitReturnReceipt}>
+                                                                                    <p className="text-sm font-semibold text-sky-950">Confirm received inventory condition</p>
+                                                                                    <p className="mt-1 text-xs text-sky-800">This records vendor receipt only. It does not execute the customer refund.</p>
+                                                                                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                                                                        <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                                                            <span className="font-medium">Resellable quantity</span>
+                                                                                            <input type="number" min="0" step="1" value={returnReceiptEvidence.resellableQuantity} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, resellableQuantity: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                                                        </label>
+                                                                                        <label className="flex flex-col gap-2 text-sm text-slate-700">
+                                                                                            <span className="font-medium">Damaged quantity</span>
+                                                                                            <input type="number" min="0" step="1" value={returnReceiptEvidence.damagedQuantity} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, damagedQuantity: event.target.value }))} className="rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                                                        </label>
+                                                                                        <label className="flex flex-col gap-2 text-sm text-slate-700 md:col-span-2">
+                                                                                            <span className="font-medium">Receipt notes (optional)</span>
+                                                                                            <textarea maxLength={MAX_LIFECYCLE_REASON_LENGTH} value={returnReceiptEvidence.notes} onChange={(event) => setReturnReceiptEvidence((current) => ({ ...current, notes: event.target.value }))} className="min-h-20 rounded-2xl border border-slate-200 bg-white px-4 py-3" />
+                                                                                        </label>
+                                                                                    </div>
+                                                                                    {returnReceiptEvidenceError ? <p role="alert" className="mt-3 text-sm text-rose-700">{returnReceiptEvidenceError}</p> : null}
+                                                                                    {returnReceiptError ? <p role="alert" className="mt-3 text-sm text-rose-700">{returnReceiptError}</p> : null}
+                                                                                    <div className="mt-4 flex flex-wrap gap-2">
+                                                                                        <button type="submit" disabled={Boolean(returnReceiptEvidenceError) || isReturnReceiptUpdating} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">
+                                                                                            {isReturnReceiptUpdating ? 'Confirming receipt' : 'Confirm receipt'}
+                                                                                        </button>
+                                                                                        <button type="button" onClick={() => setPendingReturnReceipt(null)} disabled={isReturnReceiptUpdating} className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-50">
+                                                                                            Cancel
+                                                                                        </button>
+                                                                                    </div>
+                                                                                </form>
+                                                                            ) : null}
+                                                                        </div>
+                                                                    ) : null}
+                                                                </div>
+                                                            )
+                                                        })}
+                                                    </div>
+                                                ) : null}
                                             </div>
                                         ))}
                                     </div>
@@ -1223,6 +1393,12 @@ export default function Orders() {
         onError: refreshAfterConflict,
     })
 
+    const returnReceiptMutation = useMutation({
+        mutationFn: ({ returnId, payload }) => confirmAdminReturnReceipt(returnId, payload),
+        onSuccess: refreshCanonicalState,
+        onError: refreshAfterConflict,
+    })
+
     useEffect(() => {
         const responsePage = ordersQuery.data?.page
         if (!Number.isInteger(responsePage) || responsePage < 1 || responsePage === filters.page) {
@@ -1303,7 +1479,7 @@ export default function Orders() {
                         </div>
                         <h1 className="mt-4 text-3xl font-semibold tracking-tight text-slate-950">Orders</h1>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-                            Tenant-scoped order review for storefront and marketplace sub-orders. This view stays inside POS authority and uses the tenant-admin orders API instead of the super-admin cross-tenant route.
+                            Tenant-scoped Storefront order authority. CommerceHub rows remain visible for compatibility and open in their dedicated vendor operations surface.
                         </p>
                     </div>
                     <button
@@ -1438,7 +1614,7 @@ export default function Orders() {
                         <div>
                             <p className="text-sm font-semibold text-slate-950">{totalCount.toLocaleString()} orders</p>
                             <p className="mt-1 text-sm text-slate-500">
-                                SQL-backed tenant order list with storefront and marketplace rows combined.
+                                SQL-backed Storefront orders with read-only CommerceHub compatibility links.
                             </p>
                             {ordersQuery.isFetching && !ordersQuery.isLoading ? (
                                 <p className="mt-1 text-xs font-medium text-sky-700" role="status">Refreshing orders…</p>
@@ -1500,7 +1676,9 @@ export default function Orders() {
                                             <td className="px-6 py-5">
                                                 <button
                                                     type="button"
-                                                    onClick={() => handleOpenOrder(order.orderId)}
+                                                    onClick={() => order.isMarketplaceOrder
+                                                        ? navigate(`/commercehub/orders/${order.orderId}`)
+                                                        : handleOpenOrder(order.orderId)}
                                                     className="font-medium text-sky-700 underline-offset-4 hover:text-sky-900 hover:underline focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
                                                     aria-label={`Open order ${order.orderNumber}`}
                                                 >
@@ -1606,6 +1784,9 @@ export default function Orders() {
                         onAdministrativeAction={(action) => administrativeActionMutation.mutate(action)}
                         isAdministrativeActionUpdating={administrativeActionMutation.isPending}
                         administrativeActionError={administrativeActionMutation.error ? getLifecycleMutationErrorMessage(administrativeActionMutation.error) : null}
+                        onConfirmReturnReceipt={(request) => returnReceiptMutation.mutate(request)}
+                        isReturnReceiptUpdating={returnReceiptMutation.isPending}
+                        returnReceiptError={returnReceiptMutation.error ? getLifecycleMutationErrorMessage(returnReceiptMutation.error) : null}
                     />
                 </>
             ) : null}

@@ -94,7 +94,7 @@ public sealed class StorefrontConfigurationAuthorityCertificationTests
         Assert.Contains("canManageStorefrontSettings(user)", settingsShell, StringComparison.Ordinal);
         Assert.Contains("canManageStorefrontSettings(user)", settingsPage, StringComparison.Ordinal);
         Assert.Contains("new Set(['Owner', 'Admin'])", authority, StringComparison.Ordinal);
-        Assert.Contains("navigate('/settings?tab=storefront')", statusCard, StringComparison.Ordinal);
+        Assert.Contains("navigate('/storefront/status')", statusCard, StringComparison.Ordinal);
 
         Assert.DoesNotContain("canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')", settingsShell, StringComparison.Ordinal);
         Assert.DoesNotContain("canAccessCommerceHubVendorNavigationCapability(user, 'commercehub.storefront.manage')", settingsPage, StringComparison.Ordinal);

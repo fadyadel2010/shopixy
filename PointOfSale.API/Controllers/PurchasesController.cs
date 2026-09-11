@@ -50,6 +50,7 @@ public class PurchasesController : ControllerBase
     private readonly IEventPublisher _eventPublisher;
     private readonly IAccountingOutboxService _accountingOutbox;
     private readonly ICommerceAccountingService _commerceAccounting;
+    private readonly IFinancialPostingService _postingService;
     private readonly IAccountResolver _accountResolver;
     private readonly ITreasuryReadService _treasuryReadService;
     private readonly ICashboxLedgerAccountService _cashboxLedgerAccountService;
@@ -69,6 +70,7 @@ public class PurchasesController : ControllerBase
         IEventPublisher eventPublisher,
         IAccountingOutboxService accountingOutbox,
         ICommerceAccountingService commerceAccounting,
+        IFinancialPostingService postingService,
         IAccountResolver accountResolver,
         ITreasuryReadService treasuryReadService,
         ICashboxLedgerAccountService cashboxLedgerAccountService,
@@ -84,6 +86,7 @@ public class PurchasesController : ControllerBase
         _eventPublisher = eventPublisher;
         _accountingOutbox = accountingOutbox;
         _commerceAccounting = commerceAccounting;
+        _postingService = postingService;
         _accountResolver = accountResolver;
         _treasuryReadService = treasuryReadService;
         _cashboxLedgerAccountService = cashboxLedgerAccountService;
@@ -178,6 +181,7 @@ public class PurchasesController : ControllerBase
                 Notes = request.Notes,
                 CreatedAt = DateTime.UtcNow
             };
+            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount);
 
             var lockedStocks = await ProductVariantStockMutationSupport.LockMultipleStocksAsync(
                 _context,
@@ -726,7 +730,7 @@ public class PurchasesController : ControllerBase
             {
                 query = _context.Products
                     .FromSqlInterpolated($@"
-                        SELECT *
+                        SELECT *, xmin
                         FROM ""Products""
                         WHERE ""TenantId"" = {_tenantContext.RequiredTenantId}
                           AND ""Id"" = {productId}
@@ -878,6 +882,7 @@ public class PurchasesController : ControllerBase
                     .ThenInclude(v => v!.Stocks)
             .Include(p => p.Items)
                 .ThenInclude(i => i.Unit)
+            .Include(p => p.Payments)
             .FirstOrDefaultAsync(p => p.Id == id);
 
         if (invoice == null)
@@ -1088,6 +1093,11 @@ public class PurchasesController : ControllerBase
                     : request.InvoiceDate.ToUniversalTime();
             invoice.AccountingMutationVersion++;
 
+            _context.PurchaseInvoicePayments.RemoveRange(invoice.Payments);
+            invoice.Payments.Clear();
+            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount);
+            _context.PurchaseInvoicePayments.AddRange(invoice.Payments);
+
             // 3. Clear old items
             _context.PurchaseInvoiceItems.RemoveRange(invoice.Items);
             invoice.Items.Clear();
@@ -1250,17 +1260,12 @@ public class PurchasesController : ControllerBase
                 paymentSplit.CashAmount,
                 paymentSplit.CardAmount);
 
-            var purchasePosting = await _commerceAccounting.PostPosPurchaseAsync(
+            var purchasePosting = await PostUpdatedPurchaseAccountingSynchronouslyAsync(
                 invoice,
-                HttpContext.RequestAborted,
                 purchaseOperationKey,
+                HttpContext.RequestAborted,
                 paymentSplit.CashAmount,
                 paymentSplit.CardAmount);
-            if (!purchasePosting.Success)
-            {
-                throw new InvalidOperationException(
-                    $"Updated POS purchase accounting post failed for invoice {invoice.InvoiceNumber}: {purchasePosting.ErrorMessage}");
-            }
 
             await MarkSynchronousPurchaseAccountingOutboxProcessedAsync(
                 invoice.TenantId,
@@ -1584,6 +1589,9 @@ public class PurchasesController : ControllerBase
         await _context.Entry(invoice)
             .Collection(entry => entry.Items)
             .LoadAsync();
+        await _context.Entry(invoice)
+            .Collection(entry => entry.Payments)
+            .LoadAsync();
 
         return invoice;
     }
@@ -1612,6 +1620,7 @@ public class PurchasesController : ControllerBase
                     .ThenInclude(v => v!.Stocks)
             .Include(p => p.Items)
                 .ThenInclude(i => i.Unit)
+            .Include(p => p.Payments)
             .AsQueryable();
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -1974,6 +1983,84 @@ public class PurchasesController : ControllerBase
         decimal? totalAmount = null)
     {
         return PurchasePaymentSplitter.Resolve(request, totalAmount);
+    }
+
+    private static void AddPurchasePayments(PurchaseInvoice invoice, decimal cashAmount, decimal cardAmount)
+    {
+        var paymentDate = DateTime.UtcNow;
+
+        if (cashAmount > 0m)
+        {
+            invoice.Payments.Add(new PurchaseInvoicePayment
+            {
+                Id = Guid.NewGuid(),
+                PurchaseInvoiceId = invoice.Id,
+                PaymentDate = paymentDate,
+                Amount = cashAmount,
+                PaymentMethod = PaymentMethod.Cash,
+                ReferenceNumber = invoice.InvoiceNumber,
+                Notes = $"Cash payment for purchase invoice {invoice.InvoiceNumber}",
+                CreatedAt = paymentDate
+            });
+        }
+
+        if (cardAmount > 0m)
+        {
+            invoice.Payments.Add(new PurchaseInvoicePayment
+            {
+                Id = Guid.NewGuid(),
+                PurchaseInvoiceId = invoice.Id,
+                PaymentDate = paymentDate,
+                Amount = cardAmount,
+                PaymentMethod = PaymentMethod.Card,
+                ReferenceNumber = invoice.InvoiceNumber,
+                Notes = $"Card payment for purchase invoice {invoice.InvoiceNumber}",
+                CreatedAt = paymentDate
+            });
+        }
+    }
+
+    private async Task<PostingResult> PostUpdatedPurchaseAccountingSynchronouslyAsync(
+        PurchaseInvoice invoice,
+        string operationKey,
+        CancellationToken cancellationToken,
+        decimal cashAmount,
+        decimal cardAmount)
+    {
+        var journalsToReverse = await _context.JournalEntries
+            .IgnoreQueryFilters()
+            .Where(journal =>
+                journal.TenantId == invoice.TenantId &&
+                journal.SourceId == invoice.Id &&
+                journal.SourceType == "PurchaseInvoice" &&
+                journal.Status == JournalStatus.Posted &&
+                (string.IsNullOrEmpty(journal.IdempotencyKey) || !journal.IdempotencyKey.EndsWith($":{operationKey}")))
+            .OrderBy(journal => journal.PostedAtUtc)
+            .ThenBy(journal => journal.JournalNumber)
+            .ToListAsync(cancellationToken);
+
+        foreach (var journal in journalsToReverse)
+        {
+            await _postingService.ReverseJournalAsync(
+                invoice.TenantId,
+                journal.Id,
+                $"Purchase update for {invoice.InvoiceNumber} ({operationKey})",
+                ct: cancellationToken);
+        }
+
+        var purchasePosting = await _commerceAccounting.PostPosPurchaseAsync(
+            invoice,
+            cancellationToken,
+            operationKey,
+            cashAmount,
+            cardAmount);
+        if (!purchasePosting.Success)
+        {
+            throw new InvalidOperationException(
+                $"Updated POS purchase accounting post failed for invoice {invoice.InvoiceNumber}: {purchasePosting.ErrorMessage}");
+        }
+
+        return purchasePosting;
     }
 }
 

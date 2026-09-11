@@ -23,6 +23,7 @@ using PointOfSale.API.Services.Audit;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Enums.CommerceHubFinance;
@@ -5240,6 +5241,8 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
             service.MarkDeliveredAsync(
                 graph.ReturnRequestId,
+                graph.VendorId,
+                CommerceHubReturnStatus.Confirmed,
                 SeededUtc.AddMinutes(75),
                 "TRACK-STOCK-CON-05",
                 "CommerceHub Carrier",
@@ -5247,7 +5250,7 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
                 ActorBUserId,
                 "stock-con-05-delayed-webhook@example.test",
                 "stock-con-05-out-of-order-delivered",
-                "CommerceHubWebhook"));
+                "PosAdminAPI"));
 
         Assert.Equal("RETURN_TRANSITION_NOT_ALLOWED", exception.Code);
 
@@ -7061,6 +7064,13 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        service
+            .Setup(entry => entry.DeleteAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
         return service;
     }
 
@@ -7147,6 +7157,7 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             TrackStock = true,
             IsActive = true,
             IsOnlineVisible = true,
+            PublishStatus = PublishStatus.Published,
             CreatedAt = SeededUtc
         });
 
@@ -7189,6 +7200,17 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             CreatedAt = SeededUtc,
             UpdatedAt = SeededUtc
         });
+
+        var affiliateCategory = AffiliateCategory.CreateMainCategory(
+            "Reliability Tests",
+            $"reliability-tests-{Guid.NewGuid():N}");
+        context.AffiliateCategories.Add(affiliateCategory);
+        context.AffiliateProductPolicies.Add(AffiliateProductPolicy.Create(
+            TenantId,
+            ProductId,
+            commissionRate: 0.10m,
+            maxPerItem: 25m,
+            categoryId: affiliateCategory.Id));
 
         await context.SaveChangesAsync();
 

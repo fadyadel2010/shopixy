@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.API.Services.ProductAuthoring;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
@@ -14,16 +15,19 @@ public class CategoriesController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly ITenantContext _tenantContext;
+    private readonly IEventPublisher _eventPublisher;
     private readonly ILogger<CategoriesController> _logger;
     private Guid TenantId => _tenantContext.RequiredTenantId;
 
     public CategoriesController(
         ApplicationDbContext context,
         ITenantContext tenantContext,
+        IEventPublisher eventPublisher,
         ILogger<CategoriesController> logger)
     {
         _context = context;
         _tenantContext = tenantContext;
+        _eventPublisher = eventPublisher;
         _logger = logger;
     }
 
@@ -298,12 +302,21 @@ public class CategoriesController : ControllerBase
                 return BadRequest(new { message = "Cannot move category that has subcategories" });
         }
 
+        await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
         category.Name = request.Name;
         category.Description = request.Description;
         category.ParentCategoryId = request.ParentCategoryId;
         category.UpdatedAt = DateTime.UtcNow;
 
+        await CatalogDependencyProjectionPropagation.PublishCategoryMutationAsync(
+            _context,
+            _eventPublisher,
+            tenantId,
+            category.Id,
+            cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         return NoContent();
     }

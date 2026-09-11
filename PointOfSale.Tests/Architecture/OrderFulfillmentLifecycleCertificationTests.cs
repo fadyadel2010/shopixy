@@ -510,7 +510,9 @@ public sealed class OrderFulfillmentLifecycleCertificationTests
     {
         var source = ReadRepoFile("PointOfSale.API/Controllers/CommerceHubOrdersController.cs");
 
-        Assert.Contains("[Authorize]", source, StringComparison.Ordinal);
+        Assert.Contains("[Authorize(Roles = \"Owner,Admin,Manager\")]", source, StringComparison.Ordinal);
+        Assert.Contains("ResolveAuthenticatedCustomerIdAsync", source, StringComparison.Ordinal);
+        Assert.Contains("CommerceHubOrderAccessCookie.ReadOrderAccessToken", source, StringComparison.Ordinal);
         Assert.Contains("_tenantContext.TenantId", source, StringComparison.Ordinal);
         Assert.Contains("UpdateSubOrderStatusAsync(", source, StringComparison.Ordinal);
     }

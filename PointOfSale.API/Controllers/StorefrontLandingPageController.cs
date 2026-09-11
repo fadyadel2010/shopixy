@@ -345,7 +345,7 @@ public class StorefrontLandingPageController : ControllerBase
                 product.Variants.FirstOrDefault(v => v.IsActive);
 
             if (defaultVariant != null)
-                return defaultVariant.OnlinePrice ?? defaultVariant.Price;
+                return defaultVariant.EffectivePrice;
         }
 
         return product.StorefrontVisiblePrice;
@@ -372,7 +372,7 @@ public class StorefrontLandingPageController : ControllerBase
             {
                 VariantId = v.VariantId,
                 SKU = v.SKU,
-                Price = v.OnlinePrice ?? v.Price,
+                Price = v.EffectivePrice,
                 InStock = v.TotalStock > 0,
                 ImageUrl = v.ImageUrl,
                 Attributes = v.Attributes

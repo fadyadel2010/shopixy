@@ -92,7 +92,15 @@ public sealed class CommerceHubInventoryReconciliationJob
                 !reservation.IsDeleted &&
                 reservation.ExpiresAtUtc.HasValue &&
                 reservation.ExpiresAtUtc.Value <= nowUtc &&
-                reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity)
+                reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity &&
+                !_dbContext.CommerceHubSubOrderItems.Any(item =>
+                    !item.IsDeleted &&
+                    !item.SubOrder.IsDeleted &&
+                    item.Id == reservation.OrderItemId &&
+                    item.Status != CommerceHubOrderItemStatus.Cancelled &&
+                    item.SubOrder.Status != OrderStatus.Cancelled &&
+                    item.SubOrder.Status != OrderStatus.Refunded &&
+                    item.SubOrder.PaymentMethod == CommerceHubPaymentMethod.CashOnDelivery))
             .Select(reservation => new
             {
                 reservation.Id,

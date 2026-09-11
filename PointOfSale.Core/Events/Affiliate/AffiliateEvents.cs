@@ -318,6 +318,7 @@ public class AffiliateOrderPlacedEvent : IntegrationEvent, IAggregateScopedInteg
     public string ReferralCode { get; set; } = string.Empty;
     public decimal OrderTotal { get; set; }
     public string Currency { get; set; } = string.Empty;
+    public string PaymentMethodCode { get; set; } = string.Empty;
     public int ItemCount { get; set; }
     public bool IsGuestCheckout { get; set; }
 

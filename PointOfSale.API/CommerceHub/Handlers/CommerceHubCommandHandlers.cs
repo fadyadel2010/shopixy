@@ -331,22 +331,31 @@ public class PublishToCommerceHubHandler : IPublishToCommerceHubHandler
             .WherePubliclyVisibleLineage(tenantId)
             .FirstOrDefaultAsync(
                 x => x.Id == variantId &&
-                     x.TenantId == tenantId &&
-                     x.IsActive &&
-                     !x.IsDeleted &&
-                     !x.Product.IsDeleted &&
-                     x.Product.IsActive &&
-                     x.Product.IsOnlineVisible &&
-                     x.Product.PublishStatus == PointOfSale.Core.Enums.PublishStatus.Published &&
-                     x.Product.TenantId == tenantId,
+                      x.TenantId == tenantId &&
+                      x.Product.TenantId == tenantId,
                 cancellationToken);
 
-        if (variant == null)
+        if (variant != null)
+        {
+            return variant;
+        }
+
+        var ineligibleVariant = await _dbContext.ProductVariants
+            .IgnoreQueryFilters()
+            .Include(x => x.Product)
+            .FirstOrDefaultAsync(
+                x => x.Id == variantId &&
+                     x.TenantId == tenantId &&
+                     x.Product.TenantId == tenantId,
+                cancellationToken);
+        if (ineligibleVariant == null)
         {
             throw new CommerceHubNotFoundException("Variant not found for this tenant.");
         }
 
-        return variant;
+        throw new CommerceHubValidationException(
+            CommerceHubPublicationEligibilityPolicy.GetBlockingMessage(ineligibleVariant) ??
+            "Current SQL product and variant authority does not allow this variant to be published to CommerceHub.");
     }
 
     private async Task EnsureTenantHasActiveShippingAsync(Guid tenantId, CancellationToken cancellationToken)
@@ -614,19 +623,28 @@ public class UpdateCommerceHubListingHandler : IUpdateCommerceHubListingHandler
             .WherePubliclyVisibleLineage(command.TenantId)
             .FirstOrDefaultAsync(
                 x => x.Id == command.VariantId &&
-                     x.TenantId == command.TenantId &&
-                     x.IsActive &&
-                     !x.IsDeleted &&
-                     !x.Product.IsDeleted &&
-                     x.Product.IsActive &&
-                     x.Product.IsOnlineVisible &&
-                     x.Product.PublishStatus == PointOfSale.Core.Enums.PublishStatus.Published &&
-                     x.Product.TenantId == command.TenantId,
+                      x.TenantId == command.TenantId &&
+                      x.Product.TenantId == command.TenantId,
                 cancellationToken);
 
         if (variant == null)
         {
-            throw new CommerceHubNotFoundException("Variant not found for this tenant.");
+            var ineligibleVariant = await _dbContext.ProductVariants
+                .IgnoreQueryFilters()
+                .Include(x => x.Product)
+                .FirstOrDefaultAsync(
+                    x => x.Id == command.VariantId &&
+                         x.TenantId == command.TenantId &&
+                         x.Product.TenantId == command.TenantId,
+                    cancellationToken);
+            if (ineligibleVariant == null)
+            {
+                throw new CommerceHubNotFoundException("Variant not found for this tenant.");
+            }
+
+            throw new CommerceHubValidationException(
+                CommerceHubPublicationEligibilityPolicy.GetBlockingMessage(ineligibleVariant) ??
+                "Current SQL product and variant authority does not allow this variant to be published to CommerceHub.");
         }
         CommerceHubPublicationCurrencyPolicy.EnsureEgpPricedProduct(tenant.Currency);
 

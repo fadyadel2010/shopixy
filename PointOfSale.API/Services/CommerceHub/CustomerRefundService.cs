@@ -823,7 +823,12 @@ public class CustomerRefundService : ICustomerRefundService
             MaskedAccountIdentifier = refundRequest.PayoutAccountMaskedSnapshot,
             AccountHolderName = refundRequest.PayoutAccountHolderNameSnapshot,
             TransactionReference = executionRecord?.TransactionReference ?? trackedRefund?.Reference,
-            PaidAt = executionRecord?.ExecutedAt ?? trackedRefund?.ProcessedAtUtc ?? refundRequest.CompletedAtUtc
+            PaidAt = executionRecord?.ExecutedAt ?? trackedRefund?.ProcessedAtUtc ?? refundRequest.CompletedAtUtc,
+            IsDevelopmentSimulation = trackedRefund?.GatewayStatus is
+                "development-simulated-cod-refund" or
+                "development-simulated-online-refund",
+            ExternalMoneyMovementConfirmed = trackedRefund?.Status == CommerceHubRefundStatus.Completed &&
+                string.Equals(trackedRefund.GatewayStatus, "manual-confirmed", StringComparison.Ordinal)
         };
     }
 

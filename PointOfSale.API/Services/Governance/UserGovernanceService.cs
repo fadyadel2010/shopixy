@@ -586,6 +586,16 @@ public sealed partial class UserGovernanceService : IUserGovernanceService
                 StatusCodes.Status409Conflict);
         }
 
+        if (profile.Status == targetStatus &&
+            string.Equals(profile.StatusReason, normalizedReason, StringComparison.Ordinal))
+        {
+            return await GetUserDetailsAsync(subject.Id, subject.Role, cancellationToken)
+                ?? throw new UserGovernanceException(
+                    "USER_NOT_FOUND",
+                    "Governed user was not found.",
+                    StatusCodes.Status404NotFound);
+        }
+
         var beforeSnapshot = BuildAuditSnapshot(evaluationBefore);
         VendorGovernanceActionAlerts? operationalAlerts = null;
         if (subject.Role == UserGovernanceRole.Vendor &&
@@ -767,6 +777,26 @@ public sealed partial class UserGovernanceService : IUserGovernanceService
             cancellationToken);
         var beforeSnapshot = BuildAuditSnapshot(profile);
         var now = DateTime.UtcNow;
+
+        var isExactReplay = setVerification
+            ? profile.IsKycVerified == value &&
+              string.Equals(profile.KycVerificationReason, normalizedReason, StringComparison.Ordinal) &&
+              (value || !profile.IsMarketplaceApproved)
+            : profile.IsMarketplaceApproved == value &&
+              string.Equals(profile.MarketplaceApprovalReason, normalizedReason, StringComparison.Ordinal) &&
+              (!value || profile.IsKycVerified);
+        if (isExactReplay)
+        {
+            return await GetUserDetailsAsync(
+                    vendorId,
+                    UserGovernanceRole.Vendor,
+                    cancellationToken)
+                ?? throw new UserGovernanceException(
+                    "VENDOR_NOT_FOUND",
+                    "Vendor was not found.",
+                    StatusCodes.Status404NotFound);
+        }
+
         using var certificationMutation =
             UserGovernanceMutationScope.BeginCertificationMutation();
 

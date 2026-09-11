@@ -10,7 +10,7 @@ Backend services and endpoint authorization own refund identity, ownership, life
 
 - Identity: all refund, return, execution, financial-refund, payment, order-item, customer, and vendor identifiers are validated as backend DTO evidence. No UI state creates or substitutes identity.
 - Ownership and scope: customer creation/evidence paths re-enter the current backend order item; vendor refund impact is a current-tenant-bound read-only presentation; Super Admin detail must match the current monitoring row.
-- Lifecycle, visibility, and actions: selected IDs, dialogs, cache entries, and route search parameters are candidates only. Super Admin action, execution, and return mutations re-fetch the current list and detail before submission; stale or failed reads withhold protected presentation.
+- Lifecycle, visibility, and actions: selected IDs, dialogs, cache entries, and route search parameters are candidates only. Super Admin refund actions and execution re-fetch the current list/detail before submission; return monitoring is read-only, and vendor logistics re-enters separate current tenant/order/return authority.
 - Financial: the frontend does not submit refund amounts, currencies, execution amounts, financial refund IDs, or ledger facts. It only validates and displays coherent backend evidence.
 
 ## Cross-domain, bootstrap, cache, failure, and adversarial findings

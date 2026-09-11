@@ -194,7 +194,7 @@ public sealed class CommerceHubVendorPayoutReadServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetVendorSnapshotAsync_WhenLedgerHasMultipleCurrencies_ShouldBlockPayoutEligibility()
+    public async Task GetVendorSnapshotAsync_ShouldRejectNonEgpLedgerCurrencyAtCreationBoundary()
     {
         var vendorId = await SeedVendorAsync("Mixed Ledger Currency Vendor");
         await SeedDefaultPayoutMethodAsync(vendorId);
@@ -207,7 +207,7 @@ public sealed class CommerceHubVendorPayoutReadServiceTests : IDisposable
             deliveredAt: DateTime.UtcNow.AddDays(-10),
             itemStatus: CommerceHubOrderItemStatus.Delivered);
 
-        _dbContext.CommerceHubFinancialTransactions.Add(
+        var exception = Assert.Throws<PointOfSale.Core.Financial.FinancialCurrencyMismatchException>(() =>
             CommerceHubFinancialTransaction.Create(
                 CommerceHubFinancialEntityType.Vendor,
                 vendorId,
@@ -218,19 +218,12 @@ public sealed class CommerceHubVendorPayoutReadServiceTests : IDisposable
                 CommerceHubFinancialReferenceType.Order,
                 Guid.NewGuid(),
                 "Mixed currency payable must block payout eligibility"));
-        await _dbContext.SaveChangesAsync();
 
-        var snapshot = await _service.GetVendorSnapshotAsync(vendorId);
-
-        Assert.Equal("EGP", snapshot.Currency);
-        Assert.Equal(0m, snapshot.TotalPayable);
-        Assert.Equal(0m, snapshot.EligibleAmount);
-        Assert.Contains(PayoutRiskFlags.LedgerCurrencySplit, snapshot.RiskFlags);
-        Assert.Contains(PayoutRiskFlags.PayoutBlockedByAuthorityConflict, snapshot.RiskFlags);
+        Assert.Contains("Currency mismatch", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task GetVendorSnapshotAsync_WhenOperationalCurrencyDiffersFromLedger_ShouldBlockEligibility()
+    public async Task GetVendorSnapshotAsync_ShouldRejectNonEgpOperationalCurrencyAtPersistenceBoundary()
     {
         var vendorId = await SeedVendorAsync("Operational Currency Conflict Vendor");
         await SeedDefaultPayoutMethodAsync(vendorId);
@@ -243,28 +236,22 @@ public sealed class CommerceHubVendorPayoutReadServiceTests : IDisposable
             deliveredAt: DateTime.UtcNow.AddDays(-10),
             itemStatus: CommerceHubOrderItemStatus.Delivered);
 
-        await SeedOnlineSubOrderAsync(
-            vendorId,
-            orderNumber: "CH-SNAP-CURRENCY-USD",
-            vendorEarningAmount: 30m,
-            commissionAmount: 3m,
-            deliveredAt: DateTime.UtcNow.AddDays(-10),
-            itemStatus: CommerceHubOrderItemStatus.Delivered,
-            recordLedger: false,
-            currency: "USD");
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            SeedOnlineSubOrderAsync(
+                vendorId,
+                orderNumber: "CH-SNAP-CURRENCY-USD",
+                vendorEarningAmount: 30m,
+                commissionAmount: 3m,
+                deliveredAt: DateTime.UtcNow.AddDays(-10),
+                itemStatus: CommerceHubOrderItemStatus.Delivered,
+                recordLedger: false,
+                currency: "USD"));
 
-        var snapshot = await _service.GetVendorSnapshotAsync(vendorId);
-
-        Assert.Equal("EGP", snapshot.Currency);
-        Assert.Equal(50m, snapshot.TotalPayable);
-        Assert.Equal(0m, snapshot.EligibleAmount);
-        Assert.Equal(50m, snapshot.HoldbackAmount);
-        Assert.Contains(PayoutRiskFlags.OperationalCurrencyMismatch, snapshot.RiskFlags);
-        Assert.Contains(PayoutRiskFlags.PayoutBlockedByAuthorityConflict, snapshot.RiskFlags);
+        Assert.Contains("CommerceHub currency sovereignty violation", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task GetVendorQueueSnapshotsAsync_WhenVendorHasBadTenantAndLedgerCurrencies_ShouldQuarantineOnlyThatVendor()
+    public async Task GetVendorQueueSnapshotsAsync_ShouldRejectMalformedLedgerCurrencyAtPersistenceBoundary()
     {
         var healthyVendorId = await SeedVendorAsync("Healthy Queue Vendor");
         await SeedDefaultPayoutMethodAsync(healthyVendorId);
@@ -285,21 +272,16 @@ public sealed class CommerceHubVendorPayoutReadServiceTests : IDisposable
             commissionAmount: 4m,
             deliveredAt: DateTime.UtcNow.AddDays(-10),
             itemStatus: CommerceHubOrderItemStatus.Delivered);
-        await SeedMalformedVendorLedgerTransactionAsync(quarantinedVendorId, "BAD");
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            SeedMalformedVendorLedgerTransactionAsync(quarantinedVendorId, "BAD"));
 
         var queue = await _service.GetVendorQueueSnapshotsAsync();
-        var healthySnapshot = Assert.Single(queue);
-        var quarantinedSnapshot = await _service.GetVendorSnapshotAsync(quarantinedVendorId);
+        var healthySnapshot = Assert.Single(queue.Where(snapshot => snapshot.VendorId == healthyVendorId));
 
+        Assert.Contains("CommerceHub currency sovereignty violation", exception.Message, StringComparison.Ordinal);
         Assert.Equal(healthyVendorId, healthySnapshot.VendorId);
         Assert.Equal("EGP", healthySnapshot.Currency);
         Assert.Equal(80m, healthySnapshot.TotalPayable);
-
-        Assert.Equal(string.Empty, quarantinedSnapshot.Currency);
-        Assert.Equal(0m, quarantinedSnapshot.TotalPayable);
-        Assert.Equal(0m, quarantinedSnapshot.EligibleAmount);
-        Assert.Contains(PayoutRiskFlags.LedgerCurrencySplit, quarantinedSnapshot.RiskFlags);
-        Assert.Contains(PayoutRiskFlags.PayoutBlockedByAuthorityConflict, quarantinedSnapshot.RiskFlags);
     }
 
     public void Dispose()

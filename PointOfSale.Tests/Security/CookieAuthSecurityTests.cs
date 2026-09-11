@@ -218,7 +218,12 @@ public sealed class CookieAuthSecurityTests
         Assert.Equal(string.Empty, response.AccessToken);
 
         var setCookieHeaders = controller.HttpContext.Response.Headers["Set-Cookie"];
-        Assert.Contains(setCookieHeaders, value => value.Contains("commercehub_customer_access_token=", StringComparison.Ordinal));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith("commercehub_customer_access_token=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/customers", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith("commercehub_customer_access_token=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/commercehub", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(setCookieHeaders, value => value.Contains("commercehub_order_access=", StringComparison.Ordinal));
         Assert.Contains(setCookieHeaders, value => value.Contains("httponly", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(setCookieHeaders, value => value.Contains("secure", StringComparison.OrdinalIgnoreCase));
@@ -256,7 +261,12 @@ public sealed class CookieAuthSecurityTests
         Assert.IsType<OkObjectResult>(result);
 
         var setCookieHeaders = controller.HttpContext.Response.Headers["Set-Cookie"];
-        Assert.Contains(setCookieHeaders, value => value.Contains("commercehub_customer_access_token=", StringComparison.Ordinal));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith("commercehub_customer_access_token=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/customers", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(setCookieHeaders, value =>
+            value.StartsWith("commercehub_customer_access_token=", StringComparison.Ordinal) &&
+            value.Contains("path=/api/commercehub", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(setCookieHeaders, value => value.Contains("commercehub_order_access=", StringComparison.Ordinal));
         Assert.Contains(setCookieHeaders, value => value.Contains("expires=", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(setCookieHeaders, value => value.Contains("path=/api/customers", StringComparison.OrdinalIgnoreCase));

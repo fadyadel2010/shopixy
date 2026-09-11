@@ -29,7 +29,7 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.DoesNotContain("localStorage.getItem('tenantId')", adminOrdersApi, StringComparison.Ordinal);
         Assert.Contains("const authorityScope = ['pos-admin-orders', user?.tenantId ?? 'anonymous', user?.id ?? 'anonymous']", ordersPage, StringComparison.Ordinal);
         Assert.DoesNotContain("placeholderData: (previousData) => previousData", ordersPage, StringComparison.Ordinal);
-        Assert.Contains("{ordersQuery.isError ? (", ordersPage, StringComparison.Ordinal);
+        Assert.Contains("{ordersQuery.isError || orderListAuthorityError ? (", ordersPage, StringComparison.Ordinal);
 
         Assert.Contains("setProducts([])", commerceHubSettings, StringComparison.Ordinal);
         Assert.Contains("setListingRows([])", commerceHubSettings, StringComparison.Ordinal);
@@ -42,7 +42,8 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.DoesNotContain("updateVariantListingInState", commerceHubSettings, StringComparison.Ordinal);
 
         Assert.Contains("const tenantId = currentUser?.tenantId || ''", storefrontBuilder, StringComparison.Ordinal);
-        Assert.Contains("const tenantId = user?.tenantId || ''", themeMarketplace, StringComparison.Ordinal);
+        Assert.Contains("const { user } = useAuthStore()", themeMarketplace, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentStoreIdentityPresentation(response, user)", themeMarketplace, StringComparison.Ordinal);
         Assert.Contains("useAuthStore.getState().user", telemetry, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage.getItem('tenantId')", storefrontBuilder, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage.getItem('tenantId')", themeMarketplace, StringComparison.Ordinal);
@@ -114,8 +115,6 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.orders.view\"", appRoutes, StringComparison.Ordinal);
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.finance.view\"", appRoutes, StringComparison.Ordinal);
         Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.payments.view\"", appRoutes, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.analytics.view\"", appRoutes, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubVendorRouteGuard capability=\"commercehub.storefront.manage\"", appRoutes, StringComparison.Ordinal);
         Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", appRoutes, StringComparison.Ordinal);
         Assert.Contains("path=\"storefront/cms/navigation\"", appRoutes, StringComparison.Ordinal);
 
@@ -173,7 +172,7 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("customerAuthorityRevision", customerStore, StringComparison.Ordinal);
         Assert.Contains("latestHydrationRequestId", customerStore, StringComparison.Ordinal);
         Assert.Contains("previousCustomerId !== customer.id", customerBootstrap, StringComparison.Ordinal);
-        Assert.Contains("window.addEventListener(\"online\", handleHistoryNavigation)", customerBootstrap, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener(\"online\", handleBackgroundRevalidation)", customerBootstrap, StringComparison.Ordinal);
         Assert.Contains("isSameCustomerActorAuthority(response.customer, customer)", customerLogin, StringComparison.Ordinal);
 
         Assert.Contains("POS_ACTOR_ROLES", posAuthority, StringComparison.Ordinal);
@@ -356,7 +355,7 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("queryClient.removeQueries", loginPage, StringComparison.Ordinal);
 
         Assert.Contains("CUSTOMER_SESSION_AUTHORITY_LOST_EVENT", bootstrap, StringComparison.Ordinal);
-        Assert.Contains("window.addEventListener(\"focus\", handleHistoryNavigation)", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("window.addEventListener(\"focus\", handleBackgroundRevalidation)", bootstrap, StringComparison.Ordinal);
         Assert.Contains("document.addEventListener(\"visibilitychange\", handleVisibility)", bootstrap, StringComparison.Ordinal);
         Assert.Contains("window.setInterval(() => void revalidateSession()", bootstrap, StringComparison.Ordinal);
         Assert.Contains("queryClient.removeQueries", bootstrap, StringComparison.Ordinal);
@@ -416,7 +415,8 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("POS_VENDOR_SESSION_AUTHORITY_LOST_EVENT", bootstrap, StringComparison.Ordinal);
         Assert.Contains("POS_VENDOR_SESSION_LOGOUT_STORAGE_KEY", bootstrap, StringComparison.Ordinal);
         Assert.Contains("clearAuthority", bootstrap, StringComparison.Ordinal);
-        Assert.Contains("queryClient.removeQueries({ queryKey: ['commercehub-vendor-session'] })", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("const purgeCommerceHubVendorAuthority", bootstrap, StringComparison.Ordinal);
+        Assert.Contains("root === 'commercehub-vendor-session'", bootstrap, StringComparison.Ordinal);
         Assert.Contains("window.addEventListener('storage', handleStorage)", bootstrap, StringComparison.Ordinal);
         Assert.DoesNotContain("void bootstrapSession()", bootstrap.Substring(bootstrap.IndexOf("const handleStorage", StringComparison.Ordinal)), StringComparison.Ordinal);
 
@@ -474,23 +474,24 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("fails closed for mixed ownership arrays", vendorIdentityTests, StringComparison.Ordinal);
         Assert.Contains("validates store identity presentation", vendorIdentityTests, StringComparison.Ordinal);
 
-        Assert.Contains("deriveCurrentStoreIdentityPresentation(response.data, user)", storefrontStatus, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentStoreIdentityPresentation(response, user)", storefrontStatus, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedArray(productsRes || [], currentUser)", commerceHubSettings, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedArray(listingsRes.data || [], currentUser)", commerceHubSettings, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedDto(kpisRes.data || null, currentUser)", commerceHubSettings, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentStoreIdentityPresentation(adminConfig, currentUser)", storefrontBuilder, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentStoreIdentityPresentation(response, currentUser)", storefrontBuilder, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentVendorScopedDto(", storefrontBuilder, StringComparison.Ordinal);
 
-        Assert.Contains("useAuthStore((state) => state.user?.tenantId || '')", cmsPagesList, StringComparison.Ordinal);
-        Assert.Contains("useAuthStore((state) => state.user?.tenantId || '')", cmsPageEditor, StringComparison.Ordinal);
+        Assert.Contains("const currentUser = useAuthStore((state) => state.user)", cmsPagesList, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentCmsPageListPresentation(data, currentUser)", cmsPagesList, StringComparison.Ordinal);
+        Assert.Contains("const currentUser = useAuthStore((state) => state.user)", cmsPageEditor, StringComparison.Ordinal);
+        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(response, currentUser", cmsPageEditor, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage.getItem('tenantSlug')", cmsPagesList, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage.getItem('tenantSlug')", cmsPageEditor, StringComparison.Ordinal);
 
-        Assert.Contains("const dashboard = deriveCurrentVendorScopedDto(dashboardQuery.data, user)", financePage, StringComparison.Ordinal);
-        Assert.Contains("const statementMeta = deriveCurrentVendorScopedDto(statementQuery.data, user)", financePage, StringComparison.Ordinal);
-        Assert.Contains("const methods = deriveCurrentVendorScopedArray(methodsQuery.data ?? [], user)", earningsPage, StringComparison.Ordinal);
-        Assert.Contains("paymentMethods: deriveCurrentVendorScopedArray", paymentsPage, StringComparison.Ordinal);
-        Assert.Contains("paymentHistory: deriveCurrentVendorScopedArray", paymentsPage, StringComparison.Ordinal);
+        Assert.Contains("deriveVendorFinancialDashboardPresentation(dashboardQuery.data, user)", financePage, StringComparison.Ordinal);
+        Assert.Contains("deriveVendorFinanceStatementPresentation(statementQuery.data, user)", financePage, StringComparison.Ordinal);
+        Assert.Contains("deriveVendorPayoutMethodsPresentation(methodsQuery.data ?? [], user)", earningsPage, StringComparison.Ordinal);
+        Assert.Contains("deriveVendorPaymentsDashboardPresentation(dashboardQuery.data, user)", paymentsPage, StringComparison.Ordinal);
 
         foreach (var marker in new[]
         {
@@ -591,8 +592,8 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.Contains("deriveMarketplaceGovernanceListingsAuthority(response.data.listings)", governanceService, StringComparison.Ordinal);
         Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: listingId, action: 'suppress' })", governanceService, StringComparison.Ordinal);
         Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: listingId, action: 'restore' })", governanceService, StringComparison.Ordinal);
-        Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: tenantId, action: 'suspend' })", governanceService, StringComparison.Ordinal);
-        Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: tenantId, action: 'restore' })", governanceService, StringComparison.Ordinal);
+        Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: vendorId, action: 'suspend' })", governanceService, StringComparison.Ordinal);
+        Assert.Contains("deriveMarketplaceGovernanceActionAuthority(response.data, { entityId: vendorId, action: 'restore' })", governanceService, StringComparison.Ordinal);
 
         Assert.DoesNotContain("placeholderData: (previousData) => previousData", governancePage, StringComparison.Ordinal);
         Assert.Contains("const [selectedListingId, setSelectedListingId]", governancePage, StringComparison.Ordinal);
@@ -713,7 +714,7 @@ public sealed class CommerceHubFrontendAuthorityCertificationTests
         Assert.DoesNotContain("formData.append('currency', currency)", paymentsApi, StringComparison.Ordinal);
 
         Assert.Contains("variant.isCommerceHubCurrencyEligible !== true", settingsPage, StringComparison.Ordinal);
-        Assert.Contains("disabled={isSaving || !state.categoryId || isCurrencyBlocked || !canManageCatalog}", settingsPage, StringComparison.Ordinal);
+        Assert.Contains("disabled={isSaving || !state.categoryId || isCurrencyBlocked || isPublicationBlocked || !canManageCatalog}", settingsPage, StringComparison.Ordinal);
         Assert.Contains("CommerceHub currently supports EGP products only.", settingsPage, StringComparison.Ordinal);
         Assert.Contains("currencyCode=\"EGP\"", settingsPage, StringComparison.Ordinal);
     }

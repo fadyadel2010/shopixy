@@ -664,6 +664,16 @@ public class FinancialPostingService : IFinancialPostingService
                      order.PaymentStatus == PaymentStatus.Refunded))
                 .Select(order => (decimal?)order.Total)
                 .FirstOrDefaultAsync(ct),
+            "CustomerPayment" => await _db.CustomerPayments
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(payment =>
+                    payment.Id == request.SourceId &&
+                    payment.TenantId == request.TenantId &&
+                    !payment.IsDeleted &&
+                    payment.Amount > 0m)
+                .Select(payment => (decimal?)payment.Amount)
+                .FirstOrDefaultAsync(ct),
             "GatewaySettlement" or "CODSettlement" => await _db.PaymentSettlementBatches
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -705,6 +715,7 @@ public class FinancialPostingService : IFinancialPostingService
             .Where(entry =>
                 entry.TenantId == request.TenantId &&
                 cashAccountIds.Contains(entry.AccountId) &&
+                entry.JournalEntry.Status == JournalStatus.Posted &&
                 entry.JournalEntry.SourceType == request.SourceType);
 
         priorEntries = request.SourceType is "GatewaySettlement" or "CODSettlement"
@@ -847,6 +858,7 @@ public class FinancialPostingService : IFinancialPostingService
             .Where(entry =>
                 entry.TenantId == request.TenantId &&
                 cashAccountIds.Contains(entry.AccountId) &&
+                entry.JournalEntry.Status == JournalStatus.Posted &&
                 entry.JournalEntry.SourceType == request.SourceType &&
                 entry.JournalEntry.SourceId == request.SourceId);
 

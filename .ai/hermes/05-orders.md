@@ -212,11 +212,11 @@ CommerceHub marketplace checkout:
   shipping-assignment persistence boundary). A replayed checkout must match the customer-bound request hash
   and returns the original response only; it cannot reassign shipping. Vendor A's method/cost cannot bind
   Vendor B's sub-order.
-- Multi-store checkout carries the authoritative per-store payment-method capability contract. The customer
+- Multi-store checkout carries the authoritative platform payment-method capability contract. The customer
   payment selector must consume that backend capability surface; a local hardcoded provider list is not
-  authority. CommerceHub must validate the EXACT requested online provider per store set; STRIPE and PAYMOB
-  are NOT interchangeable. Zero enabled `TenantPaymentMethod` rows = fail-closed "provider unavailable" — never
-  a COD/any-provider fallback.
+  authority. CommerceHub must validate the exact requested online provider from registered executable
+  `IPaymentProviderAdapter` capabilities; STRIPE and PAYMOB are not interchangeable. Vendor-owned Storefront
+  `TenantPaymentMethods` do not grant CommerceHub authority. COD remains CommerceHub platform policy.
 - Currency: CommerceHub owns the only accepted order currency = `EGP`
   (`FinancialCurrencyGuard.PlatformBaseCurrencyCode`). Cart, checkout, orders, sub-orders, and projections are
   EGP-normalized; non-EGP is rejected or withheld. Tenant/storefront currency cannot select, override, or

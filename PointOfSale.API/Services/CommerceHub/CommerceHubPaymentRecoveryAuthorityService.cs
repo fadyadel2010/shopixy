@@ -20,7 +20,8 @@ public sealed record CommerceHubPaymentRecoveryAuthorityDecision(
     bool CanRetryPayment,
     string? PaymentRecoveryMessage,
     bool HasUnresolvedCapturedPayment,
-    bool HasReservationAuthorityLoss = false);
+    bool HasReservationAuthorityLoss = false,
+    bool RequiresReservationReacquisition = false);
 
 public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRecoveryAuthorityService
 {
@@ -57,7 +58,6 @@ public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRec
             .AsNoTracking()
             .AnyAsync(
                 webhook =>
-                    !webhook.IsDeleted &&
                     webhook.OrderId == orderId &&
                     (!provider.HasValue || webhook.Provider == provider.Value) &&
                     (webhook.Status == PendingTenantResolutionStatus ||
@@ -66,28 +66,40 @@ public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRec
                 cancellationToken);
 
         var hasProviderSessionRecoveryBlock = false;
+        var hasAnyPaymentAuthorityEvidence = false;
         if (provider.HasValue)
         {
-            var providerPayments = await _dbContext.CommerceHubPayments
+            var orderPayments = await _dbContext.CommerceHubPayments
                 .IgnoreQueryFilters()
                 .AsNoTracking()
                 .Include(payment => payment.Attempts)
                 .Include(payment => payment.Logs)
                 .AsSplitQuery()
                 .Where(payment =>
-                    payment.OrderId == orderId &&
-                    payment.Provider == provider.Value &&
-                    !payment.IsDeleted)
+                    payment.OrderId == orderId)
                 .OrderByDescending(payment => payment.CreatedAt)
                 .ToListAsync(cancellationToken);
 
-            hasProviderSessionRecoveryBlock = providerPayments.Any(
+            hasAnyPaymentAuthorityEvidence = orderPayments.Any(
+                    CommerceHubPaymentSessionRecoveryAuthority.HasReservationReacquisitionBlockingEvidence) ||
+                await _dbContext.CommerceHubUnresolvedPaymentWebhooks
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .AnyAsync(
+                        webhook =>
+                            webhook.OrderId == orderId &&
+                            webhook.Provider == provider.Value,
+                        cancellationToken);
+            hasProviderSessionRecoveryBlock = orderPayments
+                .Where(payment => payment.Provider == provider.Value)
+                .Any(
                 CommerceHubPaymentSessionRecoveryAuthority.HasProviderSessionPersistenceGap);
         }
 
         var canRetryPaymentByOrderState =
             !hasUnresolvedCapturedPayment &&
             !hasProviderSessionRecoveryBlock &&
+            provider.HasValue &&
             paymentStatus == PaymentStatus.Pending &&
             !string.IsNullOrWhiteSpace(paymentMethodCode) &&
             !string.Equals(paymentMethodCode, CommerceHubPaymentMethods.Cod, StringComparison.OrdinalIgnoreCase) &&
@@ -101,13 +113,19 @@ public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRec
                 cancellationToken);
         }
 
-        var canRetryPayment = canRetryPaymentByOrderState && !hasReservationAuthorityLoss;
+        var requiresReservationReacquisition =
+            canRetryPaymentByOrderState &&
+            hasReservationAuthorityLoss &&
+            !hasAnyPaymentAuthorityEvidence &&
+            await HasMarketplaceReservationReacquisitionAuthorityAsync(orderId, cancellationToken);
+        var canRetryPayment = canRetryPaymentByOrderState &&
+            (!hasReservationAuthorityLoss || requiresReservationReacquisition);
 
         var paymentRecoveryMessage = hasUnresolvedCapturedPayment
             ? PaymentRecoveryReviewMessage
             : hasProviderSessionRecoveryBlock
                 ? ProviderSessionRecoveryBlockedMessage
-                : hasReservationAuthorityLoss
+                : hasReservationAuthorityLoss && !requiresReservationReacquisition
                     ? ReservationAuthorityLostMessage
                 : null;
 
@@ -115,7 +133,8 @@ public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRec
             canRetryPayment,
             paymentRecoveryMessage,
             hasUnresolvedCapturedPayment,
-            hasReservationAuthorityLoss);
+            hasReservationAuthorityLoss,
+            requiresReservationReacquisition);
     }
 
     private async Task<bool> HasActiveMarketplaceReservationAuthorityAsync(
@@ -283,6 +302,199 @@ public class CommerceHubPaymentRecoveryAuthorityService : ICommerceHubPaymentRec
 
         return true;
     }
+
+    private async Task<bool> HasMarketplaceReservationReacquisitionAuthorityAsync(
+        Guid orderId,
+        CancellationToken cancellationToken)
+    {
+        var expectedItems = await _dbContext.CommerceHubSubOrderItems
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item =>
+                item.SubOrder.MarketplaceOrderId == orderId &&
+                !item.IsDeleted &&
+                !item.SubOrder.IsDeleted &&
+                !item.SubOrder.MarketplaceOrder.IsDeleted &&
+                item.SubOrder.MarketplaceOrder.Status != OrderStatus.Cancelled &&
+                item.SubOrder.MarketplaceOrder.Status != OrderStatus.Refunded &&
+                item.SubOrder.Status != OrderStatus.Cancelled &&
+                item.SubOrder.Status != OrderStatus.Refunded &&
+                item.SubOrder.PaymentMethod == CommerceHubPaymentMethod.Online &&
+                item.Status != CommerceHubOrderItemStatus.Cancelled &&
+                item.Quantity > 0)
+            .Select(item => new MarketplaceReacquisitionItem(
+                item.SubOrder.StoreId,
+                item.SubOrderId,
+                item.Id,
+                item.ProductId,
+                item.VariantId,
+                (decimal)item.Quantity))
+            .ToListAsync(cancellationToken);
+
+        if (expectedItems.Count == 0)
+        {
+            return false;
+        }
+
+        var tenantIds = expectedItems.Select(item => item.TenantId).Distinct().ToList();
+        var productIds = expectedItems.Select(item => item.ProductId).Distinct().ToList();
+        var variantIds = expectedItems.Select(item => item.VariantId).Distinct().ToList();
+        var activeCatalogRows = await (
+            from product in _dbContext.Products.IgnoreQueryFilters().AsNoTracking()
+            join variant in _dbContext.ProductVariants.IgnoreQueryFilters().AsNoTracking()
+                on product.Id equals variant.ProductId
+            where tenantIds.Contains(product.TenantId) &&
+                  productIds.Contains(product.Id) &&
+                  variantIds.Contains(variant.Id) &&
+                  product.TenantId == variant.TenantId &&
+                  !product.IsDeleted &&
+                  product.IsActive &&
+                  product.IsOnlineVisible &&
+                  product.PublishStatus == PublishStatus.Published &&
+                  product.TrackStock &&
+                  !variant.IsDeleted &&
+                  variant.IsActive &&
+                  variant.SemanticLifecycleState == ProductVariantSemanticLifecycleState.Current &&
+                  variant.SemanticSupersededAtUtc == null &&
+                  variant.SemanticReplacementVariantId == null
+            select new { product.TenantId, ProductId = product.Id, VariantId = variant.Id })
+            .ToListAsync(cancellationToken);
+        var activeCatalogKeys = activeCatalogRows
+            .Select(row => (row.TenantId, row.ProductId, row.VariantId))
+            .ToHashSet();
+
+        if (expectedItems.Any(item =>
+                !activeCatalogKeys.Contains((item.TenantId, item.ProductId, item.VariantId))))
+        {
+            return false;
+        }
+
+        var reservationHistory = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(reservation => reservation.OrderId == orderId && !reservation.IsDeleted)
+            .OrderBy(reservation => reservation.CreatedAt)
+            .ThenBy(reservation => reservation.Id)
+            .ToListAsync(cancellationToken);
+        var expectedByItem = expectedItems.ToDictionary(item => item.OrderItemId);
+
+        if (reservationHistory.Count == 0 ||
+            reservationHistory.Any(reservation =>
+                !expectedByItem.TryGetValue(reservation.OrderItemId, out var item) ||
+                reservation.TenantId != item.TenantId ||
+                reservation.SubOrderId != item.SubOrderId ||
+                reservation.ProductId != item.ProductId ||
+                reservation.VariantId != item.VariantId))
+        {
+            return false;
+        }
+
+        foreach (var item in expectedItems)
+        {
+            var itemHistory = reservationHistory
+                .Where(reservation => reservation.OrderItemId == item.OrderItemId)
+                .ToList();
+            if (itemHistory.Count == 0)
+            {
+                return false;
+            }
+
+            var originalEventId = itemHistory[0].ReservationEventId;
+            if (originalEventId == Guid.Empty ||
+                itemHistory
+                    .Where(reservation => reservation.ReservationEventId == originalEventId)
+                    .Sum(reservation => reservation.ReservedQuantity) != item.RequiredQuantity)
+            {
+                return false;
+            }
+        }
+
+        var nowUtc = DateTime.UtcNow;
+        var rawActiveReservations = reservationHistory
+            .Where(reservation =>
+                reservation.Status == InventoryReservationStatus.Active &&
+                reservation.RemainingReservedQuantity > 0m &&
+                (reservation.ExpiresAtUtc == null || reservation.ExpiresAtUtc > nowUtc))
+            .ToList();
+        var activeReservations = await ProductVariantInventoryLineageAuthority.FilterCurrentConsumableReservationsAcrossTenantsAsync(
+            _dbContext,
+            rawActiveReservations,
+            nowUtc,
+            cancellationToken);
+        if (activeReservations.Count != rawActiveReservations.Count)
+        {
+            return false;
+        }
+
+        var activeByItem = activeReservations
+            .GroupBy(reservation => (reservation.TenantId, reservation.OrderItemId, reservation.VariantId))
+            .ToDictionary(group => group.Key, group => group.Sum(reservation => reservation.RemainingReservedQuantity));
+        var missingByVariant = expectedItems
+            .Select(item => new
+            {
+                item.TenantId,
+                item.VariantId,
+                MissingQuantity = item.RequiredQuantity -
+                    activeByItem.GetValueOrDefault((item.TenantId, item.OrderItemId, item.VariantId))
+            })
+            .GroupBy(item => (item.TenantId, item.VariantId))
+            .ToDictionary(group => group.Key, group => group.Sum(item => item.MissingQuantity));
+
+        if (missingByVariant.Values.Any(quantity => quantity < 0m))
+        {
+            return false;
+        }
+
+        foreach (var missing in missingByVariant.Where(item => item.Value > 0m))
+        {
+            var availableQuantity = await _dbContext.ProductVariantStocks
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .WhereCurrentInventoryStockOwner(missing.Key.TenantId)
+                .Where(stock => stock.VariantId == missing.Key.VariantId && !stock.IsDeleted)
+                .SumAsync(stock => stock.Quantity - stock.ReservedQuantity - stock.DamagedQuantity, cancellationToken);
+            if (availableQuantity < missing.Value)
+            {
+                return false;
+            }
+        }
+
+        var shippingSelections = await _dbContext.CommerceHubSubOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(subOrder =>
+                subOrder.MarketplaceOrderId == orderId &&
+                !subOrder.IsDeleted &&
+                subOrder.ShippingMethodId.HasValue)
+            .Select(subOrder => new { subOrder.StoreId, ShippingMethodId = subOrder.ShippingMethodId!.Value })
+            .ToListAsync(cancellationToken);
+
+        foreach (var shipping in shippingSelections)
+        {
+            if (!await _dbContext.ShippingMethods
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .AnyAsync(method =>
+                        method.TenantId == shipping.StoreId &&
+                        method.Id == shipping.ShippingMethodId &&
+                        !method.IsDeleted &&
+                        method.IsActive,
+                        cancellationToken))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private sealed record MarketplaceReacquisitionItem(
+        Guid TenantId,
+        Guid SubOrderId,
+        Guid OrderItemId,
+        Guid ProductId,
+        Guid VariantId,
+        decimal RequiredQuantity);
 
     private static bool TryResolvePaymentProvider(string paymentMethodCode, out PaymentProvider provider)
     {

@@ -6,11 +6,11 @@ import type {
 
 const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const AUTHORITY_OWNER = 'SQL marketplace governance authority'
-const VENDOR_GOVERNANCE_STATUSES = new Set(['Active', 'Suspended', 'Banned', 'FinanciallyLocked'])
+const VENDOR_GOVERNANCE_STATUSES = new Set(['Active', 'Suspended', 'Banned', 'FinanciallyLocked', 'Missing'])
 const TENANT_STATUSES = new Set(['PendingSetup', 'Active', 'Suspended', 'Deleted', 'Missing'])
 const VISIBILITY_STATES = new Set(['published', 'unpublished', 'suppressed'])
 const SUPPRESSION_OWNERS = new Set(['MarketplaceGovernance'])
-const ACTION_ENTITY_TYPES = new Set(['CommerceHubListing', 'Tenant'])
+const ACTION_ENTITY_TYPES = new Set(['CommerceHubListing', 'VendorGovernance'])
 const ACTIONS = new Set(['suppress', 'restore', 'suspend'])
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -155,7 +155,7 @@ export function deriveMarketplaceGovernanceActionAuthority(
     }
 
     if (value.entityType === 'CommerceHubListing' && !VISIBILITY_STATES.has(value.visibilityState)) return null
-    if (value.entityType === 'Tenant' && value.visibilityState !== 'active' && value.visibilityState !== 'suspended') return null
+    if (value.entityType === 'VendorGovernance' && value.visibilityState !== 'active' && value.visibilityState !== 'suspended') return null
 
     return value as unknown as MarketplaceGovernanceActionResult
 }

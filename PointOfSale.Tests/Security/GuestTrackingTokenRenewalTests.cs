@@ -34,6 +34,22 @@ public sealed class GuestTrackingTokenRenewalTests
             "Renewed token expiry should be later than initial token expiry");
     }
 
+    [Fact]
+    public void GuestTrackingToken_CannotCrossTenantBoundary()
+    {
+        var tenantId = Guid.NewGuid();
+        var service = CreateTokenService();
+        var token = service.CreateGuestTrackingToken(
+            tenantId,
+            Guid.NewGuid(),
+            Guid.NewGuid().ToString("D"));
+
+        var validation = service.ValidateGuestTrackingToken(token, Guid.NewGuid());
+
+        Assert.False(validation.IsValid);
+        Assert.False(validation.IsExpired);
+    }
+
     private static CheckoutSessionTokenService CreateTokenService()
     {
         var keyDirectory = Directory.CreateDirectory(

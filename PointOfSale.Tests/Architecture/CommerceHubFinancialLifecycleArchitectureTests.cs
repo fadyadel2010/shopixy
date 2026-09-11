@@ -87,6 +87,9 @@ public sealed class CommerceHubFinancialLifecycleArchitectureTests
 
         Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", transactionEntity, StringComparison.Ordinal);
         Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", safetyGuard, StringComparison.Ordinal);
+        Assert.Contains("INSERT OR IGNORE INTO \"\"CommerceHubFinancialGuardLocks\"\"", safetyGuard, StringComparison.Ordinal);
+        Assert.Contains("ON CONFLICT (\"\"Scope\"\") DO NOTHING", safetyGuard, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", safetyGuard, StringComparison.Ordinal);
         Assert.Contains("FinancialCurrencyGuard.RequireEgpCurrency", decisionEngine, StringComparison.Ordinal);
         Assert.Contains("ResolveLedgerCurrency", financeRead, StringComparison.Ordinal);
         Assert.Contains("FinancialCurrencyGuard.NormalizeIfPresent", financeRead, StringComparison.Ordinal);

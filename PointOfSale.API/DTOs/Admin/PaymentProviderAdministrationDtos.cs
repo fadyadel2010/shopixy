@@ -182,6 +182,29 @@ public sealed class PaymentProviderActionResponse
     public IReadOnlyList<string> Permissions { get; init; } = Array.Empty<string>();
 }
 
+public sealed class PaymentProviderSessionReconciliationRequest
+{
+    public Guid PaymentId { get; init; }
+    public string ProviderReference { get; init; } = string.Empty;
+    public string EvidenceCode { get; init; } = string.Empty;
+    public string EvidenceNote { get; init; } = string.Empty;
+    public bool AdministratorConfirmation { get; init; }
+}
+
+public sealed class PaymentProviderSessionReconciliationResponse
+{
+    public string ProviderCode { get; init; } = string.Empty;
+    public Guid PaymentId { get; init; }
+    public Guid OrderId { get; init; }
+    public string ProviderReference { get; init; } = string.Empty;
+    public string PreviousStatus { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public DateTime ResolvedAtUtc { get; init; }
+    public bool RetryAllowed { get; init; }
+    public string Message { get; init; } = string.Empty;
+    public IReadOnlyList<string> Permissions { get; init; } = Array.Empty<string>();
+}
+
 public sealed class PaymentProviderSecretMetadataDto
 {
     public string SecretId { get; init; } = string.Empty;

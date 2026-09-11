@@ -161,11 +161,77 @@ public class SalesReturnsController : ControllerBase
         return Ok(salesReturn.ToResponseDto());
     }
 
+    [HttpGet("eligible-invoices")]
+    public async Task<ActionResult<IReadOnlyList<SalesReturnEligibleInvoiceResponseDto>>> GetEligibleSalesInvoices(
+        [FromQuery] Guid? customerId = null,
+        [FromQuery] int pageSize = 50,
+        CancellationToken cancellationToken = default)
+    {
+        pageSize = Math.Clamp(pageSize, 1, PaginationGuard.MaxPageSize);
+
+        var query = _context.SalesInvoices
+            .AsNoTracking()
+            .Where(invoice =>
+                (invoice.Status == InvoiceStatus.Completed || invoice.Status == InvoiceStatus.PartiallyReturned) &&
+                invoice.Warehouse.IsActive &&
+                invoice.Items.Any(item => !item.IsDeleted));
+
+        if (customerId.HasValue)
+        {
+            query = query.Where(invoice => invoice.CustomerId == customerId.Value);
+        }
+
+        var candidates = await query
+            .Include(invoice => invoice.Customer)
+            .Include(invoice => invoice.Warehouse)
+            .Include(invoice => invoice.Items)
+                .ThenInclude(item => item.Product)
+            .Include(invoice => invoice.Items)
+                .ThenInclude(item => item.ProductVariant)
+                    .ThenInclude(variant => variant!.Attributes)
+            .Include(invoice => invoice.Items)
+                .ThenInclude(item => item.Unit)
+            .AsSplitQuery()
+            .OrderByDescending(invoice => invoice.InvoiceDate)
+            .ThenByDescending(invoice => invoice.CreatedAt)
+            .ToListAsync(cancellationToken);
+
+        var eligibleInvoices = new List<SalesReturnEligibleInvoiceResponseDto>(pageSize);
+        foreach (var invoice in candidates)
+        {
+            var readModel = await BuildSalesReturnInvoiceReadModelAsync(invoice, cancellationToken);
+            if (!readModel.Success || readModel.Response!.Items.Count == 0)
+            {
+                continue;
+            }
+
+            eligibleInvoices.Add(new SalesReturnEligibleInvoiceResponseDto
+            {
+                Id = invoice.Id,
+                InvoiceNumber = invoice.InvoiceNumber,
+                InvoiceDate = invoice.InvoiceDate,
+                TotalAmount = invoice.TotalAmount,
+                Status = invoice.Status,
+                Customer = ToCustomerReference(invoice.Customer),
+                Warehouse = ToWarehouseReference(invoice.Warehouse)
+            });
+
+            if (eligibleInvoices.Count == pageSize)
+            {
+                break;
+            }
+        }
+
+        return Ok(eligibleInvoices);
+    }
+
     /// <summary>
-    /// Get sales invoice details for creating a return
+    /// Get authoritative remaining sales invoice quantities for creating a return.
     /// </summary>
     [HttpGet("invoice/{invoiceId}")]
-    public async Task<ActionResult<SalesInvoiceResponseDto>> GetSalesInvoiceForReturn(Guid invoiceId)
+    public async Task<ActionResult<SalesReturnInvoiceResponseDto>> GetSalesInvoiceForReturn(
+        Guid invoiceId,
+        CancellationToken cancellationToken)
     {
         var invoice = await _context.SalesInvoices
             .AsNoTracking()
@@ -182,13 +248,184 @@ public class SalesReturnsController : ControllerBase
                     .ThenInclude(v => v!.Stocks)
             .Include(s => s.Items)
                 .ThenInclude(i => i.Unit)
-            .FirstOrDefaultAsync(s => s.Id == invoiceId);
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(s => s.Id == invoiceId, cancellationToken);
 
         if (invoice == null)
             return NotFound();
 
-        return Ok(invoice.ToResponseDto());
+        if (invoice.Status is not (InvoiceStatus.Completed or InvoiceStatus.PartiallyReturned))
+        {
+            return Conflict(new { message = "This sales invoice cannot accept another return." });
+        }
+
+        if (!invoice.Warehouse.IsActive)
+        {
+            return Conflict(new { message = "The original sales warehouse is not active." });
+        }
+
+        var readModel = await BuildSalesReturnInvoiceReadModelAsync(invoice, cancellationToken);
+        if (!readModel.Success)
+        {
+            return Conflict(new { message = readModel.ErrorMessage });
+        }
+
+        if (readModel.Response!.Items.Count == 0)
+        {
+            return Conflict(new { message = "This sales invoice has already been fully returned." });
+        }
+
+        return Ok(readModel.Response);
     }
+
+    private async Task<SalesReturnInvoiceReadModelResult> BuildSalesReturnInvoiceReadModelAsync(
+        SalesInvoice invoice,
+        CancellationToken cancellationToken)
+    {
+        var snapshotBuildResult = await BuildOriginalInvoiceSnapshotsAsync(invoice);
+        if (!snapshotBuildResult.Success)
+        {
+            return SalesReturnInvoiceReadModelResult.Fail(snapshotBuildResult.ErrorMessage!);
+        }
+
+        var snapshots = snapshotBuildResult.Snapshots!;
+        var defaultVariantIds = snapshotBuildResult.DefaultVariantIds;
+        var previousReturnItems = await _context.ReturnItems
+            .AsNoTracking()
+            .Where(item =>
+                !item.IsDeleted &&
+                !item.Return.IsDeleted &&
+                item.Return.ReturnType == ReturnType.SalesReturn &&
+                item.Return.OriginalInvoiceId == invoice.Id)
+            .ToListAsync(cancellationToken);
+        var previousReturns = await _context.Returns
+            .AsNoTracking()
+            .Where(previousReturn =>
+                previousReturn.ReturnType == ReturnType.SalesReturn &&
+                previousReturn.OriginalInvoiceId == invoice.Id)
+            .ToListAsync(cancellationToken);
+        var tenderCapacity = CalculateRemainingTenderCapacity(invoice, previousReturns);
+
+        var priorBaseQuantitiesByKey = new Dictionary<OriginalInvoiceSnapshotKey, decimal>();
+        foreach (var previousReturnItem in previousReturnItems)
+        {
+            var key = ResolvePriorReturnKey(previousReturnItem, snapshots, defaultVariantIds, out var errorMessage);
+            if (errorMessage != null)
+            {
+                return SalesReturnInvoiceReadModelResult.Fail(errorMessage);
+            }
+
+            priorBaseQuantitiesByKey[key] =
+                priorBaseQuantitiesByKey.GetValueOrDefault(key) + previousReturnItem.BaseQuantity;
+        }
+
+        var variantIds = snapshots.Keys.Select(key => key.EffectiveVariantId).ToList();
+        var variantsById = await _context.ProductVariants
+            .AsNoTracking()
+            .Include(variant => variant.Attributes)
+            .Where(variant => variantIds.Contains(variant.Id))
+            .ToDictionaryAsync(variant => variant.Id, cancellationToken);
+
+        var items = new List<SalesReturnInvoiceItemResponseDto>();
+        foreach (var snapshot in snapshots.Values.OrderBy(value => value.ProductName).ThenBy(value => value.EffectiveVariantId))
+        {
+            var previouslyReturnedBaseQuantity = priorBaseQuantitiesByKey.GetValueOrDefault(snapshot.Key);
+            var remainingBaseQuantity = snapshot.OriginalBaseQuantity - previouslyReturnedBaseQuantity;
+            if (remainingBaseQuantity <= 0)
+            {
+                continue;
+            }
+
+            var matchingOriginalItems = invoice.Items
+                .Where(item =>
+                    item.ProductId == snapshot.ProductId &&
+                    ResolveEffectiveVariantId(item, defaultVariantIds) == snapshot.EffectiveVariantId)
+                .OrderBy(item => item.CreatedAt)
+                .ThenBy(item => item.Id)
+                .ToList();
+            var originalItem = matchingOriginalItems[0];
+            variantsById.TryGetValue(snapshot.EffectiveVariantId, out var variant);
+
+            items.Add(new SalesReturnInvoiceItemResponseDto
+            {
+                OriginalInvoiceItemIds = matchingOriginalItems.Select(item => item.Id).ToList(),
+                ProductId = snapshot.ProductId,
+                ProductName = snapshot.ProductName,
+                ProductVariantId = snapshot.EffectiveVariantId,
+                VariantSku = variant?.SKU ?? string.Empty,
+                VariantAttributes = variant?.Attributes
+                    .Where(attribute => !attribute.IsDeleted)
+                    .OrderBy(attribute => attribute.SortOrder)
+                    .Select(attribute => new ProductVariantAttributeResponseDto
+                    {
+                        Name = attribute.Name,
+                        Value = attribute.Value
+                    })
+                    .ToList() ?? [],
+                UnitId = snapshot.UnitId,
+                UnitName = originalItem.Unit?.Name,
+                UnitSymbol = originalItem.Unit?.Symbol,
+                ConversionFactor = snapshot.ConversionFactor,
+                SoldQuantity = snapshot.OriginalQuantity,
+                PreviouslyReturnedQuantity = previouslyReturnedBaseQuantity / snapshot.ConversionFactor,
+                RemainingQuantity = remainingBaseQuantity / snapshot.ConversionFactor,
+                SoldBaseQuantity = snapshot.OriginalBaseQuantity,
+                PreviouslyReturnedBaseQuantity = previouslyReturnedBaseQuantity,
+                RemainingBaseQuantity = remainingBaseQuantity,
+                UnitPrice = snapshot.UnitPrice,
+                DiscountAmount = snapshot.LineDiscountAmount,
+                TaxRate = snapshot.TaxRate,
+                TaxAmount = snapshot.LineTaxAmount,
+                TotalAmount = snapshot.OriginalLineTotalAmount
+            });
+        }
+
+        return SalesReturnInvoiceReadModelResult.Ok(new SalesReturnInvoiceResponseDto
+        {
+            Id = invoice.Id,
+            InvoiceNumber = invoice.InvoiceNumber,
+            InvoiceDate = invoice.InvoiceDate,
+            Status = invoice.Status,
+            Subtotal = invoice.Subtotal,
+            DiscountAmount = invoice.DiscountAmount,
+            TaxAmount = invoice.TaxAmount,
+            TotalAmount = invoice.TotalAmount,
+            PaymentMethod = invoice.PaymentMethod,
+            PaidAmount = invoice.PaidAmount,
+            CashAmount = invoice.CashAmount,
+            CardAmount = invoice.CardAmount,
+            RemainingCashRefundableAmount = tenderCapacity.RemainingCashAmount,
+            RemainingCardRefundableAmount = tenderCapacity.RemainingCardAmount,
+            HasLegacySettlementGap = tenderCapacity.HasLegacySettlementGap,
+            MutationVersion = invoice.AccountingMutationVersion,
+            Customer = ToCustomerReference(invoice.Customer),
+            Warehouse = ToWarehouseReference(invoice.Warehouse),
+            Items = items
+        });
+    }
+
+    private static Guid? ResolveEffectiveVariantId(
+        SalesInvoiceItem item,
+        IReadOnlyDictionary<Guid, Guid> defaultVariantIds) =>
+        item.ProductVariantId ?? defaultVariantIds.GetValueOrDefault(item.ProductId);
+
+    private static ContactReferenceDto? ToCustomerReference(Customer? customer) => customer == null
+        ? null
+        : new ContactReferenceDto
+        {
+            Id = customer.Id,
+            Name = customer.Name,
+            Phone = customer.Phone,
+            Email = customer.Email
+        };
+
+    private static WarehouseReferenceDto ToWarehouseReference(Warehouse warehouse) => new()
+    {
+        Id = warehouse.Id,
+        Name = warehouse.Name,
+        Code = warehouse.Code,
+        Address = warehouse.Address
+    };
 
     /// <summary>
     /// Create a new sales return
@@ -296,8 +533,7 @@ public class SalesReturnsController : ControllerBase
         if (string.IsNullOrWhiteSpace(normalizedIdempotencyKey))
         {
             var autoRequestHash = BuildSalesReturnRequestFingerprint(
-                request,
-                paymentAttemptId);
+                request);
             return ($"AUTO:{autoRequestHash}", autoRequestHash, null);
         }
 
@@ -312,8 +548,7 @@ public class SalesReturnsController : ControllerBase
         return (
             normalizedIdempotencyKey,
             BuildSalesReturnRequestFingerprint(
-                request,
-                paymentAttemptId),
+                request),
             null);
     }
 
@@ -384,7 +619,7 @@ public class SalesReturnsController : ControllerBase
             throw new ValidationException(resolution.ErrorMessage);
         }
 
-        return resolution.Allocation;
+        return resolution.Allocation!;
     }
 
     private static DateTime NormalizeToUtc(DateTime value)
@@ -410,12 +645,6 @@ public class SalesReturnsController : ControllerBase
             return BadRequest(new { message = "Original sales invoice is required" });
         }
 
-        var warehouse = await LoadActiveWarehouseAsync(request.WarehouseId);
-        if (warehouse == null)
-        {
-            return BadRequest(new { message = "Warehouse not found" });
-        }
-
         var stockChanges = new List<PendingProductVariantStockChange>();
 
         try
@@ -435,14 +664,20 @@ public class SalesReturnsController : ControllerBase
                 return BadRequest(new { message = "Original sales invoice has no items to return" });
             }
 
-            if (originalInvoice.Status != InvoiceStatus.Completed)
+            if (originalInvoice.Status is not (InvoiceStatus.Completed or InvoiceStatus.PartiallyReturned))
             {
-                return BadRequest(new { message = "Only completed sales invoices can be returned" });
+                return Conflict(new { message = "This sales invoice cannot accept another return." });
             }
 
-            if (request.CustomerId != originalInvoice.CustomerId)
+            if (request.CustomerId != originalInvoice.CustomerId ||
+                request.WarehouseId != originalInvoice.WarehouseId)
             {
-                return BadRequest(new { message = "Customer must match the original invoice" });
+                return BadRequest(new { message = "Customer and warehouse must match the original sales invoice." });
+            }
+
+            if (originalInvoice.Warehouse == null || !originalInvoice.Warehouse.IsActive || originalInvoice.Warehouse.IsDeleted)
+            {
+                return BadRequest(new { message = "The original sales warehouse is not active." });
             }
 
             var customer = originalInvoice.CustomerId.HasValue
@@ -470,12 +705,18 @@ public class SalesReturnsController : ControllerBase
             var defaultVariantIds = snapshotBuildResult.DefaultVariantIds;
 
             var previousReturnItems = await _context.ReturnItems
-                .Where(ri => ri.Return.ReturnType == ReturnType.SalesReturn && ri.Return.OriginalInvoiceId == originalInvoice.Id)
+                .Where(ri =>
+                    !ri.IsDeleted &&
+                    !ri.Return.IsDeleted &&
+                    ri.Return.ReturnType == ReturnType.SalesReturn &&
+                    ri.Return.OriginalInvoiceId == originalInvoice.Id)
                 .ToListAsync();
 
-            var priorReturnedTotal = RoundCurrency(await _context.Returns
+            var previousReturns = await _context.Returns
+                .AsNoTracking()
                 .Where(r => r.ReturnType == ReturnType.SalesReturn && r.OriginalInvoiceId == originalInvoice.Id)
-                .SumAsync(r => (decimal?)r.TotalAmount) ?? 0m);
+                .ToListAsync();
+            var priorReturnedTotal = RoundCurrency(previousReturns.Sum(previousReturn => previousReturn.TotalAmount));
 
             var priorBaseQuantitiesByKey = new Dictionary<OriginalInvoiceSnapshotKey, decimal>();
             foreach (var previousReturnItem in previousReturnItems)
@@ -492,6 +733,7 @@ public class SalesReturnsController : ControllerBase
 
             var pendingLines = new List<PendingReturnLine>();
             var requestedBaseQuantitiesByKey = new Dictionary<OriginalInvoiceSnapshotKey, decimal>();
+            var requestedKeys = new HashSet<OriginalInvoiceSnapshotKey>();
             var ignoredClientOverrides = new List<object>();
 
             foreach (var itemRequest in request.Items)
@@ -505,6 +747,11 @@ public class SalesReturnsController : ControllerBase
                 if (snapshot == null)
                 {
                     return BadRequest(new { message = snapshotError });
+                }
+
+                if (!requestedKeys.Add(snapshot.Key))
+                {
+                    return BadRequest(new { message = "Duplicate product variant lines are not allowed in one sales return." });
                 }
 
                 if (itemRequest.UnitId.HasValue && itemRequest.UnitId != snapshot.UnitId)
@@ -531,9 +778,14 @@ public class SalesReturnsController : ControllerBase
                     });
                 }
 
-                var normalizedClientUnitPrice = RoundCurrency(itemRequest.UnitPrice);
-                var normalizedClientTaxRate = RoundCurrency(itemRequest.TaxRate);
-                if (normalizedClientUnitPrice != snapshot.UnitPrice || normalizedClientTaxRate != snapshot.TaxRate)
+                var normalizedClientUnitPrice = itemRequest.UnitPrice.HasValue
+                    ? RoundCurrency(itemRequest.UnitPrice.Value)
+                    : (decimal?)null;
+                var normalizedClientTaxRate = itemRequest.TaxRate.HasValue
+                    ? RoundCurrency(itemRequest.TaxRate.Value)
+                    : (decimal?)null;
+                if ((normalizedClientUnitPrice.HasValue && normalizedClientUnitPrice.Value != snapshot.UnitPrice) ||
+                    (normalizedClientTaxRate.HasValue && normalizedClientTaxRate.Value != snapshot.TaxRate))
                 {
                     ignoredClientOverrides.Add(new
                     {
@@ -576,8 +828,9 @@ public class SalesReturnsController : ControllerBase
                 return BadRequest(new { message = "At least one return item is required" });
             }
 
-            var originalInvoiceSubtotal = RoundCurrency(originalInvoice.Subtotal);
-            var priorReturnedGrossSubtotal = RoundCurrency(snapshots.Values.Sum(snapshot =>
+            var originalInvoiceDiscountBasis = RoundCurrency(
+                originalInvoice.Subtotal - snapshots.Values.Sum(snapshot => snapshot.LineDiscountAmount));
+            var priorReturnedDiscountBasis = RoundCurrency(snapshots.Values.Sum(snapshot =>
             {
                 var priorBaseQuantity = priorBaseQuantitiesByKey.GetValueOrDefault(snapshot.Key);
                 if (priorBaseQuantity <= 0 || snapshot.ConversionFactor <= 0)
@@ -585,17 +838,28 @@ public class SalesReturnsController : ControllerBase
                     return 0m;
                 }
 
-                return snapshot.UnitPrice * (priorBaseQuantity / snapshot.ConversionFactor);
+                var priorGrossSubtotal = RoundCurrency(
+                    snapshot.UnitPrice * (priorBaseQuantity / snapshot.ConversionFactor));
+                var priorLineDiscount = CalculateCumulativeProrated(
+                    snapshot.LineDiscountAmount,
+                    snapshot.OriginalBaseQuantity,
+                    0m,
+                    priorBaseQuantity);
+                return RoundCurrency(priorGrossSubtotal - priorLineDiscount);
             }));
 
             var invoiceDiscountShares = AllocateAmountAcrossLines(
                 pendingLines,
                 CalculateCumulativeProrated(
                     RoundCurrency(originalInvoice.DiscountAmount),
-                    originalInvoiceSubtotal,
-                    priorReturnedGrossSubtotal,
-                    RoundCurrency(pendingLines.Sum(line => line.GrossSubtotal))),
-                line => line.GrossSubtotal);
+                    originalInvoiceDiscountBasis,
+                    priorReturnedDiscountBasis,
+                    RoundCurrency(pendingLines.Sum(line => line.GrossSubtotal - line.LineDiscountAmount))),
+                line => RoundCurrency(line.GrossSubtotal - line.LineDiscountAmount));
+            var statusAfterReturn = priorBaseQuantitiesByKey.Values.Sum() + pendingLines.Sum(line => line.BaseQuantity) >=
+                                    snapshots.Values.Sum(snapshot => snapshot.OriginalBaseQuantity)
+                ? InvoiceStatus.FullyReturned
+                : InvoiceStatus.PartiallyReturned;
 
             return await FinalizeSalesReturnAsync(
                 request,
@@ -605,8 +869,10 @@ public class SalesReturnsController : ControllerBase
                 customer,
                 originalInvoiceTotal,
                 priorReturnedTotal,
+                previousReturns,
                 pendingLines,
                 invoiceDiscountShares,
+                statusAfterReturn,
                 ignoredClientOverrides,
                 stockChanges,
                 transaction);
@@ -635,8 +901,10 @@ public class SalesReturnsController : ControllerBase
         Customer? customer,
         decimal originalInvoiceTotal,
         decimal priorReturnedTotal,
+        IReadOnlyCollection<Return> previousReturns,
         List<PendingReturnLine> pendingLines,
         decimal[] invoiceDiscountShares,
+        InvoiceStatus statusAfterReturn,
         List<object> ignoredClientOverrides,
         List<PendingProductVariantStockChange> stockChanges,
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction transaction)
@@ -658,12 +926,15 @@ public class SalesReturnsController : ControllerBase
             OriginalInvoiceId = originalInvoice.Id,
             OriginalInvoiceNumber = originalInvoice.InvoiceNumber,
             CustomerId = originalInvoice.CustomerId,
-            WarehouseId = request.WarehouseId,
+            WarehouseId = originalInvoice.WarehouseId,
             Reason = request.Reason,
             Notes = request.Notes,
             CreatedAt = returnTimestamp,
             CreatedBy = currentUserId
         };
+
+        await LockReturnProjectionProductsAsync(
+            pendingLines.Select(line => line.Snapshot.ProductId));
 
         var variantIds = pendingLines
             .Select(line => line.Snapshot.EffectiveVariantId)
@@ -675,7 +946,7 @@ public class SalesReturnsController : ControllerBase
             .ToDictionaryAsync(v => v.Id);
         var lockTargets = pendingLines
             .Select(line => new StockLockTarget(
-                request.WarehouseId,
+                originalInvoice.WarehouseId,
                 line.Snapshot.EffectiveVariantId,
                 CreateIfMissing: true))
             .DistinctBy(target => (target.WarehouseId, target.VariantId))
@@ -747,10 +1018,10 @@ public class SalesReturnsController : ControllerBase
                 totalAmount
             });
 
-            if (!stockMap.TryGetValue((request.WarehouseId, line.Snapshot.EffectiveVariantId), out var variantStock))
+            if (!stockMap.TryGetValue((originalInvoice.WarehouseId, line.Snapshot.EffectiveVariantId), out var variantStock))
             {
                 throw new InvalidOperationException(
-                    $"Stock record not found in locked stock map for WarehouseId={request.WarehouseId}, " +
+                    $"Stock record not found in locked stock map for WarehouseId={originalInvoice.WarehouseId}, " +
                     $"VariantId={line.Snapshot.EffectiveVariantId}. This may indicate a silent row-creation failure " +
                     $"(e.g., CreateIfMissing: true with ON CONFLICT DO NOTHING).");
             }
@@ -763,7 +1034,7 @@ public class SalesReturnsController : ControllerBase
             stockChanges.Add(ProductVariantStockMutationSupport.BuildPendingStockChange(
                 line.Snapshot.EffectiveVariantId,
                 line.Snapshot.ProductId,
-                request.WarehouseId,
+                originalInvoice.WarehouseId,
                 oldQuantity,
                 variantStock.Quantity,
                 "SalesReturn",
@@ -775,7 +1046,7 @@ public class SalesReturnsController : ControllerBase
             {
                 Id = Guid.NewGuid(),
                 TenantId = _tenantContext.RequiredTenantId,
-                WarehouseId = request.WarehouseId,
+                WarehouseId = originalInvoice.WarehouseId,
                 ProductId = line.Snapshot.ProductId,
                 ProductVariantId = line.Snapshot.EffectiveVariantId,
                 MovementType = StockMovementType.SalesReturn,
@@ -857,11 +1128,26 @@ public class SalesReturnsController : ControllerBase
             });
         }
 
+        salesReturn.RefundMethod = refundAllocation.Method;
+        salesReturn.CashRefundAmount = refundAllocation.CashAmount;
+        salesReturn.CardRefundAmount = refundAllocation.CardAmount;
+        salesReturn.CustomerCreditAmount = creditToCustomerAmount;
+
+        var tenderValidationError = ValidateRefundAgainstOriginalTender(
+            originalInvoice,
+            refundAllocation,
+            previousReturns);
+        if (tenderValidationError != null)
+        {
+            return BadRequest(new { message = tenderValidationError });
+        }
+
         // The sales invoice remains the bounded historical authority for all return mutations.
         // Advance its mutation version exactly once per committed return so downstream intent is
         // auditable against a deterministic, monotonic invoice version stream.
         originalInvoice.AccountingMutationVersion++;
         var refundMutationVersion = originalInvoice.AccountingMutationVersion;
+        originalInvoice.Status = statusAfterReturn;
 
         _context.Returns.Add(salesReturn);
 
@@ -1095,15 +1381,6 @@ public class SalesReturnsController : ControllerBase
                 record.Operation == SalesReturnCreateOperation);
     }
 
-    private async Task<Warehouse?> LoadActiveWarehouseAsync(Guid warehouseId, CancellationToken cancellationToken = default) =>
-        await _context.Warehouses
-            .FirstOrDefaultAsync(warehouse =>
-                warehouse.Id == warehouseId &&
-                warehouse.TenantId == _tenantContext.RequiredTenantId &&
-                warehouse.IsActive &&
-                !warehouse.IsDeleted,
-                cancellationToken);
-
     private async Task<SalesInvoice?> LoadOriginalInvoiceForReturnMutationAsync(Guid originalInvoiceId)
     {
         IQueryable<SalesInvoice> query;
@@ -1152,6 +1429,10 @@ public class SalesReturnsController : ControllerBase
             .LoadAsync();
 
         await _context.Entry(originalInvoice)
+            .Reference(invoice => invoice.Warehouse)
+            .LoadAsync();
+
+        await _context.Entry(originalInvoice)
             .Collection(invoice => invoice.Items)
             .Query()
             .Include(item => item.Product)
@@ -1160,6 +1441,51 @@ public class SalesReturnsController : ControllerBase
             .LoadAsync();
 
         return originalInvoice;
+    }
+
+    private async Task LockReturnProjectionProductsAsync(IEnumerable<Guid> productIds)
+    {
+        foreach (var productId in productIds.Distinct().OrderBy(id => id))
+        {
+            IQueryable<Product> query;
+
+            if (IsPostgresProvider())
+            {
+                query = _context.Products
+                    .FromSqlInterpolated($@"
+                        SELECT *, xmin
+                        FROM ""Products""
+                        WHERE ""TenantId"" = {_tenantContext.RequiredTenantId}
+                          AND ""Id"" = {productId}
+                        FOR UPDATE")
+                    .IgnoreQueryFilters();
+            }
+            else if (IsSqlServerProvider())
+            {
+                query = _context.Products
+                    .FromSqlInterpolated($@"
+                        SELECT *
+                        FROM [Products] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                        WHERE [TenantId] = {_tenantContext.RequiredTenantId}
+                          AND [Id] = {productId}")
+                    .IgnoreQueryFilters();
+            }
+            else
+            {
+                query = _context.Products
+                    .IgnoreQueryFilters()
+                    .Where(product =>
+                        product.TenantId == _tenantContext.RequiredTenantId &&
+                        product.Id == productId);
+            }
+
+            var product = await query.FirstOrDefaultAsync()
+                ?? throw new InvalidOperationException(
+                    $"Sales return projection product {productId} is no longer authoritative.");
+
+            // The invoice snapshot may have tracked this product before the lock was acquired.
+            await _context.Entry(product).ReloadAsync();
+        }
     }
 
     private bool IsPostgresProvider() =>
@@ -1355,7 +1681,7 @@ public class SalesReturnsController : ControllerBase
         }
 
         return await _context.Set<ProductVariant>()
-            .Where(variant => distinctProductIds.Contains(variant.ProductId) && variant.IsDefault && variant.IsActive)
+            .Where(variant => distinctProductIds.Contains(variant.ProductId) && variant.IsDefault)
             .GroupBy(variant => variant.ProductId)
             .ToDictionaryAsync(group => group.Key, group => group.First().Id);
     }
@@ -1456,9 +1782,88 @@ public class SalesReturnsController : ControllerBase
     private static decimal ResolveReturnCostAmountSnapshot(decimal costPriceSnapshot, decimal baseQuantity) =>
         RoundCurrency(costPriceSnapshot * baseQuantity);
 
-    private static string BuildSalesReturnRequestFingerprint(
-        CreateSalesReturnRequest request,
-        string? paymentAttemptId)
+    private static OriginalTenderCapacity CalculateRemainingTenderCapacity(
+        SalesInvoice originalInvoice,
+        IReadOnlyCollection<Return> previousReturns)
+    {
+        if (previousReturns.Any(previousReturn => !previousReturn.RefundMethod.HasValue))
+        {
+            return new OriginalTenderCapacity(0m, 0m, true);
+        }
+
+        var paidAmount = Math.Max(0m, Math.Min(
+            RoundCurrency(originalInvoice.PaidAmount),
+            RoundCurrency(originalInvoice.TotalAmount)));
+        var explicitCashAmount = Math.Max(0m, RoundCurrency(originalInvoice.CashAmount ?? 0m));
+        var explicitCardAmount = Math.Max(0m, RoundCurrency(originalInvoice.CardAmount ?? 0m));
+
+        decimal originalCashAmount;
+        decimal originalCardAmount;
+        switch (originalInvoice.PaymentMethod)
+        {
+            case PaymentMethod.Cash:
+                originalCashAmount = explicitCashAmount > 0m
+                    ? Math.Min(explicitCashAmount, paidAmount)
+                    : paidAmount;
+                originalCardAmount = 0m;
+                break;
+            case PaymentMethod.Card:
+                originalCashAmount = 0m;
+                originalCardAmount = explicitCardAmount > 0m
+                    ? Math.Min(explicitCardAmount, paidAmount)
+                    : paidAmount;
+                break;
+            case PaymentMethod.Mixed:
+                // Card settlement is exact; any over-tender/change belongs to the cash leg.
+                originalCardAmount = Math.Min(explicitCardAmount, paidAmount);
+                originalCashAmount = Math.Min(
+                    explicitCashAmount,
+                    Math.Max(0m, paidAmount - originalCardAmount));
+                break;
+            default:
+                originalCashAmount = 0m;
+                originalCardAmount = 0m;
+                break;
+        }
+
+        var priorCashRefunds = RoundCurrency(previousReturns.Sum(previousReturn => previousReturn.CashRefundAmount));
+        var priorCardRefunds = RoundCurrency(previousReturns.Sum(previousReturn => previousReturn.CardRefundAmount));
+        return new OriginalTenderCapacity(
+            Math.Max(0m, RoundCurrency(originalCashAmount - priorCashRefunds)),
+            Math.Max(0m, RoundCurrency(originalCardAmount - priorCardRefunds)),
+            false);
+    }
+
+    private static string? ValidateRefundAgainstOriginalTender(
+        SalesInvoice originalInvoice,
+        RefundAllocation allocation,
+        IReadOnlyCollection<Return> previousReturns)
+    {
+        if (allocation.Method == RefundMethod.AccountCredit)
+        {
+            return null;
+        }
+
+        var capacity = CalculateRemainingTenderCapacity(originalInvoice, previousReturns);
+        if (capacity.HasLegacySettlementGap)
+        {
+            return "Immediate payout is unavailable because a previous return has no settlement snapshot. Use AccountCredit or reconcile the legacy return first.";
+        }
+
+        if (allocation.CashAmount > capacity.RemainingCashAmount)
+        {
+            return $"Cash refund exceeds the remaining cash collected on the original invoice ({capacity.RemainingCashAmount:F2}).";
+        }
+
+        if (allocation.CardAmount > capacity.RemainingCardAmount)
+        {
+            return $"Card refund exceeds the remaining card amount collected on the original invoice ({capacity.RemainingCardAmount:F2}).";
+        }
+
+        return null;
+    }
+
+    private static string BuildSalesReturnRequestFingerprint(CreateSalesReturnRequest request)
     {
         return DeterministicRequestHasher.ComputeHash(new
         {
@@ -1481,8 +1886,7 @@ public class SalesReturnsController : ControllerBase
                 .ToArray(),
             Reason = request.Reason?.Trim(),
             Notes = request.Notes?.Trim(),
-            request.RefundMethod,
-            PaymentAttemptId = paymentAttemptId?.Trim()
+            request.RefundMethod
         });
     }
 
@@ -1495,8 +1899,11 @@ public class SalesReturnsController : ControllerBase
             return new StatusCodeResult(statusCode);
         }
 
-        using var document = JsonDocument.Parse(record.ResponseJson);
-        var payload = document.RootElement.Clone();
+        var payload = JsonSerializer.Deserialize<SalesReturnResponse>(
+            record.ResponseJson,
+            SalesReturnIdempotencyJsonOptions)
+            ?? throw new InvalidOperationException(
+                $"Stored sales return response for idempotency record {record.Id} is empty.");
         return new ObjectResult(payload)
         {
             StatusCode = statusCode,
@@ -1506,7 +1913,7 @@ public class SalesReturnsController : ControllerBase
     private static string SerializeSalesReturnPayload(SalesReturnResponse response) =>
         JsonSerializer.Serialize(response, SalesReturnIdempotencyJsonOptions);
 
-    private sealed record OriginalInvoiceSnapshotKey(Guid ProductId, Guid EffectiveVariantId);
+    private readonly record struct OriginalInvoiceSnapshotKey(Guid ProductId, Guid EffectiveVariantId);
 
     private sealed record OriginalInvoiceLineSnapshot(
         OriginalInvoiceSnapshotKey Key,
@@ -1534,6 +1941,11 @@ public class SalesReturnsController : ControllerBase
         decimal LineTaxAmount,
         string? Reason);
 
+    private sealed record OriginalTenderCapacity(
+        decimal RemainingCashAmount,
+        decimal RemainingCardAmount,
+        bool HasLegacySettlementGap);
+
     private sealed record OriginalInvoiceSnapshotBuildResult(
         bool Success,
         string? ErrorMessage,
@@ -1555,6 +1967,18 @@ public class SalesReturnsController : ControllerBase
                 null,
                 new Dictionary<Guid, Guid>());
         }
+    }
+
+    private sealed record SalesReturnInvoiceReadModelResult(
+        bool Success,
+        string? ErrorMessage,
+        SalesReturnInvoiceResponseDto? Response)
+    {
+        public static SalesReturnInvoiceReadModelResult Ok(SalesReturnInvoiceResponseDto response) =>
+            new(true, null, response);
+
+        public static SalesReturnInvoiceReadModelResult Fail(string errorMessage) =>
+            new(false, errorMessage, null);
     }
 
     private async Task MarkSynchronousRefundAccountingOutboxProcessedAsync(
@@ -1675,12 +2099,12 @@ public record SalesReturnItemRequest
     public Guid ProductId { get; set; }
     public Guid? ProductVariantId { get; set; }
     public Guid? UnitId { get; set; } // Unit for the return
-    [Range(typeof(decimal), "0.01", "79228162514264337593543950335")]
+    [Range(typeof(decimal), "0.000001", "79228162514264337593543950335")]
     public decimal Quantity { get; set; } // Quantity in the selected unit
     [Range(typeof(decimal), "0", "79228162514264337593543950335")]
-    public decimal UnitPrice { get; set; }
+    public decimal? UnitPrice { get; set; }
     [Range(typeof(decimal), "0", "100")]
-    public decimal TaxRate { get; set; }
+    public decimal? TaxRate { get; set; }
     [MaxLength(500)]
     public string? Reason { get; set; }
 }
@@ -1691,6 +2115,7 @@ public record SalesReturnResponse
     public string ReturnNumber { get; set; } = string.Empty;
     public decimal TotalAmount { get; set; }
     public decimal RefundAmount { get; set; }
+    [JsonConverter(typeof(JsonStringEnumConverter))]
     public RefundMethod RefundMethod { get; set; }
     public decimal CashAmount { get; set; }
     public decimal CardAmount { get; set; }

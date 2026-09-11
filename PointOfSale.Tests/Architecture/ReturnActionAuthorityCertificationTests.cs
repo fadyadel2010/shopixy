@@ -9,9 +9,12 @@ public sealed class ReturnActionAuthorityCertificationTests
         var policy = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubReturnPolicy.cs");
         var mapper = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubReturnMapper.cs");
         var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/CommerceHub/ReturnManagementService.cs");
-        var frontendAuthority = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts");
-        var frontendService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundsService.ts");
-        var frontendPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
+        var posController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/PosAdminReturnsController.cs");
+        var superAdminController = CertificationSource.ReadRepoFile("PointOfSale.API/SuperAdmin/Controllers/SuperAdminReturnsController.cs");
+        var vendorService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/services/commerceHubVendorOrdersApi.js");
+        var vendorPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/pages/CommerceHubOrders.jsx");
+        var superAdminService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundsService.ts");
+        var superAdminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
 
         Assert.Contains("public bool CanSchedulePickup", dto, StringComparison.Ordinal);
         Assert.Contains("public bool CanMarkPickedUp", dto, StringComparison.Ordinal);
@@ -19,21 +22,24 @@ public sealed class ReturnActionAuthorityCertificationTests
         Assert.Contains("public bool CanMarkDelivered", dto, StringComparison.Ordinal);
         Assert.Contains("public bool CanMarkFailed", dto, StringComparison.Ordinal);
         Assert.Contains("public bool CanConfirmReceipt", dto, StringComparison.Ordinal);
-        Assert.Contains("public bool CanOverrideStatus", dto, StringComparison.Ordinal);
-        Assert.Contains("public IReadOnlyList<CommerceHubReturnStatus> AllowedOverrideStatuses", dto, StringComparison.Ordinal);
+        Assert.DoesNotContain("CanOverrideStatus", dto, StringComparison.Ordinal);
+        Assert.DoesNotContain("AllowedOverrideStatuses", dto, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetAllowedOverrideStatuses", policy, StringComparison.Ordinal);
+        Assert.DoesNotContain("CanOverrideStatusTo", policy, StringComparison.Ordinal);
+        Assert.DoesNotContain("AllowedOverrideStatuses", mapper, StringComparison.Ordinal);
+        Assert.DoesNotContain("OverrideStatusAsync", service, StringComparison.Ordinal);
+        Assert.Contains("EnsureExpectedStatus(returnRequest.Status, expectedStatus)", service, StringComparison.Ordinal);
 
-        Assert.Contains("GetAllowedOverrideStatuses", policy, StringComparison.Ordinal);
-        Assert.Contains("CanOverrideStatusTo", policy, StringComparison.Ordinal);
-        Assert.Contains("AllowedOverrideStatuses = CommerceHubReturnPolicy.GetAllowedOverrideStatuses", mapper, StringComparison.Ordinal);
-        Assert.Contains("CanOverrideStatus = CommerceHubReturnPolicy.CanOverrideStatus", mapper, StringComparison.Ordinal);
-        Assert.Contains("CommerceHubReturnPolicy.CanOverrideStatusTo", service, StringComparison.Ordinal);
-
-        Assert.Contains("!allowedOverrideStatuses(returnRequest.allowedOverrideStatuses, returnRequest.canOverrideStatus)", frontendAuthority, StringComparison.Ordinal);
-        Assert.Contains("canOverrideStatus: boolean", frontendService, StringComparison.Ordinal);
-        Assert.Contains("allowedOverrideStatuses: SuperAdminOverrideReturnStatus[]", frontendService, StringComparison.Ordinal);
-        Assert.Contains("refund.returnRequest.canOverrideStatus", frontendPage, StringComparison.Ordinal);
-        Assert.Contains("statusOptions={returnModalMode === 'override' ? acceptedRefundDetails.returnRequest.allowedOverrideStatuses : undefined}", frontendPage, StringComparison.Ordinal);
-        Assert.Contains("!returnRequest.allowedOverrideStatuses.includes(overrideStatus)", frontendPage, StringComparison.Ordinal);
+        Assert.Contains("_tenantContext.RequiredTenantId", posController, StringComparison.Ordinal);
+        Assert.Contains("RETURN_EXPECTED_STATUS_REQUIRED", posController, StringComparison.Ordinal);
+        Assert.DoesNotContain("[HttpPost", superAdminController, StringComparison.Ordinal);
+        Assert.Contains("runCommerceHubVendorReturnAction", vendorService, StringComparison.Ordinal);
+        Assert.Contains("expectedStatus: acceptedReturn.status", vendorService, StringComparison.Ordinal);
+        Assert.Contains("requireCommerceHubVendorReturnAuthority", vendorService, StringComparison.Ordinal);
+        Assert.Contains("Vendor return logistics", vendorPage, StringComparison.Ordinal);
+        Assert.DoesNotContain("override-status", superAdminService, StringComparison.Ordinal);
+        Assert.DoesNotContain("mark-failed", superAdminService, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReturnTransitionModal", superAdminPage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -51,7 +57,7 @@ public sealed class ReturnActionAuthorityCertificationTests
 
         Assert.Contains("const currentItem = await resolveCurrentItem(item.orderItemId)", customerRefundModal, StringComparison.Ordinal);
         Assert.Contains("requireCustomerCreatedRefundForCurrentOrderItem", customerRefundService, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorAuthority, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorAuthority, StringComparison.Ordinal);
         Assert.Contains("api.post('/salesreturns', payload", salesReturns, StringComparison.Ordinal);
         Assert.Contains("api.post('/purchasereturns', payload", purchaseReturns, StringComparison.Ordinal);

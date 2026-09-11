@@ -27,12 +27,17 @@ i18n.init({
             translation: {
                 'paymentModal.title': 'Payment',
                 'paymentModal.cashAmount': 'Cash Amount',
+                'paymentModal.creditButton': 'Credit',
+                'paymentModal.customerAccountCharge': 'Customer Account',
                 'paymentModal.completeSale': 'Complete Sale',
                 'paymentModal.confirmPayment': 'Confirm Payment',
                 'paymentModal.confirmPaymentTitle': 'Confirm Payment',
                 'paymentModal.confirmPaymentMessage': 'Please confirm the payment details',
                 'paymentModal.totalAmount': 'Total Amount',
+                'paymentModal.confirmCreditTitle': 'Confirm Credit Sale',
+                'paymentModal.confirmCreditMessage': 'Review customer account charge',
                 'paymentModal.validation.cashAmountTooLow': 'Cash amount is too low',
+                'paymentModal.validation.creditCustomerRequired': 'Select a customer',
                 'common.cancel': 'Cancel',
                 'common.close': 'Close',
             },
@@ -121,6 +126,119 @@ describe('PaymentModal mixed payment state', () => {
 })
 
 describe('PaymentModal submission concurrency', () => {
+    it('submits a customer credit sale with no immediate tender', async () => {
+        const user = userEvent.setup()
+        const preparedCartId = '11111111-1111-4111-8111-111111111111'
+
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    variantId: 'variant-1',
+                    unitId: 'unit-1',
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={{ id: 'customer-1', name: 'Credit Customer' }}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="credit-attempt-1"
+                posCartId={preparedCartId}
+                onRevalidateStock={vi.fn().mockResolvedValue(true)}
+                onPreparePosCart={vi.fn().mockResolvedValue(preparedCartId)}
+                onClose={vi.fn()}
+                onComplete={vi.fn()}
+                onError={vi.fn()}
+                editingSaleId={null}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        await user.click(screen.getByRole('button', { name: 'Credit' }))
+        expect(screen.queryByLabelText(/cash amount/i)).not.toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: /complete sale/i }))
+        expect(await screen.findByText('Confirm Credit Sale')).toBeInTheDocument()
+        await user.click(screen.getByRole('button', { name: /confirm payment/i }))
+
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled())
+        expect(apiMock.post.mock.calls[0][1]).toEqual(expect.objectContaining({
+            customerId: 'customer-1',
+            paymentMethod: 'Credit',
+            paidAmount: 0,
+            cashAmount: 0,
+            cardAmount: 0,
+        }))
+    })
+
+    it('does not offer credit for a walk-in sale', () => {
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={null}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="walk-in-attempt"
+                onClose={vi.fn()}
+                onComplete={vi.fn()}
+                onError={vi.fn()}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        expect(screen.queryByRole('button', { name: 'Credit' })).not.toBeInTheDocument()
+    })
+
+    it('restores the draft invoice tender and representative', async () => {
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    variantId: null,
+                    unitId: null,
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={null}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="edit-attempt-restore"
+                onRevalidateStock={vi.fn().mockResolvedValue(true)}
+                onClose={vi.fn()}
+                onComplete={vi.fn()}
+                onError={vi.fn()}
+                editingSaleId="sale-123"
+                editingMutationVersion={4}
+                initialPaymentMethod="Mixed"
+                initialCashAmount={25}
+                initialSalesRepresentative={{ id: 'rep-1', name: 'Sales Rep' }}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        expect(screen.getByDisplayValue('Sales Rep')).toBeInTheDocument()
+        expect(screen.getByLabelText(/cash amount/i)).toHaveValue(25)
+        expect(screen.getByRole('button', { name: 'paymentModal.mixedButton' })).toHaveClass('bg-blue-50')
+    })
+
     it('uses a synchronous confirmation lock before stock revalidation starts', async () => {
         const user = userEvent.setup()
         let revalidateResolve
@@ -190,6 +308,90 @@ describe('PaymentModal submission concurrency', () => {
         await waitFor(() => {
             expect(mockRevalidateStock).toHaveBeenCalledTimes(1)
         })
+    })
+
+    it('uses the freshly prepared server cart id for the final sale request', async () => {
+        const user = userEvent.setup()
+        const preparedCartId = '11111111-1111-4111-8111-111111111111'
+        const onPreparePosCart = vi.fn().mockResolvedValue(preparedCartId)
+
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    variantId: 'variant-1',
+                    unitId: 'unit-1',
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={null}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="attempt-1"
+                posCartId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                onRevalidateStock={vi.fn().mockResolvedValue(true)}
+                onPreparePosCart={onPreparePosCart}
+                onClose={vi.fn()}
+                onComplete={vi.fn()}
+                onError={vi.fn()}
+                editingSaleId={null}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        await user.click(screen.getByRole('button', { name: /complete sale/i }))
+        await user.click(await screen.findByRole('button', { name: /confirm payment/i }))
+
+        await waitFor(() => expect(apiMock.post).toHaveBeenCalled())
+        expect(onPreparePosCart).toHaveBeenCalledTimes(1)
+        expect(apiMock.post.mock.calls[0][2].headers['X-Pos-Cart-Id']).toBe(preparedCartId)
+    })
+
+    it('emits completion once with the fetched receipt instead of unmounting before it arrives', async () => {
+        const user = userEvent.setup()
+        const receipt = { invoiceNumber: 'INV-001', total: 100 }
+        const onComplete = vi.fn()
+        apiMock.get.mockResolvedValueOnce({ data: receipt })
+
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    variantId: null,
+                    unitId: null,
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={null}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="attempt-1"
+                posCartId="11111111-1111-4111-8111-111111111111"
+                onRevalidateStock={vi.fn().mockResolvedValue(true)}
+                onPreparePosCart={vi.fn().mockResolvedValue('11111111-1111-4111-8111-111111111111')}
+                onClose={vi.fn()}
+                onComplete={onComplete}
+                onError={vi.fn()}
+                editingSaleId={null}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        await user.click(screen.getByRole('button', { name: /complete sale/i }))
+        await user.click(await screen.findByRole('button', { name: /confirm payment/i }))
+
+        await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1))
+        expect(onComplete).toHaveBeenCalledWith(expect.objectContaining({ receipt }))
     })
 
     it('keeps ambiguous timed-out submissions in the confirmation dialog for same-key retry', async () => {
@@ -406,6 +608,59 @@ describe('PaymentModal sale submission errors', () => {
         }, t)
 
         expect(message).toBe('Insufficient stock')
+    })
+
+    it('keeps normalized active-submission conflicts eligible for same-key retry', async () => {
+        const user = userEvent.setup()
+        apiMock.put.mockRejectedValueOnce({
+            response: {
+                status: 409,
+                data: {
+                    code: 'SALE_IN_PROGRESS',
+                    message: 'The same sale update is already being processed.',
+                },
+            },
+        }).mockResolvedValueOnce({
+            data: { invoiceId: 'sale-123', invoiceNumber: 'INV-001' },
+        })
+
+        render(
+            <PaymentModal
+                total={100}
+                items={[{
+                    productId: 'prod-1',
+                    variantId: null,
+                    unitId: null,
+                    name: 'Test Product',
+                    quantity: 1,
+                    unitPrice: 100,
+                    discountAmount: 0,
+                    taxRate: 0,
+                }]}
+                customer={null}
+                discountType="fixed"
+                discountValue={0}
+                warehouseId="warehouse-1"
+                paymentAttemptId="edit-attempt-conflict"
+                onRevalidateStock={vi.fn().mockResolvedValue(true)}
+                onClose={vi.fn()}
+                onComplete={vi.fn()}
+                onError={vi.fn()}
+                editingSaleId="sale-123"
+                editingMutationVersion={7}
+            />,
+            { wrapper: TestWrapper },
+        )
+
+        await user.click(screen.getByRole('button', { name: /complete sale/i }))
+        await user.click(await screen.findByRole('button', { name: /confirm payment/i }))
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(1))
+
+        const firstKey = apiMock.put.mock.calls[0][2].headers['Idempotency-Key']
+        await user.click(screen.getByRole('button', { name: /confirm payment/i }))
+        await waitFor(() => expect(apiMock.put).toHaveBeenCalledTimes(2))
+
+        expect(apiMock.put.mock.calls[1][2].headers['Idempotency-Key']).toBe(firstKey)
     })
 })
 

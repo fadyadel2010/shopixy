@@ -1,5 +1,5 @@
 using PointOfSale.API.DTOs.CommerceHub;
-using PointOfSale.Core.Entities;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 
 namespace PointOfSale.API.Services.CommerceHub;
 
@@ -12,7 +12,7 @@ internal sealed record CommerceHubPaymentMethodAvailabilitySnapshot(
 internal static class CommerceHubPaymentMethodAuthority
 {
     private const string UnavailableReasonCode = "PAYMENT_METHOD_NOT_AVAILABLE";
-    private const string UnavailableReason = "This payment method is not enabled for every store in this order.";
+    private const string UnavailableReason = "This payment method is not available from the CommerceHub platform.";
 
     private static readonly string[] OrderedPaymentMethodCodes =
     {
@@ -23,25 +23,18 @@ internal static class CommerceHubPaymentMethodAuthority
 
     public static IReadOnlyList<CommerceHubPaymentMethodAvailabilitySnapshot> BuildAvailability(
         IReadOnlyCollection<Guid> tenantIds,
-        IReadOnlyCollection<TenantPaymentMethod> paymentMethods)
+        IEnumerable<IPaymentProviderAdapter> providerAdapters)
     {
-        var distinctTenantIds = tenantIds
-            .Where(tenantId => tenantId != Guid.Empty)
-            .Distinct()
-            .ToList();
-
-        var groupedMethods = paymentMethods
-            .Where(method => method.TenantId != Guid.Empty && method.IsEnabled && !method.IsDeleted)
-            .GroupBy(method => method.TenantId)
-            .ToDictionary(group => group.Key, group => (IReadOnlyCollection<TenantPaymentMethod>)group.ToList());
+        var hasStore = tenantIds.Any(tenantId => tenantId != Guid.Empty);
+        var adapters = providerAdapters
+            .GroupBy(adapter => adapter.ProviderCode.Normalized, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Last(), StringComparer.OrdinalIgnoreCase);
 
         return OrderedPaymentMethodCodes
             .Select(code =>
             {
-                var isAvailable = distinctTenantIds.Any() &&
-                    distinctTenantIds.All(tenantId =>
-                        groupedMethods.TryGetValue(tenantId, out var methodsForTenant) &&
-                        SupportsRequestedMethod(code, methodsForTenant));
+                var isAvailable = hasStore &&
+                    (CommerceHubPaymentMethods.IsCod(code) || IsProviderExecutable(code, adapters));
 
                 return new CommerceHubPaymentMethodAvailabilitySnapshot(
                     code,
@@ -55,27 +48,38 @@ internal static class CommerceHubPaymentMethodAuthority
     public static bool IsRequestedMethodAvailable(
         string requestedPaymentMethod,
         IReadOnlyCollection<Guid> tenantIds,
-        IReadOnlyCollection<TenantPaymentMethod> paymentMethods)
+        IEnumerable<IPaymentProviderAdapter> providerAdapters)
     {
-        return BuildAvailability(tenantIds, paymentMethods)
+        return BuildAvailability(tenantIds, providerAdapters)
             .Any(method =>
                 string.Equals(method.Code, requestedPaymentMethod, StringComparison.OrdinalIgnoreCase) &&
                 method.IsAvailable);
     }
 
-    private static bool SupportsRequestedMethod(
-        string requestedPaymentMethod,
-        IReadOnlyCollection<TenantPaymentMethod> methodsForTenant)
+    public static bool IsProviderExecutable(
+        string providerCode,
+        IEnumerable<IPaymentProviderAdapter> providerAdapters)
     {
-        if (string.Equals(requestedPaymentMethod, CommerceHubPaymentMethods.Cod, StringComparison.OrdinalIgnoreCase))
+        var normalized = new ProviderCode(providerCode).Normalized;
+        var adapter = providerAdapters.LastOrDefault(candidate =>
+            string.Equals(candidate.ProviderCode.Normalized, normalized, StringComparison.OrdinalIgnoreCase));
+        if (adapter?.Capabilities is not { } capabilities)
         {
-            return methodsForTenant.Any(method =>
-                method.SupportsOffline ||
-                string.Equals(method.Code, CommerceHubPaymentMethods.Cod, StringComparison.OrdinalIgnoreCase));
+            return false;
         }
 
-        return methodsForTenant.Any(method =>
-            method.SupportsOnline &&
-            string.Equals(method.Code, requestedPaymentMethod, StringComparison.OrdinalIgnoreCase));
+        return capabilities.SupportsPaymentSessionCreation &&
+            capabilities.SupportsWebhookVerification &&
+            (!string.Equals(providerCode, CommerceHubPaymentMethods.Paymob, StringComparison.OrdinalIgnoreCase) ||
+             capabilities.SupportsCallbackParsing);
+    }
+
+    private static bool IsProviderExecutable(
+        string providerCode,
+        IReadOnlyDictionary<string, IPaymentProviderAdapter> providerAdapters)
+    {
+        var normalized = new ProviderCode(providerCode).Normalized;
+        return providerAdapters.TryGetValue(normalized, out var adapter) &&
+            IsProviderExecutable(providerCode, new[] { adapter });
     }
 }

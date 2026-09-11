@@ -26,7 +26,7 @@ public sealed class RefundScopeIsolationAuthorityCertificationTests
         var adminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
 
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorAuthority, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorAuthority, StringComparison.Ordinal);
         Assert.Contains("const dashboard = dashboardQuery.isFetching", vendorPage, StringComparison.Ordinal);
         Assert.Contains("requireSuperAdminRefundDetailsForCurrentSelection", adminAuthority, StringComparison.Ordinal);
         Assert.Contains("Super Admin refund scope authority rejected detail/list scope contradiction.", adminAuthority, StringComparison.Ordinal);

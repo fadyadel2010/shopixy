@@ -290,12 +290,15 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             "Generating Balance Sheet for tenant {TenantId} as of {AsOfDate}",
             tenantId, asOfDate);
         
-        // Balance Sheet account types: Asset, Liability, Equity
-        var bsAccountTypes = new[] 
+        // Include temporary P&L accounts so current earnings can be presented in equity.
+        var reportAccountTypes = new[]
         { 
             AccountType.Asset, 
             AccountType.Liability, 
-            AccountType.Equity 
+            AccountType.Equity,
+            AccountType.Revenue,
+            AccountType.CostOfGoodsSold,
+            AccountType.Expense
         };
         
         // Aggregate balances in SQL so the report scales with account count.
@@ -305,7 +308,7 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
                         (l.JournalEntry!.Status == JournalStatus.Posted ||
                          l.JournalEntry.Status == JournalStatus.Reversed) &&
                         l.JournalEntry.JournalDate <= asOfDate &&
-                        bsAccountTypes.Contains(l.Account.AccountType))
+                        reportAccountTypes.Contains(l.Account.AccountType))
             .GroupBy(l => new
             {
                 l.AccountId,
@@ -325,7 +328,7 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             .OrderBy(l => l.AccountCode)
             .ToListAsync(ct);
 
-        var lines = rawBalances
+        var allLines = rawBalances
             .Select(balance => new BalanceSheetLine
             {
                 AccountId = balance.AccountId,
@@ -337,6 +340,25 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             })
             .Where(line => line.Balance != 0)
             .ToList();
+
+        var lines = allLines
+            .Where(line => line.AccountType is AccountType.Asset or AccountType.Liability or AccountType.Equity)
+            .ToList();
+        var currentEarnings =
+            allLines.Where(line => line.AccountType == AccountType.Revenue).Sum(line => line.Balance) -
+            allLines.Where(line => line.AccountType is AccountType.CostOfGoodsSold or AccountType.Expense).Sum(line => line.Balance);
+        if (currentEarnings != 0m)
+        {
+            lines.Add(new BalanceSheetLine
+            {
+                AccountId = Guid.Empty,
+                AccountCode = "3999",
+                AccountName = "Current Earnings",
+                AccountType = AccountType.Equity,
+                Balance = currentEarnings,
+                IsCurrent = false
+            });
+        }
         
         // Calculate current ratio
         var currentAssets = lines
@@ -397,11 +419,11 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
         var closingBalances = await GetAccountBalancesAsOfAsync(tenantId, toDate, ct);
 
         var openingCash = openingBalances
-            .Where(account => account.AccountCode.StartsWith("10", StringComparison.Ordinal))
+            .Where(IsCashEquivalent)
             .Sum(account => account.Balance);
 
         var closingCash = closingBalances
-            .Where(account => account.AccountCode.StartsWith("10", StringComparison.Ordinal))
+            .Where(IsCashEquivalent)
             .Sum(account => account.Balance);
         
         // 3. Calculate working capital changes
@@ -445,6 +467,22 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             });
         }
         
+        var financingActivities = new List<CashFlowItem>();
+        var equityChange = closingBalances
+            .Where(account => account.AccountType == AccountType.Equity)
+            .Sum(account => account.Balance) - openingBalances
+            .Where(account => account.AccountType == AccountType.Equity)
+            .Sum(account => account.Balance);
+        if (equityChange != 0m)
+        {
+            financingActivities.Add(new CashFlowItem
+            {
+                Description = "Net owner equity movement",
+                AccountCode = "3xxx",
+                Amount = equityChange
+            });
+        }
+
         return new CashFlowReport
         {
             TenantId = tenantId,
@@ -456,7 +494,7 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             WorkingCapitalChanges = workingCapitalChanges,
             NonCashAdjustments = new List<CashFlowAdjustment>(), // Would need depreciation accounts
             InvestingActivities = new List<CashFlowItem>(),
-            FinancingActivities = new List<CashFlowItem>()
+            FinancingActivities = financingActivities
         };
     }
     
@@ -731,6 +769,10 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             .Where(balance => codeSet.Contains(balance.AccountCode))
             .Sum(balance => balance.Balance);
     }
+
+    private static bool IsCashEquivalent(AccountBalanceAggregate account) =>
+        account.AccountCode.StartsWith("10", StringComparison.Ordinal) ||
+        account.AccountCode.StartsWith("11", StringComparison.Ordinal);
 
     private sealed class AccountBalanceAggregate
     {

@@ -13,7 +13,7 @@ public sealed class RefundOwnershipAuthorityCertificationTests
         Assert.Contains("const resolveCurrentRefundItem = async (orderItemId: string)", orderDetailsPage, StringComparison.Ordinal);
         Assert.Contains("const refreshedOrder = await orderQuery.refetch()", orderDetailsPage, StringComparison.Ordinal);
         Assert.Contains("resolveCurrentItem={resolveCurrentRefundItem}", orderDetailsPage, StringComparison.Ordinal);
-        Assert.Contains("const currentItem = resolveCurrentItem ? await resolveCurrentItem(item.orderItemId) : item", refundModal, StringComparison.Ordinal);
+        Assert.Contains("const currentItem = await resolveCurrentItem(item.orderItemId)", refundModal, StringComparison.Ordinal);
         Assert.Contains("!currentItem?.canRefund", refundModal, StringComparison.Ordinal);
         Assert.Contains("quantity > currentItem.maxRefundableQuantity", refundModal, StringComparison.Ordinal);
         Assert.Contains("const refreshedPayoutDetails = await payoutDetailsQuery.refetch()", refundModal, StringComparison.Ordinal);
@@ -34,7 +34,7 @@ public sealed class RefundOwnershipAuthorityCertificationTests
         var superAdminPage = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/RefundsPage.tsx");
 
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorFinancialAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorFinancialAuthority, StringComparison.Ordinal);
         Assert.Contains("GUID_PATTERN.test(normalizeString(row?.refundId))", vendorFinancialAuthority, StringComparison.Ordinal);
         Assert.Contains("requireCurrentSuperAdminRefundSelection", superAdminAuthority, StringComparison.Ordinal);
         Assert.Contains("return refunds.find((refund) => refund.refundId.toLowerCase() === refundId.toLowerCase()) ?? null", superAdminAuthority, StringComparison.Ordinal);

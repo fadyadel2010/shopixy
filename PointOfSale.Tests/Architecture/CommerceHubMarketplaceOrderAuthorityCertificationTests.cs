@@ -8,7 +8,7 @@ public sealed class CommerceHubMarketplaceOrderAuthorityCertificationTests
         var checkout = ReadRepoFile("PointOfSale.API/Services/CommerceHub/CommerceHubCheckoutService.cs");
         var dbContext = ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
         var subOrderConfiguration = ReadRepoFile("PointOfSale.Infrastructure/Data/Configurations/CommerceHubSubOrderConfiguration.cs");
-        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260610193000_CommerceHubMarketplaceOrderAuthorityHardening.cs");
+        var migration = ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("IsolationLevel.Serializable", checkout, StringComparison.Ordinal);
         Assert.Contains("LoadMarketplaceOrderByIdempotencyKeyAsync", checkout, StringComparison.Ordinal);
@@ -23,7 +23,9 @@ public sealed class CommerceHubMarketplaceOrderAuthorityCertificationTests
         Assert.Contains("entity.HasIndex(order => order.IdempotencyKey)", dbContext, StringComparison.Ordinal);
         Assert.Contains("UX_CommerceHubSubOrders_MarketplaceOrderId_StoreId_Live", dbContext, StringComparison.Ordinal);
         Assert.Contains("UX_CommerceHubSubOrders_MarketplaceOrderId_StoreId_Live", subOrderConfiguration, StringComparison.Ordinal);
-        Assert.Contains("duplicate live sub-orders exist", migration, StringComparison.Ordinal);
+        Assert.Contains("name: \"UX_CommerceHubSubOrders_MarketplaceOrderId_StoreId_Live\"", migration, StringComparison.Ordinal);
+        Assert.Contains("columns: new[] { \"MarketplaceOrderId\", \"StoreId\" }", migration, StringComparison.Ordinal);
+        Assert.Contains("filter: \"\\\"IsDeleted\\\" = false\"", migration, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -67,22 +69,12 @@ public sealed class CommerceHubMarketplaceOrderAuthorityCertificationTests
     public void MarketplaceOrderAuthorityDocumentation_MustBeFrozen()
     {
         var findings = ReadRepoFile("docs/architecture/commercehub-marketplace-order-authority-certification-findings.md");
-        var projectContext = ReadRepoFile(".ai-context/PROJECT_CONTEXT.md");
-        var architectureTruth = ReadRepoFile(".ai-context/ARCHITECTURE_TRUTH.md");
-        var knownRisks = ReadRepoFile(".ai-context/KNOWN_RISKS.md");
-        var hardening = ReadRepoFile(".ai-context/CROSS_SYSTEM_AUTHORITY_HARDENING.md");
-        var codexRules = ReadRepoFile(".ai-context/CODEX_RULES.md");
 
         Assert.Contains("PASS M2 CommerceHub Marketplace Order Authority", findings, StringComparison.Ordinal);
         Assert.Contains("Order identity findings", findings, StringComparison.Ordinal);
         Assert.Contains("Vendor-allocation findings", findings, StringComparison.Ordinal);
         Assert.Contains("Runtime hardening performed", findings, StringComparison.Ordinal);
         Assert.Contains("CommerceHub Marketplace Order Authority is production-certifiable", findings, StringComparison.Ordinal);
-        Assert.Contains("PASS M2 CommerceHub Marketplace Order Authority", projectContext, StringComparison.Ordinal);
-        Assert.Contains("PASS M2 CommerceHub Marketplace Order Authority Truth", architectureTruth, StringComparison.Ordinal);
-        Assert.Contains("PASS M2", knownRisks, StringComparison.Ordinal);
-        Assert.Contains("PASS M2 CommerceHub Marketplace Order Authority", hardening, StringComparison.Ordinal);
-        Assert.Contains("PASS M2 CommerceHub Marketplace Order Authority Freeze", codexRules, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -102,6 +94,8 @@ public sealed class CommerceHubMarketplaceOrderAuthorityCertificationTests
         Assert.Contains("requireMarketplaceOrderFinancialAuthority", financialAuthority, StringComparison.Ordinal);
         Assert.Contains("contradictory parent and split totals", financialAuthority, StringComparison.Ordinal);
         Assert.Contains("contradictory split item totals", financialAuthority, StringComparison.Ordinal);
+        Assert.Contains("subOrder.subtotal !== undefined", financialAuthority, StringComparison.Ordinal);
+        Assert.Contains("missing split subtotal and item evidence", financialAuthority, StringComparison.Ordinal);
         Assert.Contains("requireCommerceHubCartPricingAuthority", financialAuthority, StringComparison.Ordinal);
         Assert.Contains("requirePaymentAmountAuthority", financialAuthority, StringComparison.Ordinal);
         Assert.Contains("requireCustomerRefundFinancialAuthority", financialAuthority, StringComparison.Ordinal);

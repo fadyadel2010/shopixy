@@ -40,6 +40,14 @@ public class Return : BaseEntity, ITenantOwned
     public decimal Subtotal { get; set; }
     public decimal TaxAmount { get; set; }
     public decimal TotalAmount { get; set; }
+
+    /// <summary>
+    /// Immutable settlement snapshot for sales returns. Legacy and purchase returns may be null.
+    /// </summary>
+    public RefundMethod? RefundMethod { get; set; }
+    public decimal CashRefundAmount { get; set; }
+    public decimal CardRefundAmount { get; set; }
+    public decimal CustomerCreditAmount { get; set; }
     
     public string? Reason { get; set; }
     public string? Notes { get; set; }

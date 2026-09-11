@@ -37,7 +37,7 @@ public sealed class SalesControllerIdempotencySafetyTests
             key);
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
-        Assert.Contains("Either X-Payment-Attempt-Id or X-Pos-Cart-Id header is required", JsonSerializer.Serialize(badRequest.Value));
+        Assert.Contains("X-Pos-Cart-Id header is required", JsonSerializer.Serialize(badRequest.Value));
     }
 
     [Theory]
@@ -333,6 +333,75 @@ public sealed class SalesControllerIdempotencySafetyTests
             method!.Invoke(null, [invoice, 100m, 20m, 0m, request]));
 
         Assert.IsType<ValidationException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void ValidateAndNormalizePaymentAmounts_AllowsPureCreditWithoutTender()
+    {
+        var method = typeof(SalesController).GetMethod(
+            "ValidateAndNormalizePaymentAmounts",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var result = ((decimal PaidAmount, decimal? CashAmount, decimal? CardAmount))method!.Invoke(
+            null,
+            [PaymentMethod.Credit, 100m, 0m, null, null])!;
+
+        Assert.Equal(0m, result.PaidAmount);
+        Assert.Equal(0m, result.CashAmount);
+        Assert.Equal(0m, result.CardAmount);
+    }
+
+    [Theory]
+    [InlineData(1, 0, 0)]
+    [InlineData(0, 1, 0)]
+    [InlineData(0, 0, 1)]
+    public void ValidateAndNormalizePaymentAmounts_RejectsTenderOnCreditSale(
+        int paidAmount,
+        int cashAmount,
+        int cardAmount)
+    {
+        var method = typeof(SalesController).GetMethod(
+            "ValidateAndNormalizePaymentAmounts",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var exception = Assert.Throws<TargetInvocationException>(() => method!.Invoke(
+            null,
+            [PaymentMethod.Credit, 100m, (decimal)paidAmount, (decimal)cashAmount, (decimal)cardAmount]));
+
+        Assert.IsType<ValidationException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void EnsurePaymentMethodCustomerCompatibility_RequiresCustomerForCreditSale()
+    {
+        var method = typeof(SalesController).GetMethod(
+            "EnsurePaymentMethodCustomerCompatibility",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+        method!.Invoke(null, [PaymentMethod.Credit, Guid.NewGuid()]);
+
+        var exception = Assert.Throws<TargetInvocationException>(() =>
+            method.Invoke(null, [PaymentMethod.Credit, null]));
+        Assert.IsType<ValidationException>(exception.InnerException);
+    }
+
+    [Fact]
+    public void ResolveSaleChangeAmount_DoesNotExposeCreditBalanceAsNegativeChange()
+    {
+        var method = typeof(SalesController).GetMethod(
+            "ResolveSaleChangeAmount",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        Assert.NotNull(method);
+
+        var change = method!.Invoke(null, [new SalesInvoice { TotalAmount = 100m, PaidAmount = 0m }]);
+
+        Assert.Equal(0m, change);
     }
 
     [Fact]

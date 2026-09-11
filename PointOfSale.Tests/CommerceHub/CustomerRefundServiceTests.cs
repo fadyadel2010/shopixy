@@ -11,6 +11,7 @@ using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.CommerceHub.Finance;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Enums.CommerceHubFinance;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.TestDoubles;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
@@ -232,6 +233,46 @@ public class CustomerRefundServiceTests : IDisposable
         Assert.Equal(1, await _dbContext.CommerceHubRefundRequests.CountAsync());
     }
 
+    [Theory]
+    [InlineData("development-simulated-cod-refund", true, false)]
+    [InlineData("development-simulated-online-refund", true, false)]
+    [InlineData("manual-confirmed", false, true)]
+    public void BuildPayoutSnapshot_ShouldExposeServerOwnedMoneyMovementAuthority(
+        string gatewayStatus,
+        bool expectedSimulation,
+        bool expectedExternalConfirmation)
+    {
+        var refundRequest = new CommerceHubRefundRequest
+        {
+            Id = Guid.NewGuid(),
+            PayoutMethodSnapshot = RefundPayoutMethod.VodafoneCash,
+            PayoutAccountMaskedSnapshot = "010****678"
+        };
+        var execution = new CommerceHubRefundExecution
+        {
+            Id = Guid.NewGuid(),
+            RefundId = refundRequest.Id,
+            Method = RefundPayoutMethod.VodafoneCash,
+            TransactionReference = "authority-reference",
+            ExecutedAt = DateTime.UtcNow,
+            IsSuccessful = true
+        };
+        var trackedRefund = new CommerceHubRefund
+        {
+            Id = Guid.NewGuid(),
+            RefundRequestId = refundRequest.Id,
+            Status = CommerceHubRefundStatus.Completed,
+            GatewayStatus = gatewayStatus,
+            Reference = execution.TransactionReference
+        };
+
+        var payout = CustomerRefundService.BuildPayoutSnapshot(refundRequest, execution, trackedRefund);
+
+        Assert.NotNull(payout);
+        Assert.Equal(expectedSimulation, payout!.IsDevelopmentSimulation);
+        Assert.Equal(expectedExternalConfirmation, payout.ExternalMoneyMovementConfirmed);
+    }
+
     public void Dispose()
     {
         _dbContext.Dispose();
@@ -376,6 +417,7 @@ public class CustomerRefundServiceTests : IDisposable
     private async Task SaveCommerceHubFixtureAsync()
     {
         using (CommerceHubBoundaryMutationScope.BeginOrderLifecycle())
+        using (CommerceHubBoundaryMutationScope.BeginPaymentLifecycle())
         using (CommerceHubBoundaryMutationScope.BeginPayment())
         {
             await _dbContext.SaveChangesAsync();

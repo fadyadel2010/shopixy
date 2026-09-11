@@ -39,6 +39,13 @@ public class AdminOrderListItemDto
     /// Order total amount.
     /// </summary>
     public decimal TotalAmount { get; set; }
+    public decimal SubtotalAmount { get; set; }
+    public decimal ShippingAmount { get; set; }
+    public int ItemCount { get; set; }
+    public int TotalQuantity { get; set; }
+    public string? ProductSummary { get; set; }
+    public string? RefundStatus { get; set; }
+    public string? ReturnStatus { get; set; }
 
     /// <summary>
     /// Backend-owned currency for the displayed order total.
@@ -114,6 +121,11 @@ public class AdminOrderDetailsDto
     /// Backend-issued optimistic concurrency evidence required by lifecycle mutations.
     /// </summary>
     public string RowVersion { get; set; } = string.Empty;
+
+    /// <summary>
+    /// CommerceHub sub-order lifecycle version. This is distinct from the generic Order xmin RowVersion.
+    /// </summary>
+    public long? CommerceHubLifecycleVersion { get; set; }
     
     /// <summary>
     /// Human-readable order number.
@@ -171,6 +183,8 @@ public class AdminOrderDetailsDto
     /// Shipment cancellation remains distinct from order cancellation.
     /// </summary>
     public List<AdminOrderActionCapabilityDto> AvailableShipmentActions { get; set; } = new();
+
+    public List<AdminCommerceHubOrderHistoryDto> CommerceHubLifecycleHistory { get; set; } = new();
     
     /// <summary>
     /// Order totals breakdown.
@@ -252,6 +266,15 @@ public sealed class AdminOrderActionCapabilityDto
     public string? TargetStatus { get; set; }
     public bool RequiresConfirmation { get; set; }
     public List<string> RequiredFields { get; set; } = new();
+}
+
+public sealed class AdminCommerceHubOrderHistoryDto
+{
+    public Guid HistoryId { get; set; }
+    public OrderStatus PreviousStatus { get; set; }
+    public OrderStatus NewStatus { get; set; }
+    public string? Reason { get; set; }
+    public DateTime ChangedAtUtc { get; set; }
 }
 
 public class AdminOrderCheckoutFieldSnapshotDto
@@ -426,6 +449,8 @@ public class AdminOrderRefundEvidenceDto
     public RefundReasonCode ReasonCode { get; set; }
     public string? ReasonText { get; set; }
     public CommerceHubReturnDetailsDto? ReturnRequest { get; set; }
+    public string ExecutionState { get; set; } = "NotStarted";
+    public string NextAction { get; set; } = "PlatformReview";
     public List<string> MediaUrls { get; set; } = new();
     public List<RefundEvidenceMediaDto> Media { get; set; } = new();
     public DateTime CreatedAt { get; set; }
@@ -585,6 +610,7 @@ public class AdminConfirmReturnReceiptRequest
 
 public class AdminReturnStatusUpdateRequest
 {
+    public CommerceHubReturnStatus? ExpectedStatus { get; set; }
     public DateTime? TimestampUtc { get; set; }
     public string? TrackingNumber { get; set; }
     public string? CourierName { get; set; }
@@ -600,6 +626,7 @@ public class AdminOrderListQuery
     public int PageSize { get; set; } = 20;
     public OrderStatus? Status { get; set; }
     public PaymentStatus? PaymentStatus { get; set; }
+    public OrderSource? Source { get; set; }
     public DateTime? FromDate { get; set; }
     public DateTime? ToDate { get; set; }
     public Guid? CustomerId { get; set; }
@@ -652,6 +679,9 @@ public class AdminOrderListQuery
 
         if (!SupportedSortDirections.Contains(SortDirection))
             return "SortDirection must be asc or desc";
+
+        if (Source.HasValue && Source is not (OrderSource.Ecommerce or OrderSource.Marketplace))
+            return "Source must be Ecommerce or Marketplace";
 
         return null;
     }

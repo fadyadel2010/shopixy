@@ -15,6 +15,7 @@ using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Enums.CommerceHubFinance;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Tests.TestDoubles;
 
@@ -72,7 +73,7 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
         SeedPostedCommerceHubJournal(vendorId, debtTransaction);
         SeedHealthyReconciliationReport(vendorId);
 
-        await _dbContext.SaveChangesAsync();
+        await SaveWithLedgerAuthorityAsync();
 
         var paymentRequest = await _service.CreateVendorPaymentRequestAsync(
             vendorId,
@@ -149,7 +150,7 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
             IdempotencyKey = "test-idempotency-key"
         });
 
-        await _dbContext.SaveChangesAsync();
+        await SaveWithLedgerAuthorityAsync();
 
         var paymentRequest = await _service.CreateVendorPaymentRequestAsync(
             vendorId,
@@ -194,7 +195,7 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
         SeedPostedCommerceHubJournal(vendorId, debtTransaction);
         SeedHealthyReconciliationReport(vendorId);
 
-        await _dbContext.SaveChangesAsync();
+        await SaveWithLedgerAuthorityAsync();
 
         var paymentRequest = await _service.CreateVendorPaymentRequestAsync(
             vendorId,
@@ -289,29 +290,23 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetVendorDashboardAsync_WhenPersistedVendorCurrencyMissing_ShouldReturnServerError()
+    public async Task GetVendorDashboardAsync_WhenPersistedVendorCurrencyMissing_ShouldUsePlatformCurrency()
     {
         var vendorId = await SeedVendorAsync("Missing Currency Vendor", string.Empty);
 
-        var exception = await Assert.ThrowsAsync<CommerceHubVendorFinancialControlException>(() =>
-            _service.GetVendorDashboardAsync(vendorId));
+        var dashboard = await _service.GetVendorDashboardAsync(vendorId);
 
-        Assert.Equal("PAYMENT_CURRENCY_REQUIRED", exception.Code);
-        Assert.Equal("Payment currency is required.", exception.Message);
-        Assert.Equal(StatusCodes.Status500InternalServerError, exception.StatusCode);
+        Assert.Equal("EGP", dashboard.Currency);
     }
 
     [Fact]
-    public async Task GetVendorDashboardAsync_WhenPersistedVendorCurrencyInvalid_ShouldReturnServerError()
+    public async Task GetVendorDashboardAsync_WhenPersistedVendorCurrencyInvalid_ShouldUsePlatformCurrency()
     {
         var vendorId = await SeedVendorAsync("Invalid Currency Vendor", "bad-currency");
 
-        var exception = await Assert.ThrowsAsync<CommerceHubVendorFinancialControlException>(() =>
-            _service.GetVendorDashboardAsync(vendorId));
+        var dashboard = await _service.GetVendorDashboardAsync(vendorId);
 
-        Assert.Equal("PAYMENT_CURRENCY_INVALID", exception.Code);
-        Assert.Equal("Payment currency is invalid.", exception.Message);
-        Assert.Equal(StatusCodes.Status500InternalServerError, exception.StatusCode);
+        Assert.Equal("EGP", dashboard.Currency);
     }
 
     [Fact]
@@ -557,6 +552,14 @@ public sealed class CommerceHubVendorPaymentsServiceTests : IDisposable
             MismatchCount = 0,
             DetailsJson = $$"""{"checkedVendorIds":["{{vendorId:D}}"],"affectedVendorIds":[]}"""
         });
+    }
+
+    private async Task SaveWithLedgerAuthorityAsync()
+    {
+        using (LedgerMutationScope.Authorize())
+        {
+            await _dbContext.SaveChangesAsync();
+        }
     }
 
     private sealed class FakeR2StorageService : IR2StorageService

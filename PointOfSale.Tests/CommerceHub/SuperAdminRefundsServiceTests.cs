@@ -235,6 +235,8 @@ public sealed class SuperAdminRefundsServiceTests : IDisposable
         Assert.Equal("TXN123456", result.Execution!.TransactionReference);
         Assert.True(result.Execution.IsSuccessful);
         Assert.Equal("010****678", result.Execution.MaskedAccountIdentifier);
+        Assert.False(result.Execution.IsDevelopmentSimulation);
+        Assert.True(result.Execution.ExternalMoneyMovementConfirmed);
 
         _refundExecutionService.Verify(
             service => service.ExecuteAsync(
@@ -401,6 +403,7 @@ public sealed class SuperAdminRefundsServiceTests : IDisposable
     {
         using (CommerceHubBoundaryMutationScope.BeginOrderLifecycle())
         using (CommerceHubBoundaryMutationScope.BeginPayment())
+        using (CommerceHubBoundaryMutationScope.BeginPaymentLifecycle())
         using (CommerceHubBoundaryMutationScope.BeginRefund())
         {
             await _dbContext.SaveChangesAsync();

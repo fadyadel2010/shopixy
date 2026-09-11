@@ -16,11 +16,11 @@ public sealed class ReturnOwnershipAuthorityCertificationTests
         Assert.Contains("!guid(refund.orderItemId)", customerAuthority, StringComparison.Ordinal);
         Assert.Contains("!guid(refund.vendorId)", customerAuthority, StringComparison.Ordinal);
         Assert.Contains("hasCurrentVendorAuthority(scopedValue, currentUser)", vendorAuthority, StringComparison.Ordinal);
-        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [])", vendorAuthority, StringComparison.Ordinal);
+        Assert.Contains("validateRefundImpacts(scopedValue.recentRefundImpacts ?? [], currentUser)", vendorAuthority, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void SuperAdminReturnOwnership_MustBeCurrentRefundBoundBeforePresentationOrMutation()
+    public void SuperAdminReturnOwnership_MustBeCurrentRefundBoundAndReadOnly()
     {
         var authority = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundLifecycleAuthority.ts");
         var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/super-admin/refunds/refundsService.ts");
@@ -31,9 +31,9 @@ public sealed class ReturnOwnershipAuthorityCertificationTests
         Assert.Contains("returnRequest.customerId.toLowerCase() !== currentRefund.customer.customerId.toLowerCase()", authority, StringComparison.Ordinal);
         Assert.Contains("returnRequest.vendorId.toLowerCase() !== currentRefund.item.vendorId.toLowerCase()", authority, StringComparison.Ordinal);
         Assert.Contains("return requireSuperAdminReturnPresentation(response.data, returnId)", service, StringComparison.Ordinal);
-        Assert.Contains("await requireCurrentRefundMutationAuthority()", page, StringComparison.Ordinal);
-        Assert.Contains("returnId: returnRequest.returnId", page, StringComparison.Ordinal);
-        Assert.Contains("returnModalMode && acceptedRefundDetails?.returnRequest", page, StringComparison.Ordinal);
+        Assert.Contains("<ReturnTimeline returnRequest={refund.returnRequest} />", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReturnTransitionModal", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("returnMutation", page, StringComparison.Ordinal);
     }
 
     [Fact]

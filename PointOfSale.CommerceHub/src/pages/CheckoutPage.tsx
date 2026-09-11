@@ -173,16 +173,32 @@ export const CheckoutPage = () => {
   );
 
   const pricedCart = useMemo(
-    () => ({
-      ...checkoutPayload,
-      summary: {
-        ...checkoutPayload.summary,
-        currency: cartPricingQuery.data?.currency ?? checkoutPayload.summary.currency,
-        subtotal: cartPricingQuery.data?.subtotal ?? checkoutPayload.summary.subtotal,
-        shipping: cartPricingQuery.data?.shippingTotal ?? checkoutPayload.summary.shipping,
-        total: cartPricingQuery.data?.total ?? checkoutPayload.summary.total
-      }
-    }),
+    () => {
+      const pricing = cartPricingQuery.data;
+      const shippingByStore = new Map(
+        pricing?.storeSelections.map((selection) => [selection.storeId, selection.shippingPrice]) ?? []
+      );
+
+      return {
+        ...checkoutPayload,
+        stores: checkoutPayload.stores.map((store) => {
+          const shipping = pricing ? shippingByStore.get(store.storeId) ?? 0 : store.shipping;
+
+          return {
+            ...store,
+            shipping,
+            total: store.subtotal + shipping
+          };
+        }),
+        summary: {
+          ...checkoutPayload.summary,
+          currency: pricing?.currency ?? checkoutPayload.summary.currency,
+          subtotal: pricing?.subtotal ?? checkoutPayload.summary.subtotal,
+          shipping: pricing?.shippingTotal ?? checkoutPayload.summary.shipping,
+          total: pricing?.total ?? checkoutPayload.summary.total
+        }
+      };
+    },
     [checkoutPayload, cartPricingQuery.data]
   );
   const authoritativeFinancialSummary = useMemo(() => {

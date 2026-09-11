@@ -84,6 +84,16 @@ public sealed class AdminOrderListDeterministicTests
         context.Orders.AddRange(target, wrongStatus, wrongPayment, wrongDate);
         await context.SaveChangesAsync();
 
+        target.CreatedAt = new DateTime(2026, 8, 26, 9, 30, 0, DateTimeKind.Utc);
+        wrongStatus.CreatedAt = target.CreatedAt;
+        wrongPayment.CreatedAt = target.CreatedAt;
+        wrongDate.CreatedAt = new DateTime(2026, 8, 25, 9, 30, 0, DateTimeKind.Utc);
+        context.Entry(target).Property(order => order.CreatedAt).IsModified = true;
+        context.Entry(wrongStatus).Property(order => order.CreatedAt).IsModified = true;
+        context.Entry(wrongPayment).Property(order => order.CreatedAt).IsModified = true;
+        context.Entry(wrongDate).Property(order => order.CreatedAt).IsModified = true;
+        await context.SaveChangesAsync();
+
         var result = await CreateService(context).ListOrdersAsync(
             tenantId,
             new AdminOrderListQuery

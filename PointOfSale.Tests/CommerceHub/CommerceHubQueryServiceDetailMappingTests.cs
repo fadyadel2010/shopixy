@@ -165,6 +165,51 @@ public sealed class CommerceHubQueryServiceDetailMappingTests
         Assert.DoesNotContain(result.Variants, item => item.Id == unrelatedVariantId);
     }
 
+    [Fact]
+    public void MapDetail_MustUseSqlResolvedAvailabilityForUntrackedStock()
+    {
+        var listing = new CommerceHubProductDocument
+        {
+            Id = Guid.NewGuid(),
+            TenantId = Guid.NewGuid(),
+            ProductId = Guid.NewGuid(),
+            VariantId = Guid.NewGuid(),
+            ProductName = "Available without tracked stock",
+            CategoryId = Guid.NewGuid(),
+            Currency = "EGP",
+            Price = 125m,
+            IsPublished = true,
+            InStock = true,
+            AvailableStock = 0m
+        };
+        var product = new ProductDocument
+        {
+            TenantId = listing.TenantId,
+            ProductId = listing.ProductId,
+            Name = listing.ProductName,
+            IsActive = true,
+            IsOnlineVisible = true,
+            Media = new List<ProductMediaDocument>(),
+            Variants = new List<ProductVariantDocument>
+            {
+                new()
+                {
+                    VariantId = listing.VariantId,
+                    Price = listing.Price,
+                    IsActive = true,
+                    TotalStock = 0m
+                }
+            }
+        };
+
+        var result = InvokeMapDetail(listing, product);
+
+        Assert.True(result.InStock);
+        var variant = Assert.Single(result.Variants);
+        Assert.Equal(0, variant.TotalStock);
+        Assert.True(variant.InStock);
+    }
+
     private static CommerceHubProductDetailDto InvokeMapDetail(
         CommerceHubProductDocument listing,
         ProductDocument? product)

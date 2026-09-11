@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { getAdjustmentEffectTranslationKey } from '../utils/partyBalancePresentation'
 
 const AdjustmentModal = ({ isOpen, onClose, onSubmit, partyName, partyType, loading }) => {
     const { t } = useTranslation()
@@ -25,10 +26,10 @@ const AdjustmentModal = ({ isOpen, onClose, onSubmit, partyName, partyType, load
     }
 
     const adjustmentTypes = [
-        { value: 'CreditNote', label: t('accounts.creditNoteLabel'), description: t('accounts.reducesAmountOwed') },
-        { value: 'DebitNote', label: t('accounts.debitNoteLabel'), description: t('accounts.increasesAmountOwed') },
-        { value: 'CreditAdjustment', label: t('accounts.creditAdjustmentLabel'), description: t('accounts.generalCreditAdjustment') },
-        { value: 'DebitAdjustment', label: t('accounts.debitAdjustmentLabel'), description: t('accounts.generalDebitAdjustment') },
+        { value: 'CreditNote', label: t('accounts.creditNoteLabel'), description: t(getAdjustmentEffectTranslationKey(partyType, 'CreditNote')) },
+        { value: 'DebitNote', label: t('accounts.debitNoteLabel'), description: t(getAdjustmentEffectTranslationKey(partyType, 'DebitNote')) },
+        { value: 'CreditAdjustment', label: t('accounts.creditAdjustmentLabel'), description: t(getAdjustmentEffectTranslationKey(partyType, 'CreditAdjustment')) },
+        { value: 'DebitAdjustment', label: t('accounts.debitAdjustmentLabel'), description: t(getAdjustmentEffectTranslationKey(partyType, 'DebitAdjustment')) },
     ]
 
     return (

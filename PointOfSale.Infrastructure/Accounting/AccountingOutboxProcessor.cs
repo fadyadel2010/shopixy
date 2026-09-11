@@ -10,7 +10,9 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
+using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Enums.CommerceHubFinance;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
@@ -54,6 +56,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         "PosPurchase",
         "PurchaseReversal",
         "SupplierPayment",
+        "CustomerPayment",
         "SupplierOpeningBalance",
         "CustomerOpeningBalance",
         "PartyLedgerAdjustment",
@@ -519,7 +522,10 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             {
                 message.MarkProcessed(result.JournalId ?? Guid.Empty);
 
-                await CreateAuditTrailAsync(db, message, result, ct);
+                if (result.JournalId is { } journalId && journalId != Guid.Empty)
+                {
+                    await CreateAuditTrailAsync(db, message, result, ct);
+                }
                 await MarkOrderFinancialPostingPostedAsync(
                     services,
                     db,
@@ -721,6 +727,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             "PosPurchase"               => await ProcessPosPurchaseAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "PurchaseReversal"          => await ProcessPurchaseReversalAsync(db, commerceAccounting, postingService, payload, message.TenantId, ct),
             "SupplierPayment"           => await ProcessSupplierPaymentAsync(db, commerceAccounting, payload, message.TenantId, ct),
+            "CustomerPayment"           => await ProcessCustomerPaymentAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "SupplierOpeningBalance"    => await ProcessSupplierOpeningBalanceAsync(db, commerceAccounting, message, payload, message.TenantId, ct),
             "CustomerOpeningBalance"    => await ProcessCustomerOpeningBalanceAsync(db, commerceAccounting, message, payload, message.TenantId, ct),
             "PartyLedgerAdjustment"     => await ProcessPartyLedgerAdjustmentAsync(db, commerceAccounting, payload, message.TenantId, ct),
@@ -739,7 +746,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             "CodSettlement"             => await ProcessCodSettlementAsync(db, commerceAccounting, payload, message.TenantId, ct),
             // CommerceHub: posts each operational ledger entry to the GL so the ReadinessGate
             // can verify accounting coverage before authorising outward money movement.
-            "CommerceHubLedgerPosting"  => await ProcessCommerceHubLedgerPostingAsync(commerceAccounting, payload, message.TenantId, ct),
+            "CommerceHubLedgerPosting"  => await ProcessCommerceHubLedgerPostingAsync(db, commerceAccounting, payload, message.TenantId, ct),
             _                           => throw new InvalidOperationException($"Unknown event type: {message.EventType}")
         };
     }
@@ -921,6 +928,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
     }
 
     private static async Task<PostingResult> ProcessCommerceHubLedgerPostingAsync(
+        ApplicationDbContext db,
         ICommerceAccountingService accounting,
         JsonDocument payload,
         Guid tenantId,
@@ -936,6 +944,96 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         var currency        = root.GetProperty("Currency").GetString()!;
         var description     = root.GetProperty("Description").GetString()!;
         var occurredAtUtc   = root.GetProperty("OccurredAtUtc").GetDateTime();
+
+        if (entityType == nameof(CommerceHubFinancialEntityType.Vendor) &&
+            transactionType == nameof(CommerceHubFinancialTransactionType.Refund) &&
+            direction == nameof(CommerceHubFinancialTransactionDirection.Debit) &&
+            financialBucket == nameof(CommerceHubFinancialBucket.Payable))
+        {
+            var vendorMirror = await db.Set<CommerceHubFinancialTransaction>()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(transaction =>
+                    transaction.Id == transactionId &&
+                    transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+                    transaction.EntityId == tenantId &&
+                    transaction.TransactionType == CommerceHubFinancialTransactionType.Refund &&
+                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                    transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                    transaction.ReferenceType == CommerceHubFinancialReferenceType.Refund,
+                    ct);
+
+            if (vendorMirror == null)
+            {
+                return PostingResult.Failed(
+                    $"CommerceHub vendor refund payable transaction {transactionId:D} was not found in tenant scope.");
+            }
+
+            var hasCanonicalPlatformAdjustment = await db.Set<CommerceHubFinancialTransaction>()
+                .AsNoTracking()
+                .AnyAsync(transaction =>
+                    transaction.EntityType == CommerceHubFinancialEntityType.Platform &&
+                    transaction.TransactionType == CommerceHubFinancialTransactionType.Adjustment &&
+                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                    transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                    transaction.ReferenceType == CommerceHubFinancialReferenceType.Refund &&
+                    transaction.ReferenceId == vendorMirror.ReferenceId &&
+                    transaction.Amount == vendorMirror.Amount &&
+                    transaction.Currency == vendorMirror.Currency,
+                    ct);
+
+            if (!hasCanonicalPlatformAdjustment)
+            {
+                return PostingResult.Failed(
+                    $"CommerceHub vendor refund payable mirror {transactionId:D} has no canonical platform payable adjustment.");
+            }
+
+            return PostingResult.Succeeded(Guid.Empty, "OPERATIONAL-MIRROR");
+        }
+
+        if (entityType == nameof(CommerceHubFinancialEntityType.Vendor) &&
+            transactionType == nameof(CommerceHubFinancialTransactionType.Payout) &&
+            direction == nameof(CommerceHubFinancialTransactionDirection.Debit) &&
+            financialBucket == nameof(CommerceHubFinancialBucket.Payable))
+        {
+            var vendorMirror = await db.Set<CommerceHubFinancialTransaction>()
+                .AsNoTracking()
+                .SingleOrDefaultAsync(transaction =>
+                    transaction.Id == transactionId &&
+                    transaction.EntityType == CommerceHubFinancialEntityType.Vendor &&
+                    transaction.EntityId == tenantId &&
+                    transaction.TransactionType == CommerceHubFinancialTransactionType.Payout &&
+                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                    transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                    transaction.ReferenceType == CommerceHubFinancialReferenceType.Payout,
+                    ct);
+
+            if (vendorMirror == null)
+            {
+                return PostingResult.Failed(
+                    $"CommerceHub vendor payout payable transaction {transactionId:D} was not found in tenant scope.");
+            }
+
+            var hasCanonicalPlatformPayout = await db.Set<CommerceHubFinancialTransaction>()
+                .AsNoTracking()
+                .AnyAsync(transaction =>
+                    transaction.EntityType == CommerceHubFinancialEntityType.Platform &&
+                    transaction.TransactionType == CommerceHubFinancialTransactionType.Payout &&
+                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
+                    transaction.FinancialBucket == CommerceHubFinancialBucket.Payable &&
+                    transaction.ReferenceType == CommerceHubFinancialReferenceType.Payout &&
+                    transaction.ReferenceId == vendorMirror.ReferenceId &&
+                    transaction.Amount == vendorMirror.Amount &&
+                    transaction.Currency == vendorMirror.Currency,
+                    ct);
+
+            if (!hasCanonicalPlatformPayout)
+            {
+                return PostingResult.Failed(
+                    $"CommerceHub vendor payout payable mirror {transactionId:D} has no canonical platform payout liability.");
+            }
+
+            return PostingResult.Succeeded(Guid.Empty, "OPERATIONAL-MIRROR");
+        }
 
         return await accounting.PostCommerceHubFinancialTransactionAsync(
             tenantId,
@@ -1379,6 +1477,50 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         return await query.FirstOrDefaultAsync(ct);
     }
 
+    private static async Task<CustomerPayment?> LoadCustomerPaymentForAccountingPostAsync(
+        ApplicationDbContext db,
+        Guid tenantId,
+        Guid paymentId,
+        CancellationToken ct)
+    {
+        IQueryable<CustomerPayment> query;
+        var providerName = db.Database.ProviderName ?? string.Empty;
+
+        if (providerName.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) ||
+            providerName.Contains("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+        {
+            query = db.CustomerPayments
+                .FromSqlInterpolated($@"
+                    SELECT *
+                    FROM ""CustomerPayments""
+                    WHERE ""TenantId"" = {tenantId}
+                      AND ""Id"" = {paymentId}
+                      AND ""IsDeleted"" = FALSE
+                    FOR UPDATE")
+                .IgnoreQueryFilters();
+        }
+        else if (providerName.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) ||
+                 providerName.Contains("MicrosoftSqlServer", StringComparison.OrdinalIgnoreCase))
+        {
+            query = db.CustomerPayments
+                .FromSqlInterpolated($@"
+                    SELECT *
+                    FROM [CustomerPayments] WITH (UPDLOCK, ROWLOCK, HOLDLOCK)
+                    WHERE [TenantId] = {tenantId}
+                      AND [Id] = {paymentId}
+                      AND [IsDeleted] = 0")
+                .IgnoreQueryFilters();
+        }
+        else
+        {
+            query = db.CustomerPayments
+                .IgnoreQueryFilters()
+                .Where(payment => payment.TenantId == tenantId && payment.Id == paymentId && !payment.IsDeleted);
+        }
+
+        return await query.FirstOrDefaultAsync(ct);
+    }
+
     private async Task<PostingResult> ProcessSaleReversalAsync(
         ApplicationDbContext db,
         ICommerceAccountingService accounting,
@@ -1667,6 +1809,40 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
                     throw new InvalidOperationException($"SupplierPayment {paymentId} not found");
                 
                 var result = await accounting.PostSupplierPaymentAsync(payment, ct);
+                if (!result.Success)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return result;
+                }
+
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+
+    private async Task<PostingResult> ProcessCustomerPaymentAsync(
+        ApplicationDbContext db, ICommerceAccountingService accounting,
+        JsonDocument payload, Guid tenantId, CancellationToken ct)
+    {
+        var paymentId = payload.RootElement.GetProperty("PaymentId").GetGuid();
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var payment = await LoadCustomerPaymentForAccountingPostAsync(db, tenantId, paymentId, ct);
+                if (payment == null)
+                    throw new InvalidOperationException($"CustomerPayment {paymentId} not found");
+
+                var result = await accounting.PostCustomerPaymentAsync(payment, ct);
                 if (!result.Success)
                 {
                     await transaction.RollbackAsync(ct);
@@ -3278,6 +3454,31 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         await db.SaveChangesAsync(ct);
         
         _logger.LogInformation("Reset failed message {MessageId} for retry", messageId);
+        return true;
+    }
+
+    public async Task<bool> RequeueMessageAsync(Guid messageId, CancellationToken ct = default)
+    {
+        using var scope = _serviceProvider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        var message = await db.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(
+                m => m.Id == messageId &&
+                     m.ProcessedAtUtc == null &&
+                     (m.ClaimedUntilUtc == null || m.ClaimedUntilUtc <= DateTime.UtcNow),
+                ct);
+
+        if (message == null)
+        {
+            return false;
+        }
+
+        message.ResetForRetry();
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation("Requeued unprocessed accounting outbox message {MessageId}", messageId);
         return true;
     }
 

@@ -91,6 +91,7 @@ public sealed class CommerceHubRefundCertificationTests
 
         Assert.Contains("REFUND_WORKFLOW_REQUIRED", directController, StringComparison.Ordinal);
         Assert.Contains("Direct CommerceHub refund mutation is disabled", directController, StringComparison.Ordinal);
+        Assert.Contains("[Authorize(Roles = \"Owner,Admin\")]", directController, StringComparison.Ordinal);
         Assert.DoesNotContain("_refundService.CreateRefundAsync(", directController, StringComparison.Ordinal);
         Assert.DoesNotContain("_refundService.ConfirmRefundAsync(", directController, StringComparison.Ordinal);
         Assert.DoesNotContain("_refundService.FailRefundAsync(", directController, StringComparison.Ordinal);
@@ -101,6 +102,18 @@ public sealed class CommerceHubRefundCertificationTests
         Assert.Contains("_refundExecutionService.ExecuteAsync", superAdminService, StringComparison.Ordinal);
         Assert.Contains("CommerceHubRefundRequestWorkflowPolicy.CanExecute", execution, StringComparison.Ordinal);
         Assert.Contains("EnsureOutwardMoneyMovementAllowedAsync", execution, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CustomerRefundEndpoints_MustRegisterTheirRateLimitPolicies()
+    {
+        var controller = ReadRepoFile("PointOfSale.API/Controllers/CustomerRefundsController.cs");
+        var program = ReadRepoFile("PointOfSale.API/Program.cs");
+
+        Assert.Contains("[EnableRateLimiting(\"CustomerRefundRateLimit\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("[EnableRateLimiting(\"CustomerRefundUploadRateLimit\")]", controller, StringComparison.Ordinal);
+        Assert.Contains("options.AddPolicy(\"CustomerRefundRateLimit\"", program, StringComparison.Ordinal);
+        Assert.Contains("options.AddPolicy(\"CustomerRefundUploadRateLimit\"", program, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);

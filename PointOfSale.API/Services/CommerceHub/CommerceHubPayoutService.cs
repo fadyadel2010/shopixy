@@ -148,6 +148,32 @@ public class CommerceHubPayoutService : ICommerceHubPayoutService
             return MapPayout(existingAfterLock);
         }
 
+        var payoutMethod = request.PayoutMethodId.HasValue
+            ? await _dbContext.CommerceHubVendorPayoutMethods
+                .AsNoTracking()
+                .FirstOrDefaultAsync(method =>
+                    method.Id == request.PayoutMethodId.Value &&
+                    method.VendorId == tenantId &&
+                    !method.IsDeleted,
+                    cancellationToken)
+            : null;
+
+        if (request.PayoutMethodId.HasValue && payoutMethod == null)
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYOUT_METHOD_NOT_FOUND",
+                "Payout method was not found for this vendor.",
+                StatusCodes.Status404NotFound);
+        }
+
+        if (payoutMethod != null && payoutMethod.MethodType != request.Method)
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYOUT_METHOD_TYPE_MISMATCH",
+                "Payout method type does not match the selected vendor payout method.",
+                StatusCodes.Status409Conflict);
+        }
+
         await _financialReadinessGate.EnsureOutwardMoneyMovementAllowedAsync(
             tenantId,
             "CommerceHubPayout.Create",
@@ -173,6 +199,27 @@ public class CommerceHubPayoutService : ICommerceHubPayoutService
                 "PAYOUT_EARNING_NOT_FOUND",
                 "One or more earnings could not be found for this vendor.",
                 StatusCodes.Status404NotFound);
+        }
+
+        var paymentIds = earnings
+            .Where(earning => earning.PaymentId.HasValue)
+            .Select(earning => earning.PaymentId!.Value)
+            .Distinct()
+            .ToList();
+        var includesDevelopmentSimulation = paymentIds.Count > 0 &&
+            await _dbContext.CommerceHubPayments
+                .AsNoTracking()
+                .AnyAsync(payment =>
+                    paymentIds.Contains(payment.Id) &&
+                    payment.ProviderTransactionId != null &&
+                    payment.ProviderTransactionId.StartsWith("DEV-SIM:ONLINE:"),
+                    cancellationToken);
+        if (includesDevelopmentSimulation)
+        {
+            throw new CommerceHubCheckoutException(
+                "PAYOUT_DEVELOPMENT_SIMULATION_NOT_TRANSFERABLE",
+                "Development-simulated payment earnings cannot enter an external payout.",
+                StatusCodes.Status409Conflict);
         }
 
         var hasExternallyLockedPayout = await _dbContext.CommerceHubPayouts
@@ -296,7 +343,9 @@ public class CommerceHubPayoutService : ICommerceHubPayoutService
             Amount = totalAmount,
             Currency = payoutCurrency,
             Status = CommerceHubPayoutStatus.Pending,
+            PayoutMethodId = payoutMethod?.Id,
             Method = request.Method,
+            DestinationValueSnapshot = payoutMethod?.DestinationValue,
             Reference = NormalizeOptional(request.Reference),
             IdempotencyKey = idempotencyKey
         };

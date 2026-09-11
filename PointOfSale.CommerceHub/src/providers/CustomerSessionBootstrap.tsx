@@ -51,7 +51,11 @@ export const CustomerSessionBootstrap = () => {
     };
 
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") void revalidateSession(true);
+      if (document.visibilityState === "visible") void revalidateSession();
+    };
+
+    const handleBackgroundRevalidation = () => {
+      void revalidateSession();
     };
 
     const handleHistoryNavigation = () => {
@@ -66,8 +70,8 @@ export const CustomerSessionBootstrap = () => {
 
     void revalidateSession();
     const intervalId = window.setInterval(() => void revalidateSession(), CUSTOMER_SESSION_REVALIDATION_INTERVAL_MS);
-    window.addEventListener("focus", handleHistoryNavigation);
-    window.addEventListener("online", handleHistoryNavigation);
+    window.addEventListener("focus", handleBackgroundRevalidation);
+    window.addEventListener("online", handleBackgroundRevalidation);
     window.addEventListener("popstate", handleHistoryNavigation);
     window.addEventListener("pageshow", handlePageShow);
     window.addEventListener("storage", handleStorage);
@@ -77,8 +81,8 @@ export const CustomerSessionBootstrap = () => {
     return () => {
       controller.abort();
       window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleHistoryNavigation);
-      window.removeEventListener("online", handleHistoryNavigation);
+      window.removeEventListener("focus", handleBackgroundRevalidation);
+      window.removeEventListener("online", handleBackgroundRevalidation);
       window.removeEventListener("popstate", handleHistoryNavigation);
       window.removeEventListener("pageshow", handlePageShow);
       window.removeEventListener("storage", handleStorage);

@@ -23,7 +23,7 @@ Actual implemented return-domain financial artifacts inspected:
 
 - Customer findings: Customer refund/order return-linked surfaces cannot create, recalculate, or override return money. Customer refund creation remains amount-free intent against current backend order-item authority; stale money is withheld by current order/refund validation.
 - Vendor findings: Vendor refund impacts are read-only current-vendor financial evidence. Vendor surfaces cannot create balances, modify balances, restore balances, or preserve stale return money after current authority loss.
-- Admin findings: Monitoring, selected rows, details, execution dialogs, and return dialogs remain current-list/current-detail-bound. Monitoring cannot become financial authority; dialogs close/withhold during refresh, failure, or mismatch.
+- Admin findings: Monitoring, selected rows, details, and refund execution dialogs remain current-list/current-detail-bound. Read-only return presentation cannot become financial or return-mutation authority.
 - Refund consistency findings: Return financial presentation is bound to backend refund amount/currency/execution evidence. Return money cannot exceed refund authority in the inspected frontend because frontend return paths do not compute CommerceHub return money.
 - Order consistency findings: Order totals are display evidence only. POS return totals are recomputed by backend from locked original invoices; frontend order totals cannot create or override return money.
 - Payment consistency findings: Payment financials and callbacks cannot create return money. Payment status/provider evidence remains refund/payment evidence only.

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using PointOfSale.API.Configuration;
@@ -341,9 +342,14 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
         {
             IsValid = true,
             IsSuccess = finality == PaymobTransactionFinality.Captured,
+            IsPending = finality == PaymobTransactionFinality.Pending,
+            IsTerminalFailure = finality is PaymobTransactionFinality.Failed or PaymobTransactionFinality.Voided,
             TransactionId = callback.TransactionId,
             ProviderIntentId = callback.OrderId.ToString(CultureInfo.InvariantCulture),
             ProviderReference = callback.MerchantOrderId,
+            AmountMinorUnits = callback.Payload.AmountCents ?? 0L,
+            Currency = callback.Payload.Currency ?? string.Empty,
+            FailureReason = PaymobWebhookErrorTranslator.TranslateProviderFailure(callback)?.Message,
             Message = "Payment callback verified."
         });
     }
@@ -525,8 +531,8 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
             },
             Required(request.ProviderReference, "provider reference"),
             3600,
-            configuration.Configuration["webhookUrl"]!.ToString()!,
-            configuration.Configuration["browserCallbackUrl"]!.ToString()!);
+            Required(configuration.Configuration["webhookUrl"]?.ToString(), "webhook URL"),
+            Required(configuration.Configuration["browserCallbackUrl"]?.ToString(), "browser callback URL"));
 
         PaymobIntentionResponse response;
         try
@@ -535,6 +541,15 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
                 intentionRequest,
                 configuration.Credentials["secretKey"],
                 cancellationToken);
+        }
+        catch (PaymobOfficialApiException exception) when (!HasIndeterminateIntentionOutcome(exception.StatusCode))
+        {
+            // A definitive client-error response means Paymob rejected the request. It is
+            // safe to surface the canonical provider error and allow a corrected retry;
+            // fencing every 4xx as outcome-unknown permanently strands the local order.
+            throw new PaymentProviderAdapterException(
+                TranslateException(exception),
+                innerException: exception);
         }
         catch (Exception exception) when (IsInfrastructureFailure(exception))
         {
@@ -610,6 +625,20 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
                 "PAYMOB_INTEGRATION_MISMATCH",
                 "Paymob callback integration does not match CommerceHub Super Admin configuration."));
         }
+
+        var configuredMerchantIdentifier = configuration.Configuration["merchantIdentifier"]?.ToString();
+        var callbackMerchantIdentifier = callback.Payload.ProfileId ?? callback.Payload.Owner;
+        if (!long.TryParse(
+                configuredMerchantIdentifier,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var merchantIdentifier) ||
+            callbackMerchantIdentifier != merchantIdentifier)
+        {
+            throw new PaymentProviderAdapterException(ValidationError(
+                "PAYMOB_MERCHANT_MISMATCH",
+                "Paymob callback merchant does not match CommerceHub Super Admin configuration."));
+        }
     }
 
     private static bool IsModernConfigurationReady(PaymentProviderOperationalConfiguration configuration)
@@ -620,12 +649,17 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
             integrationId <= 0 ||
             !configuration.Configuration.TryGetValue("publicKey", out var publicKeyValue) ||
             string.IsNullOrWhiteSpace(publicKeyValue?.ToString()) ||
+            !configuration.Configuration.TryGetValue("merchantIdentifier", out var merchantValue) ||
+            !long.TryParse(merchantValue?.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var merchantIdentifier) ||
+            merchantIdentifier <= 0 ||
             !configuration.Configuration.TryGetValue("webhookUrl", out var webhookValue) ||
             !HasHttpsUrl(webhookValue?.ToString()) ||
             !configuration.Configuration.TryGetValue("browserCallbackUrl", out var callbackValue) ||
             !HasHttpsUrl(callbackValue?.ToString()) ||
             !configuration.Credentials.TryGetValue("secretKey", out var secretKey) ||
             string.IsNullOrWhiteSpace(secretKey) ||
+            !configuration.Credentials.TryGetValue("apiKey", out var apiKey) ||
+            string.IsNullOrWhiteSpace(apiKey) ||
             !configuration.Credentials.TryGetValue("hmacSecret", out var hmacSecret) ||
             string.IsNullOrWhiteSpace(hmacSecret))
         {
@@ -721,6 +755,10 @@ public sealed class PaymobAdapter : IPaymentProviderAdapter
 
     private static bool IsInfrastructureFailure(Exception exception) =>
         exception is PaymobOfficialApiException or HttpRequestException or TaskCanceledException or JsonException;
+
+    private static bool HasIndeterminateIntentionOutcome(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests ||
+        (int)statusCode >= 500;
 
     private static CanonicalProviderError TranslateException(Exception exception)
     {

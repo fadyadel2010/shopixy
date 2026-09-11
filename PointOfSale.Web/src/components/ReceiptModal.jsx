@@ -92,6 +92,12 @@ export default function ReceiptModal({ receiptData, onClose }) {
                                 <span className="font-semibold">{t('receipt.date')}:</span>
                                 <span>{new Date(receipt.invoiceDate).toLocaleString()}</span>
                             </div>
+                            {receipt.originalInvoiceNumber ? (
+                                <div className="flex justify-between mb-1 gap-3">
+                                    <span className="font-semibold">{t('receipt.originalInvoice', 'Original invoice')}:</span>
+                                    <span>{receipt.originalInvoiceNumber}</span>
+                                </div>
+                            ) : null}
                             {receipt.customerName && (
                                 <div className="flex justify-between">
                                     <span className="font-semibold">{t('receipt.customer')}:</span>
@@ -114,7 +120,23 @@ export default function ReceiptModal({ receiptData, onClose }) {
                                 <tbody>
                                     {receipt.items.map((item, index) => (
                                         <tr key={index} className="border-b border-gray-100">
-                                            <td className="py-2">{item.productName}</td>
+                                            <td className="py-2 pr-2 align-top">
+                                                <div className="font-medium">{item.productName}</div>
+                                                {item.variantDescription ? (
+                                                    <div className="mt-0.5 text-xs text-gray-600">
+                                                        {t('receipt.variant', 'Variant')}: {item.variantDescription}
+                                                    </div>
+                                                ) : null}
+                                                {item.variantSku ? (
+                                                    <div className="mt-0.5 text-xs text-gray-500">
+                                                        {t('receipt.sku', 'SKU')}: {item.variantSku}
+                                                    </div>
+                                                ) : null}
+                                                <div className="mt-0.5 text-xs text-gray-500">
+                                                    {t('receipt.unit', 'Unit')}: {item.unitName || t('receipt.baseUnit', 'Base unit')}
+                                                    {Number(item.conversionFactor) > 1 ? ` (x${item.conversionFactor})` : ''}
+                                                </div>
+                                            </td>
                                             <td className="text-right">{item.quantity}</td>
                                             <td className="text-right">{formatCurrency(item.unitPrice)}</td>
                                             <td className="text-right font-semibold">{formatCurrency(item.total)}</td>
@@ -162,6 +184,18 @@ export default function ReceiptModal({ receiptData, onClose }) {
                                     <span>{formatCurrency(receipt.change)}</span>
                                 </div>
                             )}
+                            {receipt.reason ? (
+                                <div className="mt-2 flex justify-between gap-3">
+                                    <span className="font-semibold">{t('receipt.reason', 'Reason')}:</span>
+                                    <span className="text-right">{receipt.reason}</span>
+                                </div>
+                            ) : null}
+                            {receipt.notes ? (
+                                <div className="mt-1 flex justify-between gap-3">
+                                    <span className="font-semibold">{t('receipt.notes', 'Notes')}:</span>
+                                    <span className="text-right">{receipt.notes}</span>
+                                </div>
+                            ) : null}
                         </div>
 
                         {/* Footer */}

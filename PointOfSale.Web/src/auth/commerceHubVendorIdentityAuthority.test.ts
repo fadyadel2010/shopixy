@@ -461,7 +461,7 @@ describe('CommerceHub vendor identity authority', () => {
         expect(() => requireCurrentVendorOrderVisibilityListAuthority({
             items: [{ tenantId: currentUser.tenantId, orderId: 'order-1', isMarketplaceOrder: false }],
         }, currentUser)).toThrow(/order source evidence/)
-        const admitted = requireCurrentVendorOrderVisibilityListAuthority({
+        expect(() => requireCurrentVendorOrderVisibilityListAuthority({
             items: [{
                 tenantId: currentUser.tenantId,
                 orderId: '33333333-3333-4333-8333-333333333333',
@@ -477,10 +477,6 @@ describe('CommerceHub vendor identity authority', () => {
                     attributedAtUtc: '2026-07-01T10:00:00Z',
                 },
             }],
-        }, currentUser)
-        expect(admitted.items[0]).toMatchObject({
-            affiliateAttribution: null,
-            affiliateAttributionWarning: { code: AFFILIATE_ATTRIBUTION_WARNING_CODE },
-        })
+        }, currentUser)).toThrow(/cross-order attribution evidence/)
     })
 })

@@ -9,6 +9,8 @@ public sealed class PaymentVisibilityAuthorityCertificationTests
         var refundsService = ReadRepoFile("PointOfSale.CommerceHub/src/services/customer-refunds-service.ts");
         var orderIdentity = ReadRepoFile("PointOfSale.CommerceHub/src/features/customer/orderIdentityAuthority.ts");
         var refundsPage = ReadRepoFile("PointOfSale.CommerceHub/src/pages/CustomerRefundsPage.tsx");
+        var orderDetailsPage = ReadRepoFile("PointOfSale.CommerceHub/src/pages/CustomerOrderDetailsPage.tsx");
+        var payoutDetails = ReadRepoFile("PointOfSale.CommerceHub/src/features/customer/payout-details.ts");
 
         Assert.Contains("requireCustomerRefundVisibilityAuthority", authority, StringComparison.Ordinal);
         Assert.Contains("Customer payment visibility authority rejected malformed refund visibility evidence", authority, StringComparison.Ordinal);
@@ -17,6 +19,13 @@ public sealed class PaymentVisibilityAuthorityCertificationTests
         Assert.Contains("requireCustomerExistingRefundVisibilityAuthority(refund", orderIdentity, StringComparison.Ordinal);
         Assert.Contains("acceptedRefunds = refundsQuery.isFetching || refundsQuery.isError ? []", refundsPage, StringComparison.Ordinal);
         Assert.Contains("acceptedRefunds.find((refund) => refund.refundId === activeRefundId)", refundsPage, StringComparison.Ordinal);
+        Assert.Contains("DEV-SIM:", payoutDetails, StringComparison.Ordinal);
+        Assert.Contains("isDevelopmentRefundSimulation(refund.payout)", refundsPage, StringComparison.Ordinal);
+        Assert.Contains("No external money movement occurred.", refundsPage, StringComparison.Ordinal);
+        Assert.Contains("isDevelopmentRefundSimulation(refund.payout)", orderDetailsPage, StringComparison.Ordinal);
+        Assert.Contains("No external money movement occurred.", orderDetailsPage, StringComparison.Ordinal);
+        Assert.Contains("Simulation recorded at", refundsPage, StringComparison.Ordinal);
+        Assert.Contains("Simulation recorded at", orderDetailsPage, StringComparison.Ordinal);
     }
 
     [Fact]

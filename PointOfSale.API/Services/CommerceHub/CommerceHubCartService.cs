@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PointOfSale.API.DTOs.CommerceHub;
+using PointOfSale.API.Services.Payments.ProviderContracts;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Financial;
@@ -86,6 +87,7 @@ public class CommerceHubCartService : ICommerceHubCartService
     private readonly ICommissionService _commissionService;
     private readonly IPromoService _promoService;
     private readonly ICommerceHubPriceAuthority _priceAuthority;
+    private readonly IReadOnlyCollection<IPaymentProviderAdapter> _paymentProviderAdapters;
     private readonly ILogger<CommerceHubCartService> _logger;
 
     public CommerceHubCartService(
@@ -95,6 +97,7 @@ public class CommerceHubCartService : ICommerceHubCartService
         ICommissionService commissionService,
         IPromoService promoService,
         ICommerceHubPriceAuthority priceAuthority,
+        IEnumerable<IPaymentProviderAdapter> paymentProviderAdapters,
         ILogger<CommerceHubCartService> logger)
     {
         _dbContext = dbContext;
@@ -103,6 +106,7 @@ public class CommerceHubCartService : ICommerceHubCartService
         _commissionService = commissionService;
         _promoService = promoService;
         _priceAuthority = priceAuthority;
+        _paymentProviderAdapters = paymentProviderAdapters.ToList();
         _logger = logger;
     }
 
@@ -514,12 +518,9 @@ public class CommerceHubCartService : ICommerceHubCartService
             }
         }
 
-        var paymentMethods = await _dbContext.TenantPaymentMethods
-            .IgnoreQueryFilters()
-            .AsNoTracking()
-            .Where(method => tenantIds.Contains(method.TenantId))
-            .ToListAsync(cancellationToken);
-        var paymentMethodAvailability = CommerceHubPaymentMethodAuthority.BuildAvailability(tenantIds, paymentMethods);
+        var paymentMethodAvailability = CommerceHubPaymentMethodAuthority.BuildAvailability(
+            tenantIds,
+            _paymentProviderAdapters);
 
         var currency = ResolveCommerceHubAuthorityCurrency();
         var validatedLines = new List<ValidatedPricingLine>();

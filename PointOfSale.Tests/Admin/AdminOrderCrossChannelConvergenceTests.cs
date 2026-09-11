@@ -77,6 +77,20 @@ public sealed class AdminOrderCrossChannelConvergenceTests
         Assert.Equal(marketplaceOrderId, marketplaceRow.MarketplaceLineage?.MarketplaceOrderId);
         Assert.True(marketplaceRow.IsMarketplaceOrder);
 
+        var marketplaceOnly = await service.ListOrdersAsync(
+            tenantId,
+            new AdminOrderListQuery { Page = 1, PageSize = 20, Source = OrderSource.Marketplace },
+            "o3-marketplace-only");
+        Assert.Equal(subOrderId, Assert.Single(marketplaceOnly.Items).OrderId);
+        Assert.All(marketplaceOnly.Items, item => Assert.True(item.IsMarketplaceOrder));
+
+        var storefrontOnly = await service.ListOrdersAsync(
+            tenantId,
+            new AdminOrderListQuery { Page = 1, PageSize = 20, Source = OrderSource.Ecommerce },
+            "o3-storefront-only");
+        Assert.Equal(2, storefrontOnly.TotalCount);
+        Assert.All(storefrontOnly.Items, item => Assert.False(item.IsMarketplaceOrder));
+
         var affiliateDetails = await service.GetOrderDetailsAsync(
             tenantId,
             affiliateOrder.Id,

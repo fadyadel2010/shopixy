@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
     AlertTriangle,
@@ -29,6 +29,7 @@ import {
 } from '../services/commerceHubFinanceApi'
 import { getCommerceHubPaymentsDashboard } from '../services/commerceHubPaymentsApi'
 import { formatDateTime as formatLocalizedDateTime } from '../utils/dateFormat'
+import { deriveCommerceHubAuthorityDiagnostic } from '../utils/commerceHubAuthorityDiagnostics'
 import {
     COMMERCEHUB_AUTHORITY_CURRENCY,
     COMMERCEHUB_UNSUPPORTED_CURRENCY_LABEL,
@@ -74,6 +75,7 @@ function formatStatusLabel(value, t) {
     const normalized = String(value || 'ACTIVE').toUpperCase()
     const translationMap = {
         ACTIVE: 'active',
+        AT_RISK: 'atRisk',
         APPROVED: 'approved',
         CANCELLED: 'cancelled',
         COMPLETED: 'completed',
@@ -259,6 +261,56 @@ export default function CommerceHubFinance() {
         Number(Boolean(filters.fromDate)) +
         Number(Boolean(filters.toDate)) +
         filters.transactionTypes.length
+
+    useEffect(() => {
+        const diagnostics = [
+            deriveCommerceHubAuthorityDiagnostic({
+                surface: 'Finance dashboard',
+                endpoint: '/api/admin/commercehub/finance/dashboard',
+                query: dashboardQuery,
+                presentation: dashboard,
+            }),
+            deriveCommerceHubAuthorityDiagnostic({
+                surface: 'Finance earnings',
+                endpoint: '/api/commercehub/earnings',
+                query: earningsQuery,
+                presentation: earningsDashboard,
+            }),
+            deriveCommerceHubAuthorityDiagnostic({
+                surface: 'Finance payments',
+                endpoint: '/api/admin/commercehub/payments',
+                query: paymentsQuery,
+                presentation: paymentsDashboard,
+            }),
+            deriveCommerceHubAuthorityDiagnostic({
+                surface: 'Finance statement',
+                endpoint: '/api/admin/commercehub/finance/statement',
+                query: statementQuery,
+                presentation: statementMeta,
+            }),
+        ].filter(Boolean)
+
+        diagnostics.forEach((diagnostic) => {
+            console.error('CommerceHub authority load rejected', diagnostic)
+        })
+    }, [
+        dashboard,
+        dashboardQuery.data,
+        dashboardQuery.error,
+        dashboardQuery.isFetching,
+        earningsDashboard,
+        earningsQuery.data,
+        earningsQuery.error,
+        earningsQuery.isFetching,
+        paymentsDashboard,
+        paymentsQuery.data,
+        paymentsQuery.error,
+        paymentsQuery.isFetching,
+        statementMeta,
+        statementQuery.data,
+        statementQuery.error,
+        statementQuery.isFetching,
+    ])
 
     function refreshAll() {
         dashboardQuery.refetch()

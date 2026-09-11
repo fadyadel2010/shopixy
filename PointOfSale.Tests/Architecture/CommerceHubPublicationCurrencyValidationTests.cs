@@ -26,7 +26,7 @@ public sealed class CommerceHubPublicationCurrencyValidationTests
         Assert.Contains("public string? CommerceHubCurrencyPolicyMessage { get; set; }", dtos, StringComparison.Ordinal);
         Assert.Contains("CommerceHubPublicationCurrencyPolicy.BuildUnsupportedCurrencyMessage", controller, StringComparison.Ordinal);
         Assert.Contains("CommerceHub currently supports EGP products only.", ui, StringComparison.Ordinal);
-        Assert.Contains("disabled={isSaving || !state.categoryId || isCurrencyBlocked || !canManageCatalog}", ui, StringComparison.Ordinal);
+        Assert.Contains("disabled={isSaving || !state.categoryId || isCurrencyBlocked || isPublicationBlocked || !canManageCatalog}", ui, StringComparison.Ordinal);
         Assert.Contains("showError(getCommerceHubCurrencyPolicyMessage(variant))", ui, StringComparison.Ordinal);
     }
 

@@ -1,10 +1,15 @@
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Moq;
+using PointOfSale.API.Controllers;
+using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using StatusCodes = Microsoft.AspNetCore.Http.StatusCodes;
 
@@ -55,6 +60,8 @@ public sealed class ReturnManagementServiceTests : IDisposable
         var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
             _service.MarkDeliveredAsync(
                 returnRequest.Id,
+                graph.SubOrder.StoreId,
+                CommerceHubReturnStatus.PickupScheduled,
                 DateTime.UtcNow,
                 "TRACK-123",
                 "Bosta",
@@ -75,6 +82,8 @@ public sealed class ReturnManagementServiceTests : IDisposable
 
         var result = await _service.MarkPickedUpAsync(
             returnRequest.Id,
+            graph.SubOrder.StoreId,
+            CommerceHubReturnStatus.PickupScheduled,
             DateTime.UtcNow,
             "TRACK-PICKUP",
             "Bosta",
@@ -89,7 +98,7 @@ public sealed class ReturnManagementServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task MarkPickedUpAsync_ShouldRejectVendorLogisticsSource()
+    public async Task MarkPickedUpAsync_ShouldRejectSuperAdminLogisticsSource()
     {
         var graph = await SeedRefundAsync(CommerceHubRefundRequestStatus.Approved, RefundExecutionTrigger.OnPickup);
         var returnRequest = await SeedReturnAsync(graph, CommerceHubReturnStatus.PickupScheduled, pickupScheduledAtUtc: DateTime.UtcNow.AddHours(-2));
@@ -97,17 +106,42 @@ public sealed class ReturnManagementServiceTests : IDisposable
         var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
             _service.MarkPickedUpAsync(
                 returnRequest.Id,
+                graph.SubOrder.StoreId,
+                CommerceHubReturnStatus.PickupScheduled,
                 DateTime.UtcNow,
                 "TRACK-PICKUP",
                 "Bosta",
-                "Vendor attempted to advance logistics.",
+                "Platform attempted to advance vendor logistics.",
                 Guid.NewGuid(),
                 "vendor@store.local",
                 "corr-picked-up",
-                source: "PosAdminAPI"));
+                source: "SuperAdminAPI"));
 
-        Assert.Equal("RETURN_LOGISTICS_WORKFLOW_REQUIRED", exception.Code);
+        Assert.Equal("RETURN_VENDOR_LOGISTICS_AUTHORITY_REQUIRED", exception.Code);
         Assert.Equal(StatusCodes.Status403Forbidden, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task SchedulePickupAsync_ShouldHideCrossVendorReturn()
+    {
+        var graph = await SeedRefundAsync(CommerceHubRefundRequestStatus.WaitingForReturn, RefundExecutionTrigger.OnDelivery);
+        var returnRequest = await SeedReturnAsync(graph, CommerceHubReturnStatus.Pending);
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.SchedulePickupAsync(
+                returnRequest.Id,
+                Guid.NewGuid(),
+                CommerceHubReturnStatus.Pending,
+                DateTime.UtcNow,
+                null,
+                null,
+                null,
+                Guid.NewGuid(),
+                "other-vendor@store.local",
+                "corr-cross-vendor"));
+
+        Assert.Equal("RETURN_NOT_FOUND", exception.Code);
+        Assert.Equal(StatusCodes.Status404NotFound, exception.StatusCode);
     }
 
     [Fact]
@@ -170,6 +204,8 @@ public sealed class ReturnManagementServiceTests : IDisposable
 
         var result = await _service.MarkFailedAsync(
             returnRequest.Id,
+            graph.SubOrder.StoreId,
+            CommerceHubReturnStatus.InTransit,
             DateTime.UtcNow,
             "TRACK-FAILED",
             "Bosta",
@@ -181,6 +217,42 @@ public sealed class ReturnManagementServiceTests : IDisposable
         Assert.Equal(CommerceHubReturnStatus.Failed, result.Status);
         Assert.False(result.IsExecutionTriggerReached);
 
+    }
+
+    [Fact]
+    public async Task MarkFailedAsync_ShouldRejectStaleExpectedStatus()
+    {
+        var graph = await SeedRefundAsync(CommerceHubRefundRequestStatus.WaitingForReturn, RefundExecutionTrigger.OnDelivery);
+        var returnRequest = await SeedReturnAsync(graph, CommerceHubReturnStatus.PickedUp);
+
+        var exception = await Assert.ThrowsAsync<CommerceHubCheckoutException>(() =>
+            _service.MarkFailedAsync(
+                returnRequest.Id,
+                graph.SubOrder.StoreId,
+                CommerceHubReturnStatus.PickupScheduled,
+                DateTime.UtcNow,
+                null,
+                null,
+                "Stale failure candidate.",
+                Guid.NewGuid(),
+                "owner@commercehub.local",
+                "corr-failed-stale"));
+
+        Assert.Equal("RETURN_STATUS_CONFLICT", exception.Code);
+        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task PosAdminSchedulePickup_ShouldRequireExpectedStatus()
+    {
+        var returnService = new Mock<IReturnManagementService>();
+        var controller = CreatePosAdminReturnsController(returnService);
+
+        var result = await controller.SchedulePickup(Guid.NewGuid(), new AdminReturnStatusUpdateRequest());
+
+        var response = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status428PreconditionRequired, response.StatusCode);
+        returnService.VerifyNoOtherCalls();
     }
 
     public void Dispose()
@@ -322,6 +394,24 @@ public sealed class ReturnManagementServiceTests : IDisposable
         {
             await _dbContext.SaveChangesAsync();
         }
+    }
+
+    private static PosAdminReturnsController CreatePosAdminReturnsController(
+        Mock<IReturnManagementService> returnService)
+    {
+        var tenantContext = new Mock<ITenantContext>();
+        tenantContext.SetupGet(context => context.RequiredTenantId).Returns(Guid.NewGuid());
+
+        return new PosAdminReturnsController(
+            returnService.Object,
+            tenantContext.Object,
+            Mock.Of<ILogger<PosAdminReturnsController>>())
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
     }
 
     private sealed record RefundGraph(

@@ -15,7 +15,8 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
         FinancialWorkflow,
         PaymentLifecycle,
         ShippingAssignment,
-        Projection
+        Projection,
+        SensitiveArtifactBackfill
     }
 
     private CommerceHubBoundaryMutationScope(ScopeKind scopeKind)
@@ -46,6 +47,9 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
 
     public static bool IsProjectionAuthorized =>
         CurrentState.Value?.ProjectionDepth > 0;
+
+    public static bool IsSensitiveArtifactBackfillAuthorized =>
+        CurrentState.Value?.SensitiveArtifactBackfillDepth > 0;
 
     public static CommerceHubBoundaryMutationScope BeginOrderLifecycle()
     {
@@ -119,6 +123,15 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
         return new CommerceHubBoundaryMutationScope(ScopeKind.Projection);
     }
 
+    public static CommerceHubBoundaryMutationScope BeginSensitiveArtifactBackfill()
+    {
+        var currentState = CurrentState.Value;
+        var newState = currentState?.WithSensitiveArtifactBackfillDepth(currentState.SensitiveArtifactBackfillDepth + 1)
+                       ?? new ScopeState(sensitiveArtifactBackfillDepth: 1);
+        CurrentState.Value = newState;
+        return new CommerceHubBoundaryMutationScope(ScopeKind.SensitiveArtifactBackfill);
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -142,7 +155,9 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
                 ScopeKind.FinancialWorkflow => currentState.WithFinancialWorkflowDepth(Math.Max(0, currentState.FinancialWorkflowDepth - 1)),
                 ScopeKind.PaymentLifecycle => currentState.WithPaymentLifecycleDepth(Math.Max(0, currentState.PaymentLifecycleDepth - 1)),
                 ScopeKind.ShippingAssignment => currentState.WithShippingAssignmentDepth(Math.Max(0, currentState.ShippingAssignmentDepth - 1)),
-                ScopeKind.Projection => currentState.WithProjectionDepth(Math.Max(0, currentState.ProjectionDepth - 1))
+                ScopeKind.Projection => currentState.WithProjectionDepth(Math.Max(0, currentState.ProjectionDepth - 1)),
+                ScopeKind.SensitiveArtifactBackfill => currentState.WithSensitiveArtifactBackfillDepth(Math.Max(0, currentState.SensitiveArtifactBackfillDepth - 1)),
+                _ => throw new InvalidOperationException($"Unsupported CommerceHub mutation scope kind '{_scopeKind}'.")
             };
         }
 
@@ -160,6 +175,7 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
         public int PaymentLifecycleDepth { get; }
         public int ShippingAssignmentDepth { get; }
         public int ProjectionDepth { get; }
+        public int SensitiveArtifactBackfillDepth { get; }
 
         public ScopeState(
             int orderLifecycleDepth = 0,
@@ -169,7 +185,8 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
             int financialWorkflowDepth = 0,
             int paymentLifecycleDepth = 0,
             int shippingAssignmentDepth = 0,
-            int projectionDepth = 0)
+            int projectionDepth = 0,
+            int sensitiveArtifactBackfillDepth = 0)
         {
             OrderLifecycleDepth = orderLifecycleDepth;
             PaymentDepth = paymentDepth;
@@ -179,30 +196,34 @@ public sealed class CommerceHubBoundaryMutationScope : IDisposable
             PaymentLifecycleDepth = paymentLifecycleDepth;
             ShippingAssignmentDepth = shippingAssignmentDepth;
             ProjectionDepth = projectionDepth;
+            SensitiveArtifactBackfillDepth = sensitiveArtifactBackfillDepth;
         }
 
         public ScopeState WithOrderLifecycleDepth(int depth) =>
-            new(depth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth);
+            new(depth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithPaymentDepth(int depth) =>
-            new(OrderLifecycleDepth, depth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth);
+            new(OrderLifecycleDepth, depth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithRefundDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, depth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth);
+            new(OrderLifecycleDepth, PaymentDepth, depth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithPayoutDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, depth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth);
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, depth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithFinancialWorkflowDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, depth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth);
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, depth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithPaymentLifecycleDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, depth, ShippingAssignmentDepth, ProjectionDepth);
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, depth, ShippingAssignmentDepth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithShippingAssignmentDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, depth, ProjectionDepth);
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, depth, ProjectionDepth, SensitiveArtifactBackfillDepth);
 
         public ScopeState WithProjectionDepth(int depth) =>
-            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, depth);
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, depth, SensitiveArtifactBackfillDepth);
+
+        public ScopeState WithSensitiveArtifactBackfillDepth(int depth) =>
+            new(OrderLifecycleDepth, PaymentDepth, RefundDepth, PayoutDepth, FinancialWorkflowDepth, PaymentLifecycleDepth, ShippingAssignmentDepth, ProjectionDepth, depth);
     }
 }

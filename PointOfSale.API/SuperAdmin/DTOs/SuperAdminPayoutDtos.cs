@@ -16,9 +16,26 @@ public sealed class SuperAdminVendorPayoutQueueItemDto
     public string? DefaultPayoutDestinationValue { get; init; }
     public List<SuperAdminVendorPayoutMethodChoiceDto> PayoutMethods { get; init; } = new();
     public List<string> RiskFlags { get; init; } = new();
-    public bool CanRecordCompletedPayout { get; init; }
+    public SuperAdminActiveVendorPayoutDto? ActivePayout { get; init; }
+    public bool CanPreparePayout { get; init; }
+    public bool CanCompletePayout { get; init; }
     public string? ExecutionBlockedCode { get; init; }
     public string? ExecutionBlockedReason { get; init; }
+}
+
+public sealed class SuperAdminActiveVendorPayoutDto
+{
+    public Guid PayoutId { get; init; }
+    public decimal Amount { get; init; }
+    public string Currency { get; init; } = "EGP";
+    public string Status { get; init; } = string.Empty;
+    public Guid? PayoutMethodId { get; init; }
+    public string Method { get; init; } = string.Empty;
+    public string? DestinationValueSnapshot { get; init; }
+    public string IdempotencyKey { get; init; } = string.Empty;
+    public string? ExternalTransferIdempotencyKey { get; init; }
+    public string? ExternalTransferHandoffToken { get; init; }
+    public DateTime? ExternalTransferHandoffCommittedAtUtc { get; init; }
 }
 
 public sealed class SuperAdminVendorPayoutMethodChoiceDto
@@ -64,12 +81,17 @@ public sealed class SuperAdminVendorPayoutQueueCurrencySummaryDto
     public decimal TotalHeldAmount { get; init; }
 }
 
-public sealed class SuperAdminExecuteVendorPayoutRequestDto
+public sealed class SuperAdminPrepareVendorPayoutRequestDto
 {
     public decimal Amount { get; set; }
     public Guid PayoutMethodId { get; set; }
-    public string? TransferReference { get; set; }
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class SuperAdminCompleteVendorPayoutRequestDto
+{
     public string? ExternalReferenceId { get; set; }
     public string? BankTransactionId { get; set; }
-    public string IdempotencyKey { get; set; } = string.Empty;
+    public string ExternalTransferHandoffToken { get; set; } = string.Empty;
+    public bool ExternalTransferConfirmedExecuted { get; set; }
 }

@@ -28,6 +28,8 @@ export function useAsyncLookup({
     }, [])
 
     useEffect(() => {
+        isMountedRef.current = true
+
         return () => {
             isMountedRef.current = false
             requestSequenceRef.current += 1
