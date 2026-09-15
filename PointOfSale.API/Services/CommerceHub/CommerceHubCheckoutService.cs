@@ -594,6 +594,18 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                             .OrderBy(attribute => attribute.SortOrder)
                             .Select(attribute => new { attribute.Name, attribute.Value }));
 
+                // T-08: freeze the tenant-scoped moving-weighted-average merchandise
+                // cost at checkout commit. ValidateLineIntegrity above already proved
+                // variant.TenantId == listing.TenantId == requested store.
+                var unitCostSnapshot = variant.CostPrice;
+                if (unitCostSnapshot < 0m)
+                {
+                    throw new CommerceHubCheckoutException(
+                        "INVALID_VARIANT_COST",
+                        $"{product.Name} has an invalid merchandise cost and cannot be checked out.",
+                        StatusCodes.Status409Conflict);
+                }
+
                 lineSnapshots.Add(new ValidatedCheckoutLine(
                     listing.TenantId,
                     requestedLine.ListingId,
@@ -601,6 +613,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                     requestedLine.VariantId,
                     requestedLine.Quantity,
                     roundedUnitPrice,
+                    unitCostSnapshot,
                     listing.CommerceHubCategoryId,
                     product.Name,
                     variantName,
@@ -1847,6 +1860,10 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                     ImageUrl = line.ImageUrl,
                     Quantity = line.Quantity,
                     UnitPrice = line.UnitPrice,
+                    // T-08: immutable merchandise-cost authority, frozen here.
+                    UnitCostSnapshot = line.UnitCostSnapshot,
+                    CostAmountSnapshot = line.CostAmountSnapshot,
+                    CostSnapshotCapturedAtUtc = nowUtc,
                     PlatformCommissionRate = itemCommissionRate,
                     PlatformCommissionAmount = itemCommissionAmount,
                     FinalPlatformCommissionAmount = itemCommissionAmount,
@@ -1955,6 +1972,8 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                         line.ListingId,
                         line.ProductId,
                         line.UnitPrice,
+                        // T-08: merged lines must share one frozen cost basis.
+                        line.UnitCostSnapshot,
                         line.CategoryId,
                         line.ProductName,
                         line.VariantName,
@@ -1987,6 +2006,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
                     firstLine.VariantId,
                     group.Sum(line => line.Quantity),
                     firstLine.UnitPrice,
+                    firstLine.UnitCostSnapshot,
                     firstLine.CategoryId,
                     firstLine.ProductName,
                     firstLine.VariantName,
@@ -2552,6 +2572,7 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
         Guid VariantId,
         int Quantity,
         decimal UnitPrice,
+        decimal UnitCostSnapshot,
         Guid CategoryId,
         string ProductName,
         string? VariantName,
@@ -2561,6 +2582,8 @@ public class CommerceHubCheckoutService : ICommerceHubCheckoutService
     {
         public decimal Total => UnitPrice * Quantity;
         public decimal TotalWeight => WeightKg * Quantity;
+        // T-08: frozen merchandise-cost basis for this line.
+        public decimal CostAmountSnapshot => Math.Round(UnitCostSnapshot * Quantity, 2, MidpointRounding.AwayFromZero);
     }
 
     private sealed record CommissionItemSnapshot(

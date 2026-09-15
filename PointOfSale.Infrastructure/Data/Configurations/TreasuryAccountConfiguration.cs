@@ -14,6 +14,9 @@ public class TreasuryAccountConfiguration : IEntityTypeConfiguration<TreasuryAcc
         builder.ToTable("TreasuryAccounts");
         
         builder.HasKey(e => e.Id);
+
+        builder.HasAlternateKey(e => new { e.TenantId, e.Id })
+            .HasName("AK_TreasuryAccounts_TenantId_Id");
         
         // Unique account per type per tenant
         builder.HasIndex(e => new { e.TenantId, e.AccountId })

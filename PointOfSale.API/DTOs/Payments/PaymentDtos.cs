@@ -273,10 +273,15 @@ public class PaymentWebhookEventDto
 }
 
 /// <summary>
-/// Standard webhook response (always 200 to acknowledge receipt).
+/// Standard webhook response.
 /// </summary>
 public class WebhookResponseDto
 {
+    /// <summary>
+    /// Stable error code when the webhook is rejected.
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
     /// <summary>
     /// Whether the event was processed.
     /// </summary>

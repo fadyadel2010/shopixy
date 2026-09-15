@@ -23,6 +23,29 @@ const EMPTY_CONFIG_FORM = {
     confirmReset: false
 }
 
+const FAWRY_AUTHORITY_REASON_CODE = 'FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE'
+const FAWRY_AUTHORITY_MESSAGE = 'Fawry is unavailable because financial settlement authority is not configured/certified.'
+
+export function isUnsupportedMethod(method) {
+    if (!method) {
+        return false
+    }
+
+    if (method.isSupported === false) {
+        return true
+    }
+
+    return (method.code?.toUpperCase?.() || method.code) === 'FAWRY'
+}
+
+export function unsupportedReason(method) {
+    const isFawry = (method?.code?.toUpperCase?.() || method?.code) === 'FAWRY'
+    return {
+        code: method?.unsupportedReasonCode || (isFawry ? FAWRY_AUTHORITY_REASON_CODE : 'PROVIDER_UNSUPPORTED'),
+        message: method?.unsupportedMessage || (isFawry ? FAWRY_AUTHORITY_MESSAGE : 'This payment provider is not supported.')
+    }
+}
+
 function extractValidationErrors(payload) {
     if (!Array.isArray(payload?.validationErrors)) {
         return []
@@ -62,11 +85,20 @@ function normalizeMethod(method) {
         isSandbox: method.isSandbox ?? true,
         sortOrder: method.sortOrder ?? 999,
         fee: method.fee ?? 0,
-        feeType: method.feeType || 'fixed'
+        feeType: method.feeType || 'fixed',
+        // T-09: the server is the authority, but the UI must never present
+        // Fawry credential fields as a route to activation.
+        isSupported: method.isSupported !== false && (method.code?.toUpperCase?.() || method.code) !== 'FAWRY',
+        unsupportedReasonCode: method.unsupportedReasonCode || null,
+        unsupportedMessage: method.unsupportedMessage || null
     }
 }
 
 function normalizeCatalogProvider(provider) {
+    const code = provider.code?.toUpperCase?.() || provider.code
+    const serverUnsupported = provider.isSupported === false
+    const unsupported = serverUnsupported || code === 'FAWRY'
+
     return normalizeMethod({
         id: null,
         code: provider.code,
@@ -85,7 +117,15 @@ function normalizeCatalogProvider(provider) {
         isConfigurationValid: false,
         configurationErrors: [],
         isEnabled: false,
-        hasTenantPaymentMethod: false
+        hasTenantPaymentMethod: false,
+        // T-09: Fawry is discoverable only as unsupported.
+        isSupported: !unsupported,
+        unsupportedReasonCode: unsupported
+            ? (provider.unsupportedReasonCode || FAWRY_AUTHORITY_REASON_CODE)
+            : null,
+        unsupportedMessage: unsupported
+            ? (provider.unsupportedMessage || FAWRY_AUTHORITY_MESSAGE)
+            : null
     })
 }
 
@@ -153,6 +193,14 @@ export default function PaymentMethods() {
 
     const handleCreateWithoutCredentials = async (method) => {
         clearFeedback()
+
+        // T-09: Fawry activation is not available; the server rejects mutations.
+        if (isUnsupportedMethod(method)) {
+            const reason = unsupportedReason(method)
+            setError(reason.message)
+            setErrorDetails([`Reason code: ${reason.code}`])
+            return
+        }
 
         try {
             await api.put(`/admin/payment-methods/${method.code}`, {
@@ -271,6 +319,15 @@ export default function PaymentMethods() {
 
     const handleConfig = (method) => {
         clearFeedback()
+
+        // T-09: Fawry credential fields must not be presented as a route to activation.
+        if (isUnsupportedMethod(method)) {
+            const reason = unsupportedReason(method)
+            setError(reason.message)
+            setErrorDetails([`Reason code: ${reason.code}`])
+            return
+        }
+
         setEditingMethod(method)
         setConfigData({
             isSandbox: method.isSandbox ?? true,
@@ -283,6 +340,14 @@ export default function PaymentMethods() {
 
     const handleToggle = async (method) => {
         clearFeedback()
+
+        // T-09: Fawry cannot be enabled; the server rejects mutations.
+        if (isUnsupportedMethod(method) && !method.isEnabled) {
+            const reason = unsupportedReason(method)
+            setError(reason.message)
+            setErrorDetails([`Reason code: ${reason.code}`])
+            return
+        }
 
         try {
             if (method.isEnabled) {
@@ -402,6 +467,14 @@ export default function PaymentMethods() {
     }
 
     const getTenantState = (method) => {
+        // T-09: Fawry renders as unsupported regardless of stored state.
+        if (isUnsupportedMethod(method)) {
+            return {
+                label: t('paymentMethods.unsupportedState', 'Unsupported'),
+                className: 'bg-gray-200 text-gray-700'
+            }
+        }
+
         if (!method.hasTenantPaymentMethod) {
             return {
                 label: t('paymentMethods.notConfigured', 'Not configured'),
@@ -535,6 +608,28 @@ export default function PaymentMethods() {
                                         </td>
                                         <td className="px-6 py-4 text-center align-top">
                                             <div className="flex flex-wrap justify-center gap-2">
+                                                {isUnsupportedMethod(method) ? (
+                                                    <>
+                                                        <div className="max-w-xs rounded-lg border border-gray-300 bg-gray-100 px-3 py-2 text-left text-gray-700">
+                                                            <span className="block text-xs font-semibold">
+                                                                {unsupportedReason(method).code}
+                                                            </span>
+                                                            <span className="mt-1 block text-xs">
+                                                                {unsupportedReason(method).message}
+                                                            </span>
+                                                        </div>
+                                                        {method.hasTenantPaymentMethod && method.isEnabled && (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleToggle(method)}
+                                                                className="rounded-lg border border-gray-300 px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-100"
+                                                            >
+                                                                {t('common.disable')}
+                                                            </button>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <>
                                                 {!method.hasTenantPaymentMethod && !method.requiresConfiguration && (
                                                     <button
                                                         type="button"
@@ -579,6 +674,8 @@ export default function PaymentMethods() {
                                                     >
                                                         {t('paymentMethods.configure', 'Configure')}
                                                     </button>
+                                                )}
+                                                    </>
                                                 )}
                                             </div>
                                         </td>

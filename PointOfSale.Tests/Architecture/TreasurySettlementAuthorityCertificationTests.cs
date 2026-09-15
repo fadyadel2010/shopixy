@@ -118,5 +118,35 @@ public sealed class TreasurySettlementAuthorityCertificationTests
         Assert.Contains("CommerceHub vendor earning payout reservation amount can only be changed by the CommerceHub payout boundary", applicationDbContext, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ClearingAgingAndGenericTransfers_MustNotAdvertiseManualSettlement()
+    {
+        var clearingAging = ReadRepoFile("PointOfSale.Web/src/pages/treasury/TreasuryClearingAging.jsx");
+        var transfers = ReadRepoFile("PointOfSale.Web/src/pages/treasury/TreasuryTransfers.jsx");
+        var adminAccounting = ReadRepoFile("PointOfSale.API/Controllers/AdminAccountingController.cs");
+
+        Assert.DoesNotContain("navigate('/treasury/transfers'", clearingAging, StringComparison.Ordinal);
+        Assert.DoesNotContain("toAccountCode: '1010'", clearingAging, StringComparison.Ordinal);
+        Assert.Contains("settlementRequiresEvidence", clearingAging, StringComparison.Ordinal);
+        Assert.Contains("disabled", clearingAging, StringComparison.Ordinal);
+        Assert.Contains("account.accountType === 'Cashbox' || account.accountType === 'Bank'", transfers, StringComparison.Ordinal);
+        Assert.Contains("SETTLEMENT_AUTHORITY_REQUIRED", adminAccounting, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status410Gone", adminAccounting, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GatewaySettlement_MustSelectAnExplicitClearingAuthorityOrFailClosed()
+    {
+        var paymentLifecycle = ReadRepoFile("PointOfSale.Infrastructure/Payments/PaymentLifecycleService.cs");
+        var commerceAccounting = ReadRepoFile("PointOfSale.Infrastructure/Accounting/CommerceAccountingService.cs");
+
+        Assert.Contains("IsSupportedGatewaySettlementProvider", paymentLifecycle, StringComparison.Ordinal);
+        Assert.Contains("unsupported_gateway", paymentLifecycle, StringComparison.Ordinal);
+        Assert.Contains("\"STRIPE\" => AccountCodes.StripeClearing", commerceAccounting, StringComparison.Ordinal);
+        Assert.Contains("\"PAYMOB\" or \"CARD\" or \"VISA\" => AccountCodes.VisaClearing", commerceAccounting, StringComparison.Ordinal);
+        Assert.Contains("has no configured clearing-account authority", commerceAccounting, StringComparison.Ordinal);
+        Assert.DoesNotContain("_ => AccountCodes.StripeClearing", commerceAccounting, StringComparison.Ordinal);
+    }
+
     private static string ReadRepoFile(string relativePath) => CertificationSource.ReadRepoFile(relativePath);
 }

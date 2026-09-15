@@ -14,12 +14,59 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Tests.Infrastructure;
+using Account = PointOfSale.Core.Entities.Accounting.Account;
+using JournalEntry = PointOfSale.Core.Entities.Accounting.JournalEntry;
+using LedgerEntry = PointOfSale.Core.Entities.Accounting.LedgerEntry;
+using SupplierCardFundingInstrument = PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument;
+using TreasuryAccount = PointOfSale.Core.Entities.Accounting.TreasuryAccount;
 
 namespace PointOfSale.Tests.Integration;
 
 public sealed class PurchasePaymentIntegrityIntegrationTests
 {
+    [Fact]
+    public async Task CreatePurchase_CardWithoutAuthority_FailsClosed()
+    {
+        var setup = await SetupPurchaseTestAsync("purchase-missing-card-authority-001");
+        using var scope = setup.Scope;
+        await using var actionContext = setup.ActionContext;
+        var request = BuildRequest(
+            setup.Seeded,
+            paymentMethod: PaymentMethod.Card,
+            paidAmount: 100m,
+            unitCost: 100m);
+        request.FundingInstrumentId = null;
+        request.FundingInstrumentVersion = null;
+
+        var result = await setup.Controller.CreatePurchase(request);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Contains("FundingInstrumentId is required", JsonSerializer.Serialize(badRequest.Value), StringComparison.Ordinal);
+        await using var verifyContext = scope.CreateDbContext(setup.TenantContext);
+        Assert.Equal(0, await verifyContext.PurchaseInvoices.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreatePurchase_CardAboveFundedBalance_FailsClosed()
+    {
+        var setup = await SetupPurchaseTestAsync("purchase-card-overspend-001");
+        using var scope = setup.Scope;
+        await using var actionContext = setup.ActionContext;
+
+        var result = await setup.Controller.CreatePurchase(BuildRequest(
+            setup.Seeded,
+            paymentMethod: PaymentMethod.Card,
+            paidAmount: 1000.01m,
+            unitCost: 1000.01m));
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        Assert.Contains("Insufficient funded card balance", JsonSerializer.Serialize(badRequest.Value), StringComparison.Ordinal);
+        await using var verifyContext = scope.CreateDbContext(setup.TenantContext);
+        Assert.Equal(0, await verifyContext.PurchaseInvoices.CountAsync());
+    }
+
     [Fact]
     public async Task CreatePurchase_RejectsOverpayment_AndDoesNotPersistInvoice()
     {
@@ -75,6 +122,9 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         var payment = await verifyContext.PurchaseInvoicePayments.SingleAsync();
         Assert.Equal(100m, payment.Amount);
         Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
+        Assert.Equal(seeded.FundingInstrumentId, payment.FundingInstrumentId);
+        Assert.Equal(seeded.FundingLedgerAccountId, payment.FundingLedgerAccountId);
+        Assert.Equal(seeded.FundingInstrumentVersion, payment.FundingInstrumentVersion);
     }
 
     [Fact]
@@ -141,6 +191,9 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             {
                 Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
                 Assert.Equal(60m, payment.Amount);
+                Assert.Equal(setup.Seeded.FundingInstrumentId, payment.FundingInstrumentId);
+                Assert.Equal(setup.Seeded.FundingLedgerAccountId, payment.FundingLedgerAccountId);
+                Assert.Equal(setup.Seeded.FundingInstrumentVersion, payment.FundingInstrumentVersion);
             });
     }
 
@@ -197,6 +250,9 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             {
                 Assert.Equal(PaymentMethod.Card, payment.PaymentMethod);
                 Assert.Equal(60m, payment.Amount);
+                Assert.Equal(setup.Seeded.FundingInstrumentId, payment.FundingInstrumentId);
+                Assert.Equal(setup.Seeded.FundingLedgerAccountId, payment.FundingLedgerAccountId);
+                Assert.Equal(setup.Seeded.FundingInstrumentVersion, payment.FundingInstrumentVersion);
             });
     }
 
@@ -323,14 +379,18 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         var outbox = new Mock<IAccountingOutboxService>();
         outbox.SetReturnsDefault(Task.CompletedTask);
         outbox
-            .Setup(service => service.EnqueuePosPurchaseAsync(
+            .Setup(service => service.EnqueuePosPurchaseWithCardAuthorityAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<int>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<int?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns<Guid, Guid, int, decimal, decimal, CancellationToken>(async (tenantId, invoiceId, mutationVersion, cashAmount, cardAmount, cancellationToken) =>
+            .Returns(async (Guid tenantId, Guid invoiceId, int mutationVersion, decimal cashAmount, decimal cardAmount,
+                Guid? fundingInstrumentId, Guid? fundingLedgerAccountId, int? fundingInstrumentVersion, CancellationToken cancellationToken) =>
             {
                 context.AccountingOutboxMessages.Add(new PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage
                 {
@@ -345,7 +405,10 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                         invoiceId,
                         cashAmount,
                         cardAmount,
-                        mutationVersion),
+                        mutationVersion,
+                        fundingInstrumentId,
+                        fundingLedgerAccountId,
+                        fundingInstrumentVersion),
                     AggregateVersion = mutationVersion,
                     OccurredAtUtc = DateTime.UtcNow,
                     CreatedAt = DateTime.UtcNow,
@@ -354,22 +417,28 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                 await context.SaveChangesAsync(cancellationToken);
             });
         outbox
-            .Setup(service => service.EnqueuePurchaseReversalAsync(
+            .Setup(service => service.EnqueuePurchaseReversalWithCardAuthorityAsync(
                 It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<int>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<int?>(),
                 It.IsAny<CancellationToken>()))
-            .Returns<Guid, Guid, string, int, decimal, decimal, CancellationToken>(async (
-                tenantId,
-                invoiceId,
-                operationKey,
-                mutationVersion,
-                cashAmount,
-                cardAmount,
-                cancellationToken) =>
+            .Returns(async (
+                Guid tenantId,
+                Guid invoiceId,
+                string operationKey,
+                int mutationVersion,
+                decimal cashAmount,
+                decimal cardAmount,
+                Guid? fundingInstrumentId,
+                Guid? fundingLedgerAccountId,
+                int? fundingInstrumentVersion,
+                CancellationToken cancellationToken) =>
             {
                 context.AccountingOutboxMessages.Add(new PointOfSale.Core.Entities.Accounting.AccountingOutboxMessage
                 {
@@ -385,7 +454,10 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                         operationKey,
                         cashAmount,
                         cardAmount,
-                        mutationVersion),
+                        mutationVersion,
+                        fundingInstrumentId,
+                        fundingLedgerAccountId,
+                        fundingInstrumentVersion),
                     AggregateVersion = mutationVersion,
                     OccurredAtUtc = DateTime.UtcNow,
                     CreatedAt = DateTime.UtcNow,
@@ -401,7 +473,10 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>(),
                 It.IsAny<decimal?>(),
-                It.IsAny<decimal?>()))
+                It.IsAny<decimal?>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<Guid?>(),
+                It.IsAny<int?>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "JRN-PUR-TEST"));
 
         var cashboxAccountService = new Mock<ICashboxLedgerAccountService>();
@@ -456,8 +531,12 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         Guid invoiceId,
         decimal cashAmount,
         decimal cardAmount,
-        int mutationVersion) =>
-        $"PURCHASE:{tenantId}:{invoiceId}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}";
+        int mutationVersion,
+        Guid? fundingInstrumentId = null,
+        Guid? fundingLedgerAccountId = null,
+        int? fundingInstrumentVersion = null) =>
+        $"PURCHASE:{tenantId}:{invoiceId}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}" +
+        BuildCardAuthorityKeySuffix(cardAmount, fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
 
     private static string BuildPurchaseMutationAccountingOutboxIdempotencyKey(
         Guid tenantId,
@@ -465,8 +544,21 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         string operationKey,
         decimal cashAmount,
         decimal cardAmount,
-        int mutationVersion) =>
-        $"PURCHASE:{tenantId}:{invoiceId}:{operationKey}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}";
+        int mutationVersion,
+        Guid? fundingInstrumentId = null,
+        Guid? fundingLedgerAccountId = null,
+        int? fundingInstrumentVersion = null) =>
+        $"PURCHASE:{tenantId}:{invoiceId}:{operationKey}:C{cashAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)}:V{mutationVersion}" +
+        BuildCardAuthorityKeySuffix(cardAmount, fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
+
+    private static string BuildCardAuthorityKeySuffix(
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion) =>
+        cardAmount > 0m
+            ? $":FI{fundingInstrumentId:D}:FA{fundingLedgerAccountId:D}:FV{fundingInstrumentVersion}"
+            : string.Empty;
 
     private static CreatePurchaseRequest BuildRequest(
         SeededPurchaseScenario seeded,
@@ -487,6 +579,14 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             PaidAmount = paidAmount,
             CashAmount = cashAmount,
             CardAmount = cardAmount,
+            FundingInstrumentId = paymentMethod == PaymentMethod.Card || paymentMethod == PaymentMethod.Mixed ||
+                (paymentMethod == PaymentMethod.Credit && initialPaymentMethod is PaymentMethod.Card or PaymentMethod.Mixed)
+                ? seeded.FundingInstrumentId
+                : null,
+            FundingInstrumentVersion = paymentMethod == PaymentMethod.Card || paymentMethod == PaymentMethod.Mixed ||
+                (paymentMethod == PaymentMethod.Credit && initialPaymentMethod is PaymentMethod.Card or PaymentMethod.Mixed)
+                ? seeded.FundingInstrumentVersion
+                : null,
             Items =
             [
                 new PurchaseItemRequest
@@ -511,6 +611,15 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         var warehouseId = Guid.NewGuid();
         var productId = Guid.NewGuid();
         var variantId = Guid.NewGuid();
+        var fundingSourceAccount = Account.Create(tenantId, "1098", "Test funding source", AccountType.Asset);
+        fundingSourceAccount.Id = Guid.NewGuid();
+        var cardAccount = Account.Create(tenantId, "1099", "Test funded supplier card", AccountType.Asset);
+        cardAccount.Id = Guid.NewGuid();
+        cardAccount.DesignateAsSupplierCardFunding();
+        var fundingSource = TreasuryAccount.CreateBank(tenantId, fundingSourceAccount.Id, "Test bank");
+        fundingSource.Id = Guid.NewGuid();
+        var fundingInstrument = SupplierCardFundingInstrument.Create(
+            tenantId, "Test company card", cardAccount.Id, fundingSource.Id, "Test issuer", "1234", true);
 
         context.Tenants.Add(new Tenant
         {
@@ -587,9 +696,29 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
             CreatedAt = utcNow
         });
 
+        context.LedgerAccounts.AddRange(fundingSourceAccount, cardAccount);
+        context.TreasuryAccounts.Add(fundingSource);
+        context.SupplierCardFundingInstruments.Add(fundingInstrument);
+
         await context.SaveChangesAsync();
 
-        return new SeededPurchaseScenario(supplierId, warehouseId, productId, variantId);
+        const decimal fundedBalance = 1000m;
+        var openingJournal = JournalEntry.Create(
+            tenantId, $"JE-TEST-{Guid.NewGuid():N}", utcNow, "TestOpening", Guid.NewGuid(), null,
+            "Fund supplier card test authority", $"TEST-CARD-FUNDING:{Guid.NewGuid():N}", null);
+        cardAccount.ApplyEntry(fundedBalance, 0m);
+        fundingSourceAccount.ApplyEntry(0m, fundedBalance);
+        context.JournalEntries.Add(openingJournal);
+        context.LedgerEntries.AddRange(
+            LedgerEntry.CreateDebit(tenantId, openingJournal.Id, cardAccount.Id, fundedBalance, fundedBalance, 1),
+            LedgerEntry.CreateCredit(tenantId, openingJournal.Id, fundingSourceAccount.Id, fundedBalance, -fundedBalance, 2));
+        using (LedgerMutationScope.Authorize())
+        {
+            await context.SaveChangesAsync();
+        }
+
+        return new SeededPurchaseScenario(
+            supplierId, warehouseId, productId, variantId, fundingInstrument.Id, cardAccount.Id, fundingInstrument.AuthorityVersion);
     }
 
     private static PurchaseResponse ReadPurchaseResponse(ActionResult<PurchaseResponse> result)
@@ -650,7 +779,10 @@ public sealed class PurchasePaymentIntegrityIntegrationTests
         Guid SupplierId,
         Guid WarehouseId,
         Guid ProductId,
-        Guid VariantId);
+        Guid VariantId,
+        Guid FundingInstrumentId,
+        Guid FundingLedgerAccountId,
+        int FundingInstrumentVersion);
 
     private sealed class NoOpEventPublisher : IEventPublisher
     {

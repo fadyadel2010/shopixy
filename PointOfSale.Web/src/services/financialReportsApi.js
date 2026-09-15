@@ -8,6 +8,7 @@
  */
 
 import api from './api'
+import { formatDateInputValue } from '../utils/dateFormat'
 
 // Cache for dashboard data (30 seconds)
 // Bounded LRU cache with TTL eviction
@@ -101,8 +102,8 @@ const dashboardCache = new BoundedTTLCache(MAX_CACHE_ENTRIES, CACHE_DURATION)
  */
 const getDateParams = (from, to) => {
     const params = new URLSearchParams()
-    if (from) params.append('from', from.toISOString().split('T')[0])
-    if (to) params.append('to', to.toISOString().split('T')[0])
+    if (from) params.append('from', formatDateInputValue(from))
+    if (to) params.append('to', formatDateInputValue(to))
     return params.toString()
 }
 
@@ -111,7 +112,7 @@ const getDateParams = (from, to) => {
  */
 const getAsOfParams = (asOf) => {
     const params = new URLSearchParams()
-    if (asOf) params.append('asOf', asOf.toISOString().split('T')[0])
+    if (asOf) params.append('asOf', formatDateInputValue(asOf))
     return params.toString()
 }
 

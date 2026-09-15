@@ -235,6 +235,8 @@ public static class SafeResponseMapper
                 PaymentDate = payment.PaymentDate,
                 Amount = payment.Amount,
                 PaymentMethod = payment.PaymentMethod,
+                FundingInstrumentId = payment.FundingInstrumentId,
+                FundingInstrumentVersion = payment.FundingInstrumentVersion,
                 ReferenceNumber = payment.ReferenceNumber
             })
             .ToList()

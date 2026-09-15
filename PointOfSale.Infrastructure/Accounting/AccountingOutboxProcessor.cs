@@ -17,6 +17,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Marketplace;
+using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Core.Models.Refunds;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -68,6 +69,11 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         "CodDelivered",
         "WalletApproved",
         "EcommerceRefund",
+        // T-08: merchandise-cost truth must never terminally fail while source state is committed.
+        "EcommerceCogs",
+        "EcommerceCogsReversal",
+        "CommerceHubCogs",
+        "CommerceHubCogsReversal",
         "UnresolvedOnlinePayment",
         "ResolvedUnresolvedOnlinePayment",
         "ResolvedUnresolvedCommerceHubPayment",
@@ -707,6 +713,26 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             return true;
         }
 
+        if (message.EventType is "PosPurchase" or "PurchaseReversal")
+        {
+            var purchaseJournalExists = await db.JournalEntries
+                .IgnoreQueryFilters()
+                .AnyAsync(journal =>
+                    journal.Id == message.JournalId.Value &&
+                    journal.TenantId == message.TenantId &&
+                    journal.SourceId == message.BusinessEntityId &&
+                    journal.SourceType == "PurchaseInvoice",
+                    ct);
+
+            if (!purchaseJournalExists)
+            {
+                return false;
+            }
+
+            message.MarkProcessed(message.JournalId.Value);
+            return true;
+        }
+
         return false;
     }
     
@@ -739,6 +765,12 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             "CodDelivered"              => await ProcessCodDeliveredAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "WalletApproved"            => await ProcessWalletApprovedAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "EcommerceRefund"           => await ProcessEcommerceRefundAsync(db, commerceAccounting, payload, message.TenantId, ct),
+            // T-08: merchandise-cost postings. Each re-verifies frozen snapshots and
+            // cumulative caps against immutable source state before posting.
+            "EcommerceCogs"             => await ProcessEcommerceCogsAsync(db, commerceAccounting, message, payload, ct),
+            "EcommerceCogsReversal"     => await ProcessEcommerceCogsReversalAsync(db, commerceAccounting, message, payload, ct),
+            "CommerceHubCogs"           => await ProcessCommerceHubCogsAsync(db, commerceAccounting, message, payload, ct),
+            "CommerceHubCogsReversal"   => await ProcessCommerceHubCogsReversalAsync(db, commerceAccounting, message, payload, ct),
             "UnresolvedOnlinePayment"   => await ProcessUnresolvedPaymentAsync(commerceAccounting, payload, message.TenantId, ct),
             "ResolvedUnresolvedOnlinePayment" => await ProcessResolvedUnresolvedPaymentAsync(db, commerceAccounting, payload, message.TenantId, ct),
             "ResolvedUnresolvedCommerceHubPayment" => await ProcessResolvedUnresolvedCommerceHubPaymentAsync(commerceAccounting, payload, message.TenantId, ct),
@@ -1233,6 +1265,9 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         await db.Entry(invoice)
             .Collection(entry => entry.Items)
             .LoadAsync(ct);
+        await db.Entry(invoice)
+            .Collection(entry => entry.Payments)
+            .LoadAsync(ct);
 
         return invoice;
     }
@@ -1666,7 +1701,14 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
                     return PostingResult.Succeeded(Guid.Empty, "SKIPPED");
                 }
 
-                var result = await accounting.PostPosPurchaseAsync(invoice, ct, null, cashAmount, cardAmount);
+                var cardAuthority = await ValidatePurchaseCardAuthorityPayloadAsync(
+                    db, invoice, payload.RootElement, cardAmount ?? 0m, ct);
+
+                var result = await accounting.PostPosPurchaseAsync(
+                    invoice, ct, null, cashAmount, cardAmount,
+                    cardAuthority?.FundingInstrumentId,
+                    cardAuthority?.FundingLedgerAccountId,
+                    cardAuthority?.FundingInstrumentVersion);
 
                 if (!result.Success)
                 {
@@ -1768,12 +1810,18 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
                         ct: ct);
                 }
 
+                var cardAuthority = await ValidatePurchaseCardAuthorityPayloadAsync(
+                    db, invoice, payload.RootElement, cardAmount ?? 0m, ct);
+
                 var result = await accounting.PostPosPurchaseAsync(
                     invoice,
                     ct,
                     operationKey,
                     cashAmount,
-                    cardAmount);
+                    cardAmount,
+                    cardAuthority?.FundingInstrumentId,
+                    cardAuthority?.FundingLedgerAccountId,
+                    cardAuthority?.FundingInstrumentVersion);
 
                 if (!result.Success)
                 {
@@ -1808,6 +1856,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
                 if (payment == null)
                     throw new InvalidOperationException($"SupplierPayment {paymentId} not found");
                 
+                await ValidateSupplierPaymentCardAuthorityPayloadAsync(db, payment, payload.RootElement, ct);
                 var result = await accounting.PostSupplierPaymentAsync(payment, ct);
                 if (!result.Success)
                 {
@@ -2654,6 +2703,652 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         });
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // T-08 E-COMMERCE / COMMERCEHUB MERCHANDISE-COST (COGS) PROCESSING
+    //
+    // Every method below re-verifies the durable payload against immutable source
+    // state inside the posting transaction and fails closed on any divergence:
+    // changed snapshots, unknown lines, over-quantity, or over-reversal amounts
+    // never post. Duplicate deliveries replay to the same idempotent journal.
+    // These events never touch Order/OrderRefund FinancialPostingStatus: the
+    // outbox row (ProcessedAtUtc/JournalId) is the durable COGS sidecar.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private async Task<PostingResult> ProcessEcommerceCogsAsync(
+        ApplicationDbContext db, ICommerceAccountingService accounting,
+        AccountingOutboxMessage message, JsonDocument payload, CancellationToken ct)
+    {
+        var cogs = JsonSerializer.Deserialize<EcommerceCogsOutboxPayload>(payload.RootElement.GetRawText())
+            ?? throw new InvalidOperationException("EcommerceCogs payload is missing or malformed.");
+        var tenantId = message.TenantId;
+        ValidateCogsEnvelope(
+            message,
+            EcommerceCogsPolicy.StorefrontCogsEventType,
+            EcommerceCogsPolicy.StorefrontCogsSourceType,
+            cogs.OrderId,
+            EcommerceCogsPolicy.BuildStorefrontCogsKey(tenantId, cogs.OrderId, cogs.CommitEventId),
+            requireAggregateVersion: true);
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var order = await LoadOrderForAccountingPostAsync(db, tenantId, cogs.OrderId, ct);
+                if (order == null)
+                    throw new InvalidOperationException($"Order {cogs.OrderId} not found for tenant {tenantId}.");
+
+                // OrderItem carries no TenantId of its own: tenancy is proven through
+                // the parent order, which was loaded above under tenant scope.
+                var items = await db.OrderItems
+                    .IgnoreQueryFilters()
+                    .Where(item => item.OrderId == cogs.OrderId && !item.IsDeleted)
+                    .ToListAsync(ct);
+
+                if (cogs.Lines.GroupBy(line => line.OrderItemId).Any(group => group.Count() != 1))
+                    throw new InvalidOperationException("EcommerceCogs contains duplicate source line IDs. Failing closed.");
+
+                var committedQtyByItem = await db.InventoryReservations
+                    .IgnoreQueryFilters()
+                    .Where(reservation =>
+                        reservation.TenantId == tenantId &&
+                        reservation.OrderId == cogs.OrderId &&
+                        !reservation.IsDeleted)
+                    .GroupBy(reservation => reservation.OrderItemId)
+                    .Select(group => new { OrderItemId = group.Key, Quantity = group.Sum(item => item.CommittedQuantity) })
+                    .ToDictionaryAsync(row => row.OrderItemId, row => row.Quantity, ct);
+
+                var priorCogsPayloads = await db.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .Where(candidate =>
+                        candidate.TenantId == tenantId &&
+                        candidate.BusinessEntityId == cogs.OrderId &&
+                        candidate.EventType == EcommerceCogsPolicy.StorefrontCogsEventType &&
+                        candidate.ProcessedAtUtc != null)
+                    .Select(candidate => candidate.PayloadJson)
+                    .ToListAsync(ct);
+                var priorQtyByItem = new Dictionary<Guid, decimal>();
+                var priorCostByItem = new Dictionary<Guid, decimal>();
+                foreach (var priorJson in priorCogsPayloads)
+                {
+                    var prior = JsonSerializer.Deserialize<EcommerceCogsOutboxPayload>(priorJson);
+                    if (prior == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var priorLine in prior.Lines)
+                    {
+                        priorQtyByItem[priorLine.OrderItemId] =
+                            priorQtyByItem.GetValueOrDefault(priorLine.OrderItemId) + priorLine.Quantity;
+                        priorCostByItem[priorLine.OrderItemId] =
+                            priorCostByItem.GetValueOrDefault(priorLine.OrderItemId) + priorLine.CostAmount;
+                    }
+                }
+
+                var lines = new List<EcommerceCogsLineDetail>();
+                foreach (var payloadLine in cogs.Lines.OrderBy(line => line.OrderItemId))
+                {
+                    var item = items.FirstOrDefault(candidate => candidate.Id == payloadLine.OrderItemId)
+                        ?? throw new InvalidOperationException(
+                            $"EcommerceCogs references unknown order line {payloadLine.OrderItemId}. Failing closed.");
+
+                    if (payloadLine.Quantity <= 0m || payloadLine.Quantity - item.Quantity > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogs line quantity {payloadLine.Quantity} exceeds immutable order line quantity {item.Quantity}. Failing closed.");
+
+                    if (Math.Abs(item.CostPrice - payloadLine.UnitCostSnapshot) > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogs snapshot {payloadLine.UnitCostSnapshot} does not match immutable order line cost {item.CostPrice}. Failing closed.");
+
+                    // The committed quantity may be a partial (per-commit) share of the
+                    // ordered integer quantity, so the basis uses the payload quantity
+                    // after the snapshot itself was verified against the immutable line.
+                    var lineCost = Math.Round(item.CostPrice * payloadLine.Quantity, 2, MidpointRounding.AwayFromZero);
+                    if (Math.Abs(lineCost - payloadLine.CostAmount) > 0.01m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogs line cost {payloadLine.CostAmount} does not match snapshot basis {lineCost}. Failing closed.");
+
+                    var cumulativeQty = priorQtyByItem.GetValueOrDefault(item.Id) + payloadLine.Quantity;
+                    var committedQty = committedQtyByItem.GetValueOrDefault(item.Id);
+                    if (cumulativeQty - committedQty > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogs cumulative quantity {cumulativeQty} exceeds committed stock quantity {committedQty}. Failing closed.");
+
+                    var cumulativeCost = priorCostByItem.GetValueOrDefault(item.Id) + lineCost;
+                    var committedCostCap = Math.Round(item.CostPrice * committedQty, 2, MidpointRounding.AwayFromZero);
+                    if (cumulativeCost - committedCostCap > 0.01m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogs cumulative cost {cumulativeCost} exceeds committed snapshot cost {committedCostCap}. Failing closed.");
+
+                    if (lineCost > 0m)
+                    {
+                        lines.Add(new EcommerceCogsLineDetail(
+                            item.Id, item.VariantId, payloadLine.Quantity, item.CostPrice, lineCost));
+                    }
+                }
+
+                var sourceTotal = cogs.Lines.Sum(line => line.CostAmount);
+                if (Math.Abs(sourceTotal - cogs.TotalCost) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"EcommerceCogs total {cogs.TotalCost} does not match snapshot basis {sourceTotal}. Failing closed.");
+
+                if (sourceTotal <= 0m)
+                {
+                    await transaction.CommitAsync(ct);
+                    return PostingResult.Succeeded(Guid.Empty, "SKIPPED_ZERO_COGS");
+                }
+
+                var result = await accounting.PostEcommerceCogsAsync(
+                    new EcommerceCogsPostingRequest(
+                        tenantId, cogs.OrderId, order.OrderNumber, cogs.CommitEventId,
+                        string.IsNullOrWhiteSpace(order.Currency) ? cogs.Currency : order.Currency,
+                        cogs.CommitOccurredAtUtc, lines, sourceTotal),
+                    ct);
+                if (!result.Success)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return result;
+                }
+
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+
+    private async Task<PostingResult> ProcessEcommerceCogsReversalAsync(
+        ApplicationDbContext db, ICommerceAccountingService accounting,
+        AccountingOutboxMessage message, JsonDocument payload, CancellationToken ct)
+    {
+        var reversal = JsonSerializer.Deserialize<EcommerceCogsReversalOutboxPayload>(payload.RootElement.GetRawText())
+            ?? throw new InvalidOperationException("EcommerceCogsReversal payload is missing or malformed.");
+        var tenantId = message.TenantId;
+        ValidateCogsEnvelope(
+            message,
+            EcommerceCogsPolicy.StorefrontCogsReversalEventType,
+            EcommerceCogsPolicy.StorefrontCogsReversalSourceType,
+            reversal.OrderId,
+            EcommerceCogsPolicy.BuildStorefrontCogsReversalKey(tenantId, reversal.OrderId, reversal.ReturnEventId),
+            requireAggregateVersion: true);
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var order = await LoadOrderForAccountingPostAsync(db, tenantId, reversal.OrderId, ct);
+                if (order == null)
+                    throw new InvalidOperationException($"Order {reversal.OrderId} not found for tenant {tenantId}.");
+
+                var refundExists = await db.OrderRefunds
+                    .IgnoreQueryFilters()
+                    .AnyAsync(refund =>
+                        refund.TenantId == tenantId &&
+                        refund.OrderId == reversal.OrderId &&
+                        refund.RefundId == reversal.ReturnEventId &&
+                        !refund.IsDeleted,
+                        ct);
+                if (!refundExists)
+                    throw new InvalidOperationException(
+                        $"EcommerceCogsReversal references unknown refund {reversal.ReturnEventId}. Failing closed.");
+
+                var postedCogsMessages = await db.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .Where(message =>
+                        message.TenantId == tenantId &&
+                        message.BusinessEntityId == reversal.OrderId &&
+                        message.EventType == EcommerceCogsPolicy.StorefrontCogsEventType &&
+                        message.ProcessedAtUtc != null)
+                    .Select(message => message.PayloadJson)
+                    .ToListAsync(ct);
+                if (postedCogsMessages.Count == 0)
+                    throw new InvalidOperationException(
+                        $"EcommerceCogsReversal for order {reversal.OrderId} has no posted sale COGS to reverse. Failing closed.");
+
+                // Per-commit COGS means only actually-committed quantities carry cost:
+                // a return can never reverse more than the posted committed quantity.
+                var postedQtyByItem = new Dictionary<Guid, decimal>();
+                var postedCostByItem = new Dictionary<Guid, decimal>();
+                foreach (var postedJson in postedCogsMessages)
+                {
+                    var posted = JsonSerializer.Deserialize<EcommerceCogsOutboxPayload>(postedJson);
+                    if (posted == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var postedLine in posted.Lines)
+                    {
+                        postedQtyByItem[postedLine.OrderItemId] =
+                            postedQtyByItem.GetValueOrDefault(postedLine.OrderItemId) + postedLine.Quantity;
+                        postedCostByItem[postedLine.OrderItemId] =
+                            postedCostByItem.GetValueOrDefault(postedLine.OrderItemId) + postedLine.CostAmount;
+                    }
+                }
+
+                // OrderItem carries no TenantId of its own: tenancy is proven through
+                // the parent order, which was loaded above under tenant scope.
+                var items = await db.OrderItems
+                    .IgnoreQueryFilters()
+                    .Where(item => item.OrderId == reversal.OrderId && !item.IsDeleted)
+                    .ToListAsync(ct);
+
+                if (reversal.Lines.GroupBy(line => line.OrderItemId).Any(group => group.Count() != 1))
+                    throw new InvalidOperationException("EcommerceCogsReversal contains duplicate source line IDs. Failing closed.");
+
+                var returnedQtyByItem = await db.InventoryReservations
+                    .IgnoreQueryFilters()
+                    .Where(reservation =>
+                        reservation.TenantId == tenantId &&
+                        reservation.OrderId == reversal.OrderId &&
+                        !reservation.IsDeleted)
+                    .GroupBy(reservation => reservation.OrderItemId)
+                    .Select(group => new { OrderItemId = group.Key, Quantity = group.Sum(item => item.ReturnedQuantity) })
+                    .ToDictionaryAsync(row => row.OrderItemId, row => row.Quantity, ct);
+
+                var priorReversals = await db.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .Where(message =>
+                        message.TenantId == tenantId &&
+                        message.BusinessEntityId == reversal.OrderId &&
+                        message.EventType == EcommerceCogsPolicy.StorefrontCogsReversalEventType &&
+                        message.ProcessedAtUtc != null)
+                    .Select(message => message.PayloadJson)
+                    .ToListAsync(ct);
+
+                var priorReversedQty = new Dictionary<Guid, decimal>();
+                var priorReversedAmt = new Dictionary<Guid, decimal>();
+                foreach (var priorJson in priorReversals)
+                {
+                    var prior = JsonSerializer.Deserialize<EcommerceCogsReversalOutboxPayload>(priorJson);
+                    if (prior == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var priorLine in prior.Lines)
+                    {
+                        priorReversedQty[priorLine.OrderItemId] =
+                            priorReversedQty.GetValueOrDefault(priorLine.OrderItemId) + priorLine.ReturnQuantity;
+                        priorReversedAmt[priorLine.OrderItemId] =
+                            priorReversedAmt.GetValueOrDefault(priorLine.OrderItemId) + priorLine.ReversalAmount;
+                    }
+                }
+
+                var lines = new List<EcommerceCogsReversalLineDetail>();
+                foreach (var payloadLine in reversal.Lines.OrderBy(line => line.OrderItemId))
+                {
+                    var item = items.FirstOrDefault(candidate => candidate.Id == payloadLine.OrderItemId)
+                        ?? throw new InvalidOperationException(
+                            $"EcommerceCogsReversal references unknown order line {payloadLine.OrderItemId}. Failing closed.");
+
+                    if (payloadLine.ReturnQuantity <= 0m || payloadLine.ReversalAmount <= 0m)
+                        throw new InvalidOperationException("EcommerceCogsReversal quantities and amounts must be positive. Failing closed.");
+
+                    var postedItemCogs = postedCostByItem.GetValueOrDefault(item.Id);
+                    var maxLineReversal = Math.Round(item.CostPrice * payloadLine.ReturnQuantity, 2, MidpointRounding.AwayFromZero);
+                    if (Math.Abs(payloadLine.ReversalAmount - maxLineReversal) > 0.01m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogsReversal amount {payloadLine.ReversalAmount} does not match snapshot cost {maxLineReversal} of the returned quantity. Failing closed.");
+
+                    var cumulativeQty = priorReversedQty.GetValueOrDefault(item.Id) + payloadLine.ReturnQuantity;
+                    if (cumulativeQty - item.Quantity > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogsReversal quantity {cumulativeQty} exceeds committed quantity {item.Quantity}. Failing closed.");
+
+                    var postedQty = postedQtyByItem.GetValueOrDefault(item.Id);
+                    if (cumulativeQty - postedQty > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogsReversal quantity {cumulativeQty} exceeds posted COGS quantity {postedQty}. Failing closed.");
+
+                    var returnedQty = returnedQtyByItem.GetValueOrDefault(item.Id);
+                    if (cumulativeQty - returnedQty > 0.0001m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogsReversal quantity {cumulativeQty} exceeds physically returned quantity {returnedQty}. Failing closed.");
+
+                    var cumulativeAmt = priorReversedAmt.GetValueOrDefault(item.Id) + payloadLine.ReversalAmount;
+                    if (cumulativeAmt - postedItemCogs > 0.01m)
+                        throw new InvalidOperationException(
+                            $"EcommerceCogsReversal cumulative amount {cumulativeAmt} exceeds posted COGS {postedItemCogs}. Failing closed.");
+
+                    lines.Add(new EcommerceCogsReversalLineDetail(
+                        item.Id, payloadLine.ReturnQuantity, payloadLine.ReversalAmount));
+                }
+
+                var sourceTotal = lines.Sum(line => line.ReversalAmount);
+                if (Math.Abs(sourceTotal - reversal.TotalReversal) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"EcommerceCogsReversal total {reversal.TotalReversal} does not match reversal lines {sourceTotal}. Failing closed.");
+
+                var result = await accounting.PostEcommerceCogsReversalAsync(
+                    new EcommerceCogsReversalPostingRequest(
+                        tenantId, reversal.OrderId, order.OrderNumber, reversal.ReturnEventId,
+                        string.IsNullOrWhiteSpace(order.Currency) ? reversal.Currency : order.Currency,
+                        reversal.ReturnOccurredAtUtc, lines, sourceTotal),
+                    ct);
+                if (!result.Success)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return result;
+                }
+
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+
+    private async Task<PostingResult> ProcessCommerceHubCogsAsync(
+        ApplicationDbContext db, ICommerceAccountingService accounting,
+        AccountingOutboxMessage message, JsonDocument payload, CancellationToken ct)
+    {
+        var cogs = JsonSerializer.Deserialize<CommerceHubCogsOutboxPayload>(payload.RootElement.GetRawText())
+            ?? throw new InvalidOperationException("CommerceHubCogs payload is missing or malformed.");
+        var tenantId = message.TenantId;
+        ValidateCogsEnvelope(
+            message,
+            EcommerceCogsPolicy.CommerceHubCogsEventType,
+            EcommerceCogsPolicy.CommerceHubCogsSourceType,
+            cogs.SubOrderId,
+            EcommerceCogsPolicy.BuildCommerceHubCogsKey(tenantId, cogs.SubOrderId, cogs.DeliveryCommitEventId),
+            requireAggregateVersion: true);
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var item = await db.CommerceHubSubOrderItems
+                    .IgnoreQueryFilters()
+                    .Include(candidate => candidate.SubOrder)
+                    .FirstOrDefaultAsync(candidate =>
+                        candidate.Id == cogs.SubOrderItemId &&
+                        candidate.SubOrderId == cogs.SubOrderId &&
+                        !candidate.IsDeleted,
+                        ct)
+                    ?? throw new InvalidOperationException(
+                        $"CommerceHubCogs references unknown sub-order line {cogs.SubOrderItemId}. Failing closed.");
+
+                if (item.SubOrder.StoreId != tenantId)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs tenant {tenantId} does not own sub-order {cogs.SubOrderId}. Failing closed.");
+
+                if (item.SubOrder.MarketplaceOrderId != cogs.MarketplaceOrderId ||
+                    !string.Equals(item.SubOrder.Currency, cogs.Currency, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("CommerceHubCogs order or currency binding does not match source authority. Failing closed.");
+
+                if (!item.CostSnapshotCapturedAtUtc.HasValue)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs line {cogs.SubOrderItemId} has no cost snapshot (pre-remediation history). Failing closed.");
+
+                var capturedCostAmount = Math.Round(item.UnitCostSnapshot * item.Quantity, 2, MidpointRounding.AwayFromZero);
+                if (item.UnitCostSnapshot < 0m ||
+                    item.CostAmountSnapshot < 0m ||
+                    Math.Abs(capturedCostAmount - item.CostAmountSnapshot) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs line {cogs.SubOrderItemId} has an inconsistent immutable cost snapshot. Failing closed.");
+
+                if (Math.Abs(item.UnitCostSnapshot - cogs.UnitCostSnapshot) > 0.000001m)
+                    throw new InvalidOperationException(
+                        "CommerceHubCogs snapshot does not match the immutable sub-order line cost. Failing closed.");
+
+                if (cogs.Quantity <= 0m || cogs.UnitCostSnapshot < 0m || cogs.CostAmount < 0m)
+                    throw new InvalidOperationException("CommerceHubCogs quantity or cost is invalid. Failing closed.");
+
+                var sourceCost = Math.Round(item.UnitCostSnapshot * cogs.Quantity, 2, MidpointRounding.AwayFromZero);
+                if (Math.Abs(sourceCost - cogs.CostAmount) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs cost {cogs.CostAmount} does not match snapshot basis {sourceCost}. Failing closed.");
+
+                var priorCommits = await db.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .Where(message =>
+                        message.TenantId == tenantId &&
+                        message.BusinessEntityId == cogs.SubOrderId &&
+                        message.EventType == EcommerceCogsPolicy.CommerceHubCogsEventType &&
+                        message.ProcessedAtUtc != null)
+                    .Select(message => message.PayloadJson)
+                    .ToListAsync(ct);
+
+                decimal priorQty = 0m;
+                decimal priorCost = 0m;
+                foreach (var priorJson in priorCommits)
+                {
+                    var prior = JsonSerializer.Deserialize<CommerceHubCogsOutboxPayload>(priorJson);
+                    if (prior == null || prior.SubOrderItemId != cogs.SubOrderItemId)
+                    {
+                        continue;
+                    }
+
+                    priorQty += prior.Quantity;
+                    priorCost += prior.CostAmount;
+                }
+
+                if (priorQty + cogs.Quantity - item.Quantity > 0.0001m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs cumulative quantity {priorQty + cogs.Quantity} exceeds ordered quantity {item.Quantity}. Failing closed.");
+
+                var committedQty = await db.InventoryReservations
+                    .IgnoreQueryFilters()
+                    .Where(reservation =>
+                        reservation.TenantId == tenantId &&
+                        reservation.OrderItemId == cogs.SubOrderItemId &&
+                        !reservation.IsDeleted)
+                    .SumAsync(reservation => (decimal?)reservation.CommittedQuantity, ct) ?? 0m;
+                if (priorQty + cogs.Quantity - committedQty > 0.0001m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs cumulative quantity {priorQty + cogs.Quantity} exceeds committed stock quantity {committedQty}. Failing closed.");
+
+                var postedItemCap = Math.Round(item.UnitCostSnapshot * item.Quantity, 2, MidpointRounding.AwayFromZero);
+                if (priorCost + cogs.CostAmount - postedItemCap > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogs cumulative cost {priorCost + cogs.CostAmount} exceeds snapshot cap {postedItemCap}. Failing closed.");
+
+                if (sourceCost <= 0m)
+                {
+                    await transaction.CommitAsync(ct);
+                    return PostingResult.Succeeded(Guid.Empty, "SKIPPED_ZERO_COGS");
+                }
+
+                var result = await accounting.PostCommerceHubCogsAsync(
+                    new CommerceHubCogsPostingRequest(
+                        tenantId, item.SubOrder.MarketplaceOrderId, cogs.SubOrderId, item.SubOrder.OrderNumber,
+                        cogs.SubOrderItemId, cogs.DeliveryCommitEventId, item.SubOrder.Currency,
+                        cogs.CommitOccurredAtUtc, cogs.Quantity, item.UnitCostSnapshot, sourceCost),
+                    ct);
+                if (!result.Success)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return result;
+                }
+
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+
+    private async Task<PostingResult> ProcessCommerceHubCogsReversalAsync(
+        ApplicationDbContext db, ICommerceAccountingService accounting,
+        AccountingOutboxMessage message, JsonDocument payload, CancellationToken ct)
+    {
+        var reversal = JsonSerializer.Deserialize<CommerceHubCogsReversalOutboxPayload>(payload.RootElement.GetRawText())
+            ?? throw new InvalidOperationException("CommerceHubCogsReversal payload is missing or malformed.");
+        var tenantId = message.TenantId;
+        ValidateCogsEnvelope(
+            message,
+            EcommerceCogsPolicy.CommerceHubCogsReversalEventType,
+            EcommerceCogsPolicy.CommerceHubCogsReversalSourceType,
+            reversal.SubOrderId,
+            EcommerceCogsPolicy.BuildCommerceHubCogsReversalKey(tenantId, reversal.SubOrderId, reversal.ReturnEventId),
+            requireAggregateVersion: true);
+
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
+            try
+            {
+                var item = await db.CommerceHubSubOrderItems
+                    .IgnoreQueryFilters()
+                    .Include(candidate => candidate.SubOrder)
+                    .FirstOrDefaultAsync(candidate =>
+                        candidate.Id == reversal.SubOrderItemId &&
+                        candidate.SubOrderId == reversal.SubOrderId &&
+                        !candidate.IsDeleted,
+                        ct)
+                    ?? throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal references unknown sub-order line {reversal.SubOrderItemId}. Failing closed.");
+
+                if (item.SubOrder.StoreId != tenantId)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal tenant {tenantId} does not own sub-order {reversal.SubOrderId}. Failing closed.");
+
+                if (item.SubOrder.MarketplaceOrderId != reversal.MarketplaceOrderId ||
+                    !string.Equals(item.SubOrder.Currency, reversal.Currency, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(reversal.ReturnEventId, reversal.ReturnId.ToString("D"), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("CommerceHubCogsReversal order, currency, or return identity binding is invalid. Failing closed.");
+
+                if (!item.CostSnapshotCapturedAtUtc.HasValue)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal line {reversal.SubOrderItemId} has no cost snapshot (pre-remediation history). Failing closed.");
+
+                var capturedCostAmount = Math.Round(item.UnitCostSnapshot * item.Quantity, 2, MidpointRounding.AwayFromZero);
+                if (item.UnitCostSnapshot < 0m ||
+                    item.CostAmountSnapshot < 0m ||
+                    Math.Abs(capturedCostAmount - item.CostAmountSnapshot) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal line {reversal.SubOrderItemId} has an inconsistent immutable cost snapshot. Failing closed.");
+
+                if (Math.Abs(item.UnitCostSnapshot - reversal.UnitCostSnapshot) > 0.000001m)
+                    throw new InvalidOperationException(
+                        "CommerceHubCogsReversal snapshot does not match the immutable sub-order line cost. Failing closed.");
+
+                var returnRequest = await db.CommerceHubReturnRequests
+                    .IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(candidate =>
+                        candidate.Id == reversal.ReturnId &&
+                        candidate.OrderItemId == reversal.SubOrderItemId &&
+                        candidate.VendorId == tenantId &&
+                        !candidate.IsDeleted,
+                        ct)
+                    ?? throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal references unknown return {reversal.ReturnId}. Failing closed.");
+
+                // The receipt itself enforces delivered/returnable caps at intake; here the
+                // authorized return request bounds the reversal. RequestedQuantity is set at
+                // request creation, so this holds even if the outer receipt transaction is
+                // still committing when the processor runs.
+                if (returnRequest.Status != CommerceHubReturnStatus.Confirmed ||
+                    reversal.ResellableQuantity - returnRequest.ReceivedResellableQuantity > 0.0001m)
+                    throw new InvalidOperationException(
+                        "CommerceHubCogsReversal exceeds the confirmed resellable receipt quantity. Failing closed.");
+
+                var sourceReversal = Math.Round(item.UnitCostSnapshot * reversal.ResellableQuantity, 2, MidpointRounding.AwayFromZero);
+                if (Math.Abs(sourceReversal - reversal.ReversalAmount) > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal {reversal.ReversalAmount} does not match snapshot basis {sourceReversal}. Failing closed.");
+
+                var posted = await db.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .Where(message =>
+                        message.TenantId == tenantId &&
+                        message.BusinessEntityId == reversal.SubOrderId &&
+                        message.ProcessedAtUtc != null &&
+                        (message.EventType == EcommerceCogsPolicy.CommerceHubCogsEventType ||
+                         message.EventType == EcommerceCogsPolicy.CommerceHubCogsReversalEventType))
+                    .Select(message => new { message.EventType, message.PayloadJson })
+                    .ToListAsync(ct);
+
+                decimal postedCogs = 0m;
+                decimal priorReversedQty = 0m;
+                decimal priorReversedAmt = 0m;
+                foreach (var entry in posted)
+                {
+                    if (entry.EventType == EcommerceCogsPolicy.CommerceHubCogsEventType)
+                    {
+                        var prior = JsonSerializer.Deserialize<CommerceHubCogsOutboxPayload>(entry.PayloadJson);
+                        if (prior != null && prior.SubOrderItemId == reversal.SubOrderItemId)
+                        {
+                            postedCogs += prior.CostAmount;
+                        }
+                    }
+                    else
+                    {
+                        var prior = JsonSerializer.Deserialize<CommerceHubCogsReversalOutboxPayload>(entry.PayloadJson);
+                        if (prior != null && prior.SubOrderItemId == reversal.SubOrderItemId)
+                        {
+                            priorReversedQty += prior.ResellableQuantity;
+                            priorReversedAmt += prior.ReversalAmount;
+                        }
+                    }
+                }
+
+                if (postedCogs <= 0m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal for line {reversal.SubOrderItemId} has no posted sale COGS to reverse. Failing closed.");
+
+                if (priorReversedQty + reversal.ResellableQuantity - item.Quantity > 0.0001m)
+                    throw new InvalidOperationException(
+                        "CommerceHubCogsReversal cumulative quantity exceeds the ordered quantity. Failing closed.");
+
+                var physicallyReturnedQty = await db.InventoryReservations
+                    .IgnoreQueryFilters()
+                    .Where(reservation =>
+                        reservation.TenantId == tenantId &&
+                        reservation.OrderItemId == reversal.SubOrderItemId &&
+                        !reservation.IsDeleted)
+                    .SumAsync(reservation => (decimal?)reservation.ReturnedQuantity, ct) ?? 0m;
+                if (priorReversedQty + reversal.ResellableQuantity - physicallyReturnedQty > 0.0001m)
+                    throw new InvalidOperationException(
+                        "CommerceHubCogsReversal cumulative quantity exceeds physically returned resellable stock. Failing closed.");
+
+                if (priorReversedAmt + reversal.ReversalAmount - postedCogs > 0.01m)
+                    throw new InvalidOperationException(
+                        $"CommerceHubCogsReversal cumulative amount {priorReversedAmt + reversal.ReversalAmount} exceeds posted COGS {postedCogs}. Failing closed.");
+
+                var result = await accounting.PostCommerceHubCogsReversalAsync(
+                    new CommerceHubCogsReversalPostingRequest(
+                        tenantId, item.SubOrder.MarketplaceOrderId, reversal.SubOrderId, item.SubOrder.OrderNumber,
+                        reversal.SubOrderItemId, reversal.ReturnId, reversal.ReturnEventId, item.SubOrder.Currency,
+                        reversal.ReturnOccurredAtUtc, reversal.ResellableQuantity, item.UnitCostSnapshot, sourceReversal),
+                    ct);
+                if (!result.Success)
+                {
+                    await transaction.RollbackAsync(ct);
+                    return result;
+                }
+
+                await transaction.CommitAsync(ct);
+                return result;
+            }
+            catch
+            {
+                await transaction.RollbackAsync(ct);
+                throw;
+            }
+        });
+    }
+
     private static EcommerceRefundAccountingContext? ResolveEcommerceRefundAccountingContext(JsonElement payload)
     {
         if (!payload.TryGetProperty("IsPostSettlementRefund", out var isPostSettlementElement) ||
@@ -2741,10 +3436,12 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         
         return await accounting.PostGatewaySettlementAsync(
             tenantId,
+            settlementBatchId,
             settlement!.Provider ?? gateway,
             settlement.GrossAmount,
             settlement.Fees,
             settlement.SettlementId,
+            settlement.SettledAtUtc,
             ct);
     }
 
@@ -2801,6 +3498,25 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             }
         });
     }
+
+    private static void ValidateCogsEnvelope(
+        AccountingOutboxMessage message,
+        string expectedEventType,
+        string expectedSourceType,
+        Guid expectedBusinessEntityId,
+        string expectedIdempotencyKey,
+        bool requireAggregateVersion)
+    {
+        if (!string.Equals(message.EventType, expectedEventType, StringComparison.Ordinal) ||
+            !string.Equals(message.SourceType, expectedSourceType, StringComparison.Ordinal) ||
+            message.BusinessEntityId != expectedBusinessEntityId ||
+            !string.Equals(message.IdempotencyKey, expectedIdempotencyKey, StringComparison.Ordinal) ||
+            (requireAggregateVersion && message.AggregateVersion is not > 0))
+        {
+            throw new InvalidOperationException(
+                $"{expectedEventType} outbox envelope does not match its payload or aggregate authority. Failing closed.");
+        }
+    }
     
     private async Task<PostingResult> ProcessCodSettlementAsync(
         ApplicationDbContext db,
@@ -2814,7 +3530,7 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
             db,
             tenantId,
             settlementBatchId,
-            "COD",
+            "OFFLINE_COLLECTION",
             settlementId,
             ct);
 
@@ -2835,9 +3551,11 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
         
         return await accounting.PostCodSettlementAsync(
             tenantId,
+            settlementBatchId,
             settlement!.GrossAmount,
             settlement.Fees,
             settlement.SettlementId,
+            settlement.SettledAtUtc,
             ct);
     }
     
@@ -3380,6 +4098,106 @@ public class AccountingOutboxProcessor : IAccountingOutboxProcessor
 
     private static bool IsOrderRefundPostingEvent(string eventType) =>
         eventType is "EcommerceRefund";
+
+    private static async Task<PurchaseCardAuthority?> ValidatePurchaseCardAuthorityPayloadAsync(
+        ApplicationDbContext db,
+        PurchaseInvoice invoice,
+        JsonElement payload,
+        decimal cardAmount,
+        CancellationToken cancellationToken)
+    {
+        var payloadInstrumentId = TryGetNullableGuid(payload, "FundingInstrumentId");
+        var payloadLedgerAccountId = TryGetNullableGuid(payload, "FundingLedgerAccountId");
+        var payloadVersion = TryGetNullableInt(payload, "FundingInstrumentVersion");
+        var cardPayments = invoice.Payments
+            .Where(payment => !payment.IsDeleted && payment.PaymentMethod == PointOfSale.Core.Enums.PaymentMethod.Card)
+            .ToList();
+
+        if (cardAmount <= 0m)
+        {
+            if (payloadInstrumentId.HasValue || payloadLedgerAccountId.HasValue || payloadVersion.HasValue || cardPayments.Count != 0)
+                throw new InvalidOperationException("Non-Card purchase outbox payload contains supplier card funding authority.");
+            return null;
+        }
+
+        if (cardPayments.Count != 1 || cardPayments[0].Amount != cardAmount)
+            throw new InvalidOperationException("Purchase Card allocation cannot be reproduced from persisted payment authority.");
+
+        var payment = cardPayments[0];
+        if (payment.FundingInstrumentId != payloadInstrumentId ||
+            payment.FundingLedgerAccountId != payloadLedgerAccountId ||
+            payment.FundingInstrumentVersion != payloadVersion)
+        {
+            throw new InvalidOperationException("Purchase Card outbox authority does not match the persisted payment snapshot.");
+        }
+
+        await SupplierCardAuthority.ValidateFrozenAsync(
+            db,
+            invoice.TenantId,
+            payment.FundingInstrumentId,
+            payment.FundingLedgerAccountId,
+            payment.FundingInstrumentVersion,
+            cardAmount,
+            cancellationToken);
+
+        return new PurchaseCardAuthority(
+            payment.FundingInstrumentId!.Value,
+            payment.FundingLedgerAccountId!.Value,
+            payment.FundingInstrumentVersion!.Value);
+    }
+
+    private static async Task ValidateSupplierPaymentCardAuthorityPayloadAsync(
+        ApplicationDbContext db,
+        SupplierPayment payment,
+        JsonElement payload,
+        CancellationToken cancellationToken)
+    {
+        var payloadInstrumentId = TryGetNullableGuid(payload, "FundingInstrumentId");
+        var payloadLedgerAccountId = TryGetNullableGuid(payload, "FundingLedgerAccountId");
+        var payloadVersion = TryGetNullableInt(payload, "FundingInstrumentVersion");
+
+        if (payment.PaymentMethod != PointOfSale.Core.Enums.PaymentMethod.Card)
+        {
+            if (payment.FundingInstrumentId.HasValue || payment.FundingLedgerAccountId.HasValue ||
+                payment.FundingInstrumentVersion.HasValue || payloadInstrumentId.HasValue ||
+                payloadLedgerAccountId.HasValue || payloadVersion.HasValue)
+            {
+                throw new InvalidOperationException("Non-Card supplier payment contains card funding authority.");
+            }
+            return;
+        }
+
+        if (payment.FundingInstrumentId != payloadInstrumentId ||
+            payment.FundingLedgerAccountId != payloadLedgerAccountId ||
+            payment.FundingInstrumentVersion != payloadVersion)
+        {
+            throw new InvalidOperationException("Supplier payment outbox authority does not match the persisted payment snapshot.");
+        }
+
+        await SupplierCardAuthority.ValidateFrozenAsync(
+            db,
+            payment.TenantId,
+            payment.FundingInstrumentId,
+            payment.FundingLedgerAccountId,
+            payment.FundingInstrumentVersion,
+            payment.Amount,
+            cancellationToken);
+    }
+
+    private static Guid? TryGetNullableGuid(JsonElement payload, string propertyName) =>
+        payload.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String && value.TryGetGuid(out var parsed)
+            ? parsed
+            : null;
+
+    private static int? TryGetNullableInt(JsonElement payload, string propertyName) =>
+        payload.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed)
+            ? parsed
+            : null;
+
+    private sealed record PurchaseCardAuthority(
+        Guid FundingInstrumentId,
+        Guid FundingLedgerAccountId,
+        int FundingInstrumentVersion);
 
     private static int? TryGetMutationVersion(JsonElement payload)
     {

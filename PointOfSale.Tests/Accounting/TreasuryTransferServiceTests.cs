@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Moq;
 using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Exceptions.Accounting;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Infrastructure.Accounting;
@@ -133,6 +134,17 @@ public class TreasuryTransferServiceTests
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentException>(() =>
             _service.TransferAsync(_tenantId, _cashboxId, _cashboxId, 100m, "Test"));
+    }
+
+    [Fact]
+    public async Task TransferAsync_RejectsClearingAccountSource()
+    {
+        await Assert.ThrowsAsync<TreasuryValidationException>(() =>
+            _service.TransferAsync(_tenantId, _clearingId, _bankId, 100m, "Not a settlement"));
+
+        _postingServiceMock.Verify(
+            service => service.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

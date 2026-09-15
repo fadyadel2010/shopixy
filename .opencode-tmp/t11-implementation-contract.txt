@@ -1,0 +1,12 @@
+Muse must implement exactly this contract and must not certify T-11.
+
+1. In `GetCashFlowAsync`, resolve once the active, non-deleted, same-tenant Asset account IDs mapped by active, non-deleted `TreasuryAccount` rows of type Cashbox or Bank.
+2. Use only those IDs for opening cash, closing cash, per-journal cash lines, cash movement, and non-cash-asset classification. Delete the `10`/`11` prefix cash-equivalent behavior; add no fallback.
+3. Preserve tenant predicates on mapping, account, ledger line, and journal. Explicitly enforce mapping/account active and delete state and Asset type.
+4. Keep Clearing outside cash equivalents. Ensure a clearing-to-Bank settlement is Operating rather than Investing, using existing clearing metadata without granting Treasury mutation authority.
+5. Change the synthetic `Ledger-derived non-cash settlement adjustment` account label from `10xx/11xx` to a truthful non-prefix label.
+6. Preserve posted/reversed journal inclusion, `JournalDate` boundaries, indirect working-capital logic, party-opening exclusions, activity aggregation, and reconciliation.
+7. Modify only `PointOfSale.Infrastructure/Accounting/FinancialReportService.cs` and `PointOfSale.Tests/Accounting/FinancialReportServiceTests.cs`; prefer the existing test file over adding one. Add no migration, schema, seed, account, mapping, report DTO, API contract, frontend change, journal, data write, package, or dependency.
+8. Update existing Cash Flow fixtures to map intended Cashbox/Bank accounts. Add deterministic tests for custom nonnumeric mapped Cashbox/Bank; exclusion of `1020`, `1000`, `1040`, mapped Clearing, supplier-card and arbitrary prefix assets; inactive/deleted/foreign/non-Asset/unsupported mappings; clearing collection and settlement with/without fees; internal transfer; supplier-card funding/purchase/reversal; tenant/date/status boundaries; and reconciliation. Do not weaken T-06C, T-10, transfer, tenant, reversal, or reconciliation assertions.
+9. Stop if correct behavior requires changing Treasury/payment/supplier-card authority, persisted data, or files outside the allow-list.
+10. Report root cause, exact files and edits, tests/builds with counts, migration result, diff result, limitations, and any deviation. Do not stage or commit.

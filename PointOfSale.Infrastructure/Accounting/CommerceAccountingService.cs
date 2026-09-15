@@ -1,4 +1,6 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
@@ -229,7 +231,10 @@ public class CommerceAccountingService : ICommerceAccountingService
         CancellationToken ct = default,
         string? operationKey = null,
         decimal? cashAmount = null,
-        decimal? cardAmount = null)
+        decimal? cardAmount = null,
+        Guid? fundingInstrumentId = null,
+        Guid? fundingLedgerAccountId = null,
+        int? fundingInstrumentVersion = null)
     {
         if (operationKey != null)
         {
@@ -311,7 +316,16 @@ public class CommerceAccountingService : ICommerceAccountingService
 
             if (normalizedCardAmount > 0)
             {
-                requiredAccountCodes.Add(AccountCodes.PosVisaAccount);
+                if (!fundingInstrumentId.HasValue || !fundingLedgerAccountId.HasValue || !fundingInstrumentVersion.HasValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Purchase invoice {invoice.InvoiceNumber} Card payment requires frozen supplier card funding authority.");
+                }
+            }
+            else if (fundingInstrumentId.HasValue || fundingLedgerAccountId.HasValue || fundingInstrumentVersion.HasValue)
+            {
+                throw new InvalidOperationException(
+                    $"Purchase invoice {invoice.InvoiceNumber} cannot carry supplier card funding authority without a Card amount.");
             }
 
             var accounts = await _accountResolver.GetByCodesAsync(
@@ -347,9 +361,9 @@ public class CommerceAccountingService : ICommerceAccountingService
             if (normalizedCardAmount > 0)
             {
                 lines.Add(PostingLine.Credit(
-                    accounts[AccountCodes.PosVisaAccount].Id,
+                    fundingLedgerAccountId!.Value,
                     normalizedCardAmount,
-                    $"Card payment for {invoice.InvoiceNumber}"));
+                    $"Funded company card payment for {invoice.InvoiceNumber}"));
             }
 
             var supplierPayableAmount = invoice.TotalAmount - paidPortion;
@@ -397,21 +411,34 @@ public class CommerceAccountingService : ICommerceAccountingService
             var fundingAccountCode = payment.PaymentMethod switch
             {
                 PaymentMethodEnum.Cash => await ResolveDefaultCashboxAccountCodeAsync(tenantId, ct),
-                PaymentMethodEnum.Card => AccountCodes.VisaClearing,
+                PaymentMethodEnum.Card => null,
                 PaymentMethodEnum.BankTransfer => AccountCodes.BankAccount,
                 PaymentMethodEnum.Credit => throw new InvalidOperationException("Supplier payments cannot use credit as a funding source."),
                 PaymentMethodEnum.Mixed => throw new InvalidOperationException("Supplier payments require a single concrete funding source."),
                 _ => throw new InvalidOperationException($"Unsupported supplier payment method '{payment.PaymentMethod}'."),
             };
 
+            if (payment.PaymentMethod == PaymentMethodEnum.Card &&
+                (!payment.FundingInstrumentId.HasValue || !payment.FundingLedgerAccountId.HasValue || !payment.FundingInstrumentVersion.HasValue))
+            {
+                throw new InvalidOperationException("Supplier Card payment requires frozen funding instrument authority.");
+            }
+            if (payment.PaymentMethod != PaymentMethodEnum.Card &&
+                (payment.FundingInstrumentId.HasValue || payment.FundingLedgerAccountId.HasValue || payment.FundingInstrumentVersion.HasValue))
+            {
+                throw new InvalidOperationException("Non-Card supplier payment cannot carry card funding authority.");
+            }
+
+            var requiredCodes = fundingAccountCode == null
+                ? new[] { AccountCodes.SupplierPayables }
+                : new[] { AccountCodes.SupplierPayables, fundingAccountCode };
             var accounts = await _accountResolver.GetByCodesAsync(
                 tenantId,
-                new[]
-                {
-                    AccountCodes.SupplierPayables,
-                    fundingAccountCode
-                },
+                requiredCodes,
                 ct);
+            var fundingAccountId = payment.PaymentMethod == PaymentMethodEnum.Card
+                ? payment.FundingLedgerAccountId!.Value
+                : accounts[fundingAccountCode!].Id;
             
             var request = new PostingRequest
             {
@@ -426,7 +453,7 @@ public class CommerceAccountingService : ICommerceAccountingService
                 {
                     PostingLine.Debit(accounts[AccountCodes.SupplierPayables].Id, payment.Amount, "Reduce payables"),
                     PostingLine.Credit(
-                        accounts[fundingAccountCode].Id,
+                        fundingAccountId,
                         payment.Amount,
                         $"Supplier payment funding via {payment.PaymentMethod}")
                 }
@@ -1056,7 +1083,8 @@ public class CommerceAccountingService : ICommerceAccountingService
             _logger.LogInformation(
                 "Posting online payment for order {OrderNumber}, Gateway: {Gateway}",
                 order.OrderNumber, gateway);
-            
+
+            EnsureEcommerceOrderPaymentAuthority(order, gateway);
             var paymentAccountId = await ResolveEcommercePaymentAccountIdAsync(order.TenantId, gateway, ct);
             var salesAccount = await _accountResolver.GetByCodeAsync(
                 order.TenantId,
@@ -1108,9 +1136,15 @@ public class CommerceAccountingService : ICommerceAccountingService
                 tenantId, amount, providerEventId);
             return PostingResult.Failed("Gateway is required for unresolved payment posting to avoid ambiguous suspense lineage.");
         }
+
+        if (string.IsNullOrWhiteSpace(providerEventId))
+        {
+            return PostingResult.Failed("Provider event ID is required for unresolved payment posting.");
+        }
         
         // Normalize gateway for account resolution and logging only
         var normalizedForResolve = gatewayTrimmed.ToLowerInvariant();
+        var normalizedProviderEventId = providerEventId.Trim();
         
         try
         {
@@ -1129,14 +1163,14 @@ public class CommerceAccountingService : ICommerceAccountingService
                 TenantId = tenantId,
                 JournalDate = DateTime.UtcNow,
                 SourceType = "UnresolvedPayment",
-                SourceId = Guid.Empty,
-                SourceReference = providerEventId,
-                Description = $"Unresolved payment from {gatewayTrimmed}: {providerEventId}",
-                IdempotencyKey = $"UNRESOLVED_PAYMENT:{tenantId}:{gatewayTrimmed}:{providerEventId}",
+                SourceId = BuildUnresolvedPaymentSourceId(tenantId, normalizedForResolve, normalizedProviderEventId),
+                SourceReference = normalizedProviderEventId,
+                Description = $"Unresolved payment from {gatewayTrimmed}: {normalizedProviderEventId}",
+                IdempotencyKey = $"UNRESOLVED_PAYMENT:{tenantId}:{gatewayTrimmed}:{normalizedProviderEventId}",
                 Lines = new List<PostingLine>
                 {
                     PostingLine.Debit(paymentAccountId, amount, $"{gatewayTrimmed} unresolved capture"),
-                    PostingLine.Credit(suspenseAccount.Id, amount, $"Suspense cash for {providerEventId}")
+                    PostingLine.Credit(suspenseAccount.Id, amount, $"Suspense cash for {normalizedProviderEventId}")
                 }
             };
             
@@ -1148,6 +1182,16 @@ public class CommerceAccountingService : ICommerceAccountingService
             _logger.LogError(ex, "Failed to post unresolved payment to suspense ledger | EventId: {EventId}", providerEventId);
             return PostingResult.Failed(ex.Message);
         }
+    }
+
+    private static Guid BuildUnresolvedPaymentSourceId(
+        Guid tenantId,
+        string normalizedGateway,
+        string normalizedProviderEventId)
+    {
+        var source = Encoding.UTF8.GetBytes(
+            $"unresolved-payment|{tenantId:N}|{normalizedGateway}|{normalizedProviderEventId}");
+        return new Guid(SHA256.HashData(source).AsSpan(0, 16));
     }
 
     public async Task<PostingResult> PostResolvedUnresolvedPaymentAsync(
@@ -1180,6 +1224,10 @@ public class CommerceAccountingService : ICommerceAccountingService
                 "Provider event ID cannot be null, empty, or whitespace.",
                 nameof(providerEventId));
         }
+
+        // T-09: suspense cannot be cleared to revenue without explicit provider
+        // lineage. This also checks durable order fields for disguised Fawry data.
+        EnsureEcommerceOrderPaymentAuthority(order, gatewayTrimmed);
 
         if (amount <= 0m)
         {
@@ -1267,6 +1315,13 @@ public class CommerceAccountingService : ICommerceAccountingService
         var gatewayTrimmed = gateway.Trim();
         var normalizedGateway = gatewayTrimmed.ToLowerInvariant();
         var providerEventIdTrimmed = providerEventId.Trim();
+
+        // T-09: Fawry suspense must never clear to a matched CommerceHub capture.
+        if (Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(gatewayTrimmed))
+        {
+            throw new InvalidOperationException(
+                $"{Core.Payments.FawryFinancialAuthorityPolicy.Code}: {Core.Payments.FawryFinancialAuthorityPolicy.Message}");
+        }
 
         try
         {
@@ -1449,11 +1504,299 @@ public class CommerceAccountingService : ICommerceAccountingService
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // T-08 E-COMMERCE / COMMERCEHUB MERCHANDISE-COST (COGS) OPERATIONS
+    //
+    // Forward-looking only: every amount below comes from a frozen line snapshot
+    // captured at checkout commit. Live ProductVariant.CostPrice is never read here.
+    // Journals touch only 5010 (COGS) and 1310 (Inventory): no cash, clearing,
+    // AR/AP, or revenue leg, so Cash Flow classification is unaffected.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    public async Task<PostingResult> PostEcommerceCogsAsync(
+        EcommerceCogsPostingRequest cogs,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ValidateEcommerceCogsRequest(cogs);
+
+            _logger.LogInformation(
+                "Posting Storefront COGS for order {OrderNumber} | CommitEvent: {CommitEventId} | TotalCost: {TotalCost}",
+                cogs.OrderNumber, cogs.CommitEventId, cogs.TotalCost);
+
+            var accounts = await _accountResolver.GetByCodesAsync(
+                cogs.TenantId,
+                new[] { AccountCodes.CostOfGoodsSold, AccountCodes.Inventory },
+                ct);
+
+            var request = new PostingRequest
+            {
+                TenantId = cogs.TenantId,
+                JournalDate = cogs.CommitOccurredAtUtc,
+                SourceType = EcommerceCogsPolicy.StorefrontCogsSourceType,
+                SourceId = cogs.OrderId,
+                SourceReference = cogs.OrderNumber,
+                Description = $"Storefront COGS {cogs.OrderNumber} (commit {cogs.CommitEventId})",
+                IdempotencyKey = cogs.IdempotencyKey,
+                Lines = new List<PostingLine>
+                {
+                    PostingLine.Debit(accounts[AccountCodes.CostOfGoodsSold].Id, cogs.TotalCost, "Cost of Goods Sold"),
+                    PostingLine.Credit(accounts[AccountCodes.Inventory].Id, cogs.TotalCost, "Inventory Reduction")
+                }
+            };
+
+            var journal = await _postingService.PostJournalAsync(request, ct);
+            return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post Storefront COGS for order {OrderId}", cogs.OrderId);
+            return PostingResult.Failed(ex.Message);
+        }
+    }
+
+    public async Task<PostingResult> PostEcommerceCogsReversalAsync(
+        EcommerceCogsReversalPostingRequest reversal,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ValidateEcommerceCogsReversalRequest(reversal);
+
+            _logger.LogInformation(
+                "Posting Storefront COGS reversal for order {OrderNumber} | ReturnEvent: {ReturnEventId} | TotalReversal: {TotalReversal}",
+                reversal.OrderNumber, reversal.ReturnEventId, reversal.TotalReversal);
+
+            var accounts = await _accountResolver.GetByCodesAsync(
+                reversal.TenantId,
+                new[] { AccountCodes.CostOfGoodsSold, AccountCodes.Inventory },
+                ct);
+
+            var request = new PostingRequest
+            {
+                TenantId = reversal.TenantId,
+                JournalDate = reversal.ReturnOccurredAtUtc,
+                SourceType = EcommerceCogsPolicy.StorefrontCogsReversalSourceType,
+                SourceId = reversal.OrderId,
+                SourceReference = reversal.OrderNumber,
+                Description = $"Storefront COGS reversal {reversal.OrderNumber} (return {reversal.ReturnEventId})",
+                IdempotencyKey = reversal.IdempotencyKey,
+                Lines = new List<PostingLine>
+                {
+                    PostingLine.Debit(accounts[AccountCodes.Inventory].Id, reversal.TotalReversal, "Inventory Restoration"),
+                    PostingLine.Credit(accounts[AccountCodes.CostOfGoodsSold].Id, reversal.TotalReversal, "COGS reversal")
+                }
+            };
+
+            var journal = await _postingService.PostJournalAsync(request, ct);
+            return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post Storefront COGS reversal for order {OrderId}", reversal.OrderId);
+            return PostingResult.Failed(ex.Message);
+        }
+    }
+
+    public async Task<PostingResult> PostCommerceHubCogsAsync(
+        CommerceHubCogsPostingRequest cogs,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ValidateCommerceHubCogsRequest(cogs);
+
+            _logger.LogInformation(
+                "Posting CommerceHub COGS for sub-order {SubOrderNumber} | DeliveryCommitEvent: {DeliveryCommitEventId} | Cost: {CostAmount}",
+                cogs.SubOrderNumber, cogs.DeliveryCommitEventId, cogs.CostAmount);
+
+            var accounts = await _accountResolver.GetByCodesAsync(
+                cogs.TenantId,
+                new[] { AccountCodes.CostOfGoodsSold, AccountCodes.Inventory },
+                ct);
+
+            var request = new PostingRequest
+            {
+                TenantId = cogs.TenantId,
+                JournalDate = cogs.CommitOccurredAtUtc,
+                SourceType = EcommerceCogsPolicy.CommerceHubCogsSourceType,
+                SourceId = cogs.SubOrderId,
+                SourceReference = cogs.SubOrderNumber,
+                Description = $"CommerceHub COGS {cogs.SubOrderNumber} (delivery {cogs.DeliveryCommitEventId})",
+                IdempotencyKey = cogs.IdempotencyKey,
+                Lines = new List<PostingLine>
+                {
+                    PostingLine.Debit(accounts[AccountCodes.CostOfGoodsSold].Id, cogs.CostAmount, "Cost of Goods Sold"),
+                    PostingLine.Credit(accounts[AccountCodes.Inventory].Id, cogs.CostAmount, "Inventory Reduction")
+                }
+            };
+
+            var journal = await _postingService.PostJournalAsync(request, ct);
+            return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post CommerceHub COGS for sub-order {SubOrderId}", cogs.SubOrderId);
+            return PostingResult.Failed(ex.Message);
+        }
+    }
+
+    public async Task<PostingResult> PostCommerceHubCogsReversalAsync(
+        CommerceHubCogsReversalPostingRequest reversal,
+        CancellationToken ct = default)
+    {
+        try
+        {
+            ValidateCommerceHubCogsReversalRequest(reversal);
+
+            _logger.LogInformation(
+                "Posting CommerceHub COGS reversal for sub-order {SubOrderNumber} | Return: {ReturnId} | Reversal: {ReversalAmount}",
+                reversal.SubOrderNumber, reversal.ReturnId, reversal.ReversalAmount);
+
+            var accounts = await _accountResolver.GetByCodesAsync(
+                reversal.TenantId,
+                new[] { AccountCodes.CostOfGoodsSold, AccountCodes.Inventory },
+                ct);
+
+            var request = new PostingRequest
+            {
+                TenantId = reversal.TenantId,
+                JournalDate = reversal.ReturnOccurredAtUtc,
+                SourceType = EcommerceCogsPolicy.CommerceHubCogsReversalSourceType,
+                SourceId = reversal.SubOrderId,
+                SourceReference = reversal.SubOrderNumber,
+                Description = $"CommerceHub COGS reversal {reversal.SubOrderNumber} (return {reversal.ReturnId})",
+                IdempotencyKey = reversal.IdempotencyKey,
+                Lines = new List<PostingLine>
+                {
+                    PostingLine.Debit(accounts[AccountCodes.Inventory].Id, reversal.ReversalAmount, "Inventory Restoration"),
+                    PostingLine.Credit(accounts[AccountCodes.CostOfGoodsSold].Id, reversal.ReversalAmount, "COGS reversal")
+                }
+            };
+
+            var journal = await _postingService.PostJournalAsync(request, ct);
+            return PostingResult.Succeeded(journal.Id, journal.JournalNumber);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post CommerceHub COGS reversal for sub-order {SubOrderId}", reversal.SubOrderId);
+            return PostingResult.Failed(ex.Message);
+        }
+    }
+
+    private static void ValidateEcommerceCogsRequest(EcommerceCogsPostingRequest cogs)
+    {
+        ArgumentNullException.ThrowIfNull(cogs);
+        if (cogs.TenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(cogs));
+        if (cogs.OrderId == Guid.Empty) throw new ArgumentException("OrderId is required.", nameof(cogs));
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.OrderNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.CommitEventId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.Currency);
+        if (cogs.Lines == null || cogs.Lines.Count == 0)
+            throw new ArgumentException("COGS requires at least one snapshot cost line.", nameof(cogs));
+        if (cogs.TotalCost <= 0m)
+            throw new ArgumentOutOfRangeException(nameof(cogs), cogs.TotalCost, "COGS total must be greater than zero.");
+
+        foreach (var line in cogs.Lines)
+        {
+            if (line.OrderItemId == Guid.Empty) throw new ArgumentException("OrderItemId is required on every COGS line.", nameof(cogs));
+            if (line.Quantity <= 0) throw new ArgumentOutOfRangeException(nameof(cogs), line.Quantity, "COGS line quantity must be positive.");
+            if (line.UnitCostSnapshot < 0m) throw new ArgumentOutOfRangeException(nameof(cogs), line.UnitCostSnapshot, "Snapshot unit cost cannot be negative.");
+            if (line.CostAmount <= 0m) throw new ArgumentOutOfRangeException(nameof(cogs), line.CostAmount, "Snapshot line cost must be positive.");
+
+            var expected = Math.Round(line.UnitCostSnapshot * line.Quantity, 2, MidpointRounding.AwayFromZero);
+            if (Math.Abs(expected - line.CostAmount) > 0.01m)
+                throw new InvalidOperationException(
+                    $"COGS line cost {line.CostAmount} does not match snapshot {line.UnitCostSnapshot} × quantity {line.Quantity}. Failing closed.");
+        }
+
+        var lineTotal = cogs.Lines.Sum(line => line.CostAmount);
+        if (Math.Abs(lineTotal - cogs.TotalCost) > 0.01m)
+            throw new InvalidOperationException(
+                $"COGS total {cogs.TotalCost} does not match the sum of snapshot lines {lineTotal}. Failing closed.");
+    }
+
+    private static void ValidateEcommerceCogsReversalRequest(EcommerceCogsReversalPostingRequest reversal)
+    {
+        ArgumentNullException.ThrowIfNull(reversal);
+        if (reversal.TenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(reversal));
+        if (reversal.OrderId == Guid.Empty) throw new ArgumentException("OrderId is required.", nameof(reversal));
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.OrderNumber);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.ReturnEventId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.Currency);
+        if (reversal.Lines == null || reversal.Lines.Count == 0)
+            throw new ArgumentException("COGS reversal requires at least one line.", nameof(reversal));
+        if (reversal.TotalReversal <= 0m)
+            throw new ArgumentOutOfRangeException(nameof(reversal), reversal.TotalReversal, "COGS reversal total must be greater than zero.");
+
+        foreach (var line in reversal.Lines)
+        {
+            if (line.OrderItemId == Guid.Empty) throw new ArgumentException("OrderItemId is required on every reversal line.", nameof(reversal));
+            if (line.ReturnQuantity <= 0m) throw new ArgumentOutOfRangeException(nameof(reversal), line.ReturnQuantity, "Reversal quantity must be positive.");
+            if (line.ReversalAmount <= 0m) throw new ArgumentOutOfRangeException(nameof(reversal), line.ReversalAmount, "Reversal amount must be positive.");
+        }
+
+        var lineTotal = reversal.Lines.Sum(line => line.ReversalAmount);
+        if (Math.Abs(lineTotal - reversal.TotalReversal) > 0.01m)
+            throw new InvalidOperationException(
+                $"COGS reversal total {reversal.TotalReversal} does not match the sum of reversal lines {lineTotal}. Failing closed.");
+    }
+
+    private static void ValidateCommerceHubCogsRequest(CommerceHubCogsPostingRequest cogs)
+    {
+        ArgumentNullException.ThrowIfNull(cogs);
+        if (cogs.TenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(cogs));
+        if (cogs.MarketplaceOrderId == Guid.Empty) throw new ArgumentException("MarketplaceOrderId is required.", nameof(cogs));
+        if (cogs.SubOrderId == Guid.Empty) throw new ArgumentException("SubOrderId is required.", nameof(cogs));
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.SubOrderNumber);
+        if (cogs.SubOrderItemId == Guid.Empty) throw new ArgumentException("SubOrderItemId is required.", nameof(cogs));
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.DeliveryCommitEventId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(cogs.Currency);
+        if (cogs.Quantity <= 0m) throw new ArgumentOutOfRangeException(nameof(cogs), cogs.Quantity, "Committed quantity must be positive.");
+        if (cogs.UnitCostSnapshot < 0m) throw new ArgumentOutOfRangeException(nameof(cogs), cogs.UnitCostSnapshot, "Snapshot unit cost cannot be negative.");
+        if (cogs.CostAmount <= 0m) throw new ArgumentOutOfRangeException(nameof(cogs), cogs.CostAmount, "Snapshot cost must be positive.");
+
+        var expected = Math.Round(cogs.UnitCostSnapshot * cogs.Quantity, 2, MidpointRounding.AwayFromZero);
+        if (Math.Abs(expected - cogs.CostAmount) > 0.01m)
+            throw new InvalidOperationException(
+                $"CommerceHub COGS cost {cogs.CostAmount} does not match snapshot {cogs.UnitCostSnapshot} × quantity {cogs.Quantity}. Failing closed.");
+    }
+
+    private static void ValidateCommerceHubCogsReversalRequest(CommerceHubCogsReversalPostingRequest reversal)
+    {
+        ArgumentNullException.ThrowIfNull(reversal);
+        if (reversal.TenantId == Guid.Empty) throw new ArgumentException("TenantId is required.", nameof(reversal));
+        if (reversal.SubOrderId == Guid.Empty) throw new ArgumentException("SubOrderId is required.", nameof(reversal));
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.SubOrderNumber);
+        if (reversal.SubOrderItemId == Guid.Empty) throw new ArgumentException("SubOrderItemId is required.", nameof(reversal));
+        if (reversal.ReturnId == Guid.Empty) throw new ArgumentException("ReturnId is required.", nameof(reversal));
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.ReturnEventId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reversal.Currency);
+        if (reversal.ResellableQuantity <= 0m) throw new ArgumentOutOfRangeException(nameof(reversal), reversal.ResellableQuantity, "Resellable quantity must be positive.");
+        if (reversal.UnitCostSnapshot < 0m) throw new ArgumentOutOfRangeException(nameof(reversal), reversal.UnitCostSnapshot, "Snapshot unit cost cannot be negative.");
+        if (reversal.ReversalAmount <= 0m) throw new ArgumentOutOfRangeException(nameof(reversal), reversal.ReversalAmount, "Reversal amount must be positive.");
+
+        var expected = Math.Round(reversal.UnitCostSnapshot * reversal.ResellableQuantity, 2, MidpointRounding.AwayFromZero);
+        if (Math.Abs(expected - reversal.ReversalAmount) > 0.01m)
+            throw new InvalidOperationException(
+                $"CommerceHub COGS reversal {reversal.ReversalAmount} does not match snapshot {reversal.UnitCostSnapshot} × resellable {reversal.ResellableQuantity}. Failing closed.");
+    }
+
     private async Task<Guid> ResolveEcommerceRefundCreditAccountIdAsync(
         Order order,
         EcommerceRefundAccountingContext? refundContext,
         CancellationToken ct)
     {
+        // T-09: no Fawry clearing lineage is certified, so a Fawry refund must never
+        // resolve to Stripe/Visa/Wallet clearing, Bank, or Treasury Suspense.
+        if (Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(order.PaymentGateway) ||
+            Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(order.PaymentMethodCode))
+        {
+            throw new InvalidOperationException(
+                $"{Core.Payments.FawryFinancialAuthorityPolicy.Code}: {Core.Payments.FawryFinancialAuthorityPolicy.Message}");
+        }
+
         if (refundContext?.IsPostSettlementRefund != true)
         {
             return await ResolveEcommercePaymentAccountIdAsync(order.TenantId, order.PaymentGateway, ct);
@@ -1474,16 +1817,49 @@ public class CommerceAccountingService : ICommerceAccountingService
         string? gateway,
         CancellationToken ct)
     {
-        var paymentMethodCode = gateway?.Trim().ToUpperInvariant() switch
+        var paymentMethodCode = NormalizeEcommercePaymentMethodCode(gateway);
+        return await _accountResolver.GetPaymentAccountIdAsync(tenantId, paymentMethodCode, ct);
+    }
+
+    private static string NormalizeEcommercePaymentMethodCode(string? gateway)
+    {
+        // T-09: no unknown-to-Stripe fallback. Every accepted code maps explicitly;
+        // Fawry and unknown/blank values fail before any account resolution or posting.
+        if (Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(gateway))
+        {
+            throw new InvalidOperationException(
+                $"{Core.Payments.FawryFinancialAuthorityPolicy.Code}: {Core.Payments.FawryFinancialAuthorityPolicy.Message}");
+        }
+
+        return gateway?.Trim().ToUpperInvariant() switch
         {
             PaymentMethodCodes.Stripe => PaymentMethodCodes.Stripe,
-            "PAYMOB" or PaymentMethodCodes.Card => PaymentMethodCodes.Card,
+            "PAYMOB" or "VISA" or PaymentMethodCodes.Card => PaymentMethodCodes.Card,
             PaymentMethodCodes.Cod => PaymentMethodCodes.Cod,
-            PaymentMethodCodes.Wallet => PaymentMethodCodes.Wallet,
-            _ => PaymentMethodCodes.Stripe
+            "MANUALWALLET" or PaymentMethodCodes.Wallet => PaymentMethodCodes.Wallet,
+            _ => throw new InvalidOperationException(
+                $"E-commerce payment account authority is unavailable for provider '{gateway?.Trim()}'.")
         };
+    }
 
-        return await _accountResolver.GetPaymentAccountIdAsync(tenantId, paymentMethodCode, ct);
+    private static void EnsureEcommerceOrderPaymentAuthority(Order order, string? gateway)
+    {
+        var requestedPaymentMethodCode = NormalizeEcommercePaymentMethodCode(gateway);
+
+        foreach (var orderProvider in new[] { order.PaymentGateway, order.PaymentMethodCode })
+        {
+            if (string.IsNullOrWhiteSpace(orderProvider))
+            {
+                continue;
+            }
+
+            var orderPaymentMethodCode = NormalizeEcommercePaymentMethodCode(orderProvider);
+            if (!string.Equals(orderPaymentMethodCode, requestedPaymentMethodCode, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"E-commerce payment provider lineage mismatch for order {order.Id}.");
+            }
+        }
     }
     
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1491,19 +1867,30 @@ public class CommerceAccountingService : ICommerceAccountingService
     // ═══════════════════════════════════════════════════════════════════════════
     
     public async Task<PostingResult> PostGatewaySettlementAsync(
-        Guid tenantId, string gateway, decimal grossAmount, decimal fees, string settlementId, CancellationToken ct = default)
+        Guid tenantId, Guid settlementBatchId, string gateway, decimal grossAmount, decimal fees,
+        string settlementId, DateTime settledAtUtc, CancellationToken ct = default)
     {
         try
         {
             _logger.LogInformation(
                 "Posting gateway settlement for {Gateway}, Gross: {Gross}, Fees: {Fees}",
                 gateway, grossAmount, fees);
-            
-            var clearingCode = gateway.ToUpperInvariant() switch
+
+            // T-09: Fawry has no certified clearing account; fail with the stable
+            // authority code rather than the generic clearing-authority message.
+            if (Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(gateway))
+            {
+                throw new InvalidOperationException(
+                    $"{Core.Payments.FawryFinancialAuthorityPolicy.Code}: {Core.Payments.FawryFinancialAuthorityPolicy.Message}");
+            }
+
+            var normalizedGateway = gateway.Trim().ToUpperInvariant();
+            var clearingCode = normalizedGateway switch
             {
                 "STRIPE" => AccountCodes.StripeClearing,
-                "PAYMOB" => AccountCodes.VisaClearing,
-                _ => AccountCodes.StripeClearing
+                "PAYMOB" or "CARD" or "VISA" => AccountCodes.VisaClearing,
+                _ => throw new InvalidOperationException(
+                    $"Gateway settlement provider '{gateway}' has no configured clearing-account authority.")
             };
             
             var accounts = await _accountResolver.GetByCodesAsync(
@@ -1527,9 +1914,9 @@ public class CommerceAccountingService : ICommerceAccountingService
             var request = new PostingRequest
             {
                 TenantId = tenantId,
-                JournalDate = DateTime.UtcNow,
+                JournalDate = settledAtUtc,
                 SourceType = "GatewaySettlement",
-                SourceId = Guid.NewGuid(), // No specific source entity
+                SourceId = settlementBatchId,
                 SourceReference = settlementId,
                 Description = $"{gateway} settlement {settlementId}",
                 IdempotencyKey = $"GATEWAY_SETTLEMENT:{tenantId}:{settlementId}",
@@ -1547,7 +1934,8 @@ public class CommerceAccountingService : ICommerceAccountingService
     }
     
     public async Task<PostingResult> PostCodSettlementAsync(
-        Guid tenantId, decimal grossAmount, decimal fees, string settlementId, CancellationToken ct = default)
+        Guid tenantId, Guid settlementBatchId, decimal grossAmount, decimal fees,
+        string settlementId, DateTime settledAtUtc, CancellationToken ct = default)
     {
         try
         {
@@ -1575,9 +1963,9 @@ public class CommerceAccountingService : ICommerceAccountingService
             var request = new PostingRequest
             {
                 TenantId = tenantId,
-                JournalDate = DateTime.UtcNow,
+                JournalDate = settledAtUtc,
                 SourceType = "CODSettlement",
-                SourceId = Guid.NewGuid(),
+                SourceId = settlementBatchId,
                 SourceReference = settlementId,
                 Description = $"COD settlement {settlementId}",
                 IdempotencyKey = $"COD_SETTLEMENT:{tenantId}:{settlementId}",

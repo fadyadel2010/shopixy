@@ -1,3 +1,20 @@
+# 2026-09-13 Treasury T-06 Supplier Card Funding Authority
+
+- MITIGATED AT SOURCE: Future supplier Card purchases and standalone supplier Card payments now require a tenant-owned `FundedCompanyCard` instrument and freeze its instrument ID, dedicated Asset ledger-account ID, and authority version. Missing, inactive, foreign-tenant, stale, non-dedicated, clearing, `1020`, and `1110` authority fails closed.
+- MITIGATED AT SOURCE: Card top-ups are immutable, tenant-scoped, request-hash/idempotency-bound documents that post Dr dedicated supplier-card Asset / Cr configured active Cashbox or Bank. Available balance and statements are ledger-derived, and `PreventNegative` plus ordered account locking prevents funded-card overspend.
+- PRESERVED: Historical shopixy account `1020` remains EGP -3.80. No historical journal, ledger line, balance, account classification, or retained purchase was rewritten, and customer Card/`1110` settlement authority remains separate.
+- POST-MIGRATION PASS: Migration `20260912154614_T06SupplierCardFundingAuthority` is applied exactly once to Development database `PosEcommerceDb_Baseline`; a second EF update was already current, no model drift remains, and the actual PostgreSQL schema matches the reviewed migration. The protected business-data SHA-256 remained `3250BC2CE9A9CC47F7ED48C23EB2E2C3806462852699713E4FD25091B8C4793E` before migration, immediately after migration, and after API restart/smoke. All 121 accounting outbox messages remain processed, the new instrument/funding tables remain empty, focused T-06 tests passed 119/119, and no historical authority was invented.
+- RESIDUAL: The implemented authority supports funded company cards only. Credit-card liabilities and personal/reimbursement cards require separately approved domain models; no fallback may reuse `1020`, `1110`, `1030`, `FinancialAccount`, or `VisaTransaction` authority.
+- references: `docs/reports/TREASURY_T06_SUPPLIER_CARD_FUNDING_AUTHORITY_DECISION_2026-09-12.md`, `docs/reports/TREASURY_T06_SUPPLIER_CARD_FUNDING_AUTHORITY_IMPLEMENTATION_2026-09-13.md`, `docs/reports/TREASURY_T06_PRE_DEPLOYMENT_GATE_2026-09-13.md`, `docs/reports/TREASURY_T06_POST_MIGRATION_CERTIFICATION_2026-09-13.md`, `PointOfSale.Infrastructure/Accounting/SupplierCardAuthority.cs`, `PointOfSale.API/Controllers/SupplierCardFundingInstrumentsController.cs`, `PointOfSale.Tests/Integration/SupplierCardFundingAuthorityIntegrationTests.cs`
+
+# 2026-09-12 Treasury Phase 1 Live-State Risks
+
+- CONFIRMED CRITICAL: `shopixy` has five `LedgerAccounts.CurrentBalance` values that differ from posted-ledger aggregates by EGP 4,240.00 absolute. Treasury reads and no-negative posting controls consume this cache. Preserve ledger authority; establish opening-state provenance before an approved journal adjustment or cache recomputation.
+- CONFIRMED HIGH: `shopixy` Treasury pending clearing is EGP 2,095.00 while ledger-derived Clearing Aging is EGP 55.00. COD EGP 400.00 and Wallet EGP 1,640.00 are unjournaled cached opening state.
+- CONFIRMED HIGH: `shopixy` Cash Flow fails reconciliation by EGP 120.00 because affiliate expense/payable activity uses `6110`/`2105`, while working-capital payables include only `20xx`.
+- CONFIRMED HIGH: Clearing Aging's Settle action prefills a generic clearing-to-Cashbox transfer, but the active transfer authority accepts only Cashbox/Bank accounts; manual clearing settlement is intentionally disabled. Route future settlement through current `PaymentSettlementBatch` plus settlement-order authority rather than enabling a manual shortcut.
+- references: `docs/reports/TREASURY_PHASE_1_ARCHITECTURE_AUDIT_2026-09-12.md`, `PointOfSale.Infrastructure/Treasury/TreasuryReadService.cs`, `PointOfSale.Infrastructure/Accounting/FinancialReportService.cs`, `PointOfSale.Infrastructure/Accounting/FinancialPostingService.cs`, `PointOfSale.Web/src/pages/treasury/TreasuryClearingAging.jsx`
+
 # 2026-08-30 Affiliate Attribution Certification Risks
 
 - PASS AF-PA4.4 source-level promotion-link admission drift is mitigated; live credential-backed runtime proof remains operational certification work.

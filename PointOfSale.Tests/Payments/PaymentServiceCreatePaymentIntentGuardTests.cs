@@ -42,7 +42,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
-                new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+                new CreatePaymentIntentRequestDto { Provider = "Stripe" },
                 promotionCalculationFailed: false,
                 requestId: Guid.NewGuid().ToString("N"),
                 correlationId: "test-correlation",
@@ -67,7 +67,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
-                new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+                new CreatePaymentIntentRequestDto { Provider = "Stripe" },
                 promotionCalculationFailed: false,
                 requestId: Guid.NewGuid().ToString("N"),
                 correlationId: "test-correlation",
@@ -92,7 +92,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
         var initialResponse = await service.CreatePaymentIntentAsync(
             tenantId,
             order.Id,
-            new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+            new CreatePaymentIntentRequestDto { Provider = "Stripe" },
             promotionCalculationFailed: false,
             requestId,
             correlationId: "initial-attempt",
@@ -107,7 +107,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
-                new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+                new CreatePaymentIntentRequestDto { Provider = "Stripe" },
                 promotionCalculationFailed: false,
                 requestId,
                 correlationId: "replay-attempt",
@@ -116,6 +116,60 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
         Assert.Equal("PAYMENT_ALREADY_FINALIZED", exception.ErrorCode);
         Assert.Equal(1, await dbContext.PaymentIntents.CountAsync());
         Assert.NotEqual(Guid.Empty, initialResponse.PaymentIntentId);
+    }
+
+    [Fact]
+    public async Task CreatePaymentIntentAsync_WhenProviderIsFawry_RejectsWithoutFinancialAuthority()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(tenantId);
+        var order = SeedOrder(tenantId, status: OrderStatus.Pending, paymentStatus: PaymentStatus.Pending);
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var service = CreateService(dbContext);
+
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
+            service.CreatePaymentIntentAsync(
+                tenantId,
+                order.Id,
+                new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+                promotionCalculationFailed: false,
+                requestId: Guid.NewGuid().ToString("N"),
+                correlationId: "fawry-authority",
+                cancellationToken: CancellationToken.None));
+
+        Assert.Equal("FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE", exception.ErrorCode);
+        Assert.Empty(await dbContext.PaymentIntents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task CreatePaymentIntentAsync_WhenFawryOrderRequestsStripe_RejectsWithoutMutation()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(tenantId);
+        var order = SeedOrder(
+            tenantId,
+            status: OrderStatus.Pending,
+            paymentStatus: PaymentStatus.Pending,
+            paymentMethod: PaymentMethod.Card,
+            paymentMethodCode: "FAWRY");
+        order.PaymentGateway = "Fawry";
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
+            CreateService(dbContext).CreatePaymentIntentAsync(
+                tenantId,
+                order.Id,
+                new CreatePaymentIntentRequestDto { Provider = "Stripe" },
+                promotionCalculationFailed: false,
+                requestId: Guid.NewGuid().ToString("N"),
+                correlationId: "fawry-disguised-as-stripe",
+                cancellationToken: CancellationToken.None));
+
+        Assert.Equal("FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE", exception.ErrorCode);
+        Assert.Empty(await dbContext.PaymentIntents.ToListAsync());
     }
 
     [Fact]
@@ -272,7 +326,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
-                new CreatePaymentIntentRequestDto { Provider = "Fawry" },
+                new CreatePaymentIntentRequestDto { Provider = "Stripe" },
                 promotionCalculationFailed: false,
                 requestId: Guid.NewGuid().ToString("N"),
                 correlationId: "currency-missing",
@@ -283,8 +337,11 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
     }
 
     [Fact]
-    public async Task CreatePaymentIntentAsync_WhenOrderCurrencyDoesNotMatchTenant_RejectsRequest()
+    public async Task CreatePaymentIntentAsync_WhenProviderIsFawry_RejectsWithStableAuthorityDespiteCurrencyMismatch()
     {
+        // T-09: the Fawry tenant-currency provider check no longer exists because
+        // Fawry initiation is fail-closed. The stable authority rejection wins
+        // and no intent is created.
         var tenantId = Guid.NewGuid();
         await using var dbContext = CreateDbContext(tenantId);
         var order = SeedOrder(tenantId, status: OrderStatus.Pending, paymentStatus: PaymentStatus.Pending);
@@ -294,7 +351,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
 
         var service = CreateService(dbContext);
 
-        var exception = await Assert.ThrowsAsync<PaymentCurrencyMismatchException>(() =>
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
@@ -304,8 +361,7 @@ public sealed class PaymentServiceCreatePaymentIntentGuardTests
                 correlationId: "currency-mismatch",
                 cancellationToken: CancellationToken.None));
 
-        Assert.Equal("USD", exception.OrderCurrency);
-        Assert.Equal("EGP", exception.TenantCurrency);
+        Assert.Equal("FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE", exception.ErrorCode);
         Assert.Empty(await dbContext.PaymentIntents.ToListAsync());
     }
 

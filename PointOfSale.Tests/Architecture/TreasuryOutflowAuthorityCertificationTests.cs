@@ -2,7 +2,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
+using PointOfSale.Core.Entities.CommerceHubFinance;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Enums.CommerceHubFinance;
 using PointOfSale.Core.Exceptions.Accounting;
 using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Infrastructure.Accounting;
@@ -178,6 +180,50 @@ public sealed class TreasuryOutflowAuthorityCertificationTests
                 "SupplierPayment",
                 foreignPayment.Id,
                 $"FOREIGN-LIABILITY:{foreignPayment.Id}")));
+    }
+
+    [Fact]
+    public async Task ForeignTenantCommerceHubOutbox_CannotAuthorizeLocalTreasuryOutflow()
+    {
+        var localTenantId = Guid.NewGuid();
+        var foreignTenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var (cash, expense) = await SeedFundedCashAsync(db, localTenantId, 200m);
+        var transaction = CommerceHubFinancialTransaction.Create(
+            CommerceHubFinancialEntityType.Platform,
+            null,
+            CommerceHubFinancialTransactionType.Refund,
+            CommerceHubFinancialTransactionDirection.Debit,
+            50m,
+            "EGP",
+            CommerceHubFinancialReferenceType.Refund,
+            Guid.NewGuid(),
+            "Foreign CommerceHub refund",
+            financialBucketOverride: CommerceHubFinancialBucket.Cash);
+        var idempotencyKey = $"COMMERCEHUB_TX:{foreignTenantId:N}:{transaction.Id:N}";
+        db.CommerceHubFinancialTransactions.Add(transaction);
+        db.AccountingOutboxMessages.Add(AccountingOutboxMessage.Create(
+            foreignTenantId,
+            "CommerceHubLedgerPosting",
+            transaction.Id,
+            nameof(CommerceHubFinancialTransaction),
+            "{}",
+            idempotencyKey,
+            sourceType: "CommerceHubFinancialTransaction"));
+        await db.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<InvalidJournalException>(() =>
+            CreatePostingService(db).PostJournalAsync(BuildOutflow(
+                localTenantId,
+                cash.Id,
+                expense.Id,
+                50m,
+                "CommerceHubFinancialTransaction",
+                transaction.Id,
+                idempotencyKey)));
+
+        Assert.Contains("accounting SQL authority", exception.Message);
+        Assert.Equal(200m, cash.CurrentBalance);
     }
 
     [Fact]

@@ -194,6 +194,21 @@ public class PaymentService : IPaymentService
         await EnsureOrderCustomerBelongsToTenantAsync(order, tenantId, correlationId, cancellationToken);
 
         var provider = DetermineProvider(order.PaymentMethod, request.Provider);
+
+        // T-09: Fawry has no certified financial settlement authority. Reject
+        // before any order, reservation, intent, checkpoint, provider call, or
+        // outbox mutation.
+        if (provider == PaymentProvider.Fawry ||
+            FawryFinancialAuthorityPolicy.IsFawry(order.PaymentMethodCode) ||
+            FawryFinancialAuthorityPolicy.IsFawry(order.PaymentGateway))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            _reliabilityTelemetry.RecordPaymentIntentRejected(
+                "fawry_financial_authority_unavailable",
+                provider.ToString());
+            throw new PaymentFawryFinancialAuthorityException();
+        }
+
         var validatedCurrency = await EnsurePaymentCurrencyConsistencyAsync(
             tenantId,
             orderId,
@@ -559,6 +574,12 @@ public class PaymentService : IPaymentService
                 "RecoveryResumeRequest:Invalid",
                 "ExistingDurablePaymentIntent",
                 "PAYMENT_RECOVERY_FACTS_INVALID");
+        }
+
+        // T-09: Fawry recovery must never initiate or resume provider execution.
+        if (provider == PaymentProvider.Fawry)
+        {
+            throw new PaymentFawryFinancialAuthorityException();
         }
 
         return EnsurePersistedPaymentIntentReadyAsync(
@@ -1980,14 +2001,7 @@ public class PaymentService : IPaymentService
     {
         if (provider == PaymentProvider.Fawry)
         {
-            return await EnsurePersistedFawryPaymentIntentReadyAsync(
-                tenantId,
-                orderId,
-                paymentIntentId,
-                promotionCalculationFailed,
-                requestId,
-                correlationId,
-                cancellationToken);
+            throw new PaymentFawryFinancialAuthorityException();
         }
 
         _dbContext.ChangeTracker.Clear();
@@ -2022,6 +2036,13 @@ public class PaymentService : IPaymentService
                     $"PaymentIntent:{paymentIntentId}",
                     "PersistedPaymentIntent",
                     "PAYMENT_INTENT_NOT_FOUND");
+            }
+
+            if (paymentIntent.Provider == PaymentProvider.Fawry ||
+                FawryFinancialAuthorityPolicy.IsFawry(order.PaymentMethodCode) ||
+                FawryFinancialAuthorityPolicy.IsFawry(order.PaymentGateway))
+            {
+                throw new PaymentFawryFinancialAuthorityException();
             }
 
             if (IsProviderInitiationIncomplete(paymentIntent))

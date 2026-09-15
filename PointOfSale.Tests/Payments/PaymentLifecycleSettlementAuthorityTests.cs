@@ -52,10 +52,12 @@ public sealed class PaymentLifecycleSettlementAuthorityTests
         commerceAccounting.Verify(
             dependency => dependency.PostGatewaySettlementAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
+                It.IsAny<DateTime>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
         eventPublisher.Verify(
@@ -95,9 +97,11 @@ public sealed class PaymentLifecycleSettlementAuthorityTests
         commerceAccounting.Verify(
             dependency => dependency.PostCodSettlementAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
+                It.IsAny<DateTime>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
         eventPublisher.Verify(
@@ -105,6 +109,111 @@ public sealed class PaymentLifecycleSettlementAuthorityTests
                 It.IsAny<OrderPaymentStatusChangedEvent>(),
                 It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task RecordGatewaySettlementAsync_WhenProviderHasNoClearingAuthority_ShouldFailBeforeMutation()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = CreateContext(tenantId);
+        var commerceAccounting = new Mock<ICommerceAccountingService>();
+        var eventPublisher = new Mock<IEventPublisher>();
+        var service = CreateService(context, commerceAccounting, eventPublisher);
+        var order = await SeedCollectedGatewayOrderAsync(context, tenantId, total: 100m, gateway: "wallet");
+
+        var result = await service.RecordGatewaySettlementAsync(new GatewaySettlementRequest
+        {
+            TenantId = tenantId,
+            SettlementId = "unsupported-wallet-settlement",
+            Gateway = "wallet",
+            GrossAmount = 100m,
+            Fees = 1m,
+            Currency = "EGP",
+            OrderIds = new List<Guid> { order.Id }
+        });
+
+        Assert.False(result.Success);
+        Assert.Contains("not supported", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(await context.PaymentSettlementBatches.ToListAsync());
+        Assert.Empty(await context.PaymentSettlementOrders.ToListAsync());
+        Assert.Equal(PaymentStatus.Collected, (await context.Orders.SingleAsync(item => item.Id == order.Id)).PaymentStatus);
+        commerceAccounting.Verify(
+            dependency => dependency.PostGatewaySettlementAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<decimal>(),
+                It.IsAny<decimal>(),
+                It.IsAny<string>(),
+                It.IsAny<DateTime>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task RecordGatewaySettlementAsync_ReplayIsIdempotentAndChangedEvidenceIsRejected()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = CreateContext(tenantId);
+        var commerceAccounting = new Mock<ICommerceAccountingService>();
+        var eventPublisher = new Mock<IEventPublisher>();
+        var accountingOutbox = new Mock<IAccountingOutboxService>();
+        accountingOutbox
+            .Setup(service => service.EnqueueGatewaySettlementAsync(
+                It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
+                It.IsAny<string>(),
+                It.IsAny<decimal>(),
+                It.IsAny<decimal>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var service = CreateService(context, commerceAccounting, eventPublisher, accountingOutbox.Object);
+        var order = await SeedCollectedGatewayOrderAsync(context, tenantId, total: 100m, gateway: "stripe");
+        var request = new GatewaySettlementRequest
+        {
+            TenantId = tenantId,
+            SettlementId = "stripe-settlement-replay-001",
+            Gateway = "stripe",
+            GrossAmount = 100m,
+            Fees = 3m,
+            Currency = "EGP",
+            OrderIds = new List<Guid> { order.Id },
+            BankReference = "bank-reference-001"
+        };
+
+        var first = await service.RecordGatewaySettlementAsync(request);
+        var replay = await service.RecordGatewaySettlementAsync(request);
+        var changedEvidence = await service.RecordGatewaySettlementAsync(new GatewaySettlementRequest
+        {
+            TenantId = request.TenantId,
+            SettlementId = request.SettlementId,
+            Gateway = request.Gateway,
+            GrossAmount = request.GrossAmount,
+            Fees = 4m,
+            Currency = request.Currency,
+            OrderIds = request.OrderIds,
+            BankReference = request.BankReference
+        });
+
+        Assert.True(first.Success, first.ErrorMessage);
+        Assert.True(replay.Success, replay.ErrorMessage);
+        Assert.True(replay.WasIdempotent);
+        Assert.False(replay.StateChanged);
+        Assert.False(changedEvidence.Success);
+        Assert.Contains("different contents", changedEvidence.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(await context.PaymentSettlementBatches.ToListAsync());
+        Assert.Single(await context.PaymentSettlementOrders.ToListAsync());
+        accountingOutbox.Verify(
+            dependency => dependency.EnqueueGatewaySettlementAsync(
+                tenantId,
+                It.IsAny<Guid>(),
+                "stripe",
+                100m,
+                3m,
+                request.SettlementId,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     private static ApplicationDbContext CreateContext(Guid tenantId)
@@ -120,23 +229,28 @@ public sealed class PaymentLifecycleSettlementAuthorityTests
     private static PaymentLifecycleService CreateService(
         ApplicationDbContext context,
         Mock<ICommerceAccountingService> commerceAccounting,
-        Mock<IEventPublisher> eventPublisher)
+        Mock<IEventPublisher> eventPublisher,
+        IAccountingOutboxService? accountingOutbox = null)
     {
         commerceAccounting
             .Setup(service => service.PostGatewaySettlementAsync(
+                It.IsAny<Guid>(),
                 It.IsAny<Guid>(),
                 It.IsAny<string>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
+                It.IsAny<DateTime>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "GATEWAY-SETTLEMENT-JOURNAL-TEST"));
         commerceAccounting
             .Setup(service => service.PostCodSettlementAsync(
                 It.IsAny<Guid>(),
+                It.IsAny<Guid>(),
                 It.IsAny<decimal>(),
                 It.IsAny<decimal>(),
                 It.IsAny<string>(),
+                It.IsAny<DateTime>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(() => PostingResult.Succeeded(Guid.NewGuid(), "COD-SETTLEMENT-JOURNAL-TEST"));
 
@@ -151,7 +265,7 @@ public sealed class PaymentLifecycleSettlementAuthorityTests
             .Setup(accessor => accessor.GetCorrelationId())
             .Returns("settlement-authority-test");
 
-        var accountingOutbox = new AccountingOutboxService(
+        accountingOutbox ??= new AccountingOutboxService(
             context,
             correlationIdAccessor.Object,
             NullLogger<AccountingOutboxService>.Instance);

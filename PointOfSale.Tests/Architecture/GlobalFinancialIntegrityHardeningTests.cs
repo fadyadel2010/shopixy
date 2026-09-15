@@ -55,8 +55,8 @@ public sealed class GlobalFinancialIntegrityHardeningTests
         Assert.Contains("ResolvePurchasePaymentSplit", source, StringComparison.Ordinal);
         Assert.Contains("ResolvePurchasePaymentSplit(request, purchaseFinancials.TotalAmount)", source, StringComparison.Ordinal);
         Assert.Contains("invoice.PaidAmount = paymentSplit.PaidAmount", source, StringComparison.Ordinal);
-        Assert.Contains("EnqueuePosPurchaseAsync(", source, StringComparison.Ordinal);
-        Assert.Contains("EnqueuePurchaseReversalAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("EnqueuePosPurchaseWithCardAuthorityAsync(", source, StringComparison.Ordinal);
+        Assert.Contains("EnqueuePurchaseReversalWithCardAuthorityAsync(", source, StringComparison.Ordinal);
         Assert.Contains("BuildPurchaseMutationOperationKey", source, StringComparison.Ordinal);
         Assert.Contains("paymentSplit.CashAmount", source, StringComparison.Ordinal);
         Assert.Contains("paymentSplit.CardAmount", source, StringComparison.Ordinal);

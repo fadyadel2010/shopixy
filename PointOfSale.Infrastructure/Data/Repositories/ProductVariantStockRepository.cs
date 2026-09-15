@@ -35,6 +35,22 @@ public interface IProductVariantStockRepository
         Guid orderId,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// T-08: Restores previously committed (delivered) reservation quantities back
+    /// to on-hand stock for a Storefront return. Each restored quantity is capped
+    /// by the reservation's remaining returnable balance
+    /// (Committed − Returned − DamagedReturned), so cumulative restores can never
+    /// exceed what was committed. Emits SalesReturn stock movements. Joins the
+    /// caller's ambient transaction when one exists.
+    /// Returns the total quantity restored to stock.
+    /// </summary>
+    Task<decimal> RestoreCommittedReservationsForReturnAsync(
+        Guid tenantId,
+        Guid orderId,
+        IReadOnlyDictionary<Guid, decimal> returnQuantitiesByOrderItemId,
+        Guid returnEventId,
+        CancellationToken cancellationToken = default);
+
     Task<decimal> GetAvailableQuantityAsync(
         Guid tenantId,
         Guid variantId,
@@ -464,6 +480,134 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
             anyReleased);
         
         return anyReleased;
+    }
+
+    public async Task<decimal> RestoreCommittedReservationsForReturnAsync(
+        Guid tenantId,
+        Guid orderId,
+        IReadOnlyDictionary<Guid, decimal> returnQuantitiesByOrderItemId,
+        Guid returnEventId,
+        CancellationToken cancellationToken = default)
+    {
+        if (returnQuantitiesByOrderItemId == null || returnQuantitiesByOrderItemId.Count == 0)
+        {
+            return 0m;
+        }
+
+        var remainingByItem = returnQuantitiesByOrderItemId
+            .Where(pair => pair.Value > 0m)
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
+        if (remainingByItem.Count == 0)
+        {
+            return 0m;
+        }
+
+        var totalRestored = 0m;
+
+        await ExecuteWithinMutationTransactionAsync(async () =>
+        {
+            var reservations = await LoadOrderReservationsForMutationAsync(
+                tenantId,
+                orderId,
+                cancellationToken);
+
+            var returnable = reservations
+                .Where(reservation => reservation.RemainingDeliveredReturnableQuantity > 0m)
+                .OrderByDescending(reservation => reservation.RemainingDeliveredReturnableQuantity)
+                .ThenBy(reservation => reservation.CreatedAt)
+                .ThenBy(reservation => reservation.Id)
+                .ToList();
+
+            if (returnable.Count == 0)
+            {
+                return;
+            }
+
+            var nowUtc = DateTime.UtcNow;
+            var stockCache = new Dictionary<(Guid VariantId, Guid WarehouseId), ProductVariantStock>();
+            var pendingChanges = new List<PendingRepositoryStockSyncChange>();
+            var restored = 0m;
+
+            foreach (var reservation in returnable)
+            {
+                if (!remainingByItem.TryGetValue(reservation.OrderItemId, out var remaining) || remaining <= 0m)
+                {
+                    continue;
+                }
+
+                var restorable = Math.Min(remaining, reservation.RemainingDeliveredReturnableQuantity);
+                if (restorable <= 0m)
+                {
+                    continue;
+                }
+
+                var stock = await LoadReservationStockAsync(
+                    tenantId,
+                    reservation,
+                    stockCache,
+                    cancellationToken);
+
+                var oldAvailable = stock.AvailableQuantity;
+                var mutationEventId = BuildReturnRestoreEventId(tenantId, orderId, returnEventId, reservation.Id);
+                stock.Quantity += restorable;
+                stock.UpdatedAt = nowUtc;
+                var newAvailable = stock.AvailableQuantity;
+
+                if (reservation.ProductId == Guid.Empty)
+                {
+                    reservation.ProductId = await LoadVariantProductIdAsync(tenantId, reservation.VariantId, cancellationToken);
+                }
+
+                reservation.ReturnedQuantity += restorable;
+                reservation.LastMutationEventId = mutationEventId;
+                reservation.Status = ResolveReservationStatus(reservation, nowUtc);
+                reservation.UpdatedAt = nowUtc;
+
+                AddReservationMovement(
+                    tenantId,
+                    stock,
+                    reservation,
+                    quantityChange: restorable,
+                    reservedQuantityChange: 0m,
+                    InventoryEventType.StockIncreased,
+                    orderId,
+                    "Order",
+                    $"Storefront return restore for return {returnEventId}.",
+                    nowUtc,
+                    StockMovementType.SalesReturn);
+
+                pendingChanges.Add(new PendingRepositoryStockSyncChange(
+                    stock.VariantId,
+                    stock.WarehouseId,
+                    oldAvailable,
+                    newAvailable,
+                    "Storefront Return Restored",
+                    orderId,
+                    "Order"));
+
+                remainingByItem[reservation.OrderItemId] = remaining - restorable;
+                restored += restorable;
+            }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await EnqueueStockSyncOutboxMessagesAsync(tenantId, pendingChanges, cancellationToken);
+            totalRestored = restored;
+        }, cancellationToken);
+
+        _logger.LogInformation(
+            "RestoreCommittedReservationsForReturn completed | TenantId: {TenantId} | OrderId: {OrderId} | ReturnEventId: {ReturnEventId} | Restored: {Restored}",
+            tenantId, orderId, returnEventId, totalRestored);
+
+        return totalRestored;
+    }
+
+    private static Guid BuildReturnRestoreEventId(Guid tenantId, Guid orderId, Guid returnEventId, Guid reservationId)
+    {
+        var payload = System.Text.Encoding.UTF8.GetBytes(
+            $"storefront-return-restore|{tenantId:N}|{orderId:N}|{returnEventId:N}|{reservationId:N}");
+        var hash = System.Security.Cryptography.SHA256.HashData(payload);
+        Array.Resize(ref hash, 16);
+        return new Guid(hash);
     }
 
     public async Task<decimal> GetAvailableQuantityAsync(
@@ -1060,7 +1204,8 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
         Guid orderId,
         string referenceType,
         string notes,
-        DateTime nowUtc)
+        DateTime nowUtc,
+        StockMovementType? movementKindOverride = null)
     {
         if (reservation.ProductId == Guid.Empty)
         {
@@ -1069,9 +1214,9 @@ public class ProductVariantStockRepository : IProductVariantStockRepository
         }
 
         var inventoryEventId = reservation.LastMutationEventId ?? reservation.ReservationEventId;
-        var movementKind = quantityChange < 0m
+        var movementKind = movementKindOverride ?? (quantityChange < 0m
             ? StockMovementType.Sale
-            : StockMovementType.Adjustment;
+            : StockMovementType.Adjustment);
 
         _dbContext.StockMovements.Add(new StockMovement
         {

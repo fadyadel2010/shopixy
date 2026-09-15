@@ -184,3 +184,27 @@ public class DuplicateOpeningBalanceException : AccountingException
         PartyId = partyId;
     }
 }
+
+public enum TreasuryInitialCapitalizationErrorKind
+{
+    Validation,
+    Conflict,
+    NotFound,
+    Forbidden
+}
+
+public sealed class TreasuryInitialCapitalizationException : AccountingException
+{
+    public TreasuryInitialCapitalizationException(
+        string code,
+        string message,
+        TreasuryInitialCapitalizationErrorKind kind = TreasuryInitialCapitalizationErrorKind.Conflict)
+        : base(message)
+    {
+        Code = code;
+        Kind = kind;
+    }
+
+    public string Code { get; }
+    public TreasuryInitialCapitalizationErrorKind Kind { get; }
+}

@@ -1,0 +1,1346 @@
+{
+  "marker": "NON-PRODUCTION TEST DATA",
+  "seedVersion": "m2.1",
+  "seedNamespace": "b9c4d3a1-7e22-4f5a-9c1d-2a6f8e0b4d11",
+  "timestampUtc": "2026-09-15T16:30:34.728273+00:00",
+  "environment": "local",
+  "database": {
+    "host": "192.168.1.5",
+    "database": "PosEcommerceDb_Baseline"
+  },
+  "counts": {
+    "created": 0,
+    "preserved": 216,
+    "repaired": 27
+  },
+  "tenants": [
+    {
+      "key": "a",
+      "tenantId": "8242b275-ee28-5e42-b37c-62eb48e2c1b6",
+      "slug": "loadtest-tenant-a",
+      "staff": [
+        {
+          "userKey": "loadtest-owner-a",
+          "userId": "f8608fd3-f712-5662-bbfd-0fb3caeb332a"
+        },
+        {
+          "userKey": "loadtest-admin-a",
+          "userId": "35a7c853-c96c-5419-ac98-a1dd7c3fbcee"
+        },
+        {
+          "userKey": "loadtest-cashier-a",
+          "userId": "2187a324-4c1f-5100-b5d4-0edae4c24e4e"
+        }
+      ],
+      "customers": [
+        {
+          "customerKey": "loadtest-customer-a-001",
+          "customerId": "92baacb6-6082-5694-95ef-461725ab2848"
+        },
+        {
+          "customerKey": "loadtest-customer-a-002",
+          "customerId": "3ec079ab-5eda-528c-9cea-15160f0ca1f2"
+        },
+        {
+          "customerKey": "loadtest-customer-a-003",
+          "customerId": "521e642f-37f5-5cde-9210-7537e15756aa"
+        },
+        {
+          "customerKey": "loadtest-customer-a-004",
+          "customerId": "c0045fe8-9654-5e4d-bcb4-59b0117626f0"
+        },
+        {
+          "customerKey": "loadtest-customer-a-005",
+          "customerId": "42b7a7ed-91e4-534c-bc70-4c5eacc61f54"
+        },
+        {
+          "customerKey": "test-probe-customer-a",
+          "customerId": "18909a41-2693-562c-950d-70d197827c09"
+        }
+      ],
+      "categories": [
+        {
+          "name": "LOADTEST-CAT-A-001",
+          "categoryId": "f1d0207a-cd2f-55dd-a6bc-697b2d8b6864"
+        },
+        {
+          "name": "LOADTEST-CAT-A-002",
+          "categoryId": "481ce2ad-2c41-5071-9dc7-f4230d991e22"
+        },
+        {
+          "name": "LOADTEST-CAT-A-003",
+          "categoryId": "ddf59668-4a99-5b15-a05a-497b7caba655"
+        },
+        {
+          "name": "TEST-PROBE-CAT-A",
+          "categoryId": "5fd607ce-179f-5af4-887c-92ec3941956d"
+        }
+      ],
+      "products": [
+        {
+          "slug": "lt-probe-tenant-a",
+          "productId": "adc0e08b-64e5-59d6-9153-06456aeb5c5c",
+          "kind": "sentinel",
+          "sku": "LT-PROBE-A"
+        },
+        {
+          "slug": "lt-a-product-002",
+          "productId": "b44bc350-3a28-528a-8702-30fe0f9c182f",
+          "kind": "normal",
+          "sku": "LTA-P002"
+        },
+        {
+          "slug": "lt-a-product-003",
+          "productId": "29da9226-2f7f-5765-b01c-bbdca5dcb6b1",
+          "kind": "normal",
+          "sku": "LTA-P003"
+        },
+        {
+          "slug": "lt-a-product-004",
+          "productId": "40daf850-eec8-5685-b285-52c042832a05",
+          "kind": "normal",
+          "sku": "LTA-P004"
+        },
+        {
+          "slug": "lt-a-product-005",
+          "productId": "a694d285-a8cf-58f9-9420-2444d82635dd",
+          "kind": "normal",
+          "sku": "LTA-P005"
+        },
+        {
+          "slug": "lt-a-product-006",
+          "productId": "7309b1b2-6fee-51ed-9032-831864511ab0",
+          "kind": "normal",
+          "sku": "LTA-P006"
+        },
+        {
+          "slug": "lt-a-product-007",
+          "productId": "43f18759-7b7e-5d59-b44a-1ba374643a72",
+          "kind": "normal",
+          "sku": "LTA-P007"
+        },
+        {
+          "slug": "lt-a-product-008",
+          "productId": "353058f3-f76a-5193-9e4e-5bfdc0f6d268",
+          "kind": "normal",
+          "sku": "LTA-P008"
+        },
+        {
+          "slug": "lt-a-product-009",
+          "productId": "b4d59ad2-5082-54dd-afd6-f627094189e7",
+          "kind": "normal",
+          "sku": "LTA-P009"
+        },
+        {
+          "slug": "lt-a-product-010",
+          "productId": "1b30adde-77fe-57d6-9c2f-e2c50d306620",
+          "kind": "normal",
+          "sku": "LTA-P010"
+        },
+        {
+          "slug": "lt-a-product-011",
+          "productId": "7f40cf11-4fb0-5025-99b3-8cd90bb20e72",
+          "kind": "normal",
+          "sku": "LTA-P011"
+        },
+        {
+          "slug": "lt-a-product-012",
+          "productId": "5ae19982-a800-5b40-9da4-a8b8214f182d",
+          "kind": "normal",
+          "sku": "LTA-P012"
+        },
+        {
+          "slug": "lt-a-product-013",
+          "productId": "6ba716bc-bc54-52ae-8cbc-f305fb37d3c1",
+          "kind": "normal",
+          "sku": "LTA-P013"
+        },
+        {
+          "slug": "lt-a-product-014",
+          "productId": "43e9007e-f1c4-5de6-8341-455b7af5ed01",
+          "kind": "normal",
+          "sku": "LTA-P014"
+        },
+        {
+          "slug": "lt-a-product-015",
+          "productId": "fb07a6e2-e1a9-516b-970b-ba2cd81b3eef",
+          "kind": "low-stock",
+          "sku": "LTA-P015"
+        },
+        {
+          "slug": "lt-a-product-016",
+          "productId": "37347c8f-56cc-50e6-a79e-9543b224235e",
+          "kind": "contended",
+          "sku": "LTA-P016"
+        },
+        {
+          "slug": "lt-a-product-017",
+          "productId": "7683be19-cdb4-5be1-8759-f9f689435bd4",
+          "kind": "backorder",
+          "sku": "LTA-P017"
+        },
+        {
+          "slug": "lt-a-product-018",
+          "productId": "07b223c2-8f79-5903-9d47-44ac04736965",
+          "kind": "untracked",
+          "sku": "LTA-P018"
+        },
+        {
+          "slug": "lt-a-product-019",
+          "productId": "54ed7d5a-b596-5d27-85f7-9a58bb400b96",
+          "kind": "variant-container",
+          "sku": "LTA-P019"
+        },
+        {
+          "slug": "lt-a-product-020",
+          "productId": "1fa43705-6af5-50f5-811e-4b7831e8af09",
+          "kind": "normal",
+          "sku": "LTA-P020"
+        }
+      ],
+      "variants": [
+        {
+          "variantId": "2e63bb5a-f8fa-5fdf-9460-748f14022065",
+          "sku": "LT-PROBE-A-D"
+        },
+        {
+          "variantId": "27461b99-f97f-5912-b3e0-2a67c72e1dbe",
+          "sku": "LTA-P002-D"
+        },
+        {
+          "variantId": "66d8536a-6ba7-5d5c-8a1b-ac63fd22b515",
+          "sku": "LTA-P003-D"
+        },
+        {
+          "variantId": "1ee622b5-6fce-52d2-b39f-89bd3a62e70c",
+          "sku": "LTA-P004-D"
+        },
+        {
+          "variantId": "eb6f9c96-6b18-5e70-ac31-b52c0fec2f24",
+          "sku": "LTA-P005-D"
+        },
+        {
+          "variantId": "4a568581-2b16-5554-843f-fdff0d83fd10",
+          "sku": "LTA-P006-D"
+        },
+        {
+          "variantId": "ff1bffbc-5596-5d3a-906c-69e41450ef70",
+          "sku": "LTA-P007-D"
+        },
+        {
+          "variantId": "869b9a97-0e24-5172-96eb-57e1254e3c30",
+          "sku": "LTA-P008-D"
+        },
+        {
+          "variantId": "23c297f2-3972-5346-8e8f-58ffbcdd98f3",
+          "sku": "LTA-P009-D"
+        },
+        {
+          "variantId": "018469ad-27b3-5d8a-b4f2-2f3923942ded",
+          "sku": "LTA-P010-D"
+        },
+        {
+          "variantId": "725745f2-08cf-5a41-9c20-8501105d3b8d",
+          "sku": "LTA-P011-D"
+        },
+        {
+          "variantId": "2f983543-d875-50f4-af8e-434e2f8fd822",
+          "sku": "LTA-P012-D"
+        },
+        {
+          "variantId": "487a07f6-594b-5522-9644-8fc0aa790a02",
+          "sku": "LTA-P013-D"
+        },
+        {
+          "variantId": "776a603c-ca9e-5415-ba42-ce8869443d05",
+          "sku": "LTA-P014-D"
+        },
+        {
+          "variantId": "08d84eee-1811-56f8-ae5f-585eb4c8e376",
+          "sku": "LTA-P015-D"
+        },
+        {
+          "variantId": "157e3d2e-c62d-54cb-be2f-39d94db7ae60",
+          "sku": "LTA-P016-D"
+        },
+        {
+          "variantId": "251e40be-e8ac-52b0-95e6-a45bbd490eab",
+          "sku": "LTA-P017-D"
+        },
+        {
+          "variantId": "b398a4c9-55b1-5267-9929-facb8663e5f8",
+          "sku": "LTA-P018-D"
+        },
+        {
+          "variantId": "a7be1ba8-6a3d-5f02-980d-93ac7b4c95d6",
+          "sku": "LTA-P019-D"
+        },
+        {
+          "variantId": "3dc9cb14-9238-5ded-8a7b-f1d83f9982b2",
+          "sku": "LTA-P019-V2"
+        },
+        {
+          "variantId": "23a7dd13-16aa-5605-904c-aed3bbd634c2",
+          "sku": "LTA-P019-V3"
+        },
+        {
+          "variantId": "3c38c79b-c1cb-553f-9e3d-3c9927fef05b",
+          "sku": "LTA-P020-D"
+        }
+      ],
+      "warehouses": [
+        {
+          "code": "LT-A-W1",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e"
+        },
+        {
+          "code": "LT-A-W2",
+          "warehouseId": "a3fe5f84-ef41-54e1-918a-6cd5212ff0f8"
+        }
+      ],
+      "stockBudgets": [
+        {
+          "variantId": "2e63bb5a-f8fa-5fdf-9460-748f14022065",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "100.00",
+          "purpose": "sentinel"
+        },
+        {
+          "variantId": "27461b99-f97f-5912-b3e0-2a67c72e1dbe",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "66d8536a-6ba7-5d5c-8a1b-ac63fd22b515",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "1ee622b5-6fce-52d2-b39f-89bd3a62e70c",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "eb6f9c96-6b18-5e70-ac31-b52c0fec2f24",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "4a568581-2b16-5554-843f-fdff0d83fd10",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "ff1bffbc-5596-5d3a-906c-69e41450ef70",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "869b9a97-0e24-5172-96eb-57e1254e3c30",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "23c297f2-3972-5346-8e8f-58ffbcdd98f3",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "018469ad-27b3-5d8a-b4f2-2f3923942ded",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "725745f2-08cf-5a41-9c20-8501105d3b8d",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "2f983543-d875-50f4-af8e-434e2f8fd822",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "487a07f6-594b-5522-9644-8fc0aa790a02",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "776a603c-ca9e-5415-ba42-ce8869443d05",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "08d84eee-1811-56f8-ae5f-585eb4c8e376",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "3.00",
+          "purpose": "low-stock"
+        },
+        {
+          "variantId": "157e3d2e-c62d-54cb-be2f-39d94db7ae60",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "20.00",
+          "purpose": "contended"
+        },
+        {
+          "variantId": "251e40be-e8ac-52b0-95e6-a45bbd490eab",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "0.00",
+          "purpose": "backorder-zero"
+        },
+        {
+          "variantId": "a7be1ba8-6a3d-5f02-980d-93ac7b4c95d6",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "500.00",
+          "purpose": "container-default"
+        },
+        {
+          "variantId": "a7be1ba8-6a3d-5f02-980d-93ac7b4c95d6",
+          "warehouseId": "a3fe5f84-ef41-54e1-918a-6cd5212ff0f8",
+          "quantity": "100.00",
+          "purpose": "container-default-w2"
+        },
+        {
+          "variantId": "3dc9cb14-9238-5ded-8a7b-f1d83f9982b2",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "23a7dd13-16aa-5605-904c-aed3bbd634c2",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "3c38c79b-c1cb-553f-9e3d-3c9927fef05b",
+          "warehouseId": "487f9d0a-1067-529f-a722-c61f91e75b6e",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "27461b99-f97f-5912-b3e0-2a67c72e1dbe",
+          "warehouseId": "a3fe5f84-ef41-54e1-918a-6cd5212ff0f8",
+          "quantity": "250.00",
+          "purpose": "plentiful-w2"
+        }
+      ]
+    },
+    {
+      "key": "b",
+      "tenantId": "d74f075b-e0f5-57a2-80cd-cd3ab6ed616e",
+      "slug": "loadtest-tenant-b",
+      "staff": [
+        {
+          "userKey": "loadtest-owner-b",
+          "userId": "1aba8f68-6799-519e-9876-ba754090d2bf"
+        },
+        {
+          "userKey": "loadtest-admin-b",
+          "userId": "576c4741-b4cb-5317-a939-e237e9f4bca6"
+        },
+        {
+          "userKey": "loadtest-cashier-b",
+          "userId": "079a1b65-f0a7-5cdb-acb9-1bc69bd99678"
+        }
+      ],
+      "customers": [
+        {
+          "customerKey": "loadtest-customer-b-001",
+          "customerId": "f552d9be-d5b3-513a-82c3-2041d95b113f"
+        },
+        {
+          "customerKey": "loadtest-customer-b-002",
+          "customerId": "fc54811a-ab10-5e5a-b4c4-c318f278f74b"
+        },
+        {
+          "customerKey": "loadtest-customer-b-003",
+          "customerId": "82f15683-e2f7-532d-bc93-ca0a36a6710c"
+        },
+        {
+          "customerKey": "loadtest-customer-b-004",
+          "customerId": "0a113019-054b-5d06-8bcf-d540fa087d5e"
+        },
+        {
+          "customerKey": "loadtest-customer-b-005",
+          "customerId": "d8efda24-8475-5932-a1bd-941a3f3f1e08"
+        },
+        {
+          "customerKey": "test-probe-customer-b",
+          "customerId": "8cfef1d8-c32c-5e78-a7de-4d54ffab1b74"
+        }
+      ],
+      "categories": [
+        {
+          "name": "LOADTEST-CAT-B-001",
+          "categoryId": "1510038b-d156-5ca2-9d78-ef0919895997"
+        },
+        {
+          "name": "LOADTEST-CAT-B-002",
+          "categoryId": "520ab0d5-04b1-5a5f-94e7-466309600bc3"
+        },
+        {
+          "name": "LOADTEST-CAT-B-003",
+          "categoryId": "fe6f1ad9-8cca-5dd5-a06a-87b9a64c96e9"
+        },
+        {
+          "name": "TEST-PROBE-CAT-B",
+          "categoryId": "7850d3c8-20f8-5238-9330-5435c669a97a"
+        }
+      ],
+      "products": [
+        {
+          "slug": "lt-probe-tenant-b",
+          "productId": "a6b0668b-823f-56b8-81c6-cee6f5b8b5fb",
+          "kind": "sentinel",
+          "sku": "LT-PROBE-B"
+        },
+        {
+          "slug": "lt-b-product-002",
+          "productId": "ac15c5b7-cc6a-5ad4-96bb-13344d1b99f1",
+          "kind": "normal",
+          "sku": "LTB-P002"
+        },
+        {
+          "slug": "lt-b-product-003",
+          "productId": "f037e7f6-bbca-5948-acbe-eba9b408b548",
+          "kind": "normal",
+          "sku": "LTB-P003"
+        },
+        {
+          "slug": "lt-b-product-004",
+          "productId": "64bf74ec-287f-5a29-a7b9-2c62c01c3a96",
+          "kind": "normal",
+          "sku": "LTB-P004"
+        },
+        {
+          "slug": "lt-b-product-005",
+          "productId": "9a294ebb-acdf-5748-a5df-f29061677f44",
+          "kind": "normal",
+          "sku": "LTB-P005"
+        },
+        {
+          "slug": "lt-b-product-006",
+          "productId": "8c92e2aa-cc95-562a-82cc-5421cb3e1aac",
+          "kind": "normal",
+          "sku": "LTB-P006"
+        },
+        {
+          "slug": "lt-b-product-007",
+          "productId": "5908c8ab-73f0-552f-a658-7a60e4080dcc",
+          "kind": "normal",
+          "sku": "LTB-P007"
+        },
+        {
+          "slug": "lt-b-product-008",
+          "productId": "71f296b9-52e1-5b98-8616-f9deb07353f4",
+          "kind": "normal",
+          "sku": "LTB-P008"
+        },
+        {
+          "slug": "lt-b-product-009",
+          "productId": "2a8547fd-3d75-5405-a18f-7fd82eda7d49",
+          "kind": "normal",
+          "sku": "LTB-P009"
+        },
+        {
+          "slug": "lt-b-product-010",
+          "productId": "70605470-88d3-550a-9b93-11289ca42dcb",
+          "kind": "normal",
+          "sku": "LTB-P010"
+        },
+        {
+          "slug": "lt-b-product-011",
+          "productId": "75438cef-65ba-53b9-858e-7fc1d2022dd4",
+          "kind": "normal",
+          "sku": "LTB-P011"
+        },
+        {
+          "slug": "lt-b-product-012",
+          "productId": "e934feb7-0114-5bef-b12b-4e13e0272acb",
+          "kind": "normal",
+          "sku": "LTB-P012"
+        },
+        {
+          "slug": "lt-b-product-013",
+          "productId": "5e39369a-7fbd-50c5-ac91-ea0eac752462",
+          "kind": "normal",
+          "sku": "LTB-P013"
+        },
+        {
+          "slug": "lt-b-product-014",
+          "productId": "be9a9d6c-a10f-5486-86cf-d23b03e37ef1",
+          "kind": "normal",
+          "sku": "LTB-P014"
+        },
+        {
+          "slug": "lt-b-product-015",
+          "productId": "9d992f72-aa8e-57d2-9a7c-f1f26063a208",
+          "kind": "low-stock",
+          "sku": "LTB-P015"
+        },
+        {
+          "slug": "lt-b-product-016",
+          "productId": "405b1e70-6192-503f-9cbd-ca80d14ca163",
+          "kind": "contended",
+          "sku": "LTB-P016"
+        },
+        {
+          "slug": "lt-b-product-017",
+          "productId": "ce936cfc-9ebf-5a5e-bd65-abd9f570bb2a",
+          "kind": "backorder",
+          "sku": "LTB-P017"
+        },
+        {
+          "slug": "lt-b-product-018",
+          "productId": "d3d0f57f-202b-54a7-9d26-b62cede71182",
+          "kind": "untracked",
+          "sku": "LTB-P018"
+        },
+        {
+          "slug": "lt-b-product-019",
+          "productId": "c546fbcd-eb10-5482-bfc7-647571d8e236",
+          "kind": "variant-container",
+          "sku": "LTB-P019"
+        },
+        {
+          "slug": "lt-b-product-020",
+          "productId": "09c201ec-a3e8-58f8-81ec-7f259cf755a6",
+          "kind": "normal",
+          "sku": "LTB-P020"
+        }
+      ],
+      "variants": [
+        {
+          "variantId": "eb60ec8f-a000-59be-b13c-feefea57da01",
+          "sku": "LT-PROBE-B-D"
+        },
+        {
+          "variantId": "41bf02b3-d979-5a99-8689-e07962d091a1",
+          "sku": "LTB-P002-D"
+        },
+        {
+          "variantId": "a8e006c7-5701-514a-afc1-cefb931adec3",
+          "sku": "LTB-P003-D"
+        },
+        {
+          "variantId": "978319b3-a572-5a4e-b352-3242e533b631",
+          "sku": "LTB-P004-D"
+        },
+        {
+          "variantId": "4fa22d09-dd83-5c55-a3a7-0a31a0cd57c9",
+          "sku": "LTB-P005-D"
+        },
+        {
+          "variantId": "a61d5ca6-b406-5727-87a3-7ddfb31407d4",
+          "sku": "LTB-P006-D"
+        },
+        {
+          "variantId": "752536d5-c5e9-5749-b484-785301bf4ed8",
+          "sku": "LTB-P007-D"
+        },
+        {
+          "variantId": "be48e08b-36a9-5e4c-a35f-b72298075a81",
+          "sku": "LTB-P008-D"
+        },
+        {
+          "variantId": "45fb7f68-26f3-57eb-8e6b-2f31f837cacb",
+          "sku": "LTB-P009-D"
+        },
+        {
+          "variantId": "65caa5ad-18e6-588b-b7ca-c2a2b21ae15a",
+          "sku": "LTB-P010-D"
+        },
+        {
+          "variantId": "bbf3b9f3-633e-5cf3-b38b-487bdae67c19",
+          "sku": "LTB-P011-D"
+        },
+        {
+          "variantId": "fbcc6d35-1c01-5869-9f31-c77d59be06ff",
+          "sku": "LTB-P012-D"
+        },
+        {
+          "variantId": "b1d92756-2dd9-5ccd-81c4-19cca713a69e",
+          "sku": "LTB-P013-D"
+        },
+        {
+          "variantId": "70483381-a23c-598b-ad2c-f16b8359d83c",
+          "sku": "LTB-P014-D"
+        },
+        {
+          "variantId": "da20c8b1-e993-5892-b1f2-c5bc7065370f",
+          "sku": "LTB-P015-D"
+        },
+        {
+          "variantId": "7b22256d-29b1-5eb1-8a58-20e07d6b3ec8",
+          "sku": "LTB-P016-D"
+        },
+        {
+          "variantId": "f944018c-7521-5e3a-b152-719fc44e12b9",
+          "sku": "LTB-P017-D"
+        },
+        {
+          "variantId": "56f801c1-a410-5acd-ac25-f7ed69e1bac7",
+          "sku": "LTB-P018-D"
+        },
+        {
+          "variantId": "edb02f36-b66c-588d-8b40-8926ec8622b2",
+          "sku": "LTB-P019-D"
+        },
+        {
+          "variantId": "57385562-0e70-5d4f-8366-132d1a9667ba",
+          "sku": "LTB-P019-V2"
+        },
+        {
+          "variantId": "1b30629f-41ba-5d56-8aac-20da3b510b09",
+          "sku": "LTB-P019-V3"
+        },
+        {
+          "variantId": "e75a07be-0778-578c-aa54-d0ab32f5ad5b",
+          "sku": "LTB-P020-D"
+        }
+      ],
+      "warehouses": [
+        {
+          "code": "LT-B-W1",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173"
+        },
+        {
+          "code": "LT-B-W2",
+          "warehouseId": "766b4348-8e35-54b7-9c45-9fe08d8ecdd7"
+        }
+      ],
+      "stockBudgets": [
+        {
+          "variantId": "eb60ec8f-a000-59be-b13c-feefea57da01",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "100.00",
+          "purpose": "sentinel"
+        },
+        {
+          "variantId": "41bf02b3-d979-5a99-8689-e07962d091a1",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "a8e006c7-5701-514a-afc1-cefb931adec3",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "978319b3-a572-5a4e-b352-3242e533b631",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "4fa22d09-dd83-5c55-a3a7-0a31a0cd57c9",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "a61d5ca6-b406-5727-87a3-7ddfb31407d4",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "752536d5-c5e9-5749-b484-785301bf4ed8",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "be48e08b-36a9-5e4c-a35f-b72298075a81",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "45fb7f68-26f3-57eb-8e6b-2f31f837cacb",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "65caa5ad-18e6-588b-b7ca-c2a2b21ae15a",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "bbf3b9f3-633e-5cf3-b38b-487bdae67c19",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "fbcc6d35-1c01-5869-9f31-c77d59be06ff",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "b1d92756-2dd9-5ccd-81c4-19cca713a69e",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "70483381-a23c-598b-ad2c-f16b8359d83c",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "da20c8b1-e993-5892-b1f2-c5bc7065370f",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "3.00",
+          "purpose": "low-stock"
+        },
+        {
+          "variantId": "7b22256d-29b1-5eb1-8a58-20e07d6b3ec8",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "20.00",
+          "purpose": "contended"
+        },
+        {
+          "variantId": "f944018c-7521-5e3a-b152-719fc44e12b9",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "0.00",
+          "purpose": "backorder-zero"
+        },
+        {
+          "variantId": "edb02f36-b66c-588d-8b40-8926ec8622b2",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "500.00",
+          "purpose": "container-default"
+        },
+        {
+          "variantId": "edb02f36-b66c-588d-8b40-8926ec8622b2",
+          "warehouseId": "766b4348-8e35-54b7-9c45-9fe08d8ecdd7",
+          "quantity": "100.00",
+          "purpose": "container-default-w2"
+        },
+        {
+          "variantId": "57385562-0e70-5d4f-8366-132d1a9667ba",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "1b30629f-41ba-5d56-8aac-20da3b510b09",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "e75a07be-0778-578c-aa54-d0ab32f5ad5b",
+          "warehouseId": "12f3cf2f-d4d1-50ee-bf0b-00c3f9c1a173",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "41bf02b3-d979-5a99-8689-e07962d091a1",
+          "warehouseId": "766b4348-8e35-54b7-9c45-9fe08d8ecdd7",
+          "quantity": "250.00",
+          "purpose": "plentiful-w2"
+        }
+      ]
+    },
+    {
+      "key": "c",
+      "tenantId": "6b9c21af-8eba-5b8a-87d7-da4a40263717",
+      "slug": "loadtest-tenant-c",
+      "staff": [
+        {
+          "userKey": "loadtest-owner-c",
+          "userId": "946a03d2-d3a9-5247-b6a4-07ab3f7a94ec"
+        },
+        {
+          "userKey": "loadtest-admin-c",
+          "userId": "f49fd009-b622-57a9-bb5b-a9c10acf1144"
+        },
+        {
+          "userKey": "loadtest-cashier-c",
+          "userId": "19ea4cf8-748f-5ced-82c1-234c48317f53"
+        }
+      ],
+      "customers": [
+        {
+          "customerKey": "loadtest-customer-c-001",
+          "customerId": "181bc0ae-8504-518d-8d66-6cff5c87d448"
+        },
+        {
+          "customerKey": "loadtest-customer-c-002",
+          "customerId": "05c12c61-a1de-59ec-8161-f6c17d8e5fda"
+        },
+        {
+          "customerKey": "loadtest-customer-c-003",
+          "customerId": "3b4d932e-329b-5b5b-9ba8-5c87b3bbeb90"
+        },
+        {
+          "customerKey": "loadtest-customer-c-004",
+          "customerId": "fbbbebf0-c96d-5db7-982c-a1d16273bd9b"
+        },
+        {
+          "customerKey": "loadtest-customer-c-005",
+          "customerId": "3a6dfe42-9d5d-5ca1-897b-fd6638c09b78"
+        },
+        {
+          "customerKey": "test-probe-customer-c",
+          "customerId": "e5083ae7-52b9-5744-946f-682584dd6906"
+        }
+      ],
+      "categories": [
+        {
+          "name": "LOADTEST-CAT-C-001",
+          "categoryId": "38a62fe9-3031-5040-8d90-38785f05a413"
+        },
+        {
+          "name": "LOADTEST-CAT-C-002",
+          "categoryId": "e28915de-d683-5273-aaf2-fe47de84c021"
+        },
+        {
+          "name": "LOADTEST-CAT-C-003",
+          "categoryId": "16fbd530-6e51-5670-9e62-fe9ede087dab"
+        },
+        {
+          "name": "TEST-PROBE-CAT-C",
+          "categoryId": "4f7279e2-ba68-5ef4-b64c-9ea730ff6ef1"
+        }
+      ],
+      "products": [
+        {
+          "slug": "lt-probe-tenant-c",
+          "productId": "cdf712a5-e2ae-56c7-bead-a2cc85f84570",
+          "kind": "sentinel",
+          "sku": "LT-PROBE-C"
+        },
+        {
+          "slug": "lt-c-product-002",
+          "productId": "70dce816-a111-5295-ae15-c532496e40d1",
+          "kind": "normal",
+          "sku": "LTC-P002"
+        },
+        {
+          "slug": "lt-c-product-003",
+          "productId": "6c1d33d6-7f01-5ac9-9bb6-bec9c97e93a2",
+          "kind": "normal",
+          "sku": "LTC-P003"
+        },
+        {
+          "slug": "lt-c-product-004",
+          "productId": "b677f7e1-60bf-5d9f-b85a-505a94ac912d",
+          "kind": "normal",
+          "sku": "LTC-P004"
+        },
+        {
+          "slug": "lt-c-product-005",
+          "productId": "87ca196a-144d-598c-b0df-f4a83f01cced",
+          "kind": "normal",
+          "sku": "LTC-P005"
+        },
+        {
+          "slug": "lt-c-product-006",
+          "productId": "a224fa70-eb2b-5293-9cd1-06a55b35d6a5",
+          "kind": "normal",
+          "sku": "LTC-P006"
+        },
+        {
+          "slug": "lt-c-product-007",
+          "productId": "92cb4746-8798-5ce6-8d7f-0d7b4a2a8082",
+          "kind": "normal",
+          "sku": "LTC-P007"
+        },
+        {
+          "slug": "lt-c-product-008",
+          "productId": "b3cc5750-97b3-5408-aabb-36e86ba01ad3",
+          "kind": "normal",
+          "sku": "LTC-P008"
+        },
+        {
+          "slug": "lt-c-product-009",
+          "productId": "fcd29f5d-1be7-5b58-bad1-8c8b86a905d3",
+          "kind": "normal",
+          "sku": "LTC-P009"
+        },
+        {
+          "slug": "lt-c-product-010",
+          "productId": "d6b442ac-b34a-54e8-9876-dde7af653b4e",
+          "kind": "normal",
+          "sku": "LTC-P010"
+        },
+        {
+          "slug": "lt-c-product-011",
+          "productId": "3d941248-0757-5630-b703-4d31cb41fd8f",
+          "kind": "normal",
+          "sku": "LTC-P011"
+        },
+        {
+          "slug": "lt-c-product-012",
+          "productId": "8297bf62-b591-5a39-9e22-bc6f097be919",
+          "kind": "normal",
+          "sku": "LTC-P012"
+        },
+        {
+          "slug": "lt-c-product-013",
+          "productId": "9cc6041f-bd9d-5b24-ad38-0700ae2a8454",
+          "kind": "normal",
+          "sku": "LTC-P013"
+        },
+        {
+          "slug": "lt-c-product-014",
+          "productId": "5de99157-ab1b-5369-9fda-d6115e533e64",
+          "kind": "normal",
+          "sku": "LTC-P014"
+        },
+        {
+          "slug": "lt-c-product-015",
+          "productId": "05a18eef-1a22-57cd-8e60-968aef8ec4bb",
+          "kind": "low-stock",
+          "sku": "LTC-P015"
+        },
+        {
+          "slug": "lt-c-product-016",
+          "productId": "56b18ab0-dbeb-5609-b1ab-c661696bdb0f",
+          "kind": "contended",
+          "sku": "LTC-P016"
+        },
+        {
+          "slug": "lt-c-product-017",
+          "productId": "d277a0f2-766c-5d2c-9c30-c4f4ab28266c",
+          "kind": "backorder",
+          "sku": "LTC-P017"
+        },
+        {
+          "slug": "lt-c-product-018",
+          "productId": "93c7034e-d46d-5317-a38d-b955c8ba891e",
+          "kind": "untracked",
+          "sku": "LTC-P018"
+        },
+        {
+          "slug": "lt-c-product-019",
+          "productId": "921740cb-cd14-5e13-b306-ce80696d7c93",
+          "kind": "variant-container",
+          "sku": "LTC-P019"
+        },
+        {
+          "slug": "lt-c-product-020",
+          "productId": "6a18efce-0121-52fd-a631-f545b4ea2bb1",
+          "kind": "normal",
+          "sku": "LTC-P020"
+        }
+      ],
+      "variants": [
+        {
+          "variantId": "0c756adb-6a04-5954-aaf0-b567abb292ec",
+          "sku": "LT-PROBE-C-D"
+        },
+        {
+          "variantId": "307626a6-24a4-595d-adfc-b9d9af8e4662",
+          "sku": "LTC-P002-D"
+        },
+        {
+          "variantId": "80eb3067-9696-56b5-9e45-c66429671b50",
+          "sku": "LTC-P003-D"
+        },
+        {
+          "variantId": "709df417-b5f0-584b-86fe-2fa9248cad1b",
+          "sku": "LTC-P004-D"
+        },
+        {
+          "variantId": "13f43454-aaf7-57ac-8c0b-ee5f63bade32",
+          "sku": "LTC-P005-D"
+        },
+        {
+          "variantId": "ecae5a1c-1736-5632-95d2-b1e8300e4574",
+          "sku": "LTC-P006-D"
+        },
+        {
+          "variantId": "27ace896-746a-5bb9-b119-b78c88509fcf",
+          "sku": "LTC-P007-D"
+        },
+        {
+          "variantId": "62794a4c-506d-56b4-888e-ca31893363b5",
+          "sku": "LTC-P008-D"
+        },
+        {
+          "variantId": "85ed2537-2e56-5b16-8714-36e2a2086abf",
+          "sku": "LTC-P009-D"
+        },
+        {
+          "variantId": "952aed53-2a5e-537e-aabf-4d896beb7c44",
+          "sku": "LTC-P010-D"
+        },
+        {
+          "variantId": "d82eb963-c4c3-52f4-8f73-f1597dcb242c",
+          "sku": "LTC-P011-D"
+        },
+        {
+          "variantId": "c5e1cb30-904f-51ca-89dc-0083d64a1c27",
+          "sku": "LTC-P012-D"
+        },
+        {
+          "variantId": "acc96000-d050-5b14-9a2a-7ba710a8a90b",
+          "sku": "LTC-P013-D"
+        },
+        {
+          "variantId": "f6351b98-6377-51ba-ad63-5078fb50baaf",
+          "sku": "LTC-P014-D"
+        },
+        {
+          "variantId": "dfd041d4-ea4e-52a6-b026-cd344a94f317",
+          "sku": "LTC-P015-D"
+        },
+        {
+          "variantId": "874b73e3-cfb1-5c45-83f6-185653cc414e",
+          "sku": "LTC-P016-D"
+        },
+        {
+          "variantId": "7481c6f1-378e-59a7-a970-df5eebb14460",
+          "sku": "LTC-P017-D"
+        },
+        {
+          "variantId": "8672e737-24f4-547f-a7ba-202fee383a9a",
+          "sku": "LTC-P018-D"
+        },
+        {
+          "variantId": "5c6da4d2-c9dd-58ad-baf0-a153fa6e3036",
+          "sku": "LTC-P019-D"
+        },
+        {
+          "variantId": "dc7ea97a-2402-5fce-9756-e1411a798770",
+          "sku": "LTC-P019-V2"
+        },
+        {
+          "variantId": "dd475cfc-8fc2-56bc-8e18-f55534db3643",
+          "sku": "LTC-P019-V3"
+        },
+        {
+          "variantId": "38822b31-dfda-574c-b624-e1a19a2dbd3d",
+          "sku": "LTC-P020-D"
+        }
+      ],
+      "warehouses": [
+        {
+          "code": "LT-C-W1",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b"
+        },
+        {
+          "code": "LT-C-W2",
+          "warehouseId": "610e0793-0752-55e9-8798-36f4469c2ce9"
+        }
+      ],
+      "stockBudgets": [
+        {
+          "variantId": "0c756adb-6a04-5954-aaf0-b567abb292ec",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "100.00",
+          "purpose": "sentinel"
+        },
+        {
+          "variantId": "307626a6-24a4-595d-adfc-b9d9af8e4662",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "80eb3067-9696-56b5-9e45-c66429671b50",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "709df417-b5f0-584b-86fe-2fa9248cad1b",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "13f43454-aaf7-57ac-8c0b-ee5f63bade32",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "ecae5a1c-1736-5632-95d2-b1e8300e4574",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "27ace896-746a-5bb9-b119-b78c88509fcf",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "62794a4c-506d-56b4-888e-ca31893363b5",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "85ed2537-2e56-5b16-8714-36e2a2086abf",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "952aed53-2a5e-537e-aabf-4d896beb7c44",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "d82eb963-c4c3-52f4-8f73-f1597dcb242c",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "c5e1cb30-904f-51ca-89dc-0083d64a1c27",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "acc96000-d050-5b14-9a2a-7ba710a8a90b",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "f6351b98-6377-51ba-ad63-5078fb50baaf",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "dfd041d4-ea4e-52a6-b026-cd344a94f317",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "3.00",
+          "purpose": "low-stock"
+        },
+        {
+          "variantId": "874b73e3-cfb1-5c45-83f6-185653cc414e",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "20.00",
+          "purpose": "contended"
+        },
+        {
+          "variantId": "7481c6f1-378e-59a7-a970-df5eebb14460",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "0.00",
+          "purpose": "backorder-zero"
+        },
+        {
+          "variantId": "5c6da4d2-c9dd-58ad-baf0-a153fa6e3036",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "500.00",
+          "purpose": "container-default"
+        },
+        {
+          "variantId": "5c6da4d2-c9dd-58ad-baf0-a153fa6e3036",
+          "warehouseId": "610e0793-0752-55e9-8798-36f4469c2ce9",
+          "quantity": "100.00",
+          "purpose": "container-default-w2"
+        },
+        {
+          "variantId": "dc7ea97a-2402-5fce-9756-e1411a798770",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "dd475cfc-8fc2-56bc-8e18-f55534db3643",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "0.00",
+          "purpose": "container-zero-variant"
+        },
+        {
+          "variantId": "38822b31-dfda-574c-b624-e1a19a2dbd3d",
+          "warehouseId": "9c3c751a-e0db-5a49-95e5-cf429c79cd0b",
+          "quantity": "10000.00",
+          "purpose": "plentiful"
+        },
+        {
+          "variantId": "307626a6-24a4-595d-adfc-b9d9af8e4662",
+          "warehouseId": "610e0793-0752-55e9-8798-36f4469c2ce9",
+          "quantity": "250.00",
+          "purpose": "plentiful-w2"
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-a",
+      "tenantId": "8242b275-ee28-5e42-b37c-62eb48e2c1b6",
+      "slug": "loadtest-tenant-a",
+      "probeProductId": "adc0e08b-64e5-59d6-9153-06456aeb5c5c",
+      "probeName": "TEST-PROBE-TENANT-A",
+      "probeSlug": "lt-probe-tenant-a",
+      "probeSku": "LT-PROBE-A",
+      "probeBarcode": "LTBCPROBEA001",
+      "probePrice": "111.11",
+      "probeCategoryId": "5fd607ce-179f-5af4-887c-92ec3941956d",
+      "probeCategoryName": "TEST-PROBE-CAT-A",
+      "probeCustomerId": "18909a41-2693-562c-950d-70d197827c09",
+      "probeCustomerEmail": "test-probe-customer-a@loadtest.local",
+      "sentinelOrderCreated": false
+    },
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-b",
+      "tenantId": "d74f075b-e0f5-57a2-80cd-cd3ab6ed616e",
+      "slug": "loadtest-tenant-b",
+      "probeProductId": "a6b0668b-823f-56b8-81c6-cee6f5b8b5fb",
+      "probeName": "TEST-PROBE-TENANT-B",
+      "probeSlug": "lt-probe-tenant-b",
+      "probeSku": "LT-PROBE-B",
+      "probeBarcode": "LTBCPROBEB001",
+      "probePrice": "222.22",
+      "probeCategoryId": "7850d3c8-20f8-5238-9330-5435c669a97a",
+      "probeCategoryName": "TEST-PROBE-CAT-B",
+      "probeCustomerId": "8cfef1d8-c32c-5e78-a7de-4d54ffab1b74",
+      "probeCustomerEmail": "test-probe-customer-b@loadtest.local",
+      "sentinelOrderCreated": false
+    },
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-c",
+      "tenantId": "6b9c21af-8eba-5b8a-87d7-da4a40263717",
+      "slug": "loadtest-tenant-c",
+      "probeProductId": "cdf712a5-e2ae-56c7-bead-a2cc85f84570",
+      "probeName": "TEST-PROBE-TENANT-C",
+      "probeSlug": "lt-probe-tenant-c",
+      "probeSku": "LT-PROBE-C",
+      "probeBarcode": "LTBCPROBEC001",
+      "probePrice": "333.33",
+      "probeCategoryId": "4f7279e2-ba68-5ef4-b64c-9ea730ff6ef1",
+      "probeCategoryName": "TEST-PROBE-CAT-C",
+      "probeCustomerId": "e5083ae7-52b9-5744-946f-682584dd6906",
+      "probeCustomerEmail": "test-probe-customer-c@loadtest.local",
+      "sentinelOrderCreated": false
+    }
+  ]
+}

@@ -140,6 +140,61 @@ public sealed class TreasuryInflowAuthorityCertificationTests
                 $"CUSTOMER_PAYMENT-INFLATE:{tenantId}:{payment.Id}")));
     }
 
+    [Theory]
+    [InlineData("GATEWAY", "GatewaySettlement")]
+    [InlineData("OFFLINE_COLLECTION", "CODSettlement")]
+    public async Task Settlement_RequiresExactBatchIdentityAndSettledDate(
+        string settlementType,
+        string sourceType)
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var (bank, clearing) = await SeedCashAccountsAsync(db, tenantId);
+        var settledAtUtc = DateTime.UtcNow.AddDays(-2);
+        var batch = new PaymentSettlementBatch
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            SettlementType = settlementType,
+            SettlementId = $"{settlementType.ToLowerInvariant()}-authority-001",
+            Provider = "stripe",
+            GrossAmount = 100m,
+            Fees = 0m,
+            Currency = "EGP",
+            OrderCount = 1,
+            SettledAtUtc = settledAtUtc
+        };
+        db.PaymentSettlementBatches.Add(batch);
+        await db.SaveChangesAsync();
+
+        PostingRequest BuildRequest(Guid sourceId, DateTime journalDate, string suffix) => new()
+        {
+            TenantId = tenantId,
+            JournalDate = journalDate,
+            SourceType = sourceType,
+            SourceId = sourceId,
+            SourceReference = batch.SettlementId,
+            Description = "Gateway settlement authority certification",
+            IdempotencyKey = $"{sourceType}:{tenantId}:{batch.SettlementId}:{suffix}",
+            Lines =
+            [
+                PostingLine.Debit(bank.Id, batch.GrossAmount),
+                PostingLine.Credit(clearing.Id, batch.GrossAmount)
+            ]
+        };
+
+        var posting = CreatePostingService(db);
+        var request = BuildRequest(batch.Id, settledAtUtc, "valid");
+        var first = await posting.PostJournalAsync(request);
+        var replay = await posting.PostJournalAsync(request);
+
+        Assert.Equal(first.Id, replay.Id);
+        await Assert.ThrowsAsync<InvalidJournalException>(() =>
+            posting.PostJournalAsync(BuildRequest(Guid.NewGuid(), settledAtUtc, "wrong-source")));
+        await Assert.ThrowsAsync<InvalidJournalException>(() =>
+            posting.PostJournalAsync(BuildRequest(batch.Id, settledAtUtc.AddDays(1), "wrong-date")));
+    }
+
     [Fact]
     public async Task ReversedSale_CanBeRepostedWithinCurrentAuthoritativeAmount()
     {

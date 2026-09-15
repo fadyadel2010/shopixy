@@ -1,0 +1,44 @@
+<goal>
+Implement only the deterministic read-only PostgreSQL evidence harness required by docs/reports/GLOBAL_GOLDEN_TREASURY_RECONCILIATION_ARCHITECTURE_2026-09-15.md. This is harness support for a real financial certification. You are not the certifier and must not execute any business mutation.
+</goal>
+
+<repository-state>
+The repository is intentionally very dirty with existing T-01 through T-11 and unrelated work. Frozen HEAD is 0de1c542bd316026de06bd5cc8f7111878b1b0e6. Never reset, restore, clean, stage, commit, amend, reformat wholesale, or modify existing work. Read the architecture report and .ai-context/PROJECT_CONTEXT.md, .ai-context/ARCHITECTURE_TRUTH.md, .ai-context/KNOWN_RISKS.md, and .ai-context/CODEX_RULES.md before implementation.
+</repository-state>
+
+<allowed-files>
+Create or modify files only beneath .opencode-tmp/global-golden-reconciliation/. Do not modify the architecture report or this brief. Prefer one .NET 9 console project, one Program.cs, and a concise README. A lightweight self-test mode is preferred over adding another test project. Npgsql 9.0.2 is allowed because the existing local T11 discovery harness already uses it. Do not add the project to PointOfSale.sln and do not modify package lockfiles or application projects.
+</allowed-files>
+
+<functional-contract>
+1. Connect from ConnectionStrings__DefaultConnection, falling back to PointOfSale.API/appsettings.Development.local.json without ever printing or writing the connection string.
+2. Begin an explicit REPEATABLE READ transaction, execute SET TRANSACTION READ ONLY, capture evidence, and roll back. Verify current_setting('transaction_read_only') is on and fail if it is not.
+3. Default tenant scope is exactly AhramStore c9c5c1ae-949e-498e-bc63-07242daeb49d, shopixy 83b39fe2-c80d-45a0-8c0d-5ce6c1f33ae5, and greatone c43aebf2-4cc4-406a-a2db-4df06d40bce5. Permit an explicit subset only from this allow-list. Every business query must include explicit tenant predicates; do not rely on EF query filters.
+4. Support a whole-scope snapshot and an optional source-focused snapshot by repeated --source-id GUID arguments. Source filters narrow detail sections but must not broaden tenants.
+5. Produce canonical JSON with capture metadata separated from deterministic evidence. Produce a SHA-256 fingerprint over only deterministic evidence. Stable sort every array and normalize decimal/date/GUID output invariantly.
+6. Capture enough read-only evidence to populate the baseline/final and source lineage required by the architecture report: tenants/currency; all LedgerAccounts with active/deleted/system/clearing/supplier-card flags, normal balance, cached balance, posted/reversed ledger aggregate and variance; TreasuryAccounts; PaymentMethods; supplier-card instruments/fundings; Treasury capitalization; Orders and OrderItems; SalesInvoices/items/payments; Purchases/items/invoice payments; SupplierPayments; CustomerPayments; Sales Returns/items/refund allocations if present; Purchase Returns/items; OrderRefunds and allocations; Affiliate commission ledger/attribution/payout/evidence rows; CommerceHub marketplace orders/suborders/items, payments, refunds, financial transactions, settlements, payouts; PaymentSettlementBatches and members; ProductVariantStocks, InventoryReservations, and StockMovements; LedgerJournalEntries and LedgerLines; AccountingOutboxMessages.
+7. Capture deterministic aggregate reconciliations: Treasury opening/current by mapped Cashbox, Bank, each Clearing, supplier-card Asset, and requested account codes 1010, 1020, 1030, 1110, 1120, 1130, 1140, 1310, 1410, 2010, 2105, 3010, 4010, 4020, 5010, 6010, 6020, 6110; total journal debit/credit/variance; accounting outbox total/pending/failed/unlinked; counts by event/source type; party control totals and per-controlled-party source linkage where source IDs identify a party; stock totals and focused source linkage; report inputs sufficient to independently check canonical Cash Flow closing cash, P&L account classes, Balance Sheet equality, and Trial Balance equality.
+8. Capture source-to-outbox-to-journal linkage by TenantId plus BusinessEntityId/source IDs, idempotency key, source type/reference, JournalId, and ordered journal lines. Do not infer a link by amount alone. Clearly emit unresolved links rather than fabricating them.
+9. Redact/exclude secrets and personal data. Do not output names, emails, phones, addresses, tokens, cookies, credentials, provider secrets, raw outbox payloads, raw webhook payloads, or connection details. Tenant names and financial document/reference numbers are allowed; customer/supplier/affiliate personal names are not.
+10. Add --self-test that proves canonical ordering/hash stability, capture timestamp exclusion from fingerprint, tenant allow-list rejection, source GUID validation, sensitive-key redaction/exclusion, and SQL read-only command presence. Self-test must not require a database.
+11. Add --output PATH. Refuse to overwrite an existing output unless --overwrite is supplied. Create output parent only when valid. Print only a terse JSON summary containing path, fingerprint, tenant count, and captured counts.
+12. Do not call application mutation APIs, browser tools, providers, or external services. Do not run EF update or any SQL statement that can write. SELECT and transaction/session read controls only.
+</functional-contract>
+
+<stop-conditions>
+Stop and report instead of broadening scope if table/column drift makes a requested entity unavailable, if read-only enforcement cannot be proven, if the utility would need production changes, if evidence requires PII/raw payloads, or if any business write appears necessary. Missing optional tables must be emitted as an explicit schema limitation only when PostgreSQL proves they do not exist; do not silently omit them.
+</stop-conditions>
+
+<gates>
+Run:
+dotnet build .opencode-tmp/global-golden-reconciliation/GlobalGoldenTreasuryReconciliation.csproj -c Release
+dotnet run --project .opencode-tmp/global-golden-reconciliation/GlobalGoldenTreasuryReconciliation.csproj -c Release --no-build -- --self-test
+dotnet run --project .opencode-tmp/global-golden-reconciliation/GlobalGoldenTreasuryReconciliation.csproj -c Release --no-build -- --output .opencode-tmp/global-golden-reconciliation/sample-evidence.json --overwrite
+git diff --check -- .opencode-tmp/global-golden-reconciliation
+
+The live sample command is read-only evidence capture, not a business mutation. If the running schema differs, fix only the harness. Do not touch production code.
+</gates>
+
+<report-contract>
+Return one final report listing every changed file, implementation summary, exact captured sections and known schema limitations, self-test result, build result, live read-only capture result and fingerprint, migration status (must be none), confirmation of no business/API/browser mutation, confirmation no files outside the allow-list changed by you, and an exact diff or complete contents for every created file. Do not commit.
+</report-contract>

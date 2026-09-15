@@ -14,7 +14,7 @@ import { useToast } from '../../components/Toast'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
 import * as finApi from '../../services/financialReportsApi'
 import { useRTL } from '../../hooks/useRTL'
-import { formatDate, formatDateTime } from '../../utils/dateFormat'
+import { formatDate, formatDateInputValue, formatDateTime, parseDateInput } from '../../utils/dateFormat'
 
 export default function TreasuryBalanceSheet() {
     const { t } = useTranslation()
@@ -47,40 +47,43 @@ export default function TreasuryBalanceSheet() {
     const exportToExcel = () => {
         import('xlsx').then(XLSX => {
             const data = []
+            const sectionKey = t('common.section', 'Section')
+            const accountKey = t('treasury.account', 'Account')
+            const balanceKey = t('treasury.balance', 'Balance')
 
-            data.push({ Section: 'ASSETS', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.assets', 'Assets'), [accountKey]: '', [balanceKey]: '' })
             report.assetLines?.forEach(l => data.push({
-                Section: '',
-                Account: `${l.accountCode} - ${l.accountName}`,
-                Balance: l.balance
+                [sectionKey]: '',
+                [accountKey]: `${l.accountCode} - ${l.accountName}`,
+                [balanceKey]: l.balance
             }))
-            data.push({ Section: 'Total Assets', Account: '', Balance: report.totalAssets })
-            data.push({ Section: '', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.totalAssets', 'Total Assets'), [accountKey]: '', [balanceKey]: report.totalAssets })
+            data.push({ [sectionKey]: '', [accountKey]: '', [balanceKey]: '' })
 
-            data.push({ Section: 'LIABILITIES', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.liabilities', 'Liabilities'), [accountKey]: '', [balanceKey]: '' })
             report.liabilityLines?.forEach(l => data.push({
-                Section: '',
-                Account: `${l.accountCode} - ${l.accountName}`,
-                Balance: l.balance
+                [sectionKey]: '',
+                [accountKey]: `${l.accountCode} - ${l.accountName}`,
+                [balanceKey]: l.balance
             }))
-            data.push({ Section: 'Total Liabilities', Account: '', Balance: report.totalLiabilities })
-            data.push({ Section: '', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.totalLiabilities', 'Total Liabilities'), [accountKey]: '', [balanceKey]: report.totalLiabilities })
+            data.push({ [sectionKey]: '', [accountKey]: '', [balanceKey]: '' })
 
-            data.push({ Section: 'EQUITY', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.equity', 'Equity'), [accountKey]: '', [balanceKey]: '' })
             report.equityLines?.forEach(l => data.push({
-                Section: '',
-                Account: `${l.accountCode} - ${l.accountName}`,
-                Balance: l.balance
+                [sectionKey]: '',
+                [accountKey]: `${l.accountCode} - ${l.accountName}`,
+                [balanceKey]: l.balance
             }))
-            data.push({ Section: 'Total Equity', Account: '', Balance: report.totalEquity })
-            data.push({ Section: '', Account: '', Balance: '' })
+            data.push({ [sectionKey]: t('treasury.totalEquity', 'Total Equity'), [accountKey]: '', [balanceKey]: report.totalEquity })
+            data.push({ [sectionKey]: '', [accountKey]: '', [balanceKey]: '' })
 
-            data.push({ Section: 'LIABILITIES + EQUITY', Account: '', Balance: report.totalLiabilitiesAndEquity })
+            data.push({ [sectionKey]: t('treasury.totalLiabilitiesEquity', 'Liabilities + Equity'), [accountKey]: '', [balanceKey]: report.totalLiabilitiesAndEquity })
 
             const ws = XLSX.utils.json_to_sheet(data)
             const wb = XLSX.utils.book_new()
-            XLSX.utils.book_append_sheet(wb, ws, 'Balance Sheet')
-            XLSX.writeFile(wb, `BalanceSheet_${asOfDate.toISOString().split('T')[0]}.xlsx`)
+            XLSX.utils.book_append_sheet(wb, ws, t('treasury.balanceSheet', 'Balance Sheet').slice(0, 31))
+            XLSX.writeFile(wb, `BalanceSheet_${formatDateInputValue(asOfDate)}.xlsx`)
             showSuccess(t('common.exportSuccess', 'Exported successfully'))
         })
     }
@@ -91,16 +94,16 @@ export default function TreasuryBalanceSheet() {
                 const doc = new jsPDF()
 
                 doc.setFontSize(18)
-                doc.text('Balance Sheet', 14, 22)
+                doc.text(t('treasury.balanceSheet', 'Balance Sheet'), 14, 22)
                 doc.setFontSize(11)
-                doc.text(`As of: ${formatDate(asOfDate, locale)}`, 14, 32)
+                doc.text(`${t('treasury.asOf', 'As of')}: ${formatDate(asOfDate, locale)}`, 14, 32)
 
                 let y = 45
 
                 // Assets
                 doc.setFontSize(12)
                 doc.setFont(undefined, 'bold')
-                doc.text('ASSETS', 14, y)
+                doc.text(t('treasury.assets', 'Assets'), 14, y)
                 y += 8
                 doc.setFont(undefined, 'normal')
                 doc.setFontSize(10)
@@ -111,13 +114,13 @@ export default function TreasuryBalanceSheet() {
                 })
                 doc.setFont(undefined, 'bold')
                 doc.setFontSize(11)
-                doc.text('Total Assets', 14, y)
+                doc.text(t('treasury.totalAssets', 'Total Assets'), 14, y)
                 doc.text(formatCurrency(report.totalAssets), 180, y, { align: 'right' })
                 y += 15
 
                 // Liabilities
                 doc.setFontSize(12)
-                doc.text('LIABILITIES', 14, y)
+                doc.text(t('treasury.liabilities', 'Liabilities'), 14, y)
                 y += 8
                 doc.setFont(undefined, 'normal')
                 doc.setFontSize(10)
@@ -128,13 +131,13 @@ export default function TreasuryBalanceSheet() {
                 })
                 doc.setFont(undefined, 'bold')
                 doc.setFontSize(11)
-                doc.text('Total Liabilities', 14, y)
+                doc.text(t('treasury.totalLiabilities', 'Total Liabilities'), 14, y)
                 doc.text(formatCurrency(report.totalLiabilities), 180, y, { align: 'right' })
                 y += 15
 
                 // Equity
                 doc.setFontSize(12)
-                doc.text('EQUITY', 14, y)
+                doc.text(t('treasury.equity', 'Equity'), 14, y)
                 y += 8
                 doc.setFont(undefined, 'normal')
                 doc.setFontSize(10)
@@ -145,7 +148,7 @@ export default function TreasuryBalanceSheet() {
                 })
                 doc.setFont(undefined, 'bold')
                 doc.setFontSize(11)
-                doc.text('Total Equity', 14, y)
+                doc.text(t('treasury.totalEquity', 'Total Equity'), 14, y)
                 doc.text(formatCurrency(report.totalEquity), 180, y, { align: 'right' })
                 y += 15
 
@@ -153,13 +156,13 @@ export default function TreasuryBalanceSheet() {
                 doc.setFontSize(12)
                 if (report.isBalanced) {
                     doc.setTextColor(0, 128, 0)
-                    doc.text('✓ BALANCED: Assets = Liabilities + Equity', 14, y)
+                    doc.text(`✓ ${t('treasury.balanced', 'Balanced')}: ${t('treasury.accountingEquation', 'Assets = Liabilities + Equity')}`, 14, y)
                 } else {
                     doc.setTextColor(255, 0, 0)
-                    doc.text(`✗ UNBALANCED: Variance ${formatCurrency(report.variance)}`, 14, y)
+                    doc.text(`✗ ${t('treasury.unbalanced', 'Unbalanced')}: ${t('treasury.variance', 'Variance')} ${formatCurrency(report.variance)}`, 14, y)
                 }
 
-                doc.save(`BalanceSheet_${asOfDate.toISOString().split('T')[0]}.pdf`)
+                doc.save(`BalanceSheet_${formatDateInputValue(asOfDate)}.pdf`)
                 showSuccess(t('common.exportSuccess', 'Exported successfully'))
             })
         })
@@ -169,8 +172,8 @@ export default function TreasuryBalanceSheet() {
         return (
             <div className="flex items-center justify-center h-96">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">{t('common.loading')}</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto" aria-hidden="true"></div>
+                    <p className="mt-4 text-gray-600" role="status">{t('common.loading')}</p>
                 </div>
             </div>
         )
@@ -181,15 +184,22 @@ export default function TreasuryBalanceSheet() {
             {/* Phase C4: UI Truth Label */}
             <ReportTruthBadge type="financial" />
 
+            {/* Asset perimeter: broader than available cash. */}
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200" role="note">
+                <p className="text-sm text-slate-700">
+                    {t('treasury.balanceSheetPerimeter', 'Assets include clearing, supplier-card funding, control, and other non-cash accounts. Only mapped Cashbox and Bank are available cash.')}
+                </p>
+            </div>
+
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center gap-4">
-                    <button onClick={() => navigate('/treasury')} className="text-gray-500 hover:text-gray-700">
-                        ← {t('common.back')}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                    <button onClick={() => navigate('/treasury')} className="self-start text-gray-500 hover:text-gray-700">
+                        <span aria-hidden="true" className="inline-block rtl:rotate-180">←</span> {t('common.back')}
                     </button>
                     <div>
                         <h2 className="text-2xl font-bold text-gray-900">
-                            📋 {t('treasury.balanceSheet', 'Balance Sheet')}
+                            <span aria-hidden="true">📋 </span>{t('treasury.balanceSheet', 'Balance Sheet')}
                         </h2>
                         <p className="text-gray-600">
                             {t('treasury.asOf', 'As of')}: {formatDate(asOfDate, locale)}
@@ -197,26 +207,30 @@ export default function TreasuryBalanceSheet() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                    <label className="text-sm text-gray-600">{t('treasury.asOf', 'As of')}:</label>
+                <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
+                    <label htmlFor="treasury-balance-sheet-date" className="text-sm text-gray-600">{t('treasury.asOf', 'As of')}:</label>
                     <input
+                        id="treasury-balance-sheet-date"
                         type="date"
-                        value={asOfDate.toISOString().split('T')[0]}
-                        onChange={(e) => setAsOfDate(new Date(e.target.value))}
-                        className="input"
+                        value={formatDateInputValue(asOfDate)}
+                        onChange={(e) => {
+                            const date = parseDateInput(e.target.value)
+                            if (date) setAsOfDate(date)
+                        }}
+                        className="input min-w-0 flex-1 md:flex-none"
                     />
-                    <button onClick={exportToExcel} className="btn-secondary text-sm">📊 Excel</button>
-                    <button onClick={exportToPdf} className="btn-secondary text-sm">📄 PDF</button>
+                    <button onClick={exportToExcel} disabled={!report} className="btn-secondary flex-1 text-sm sm:flex-none">📊 Excel</button>
+                    <button onClick={exportToPdf} disabled={!report} className="btn-secondary flex-1 text-sm sm:flex-none">📄 PDF</button>
                 </div>
             </div>
 
             {/* Balance Status */}
-            <div className={`p-4 rounded-lg flex items-center justify-between ${report?.isBalanced
+            <div role="status" className={`p-4 rounded-lg flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between ${report?.isBalanced
                 ? 'bg-green-50 border border-green-200'
                 : 'bg-red-50 border border-red-200'
                 }`}>
                 <div className="flex items-center gap-3">
-                    <span className="text-3xl">{report?.isBalanced ? '✅' : '❌'}</span>
+                    <span className="text-3xl" aria-hidden="true">{report?.isBalanced ? '✅' : '❌'}</span>
                     <div>
                         <p className={`font-semibold ${report?.isBalanced ? 'text-green-800' : 'text-red-800'}`}>
                             {report?.isBalanced ? t('treasury.balanced', 'BALANCED') : t('treasury.unbalanced', 'UNBALANCED')}
@@ -226,7 +240,7 @@ export default function TreasuryBalanceSheet() {
                         </p>
                     </div>
                 </div>
-                <div className="flex gap-8">
+                <div className="flex w-full justify-around gap-8 sm:w-auto">
                     <div className="text-center">
                         <p className="text-xs text-gray-500">{t('treasury.currentRatio', 'Current Ratio')}</p>
                         <p className={`text-xl font-bold ${(report?.currentRatio || 0) >= 1.5 ? 'text-green-600' :
@@ -267,25 +281,24 @@ export default function TreasuryBalanceSheet() {
             {/* Two-Column Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Assets Column */}
-                <div className="card">
+                <div className="card overflow-x-auto">
                     <h3 className="text-lg font-semibold text-blue-800 mb-4">
                         📈 {t('treasury.assets', 'ASSETS')}
                     </h3>
                     <table className="min-w-full">
                         <tbody className="divide-y divide-gray-100">
-                            {report?.assetLines?.map((line, idx) => (
-                                <tr key={idx} className="hover:bg-gray-50 cursor-pointer"
-                                    onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>
-                                    <td className="py-2 text-sm font-mono text-gray-500">{line.accountCode}</td>
+                            {report?.assetLines?.map((line) => (
+                                <tr key={line.accountId} className="hover:bg-gray-50">
+                                    <td className="py-2 text-sm font-mono text-gray-500"><bdi>{line.accountCode}</bdi></td>
                                     <td className="py-2 text-sm text-gray-900">
-                                        {line.accountName}
+                                        <button type="button" className="text-start hover:underline" onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>{line.accountName}</button>
                                         {line.isCurrent && (
-                                            <span className="ml-2 text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
-                                                Current
+                                            <span className="ms-2 text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">
+                                                {t('treasury.currentClassification', 'Current')}
                                             </span>
                                         )}
                                     </td>
-                                    <td className="py-2 text-sm text-right font-semibold text-gray-900">
+                                    <td className="py-2 text-sm text-end font-semibold text-gray-900">
                                         {formatCurrency(line.balance)}
                                     </td>
                                 </tr>
@@ -296,7 +309,7 @@ export default function TreasuryBalanceSheet() {
                                 <td colSpan={2} className="py-3 font-bold text-blue-900">
                                     {t('treasury.totalAssets', 'Total Assets')}
                                 </td>
-                                <td className="py-3 text-right font-bold text-blue-900">
+                                <td className="py-3 text-end font-bold text-blue-900">
                                     {formatCurrency(report?.totalAssets || 0)}
                                 </td>
                             </tr>
@@ -307,25 +320,24 @@ export default function TreasuryBalanceSheet() {
                 {/* Liabilities & Equity Column */}
                 <div className="space-y-6">
                     {/* Liabilities */}
-                    <div className="card">
+                    <div className="card overflow-x-auto">
                         <h3 className="text-lg font-semibold text-orange-800 mb-4">
                             💳 {t('treasury.liabilities', 'LIABILITIES')}
                         </h3>
                         <table className="min-w-full">
                             <tbody className="divide-y divide-gray-100">
-                                {report?.liabilityLines?.map((line, idx) => (
-                                    <tr key={idx} className="hover:bg-gray-50 cursor-pointer"
-                                        onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>
-                                        <td className="py-2 text-sm font-mono text-gray-500">{line.accountCode}</td>
+                                {report?.liabilityLines?.map((line) => (
+                                    <tr key={line.accountId} className="hover:bg-gray-50">
+                                        <td className="py-2 text-sm font-mono text-gray-500"><bdi>{line.accountCode}</bdi></td>
                                         <td className="py-2 text-sm text-gray-900">
-                                            {line.accountName}
+                                            <button type="button" className="text-start hover:underline" onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>{line.accountName}</button>
                                             {line.isCurrent && (
-                                                <span className="ml-2 text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">
-                                                    Current
+                                                <span className="ms-2 text-xs bg-orange-100 text-orange-600 px-1.5 py-0.5 rounded">
+                                                    {t('treasury.currentClassification', 'Current')}
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="py-2 text-sm text-right font-semibold text-gray-900">
+                                        <td className="py-2 text-sm text-end font-semibold text-gray-900">
                                             {formatCurrency(line.balance)}
                                         </td>
                                     </tr>
@@ -336,7 +348,7 @@ export default function TreasuryBalanceSheet() {
                                     <td colSpan={2} className="py-3 font-bold text-orange-900">
                                         {t('treasury.totalLiabilities', 'Total Liabilities')}
                                     </td>
-                                    <td className="py-3 text-right font-bold text-orange-900">
+                                    <td className="py-3 text-end font-bold text-orange-900">
                                         {formatCurrency(report?.totalLiabilities || 0)}
                                     </td>
                                 </tr>
@@ -345,18 +357,17 @@ export default function TreasuryBalanceSheet() {
                     </div>
 
                     {/* Equity */}
-                    <div className="card">
+                    <div className="card overflow-x-auto">
                         <h3 className="text-lg font-semibold text-green-800 mb-4">
                             🏛️ {t('treasury.equity', 'EQUITY')}
                         </h3>
                         <table className="min-w-full">
                             <tbody className="divide-y divide-gray-100">
-                                {report?.equityLines?.map((line, idx) => (
-                                    <tr key={idx} className="hover:bg-gray-50 cursor-pointer"
-                                        onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>
-                                        <td className="py-2 text-sm font-mono text-gray-500">{line.accountCode}</td>
-                                        <td className="py-2 text-sm text-gray-900">{line.accountName}</td>
-                                        <td className="py-2 text-sm text-right font-semibold text-gray-900">
+                                {report?.equityLines?.map((line) => (
+                                    <tr key={line.accountId} className="hover:bg-gray-50">
+                                        <td className="py-2 text-sm font-mono text-gray-500"><bdi>{line.accountCode}</bdi></td>
+                                        <td className="py-2 text-sm text-gray-900"><button type="button" className="text-start hover:underline" onClick={() => navigate(`/treasury/general-ledger?accountId=${line.accountId}`)}>{line.accountName}</button></td>
+                                        <td className="py-2 text-sm text-end font-semibold text-gray-900">
                                             {formatCurrency(line.balance)}
                                         </td>
                                     </tr>
@@ -367,7 +378,7 @@ export default function TreasuryBalanceSheet() {
                                     <td colSpan={2} className="py-3 font-bold text-green-900">
                                         {t('treasury.totalEquity', 'Total Equity')}
                                     </td>
-                                    <td className="py-3 text-right font-bold text-green-900">
+                                    <td className="py-3 text-end font-bold text-green-900">
                                         {formatCurrency(report?.totalEquity || 0)}
                                     </td>
                                 </tr>
@@ -377,7 +388,7 @@ export default function TreasuryBalanceSheet() {
 
                     {/* Total L+E */}
                     <div className="p-4 bg-gray-100 rounded-lg">
-                        <div className="flex justify-between items-center">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <span className="font-bold text-gray-800">
                                 {t('treasury.totalLiabilitiesEquity', 'LIABILITIES + EQUITY')}
                             </span>

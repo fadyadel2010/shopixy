@@ -686,6 +686,11 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("IsSupplierCardFunding")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<bool>("IsSystem")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
@@ -1231,6 +1236,169 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("PaymentMethods", (string)null);
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.SupplierCardFunding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("FundingDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("FundingInstrumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("FundingInstrumentVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("FundingLedgerAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FundingSourceLedgerAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FundingSourceTreasuryAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("ReferenceNumber")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "FundingLedgerAccountId");
+
+                    b.HasIndex("TenantId", "FundingSourceLedgerAccountId");
+
+                    b.HasIndex("TenantId", "FundingSourceTreasuryAccountId");
+
+                    b.HasIndex("TenantId", "IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "FundingInstrumentId", "FundingDate");
+
+                    b.ToTable("SupplierCardFundings", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SupplierCardFunding_Amount", "\"Amount\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AuthorityVersion")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1);
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)");
+
+                    b.Property<Guid>("FundingSourceTreasuryAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("InstrumentType")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Issuer")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Last4")
+                        .HasMaxLength(4)
+                        .HasColumnType("character varying(4)");
+
+                    b.Property<Guid>("LedgerAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_SupplierCardFundingInstruments_TenantId_Id");
+
+                    b.HasIndex("TenantId", "FundingSourceTreasuryAccountId");
+
+                    b.HasIndex("TenantId", "IsActive");
+
+                    b.HasIndex("TenantId", "LedgerAccountId")
+                        .IsUnique();
+
+                    b.ToTable("SupplierCardFundingInstruments", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_SupplierCardFundingInstrument_AuthorityVersion", "\"AuthorityVersion\" > 0");
+
+                            t.HasCheckConstraint("CK_SupplierCardFundingInstrument_Last4", "\"Last4\" IS NULL OR \"Last4\" ~ '^[0-9]{4}$'");
+                        });
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryAccount", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1295,6 +1463,9 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_TreasuryAccounts_TenantId_Id");
+
                     b.HasIndex("TenantId")
                         .HasDatabaseName("IX_TreasuryAccounts_Tenant");
 
@@ -1306,6 +1477,230 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasDatabaseName("IX_TreasuryAccounts_TenantType");
 
                     b.ToTable("TreasuryAccounts", (string)null);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalization", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CutoverDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DeclarationVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("DocumentNumber")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("EvidenceReference")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("MutationVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<string>("OpeningEquityAccountCodeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("OpeningEquityAccountNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("OpeningEquityLedgerAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("PostedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("PostedJournalId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("PredecessorCapitalizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RequestHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid?>("ReversalJournalId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ReversalOperationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReversalReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReversalRequestHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("ReversedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("TotalAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasAlternateKey("TenantId", "Id")
+                        .HasName("AK_TreasuryInitialCapitalizations_TenantId_Id");
+
+                    b.HasIndex("TenantId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TreasuryInitialCapitalization_OneActivePerTenant")
+                        .HasFilter("\"Status\" IN (0, 1) AND \"IsDeleted\" = false");
+
+                    b.HasIndex("TenantId", "DocumentNumber")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TreasuryInitialCapitalization_Tenant_Number");
+
+                    b.HasIndex("TenantId", "OpeningEquityLedgerAccountId");
+
+                    b.HasIndex("TenantId", "OperationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TreasuryInitialCapitalization_Tenant_Operation");
+
+                    b.HasIndex("TenantId", "PredecessorCapitalizationId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TreasuryInitialCapitalization_Predecessor")
+                        .HasFilter("\"PredecessorCapitalizationId\" IS NOT NULL");
+
+                    b.ToTable("TreasuryInitialCapitalizations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_TreasuryInitialCapitalization_MutationVersion", "\"MutationVersion\" > 0");
+
+                            t.HasCheckConstraint("CK_TreasuryInitialCapitalization_OpeningEquity", "\"OpeningEquityAccountCodeSnapshot\" = '3010'");
+
+                            t.HasCheckConstraint("CK_TreasuryInitialCapitalization_Total", "\"TotalAmount\" > 0");
+                        });
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalizationAllocation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<Guid>("CapitalizationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LedgerAccountCodeSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid>("LedgerAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("LedgerAccountNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TreasuryAccountId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TreasuryAccountNameSnapshot")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("TreasuryAccountTypeSnapshot")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TenantId", "LedgerAccountId");
+
+                    b.HasIndex("TenantId", "TreasuryAccountId");
+
+                    b.HasIndex("TenantId", "CapitalizationId", "TreasuryAccountId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_TreasuryInitialCapitalizationAllocation_Destination");
+
+                    b.ToTable("TreasuryInitialCapitalizationAllocations", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_TreasuryInitialCapitalizationAllocation_Amount", "\"Amount\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Affiliate.AffiliateAccount", b =>
@@ -7036,6 +7431,13 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<Guid>("CategoryId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal>("CostAmountSnapshot")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime?>("CostSnapshotCapturedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -7091,6 +7493,10 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<decimal>("Total")
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)");
+
+                    b.Property<decimal>("UnitCostSnapshot")
+                        .HasPrecision(18, 6)
+                        .HasColumnType("numeric(18,6)");
 
                     b.Property<decimal>("UnitPrice")
                         .HasPrecision(18, 2)
@@ -16780,6 +17186,15 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("FundingInstrumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("FundingInstrumentVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("FundingLedgerAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
@@ -16805,6 +17220,10 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("uuid");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FundingInstrumentId");
+
+                    b.HasIndex("FundingLedgerAccountId");
 
                     b.HasIndex("PurchaseInvoiceId");
 
@@ -20656,6 +21075,15 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("FundingInstrumentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("FundingInstrumentVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("FundingLedgerAccountId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("IdempotencyKey")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -20695,9 +21123,15 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("FundingInstrumentId");
+
                     b.HasIndex("PurchaseInvoiceId");
 
                     b.HasIndex("SupplierId");
+
+                    b.HasIndex("TenantId", "FundingInstrumentId");
+
+                    b.HasIndex("TenantId", "FundingLedgerAccountId");
 
                     b.HasIndex("TenantId", "IdempotencyKey")
                         .IsUnique()
@@ -22288,6 +22722,60 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("TargetAccount");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.SupplierCardFunding", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument", "FundingInstrument")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingInstrumentId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingLedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingSourceLedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.TreasuryAccount", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingSourceTreasuryAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("FundingInstrument");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.TreasuryAccount", "FundingSourceTreasuryAccount")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingSourceTreasuryAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", "LedgerAccount")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "LedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("FundingSourceTreasuryAccount");
+
+                    b.Navigation("LedgerAccount");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryAccount", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Accounting.Account", "Account")
@@ -22298,6 +22786,48 @@ namespace PointOfSale.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Account");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalization", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "OpeningEquityLedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalization", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "PredecessorCapitalizationId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalizationAllocation", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalization", "Capitalization")
+                        .WithMany("Allocations")
+                        .HasForeignKey("TenantId", "CapitalizationId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "LedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.TreasuryAccount", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId", "TreasuryAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Capitalization");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Affiliate.AffiliateAttribution", b =>
@@ -24238,11 +24768,25 @@ namespace PointOfSale.Infrastructure.Migrations
 
             modelBuilder.Entity("PointOfSale.Core.Entities.PurchaseInvoicePayment", b =>
                 {
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument", "FundingInstrument")
+                        .WithMany()
+                        .HasForeignKey("FundingInstrumentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", "FundingLedgerAccount")
+                        .WithMany()
+                        .HasForeignKey("FundingLedgerAccountId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("PointOfSale.Core.Entities.PurchaseInvoice", "PurchaseInvoice")
                         .WithMany("Payments")
                         .HasForeignKey("PurchaseInvoiceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("FundingInstrument");
+
+                    b.Navigation("FundingLedgerAccount");
 
                     b.Navigation("PurchaseInvoice");
                 });
@@ -24864,6 +25408,22 @@ namespace PointOfSale.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.SupplierCardFundingInstrument", "FundingInstrument")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingInstrumentId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("PointOfSale.Core.Entities.Accounting.Account", "FundingLedgerAccount")
+                        .WithMany()
+                        .HasForeignKey("TenantId", "FundingLedgerAccountId")
+                        .HasPrincipalKey("TenantId", "Id")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("FundingInstrument");
+
+                    b.Navigation("FundingLedgerAccount");
+
                     b.Navigation("PurchaseInvoice");
 
                     b.Navigation("Supplier");
@@ -25004,6 +25564,11 @@ namespace PointOfSale.Infrastructure.Migrations
             modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.JournalEntry", b =>
                 {
                     b.Navigation("LedgerEntries");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.Accounting.TreasuryInitialCapitalization", b =>
+                {
+                    b.Navigation("Allocations");
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.Bank", b =>

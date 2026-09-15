@@ -159,6 +159,12 @@ public class Account : BaseEntity, ITenantOwned
     /// Used for: Cashbox, Bank accounts.
     /// </summary>
     public bool PreventNegative { get; set; }
+
+    /// <summary>
+    /// Explicitly designates a dedicated funded supplier-card Asset account.
+    /// This classification is immutable after account creation.
+    /// </summary>
+    public bool IsSupplierCardFunding { get; private set; }
     
     /// <summary>
     /// If false, account is disabled and cannot receive new entries.
@@ -251,6 +257,15 @@ public class Account : BaseEntity, ITenantOwned
     public void SetAccountType(AccountType type)
     {
         AccountType = type;
+    }
+
+    public void DesignateAsSupplierCardFunding()
+    {
+        if (AccountType != Enums.AccountType.Asset || IsClearing)
+            throw new InvalidOperationException("Supplier card funding accounts must be non-clearing Asset accounts.");
+
+        IsSupplierCardFunding = true;
+        PreventNegative = true;
     }
     
     #endregion

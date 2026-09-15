@@ -48,8 +48,35 @@ export const ACCOUNT_NAMES = {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LEDGER BALANCE QUERIES
+// TREASURY ACCOUNT CATALOG (tenant-scoped presentation authority)
+// GET /api/treasury/accounts returns: accountCode, name, nameAr,
+// currentBalance, accountType (Cashbox | Bank | Clearing), isClearing,
+// preventNegative. The browser must not duplicate backend eligibility logic.
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Get the tenant-scoped Treasury account catalog.
+ * accountType is the only Treasury role authority consumed by the UI.
+ * @param {Object} options - { signal }
+ * @returns {Promise<Array<TreasuryCatalogAccount>>}
+ */
+export const getTreasuryAccounts = async (options = {}) => {
+    const response = await api.get('/treasury/accounts', {
+        signal: options.signal,
+    })
+    return response.data
+}
+
+/**
+ * @typedef {Object} TreasuryCatalogAccount
+ * @property {string} accountCode - Ledger account code (identity only)
+ * @property {string} name - Server-owned display name
+ * @property {string} nameAr - Server-owned Arabic display name
+ * @property {number} currentBalance - Current ledger balance
+ * @property {string} accountType - Cashbox | Bank | Clearing (role authority)
+ * @property {boolean} isClearing - Server-owned clearing flag
+ * @property {boolean} preventNegative - Server-owned guard flag
+ */
 
 /**
  * Get balance for a single account by code.
@@ -271,6 +298,7 @@ export const treasuryCashOut = async (request) => {
 export default {
     ACCOUNT_CODES,
     ACCOUNT_NAMES,
+    getTreasuryAccounts,
     getTreasuryBalance,
     getTreasuryBalances,
     getTreasuryMovements,

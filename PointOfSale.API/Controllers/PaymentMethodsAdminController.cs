@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
@@ -134,18 +135,26 @@ public class PaymentMethodsAdminController : ControllerBase
     [HttpPut("{code}")]
     [ProducesResponseType(typeof(PaymentMethodResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> UpsertPaymentMethod(
         string code,
         [FromBody] UpsertPaymentMethodDto request,
         CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        var normalizedCode = code.ToUpperInvariant();
+        var normalizedCode = code.Trim().ToUpperInvariant();
 
         // Validate code
         if (!IsValidCode(normalizedCode))
         {
             return BadRequest(new { error = "INVALID_CODE", message = "Code must be COD, STRIPE, PAYMOB, FAWRY, or MANUALWALLET" });
+        }
+
+        // T-09: Fawry has no certified financial settlement authority. Server-side
+        // mutation rejection; no tenant-row or outbox mutation is performed.
+        if (FawryFinancialAuthorityPolicy.IsFawry(normalizedCode))
+        {
+            return BuildFawryAuthorityRejection();
         }
 
         // PHASE P3 FIX: Must resolve TenantId for tenant isolation
@@ -231,18 +240,26 @@ public class PaymentMethodsAdminController : ControllerBase
     [ProducesResponseType(typeof(PaymentMethodResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> UpdateConfiguration(
         string code,
         [FromBody] UpsertPaymentMethodDto request,
         CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        var normalizedCode = code.ToUpperInvariant();
+        var normalizedCode = code.Trim().ToUpperInvariant();
 
         // Validate code first
         if (!IsValidCode(normalizedCode))
         {
             return BadRequest(new { error = "INVALID_CODE", message = "Code must be COD, STRIPE, PAYMOB, FAWRY, or MANUALWALLET" });
+        }
+
+        // T-09: Fawry has no certified financial settlement authority. Server-side
+        // mutation rejection; no tenant-row or outbox mutation is performed.
+        if (FawryFinancialAuthorityPolicy.IsFawry(normalizedCode))
+        {
+            return BuildFawryAuthorityRejection();
         }
 
         // Get TenantId from the current user context
@@ -330,15 +347,23 @@ public class PaymentMethodsAdminController : ControllerBase
     [ProducesResponseType(typeof(PaymentMethodResponseDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> EnablePaymentMethod(string code, CancellationToken cancellationToken)
     {
         var traceId = GetTraceId();
-        var normalizedCode = code.ToUpperInvariant();
+        var normalizedCode = code.Trim().ToUpperInvariant();
 
         // Validate code first
         if (!IsValidCode(normalizedCode))
         {
             return BadRequest(new { error = "INVALID_CODE", message = "Code must be COD, STRIPE, PAYMOB, FAWRY, or MANUALWALLET" });
+        }
+
+        // T-09: Fawry has no certified financial settlement authority. Server-side
+        // mutation rejection; no tenant-row or outbox mutation is performed.
+        if (FawryFinancialAuthorityPolicy.IsFawry(normalizedCode))
+        {
+            return BuildFawryAuthorityRejection();
         }
 
         // Get TenantId from the current user context
@@ -648,12 +673,21 @@ public class PaymentMethodsAdminController : ControllerBase
         Fee = 0,
         FeeType = "fixed",
         RequiresConfiguration = RequiresConfiguration(code),
-        IsSupported = true
+        // T-09: Fawry has no certified financial settlement authority and must
+        // render as unsupported regardless of credentials or stored state.
+        IsSupported = !FawryFinancialAuthorityPolicy.IsFawry(code),
+        UnsupportedReasonCode = FawryFinancialAuthorityPolicy.IsFawry(code)
+            ? FawryFinancialAuthorityPolicy.Code
+            : null,
+        UnsupportedMessage = FawryFinancialAuthorityPolicy.IsFawry(code)
+            ? FawryFinancialAuthorityPolicy.Message
+            : null
     };
 
     private PaymentMethodResponseDto MapToDto(TenantPaymentMethod method)
     {
         var configuration = EvaluateConfiguration(method);
+        var isFawry = FawryFinancialAuthorityPolicy.IsFawry(method.Code);
 
         return new PaymentMethodResponseDto
         {
@@ -676,6 +710,11 @@ public class PaymentMethodsAdminController : ControllerBase
             RequiresConfiguration = configuration.RequiresConfiguration,
             IsConfigurationValid = configuration.IsConfigurationValid,
             ConfigurationErrors = configuration.ValidationErrors.ToList(),
+            // T-09: existing Fawry tenant rows render as unsupported regardless
+            // of stored IsEnabled or credential validity. Rows are never rewritten.
+            IsSupported = !isFawry,
+            UnsupportedReasonCode = isFawry ? FawryFinancialAuthorityPolicy.Code : null,
+            UnsupportedMessage = isFawry ? FawryFinancialAuthorityPolicy.Message : null,
             CreatedAt = method.CreatedAt,
             UpdatedAt = method.UpdatedAtUtc
         };
@@ -1059,6 +1098,19 @@ public class PaymentMethodsAdminController : ControllerBase
 
     private string GetTraceId() => Activity.Current?.Id ?? HttpContext.TraceIdentifier;
 
+    /// <summary>
+    /// T-09: deterministic Fawry fail-closed rejection for admin mutations.
+    /// Called before any tenant-row read that could lead to a mutation, so no
+    /// tenant row or outbox event is created.
+    /// </summary>
+    private ObjectResult BuildFawryAuthorityRejection() =>
+        StatusCode(
+            StatusCodes.Status422UnprocessableEntity,
+            new ApiErrorResponse(
+                FawryFinancialAuthorityPolicy.Code,
+                FawryFinancialAuthorityPolicy.Message,
+                GetTraceId()));
+
     private void SetNoStoreHeaders()
     {
         Response.Headers["Cache-Control"] = "no-store, no-cache, max-age=0";
@@ -1131,6 +1183,12 @@ public class PaymentMethodResponseDto
     public bool RequiresConfiguration { get; set; }
     public bool IsConfigurationValid { get; set; }
     public List<string> ConfigurationErrors { get; set; } = new();
+    /// <summary>
+    /// T-09: false for Fawry, which has no certified financial settlement authority.
+    /// </summary>
+    public bool IsSupported { get; set; } = true;
+    public string? UnsupportedReasonCode { get; set; }
+    public string? UnsupportedMessage { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
 }
@@ -1151,6 +1209,11 @@ public class PaymentMethodCatalogProviderDto
     public string FeeType { get; set; } = "fixed";
     public bool RequiresConfiguration { get; set; }
     public bool IsSupported { get; set; }
+    /// <summary>
+    /// T-09: stable reason code when <see cref="IsSupported"/> is false.
+    /// </summary>
+    public string? UnsupportedReasonCode { get; set; }
+    public string? UnsupportedMessage { get; set; }
 }
 
 public class UpsertPaymentMethodDto

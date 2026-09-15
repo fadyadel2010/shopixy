@@ -14,7 +14,7 @@ import { useToast } from '../../components/Toast'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
 import * as finApi from '../../services/financialReportsApi'
 import { useRTL } from '../../hooks/useRTL'
-import { formatDate, formatDateTime } from '../../utils/dateFormat'
+import { formatDate, formatDateInputValue, formatDateTime, parseDateInput } from '../../utils/dateFormat'
 
 export default function TreasuryGeneralLedger() {
     const { t } = useTranslation()
@@ -75,39 +75,39 @@ export default function TreasuryGeneralLedger() {
 
         import('xlsx').then(XLSX => {
             const data = report.entries?.map(e => ({
-                Date: formatDate(e.journalDate, locale),
-                'Journal #': e.journalNumber,
-                Source: e.sourceType,
-                Description: e.description,
-                Debit: e.debitAmount || '',
-                Credit: e.creditAmount || '',
-                Balance: e.balanceAfter
+                [t('treasury.date', 'Date')]: formatDate(e.journalDate, locale),
+                [t('treasury.journalNumber', 'Journal #')]: e.journalNumber,
+                [t('treasury.source', 'Source')]: t(`treasury.sourceTypes.${e.sourceType}`, t('treasury.sourceTypes.Other', 'Other source')),
+                [t('treasury.description', 'Description')]: e.description,
+                [t('treasury.debit', 'Debit')]: e.debitAmount || '',
+                [t('treasury.credit', 'Credit')]: e.creditAmount || '',
+                [t('treasury.balance', 'Balance')]: e.balanceAfter
             })) || []
 
             // Add opening and closing
             data.unshift({
-                Date: '',
-                'Journal #': '',
-                Source: '',
-                Description: 'Opening Balance',
-                Debit: '',
-                Credit: '',
-                Balance: report.openingBalance
+                [t('treasury.date', 'Date')]: '',
+                [t('treasury.journalNumber', 'Journal #')]: '',
+                [t('treasury.source', 'Source')]: '',
+                [t('treasury.description', 'Description')]: t('treasury.openingBalance', 'Opening Balance'),
+                [t('treasury.debit', 'Debit')]: '',
+                [t('treasury.credit', 'Credit')]: '',
+                [t('treasury.balance', 'Balance')]: report.openingBalance
             })
             data.push({
-                Date: '',
-                'Journal #': '',
-                Source: '',
-                Description: 'Closing Balance',
-                Debit: report.totalDebits,
-                Credit: report.totalCredits,
-                Balance: report.closingBalance
+                [t('treasury.date', 'Date')]: '',
+                [t('treasury.journalNumber', 'Journal #')]: '',
+                [t('treasury.source', 'Source')]: '',
+                [t('treasury.description', 'Description')]: t('treasury.closingBalance', 'Closing Balance'),
+                [t('treasury.debit', 'Debit')]: report.totalDebits,
+                [t('treasury.credit', 'Credit')]: report.totalCredits,
+                [t('treasury.balance', 'Balance')]: report.closingBalance
             })
 
             const ws = XLSX.utils.json_to_sheet(data)
             const wb = XLSX.utils.book_new()
-            XLSX.utils.book_append_sheet(wb, ws, 'General Ledger')
-            XLSX.writeFile(wb, `GeneralLedger_${report.accountCode}_${dateRange.from.toISOString().split('T')[0]}.xlsx`)
+            XLSX.utils.book_append_sheet(wb, ws, t('treasury.generalLedger', 'General Ledger').slice(0, 31))
+            XLSX.writeFile(wb, `GeneralLedger_${report.accountCode}_${formatDateInputValue(dateRange.from)}.xlsx`)
             showSuccess(t('common.exportSuccess', 'Exported successfully'))
         })
     }
@@ -120,24 +120,24 @@ export default function TreasuryGeneralLedger() {
                 const doc = new jsPDF()
 
                 doc.setFontSize(16)
-                doc.text(`General Ledger: ${report.accountCode} - ${report.accountName}`, 14, 20)
+                doc.text(`${t('treasury.generalLedger', 'General Ledger')}: ${report.accountCode} - ${report.accountName}`, 14, 20)
                 doc.setFontSize(10)
-                doc.text(`Period: ${formatDate(dateRange.from, locale)} - ${formatDate(dateRange.to, locale)}`, 14, 28)
-                doc.text(`Opening Balance: ${formatCurrency(report.openingBalance)}`, 14, 35)
+                doc.text(`${t('common.period', 'Period')}: ${formatDate(dateRange.from, locale)} - ${formatDate(dateRange.to, locale)}`, 14, 28)
+                doc.text(`${t('treasury.openingBalance', 'Opening Balance')}: ${formatCurrency(report.openingBalance)}`, 14, 35)
 
                 doc.autoTable({
                     startY: 42,
-                    head: [['Date', 'Journal', 'Source', 'Description', 'Debit', 'Credit', 'Balance']],
+                    head: [[t('treasury.date', 'Date'), t('treasury.journalNumber', 'Journal'), t('treasury.source', 'Source'), t('treasury.description', 'Description'), t('treasury.debit', 'Debit'), t('treasury.credit', 'Credit'), t('treasury.balance', 'Balance')]],
                     body: report.entries?.map(e => [
                         formatDate(e.journalDate, locale),
                         e.journalNumber || '',
-                        e.sourceType || '',
+                         t(`treasury.sourceTypes.${e.sourceType}`, t('treasury.sourceTypes.Other', 'Other source')),
                         e.description?.substring(0, 30) || '',
                         e.debitAmount ? formatCurrency(e.debitAmount) : '',
                         e.creditAmount ? formatCurrency(e.creditAmount) : '',
                         formatCurrency(e.balanceAfter)
                     ]) || [],
-                    foot: [['', '', '', 'TOTALS', formatCurrency(report.totalDebits), formatCurrency(report.totalCredits), formatCurrency(report.closingBalance)]],
+                    foot: [['', '', '', t('common.totals', 'Totals'), formatCurrency(report.totalDebits), formatCurrency(report.totalCredits), formatCurrency(report.closingBalance)]],
                     theme: 'striped',
                     styles: { fontSize: 8 },
                     headStyles: { fillColor: [59, 130, 246] }
@@ -154,15 +154,22 @@ export default function TreasuryGeneralLedger() {
             {/* Phase C4: UI Truth Label */}
             <ReportTruthBadge type="financial" />
 
+            {/* Complete history across all ledger accounts. */}
+            <div className="p-4 rounded-lg bg-slate-50 border border-slate-200" role="note">
+                <p className="text-sm text-slate-700">
+                    {t('treasury.generalLedgerPerimeter', 'All ledger accounts and complete history are shown here, including clearing, supplier-card assets, account 1020, control accounts, reserves, and other non-cash accounts. Report inclusion grants no transfer or settlement authority.')}
+                </p>
+            </div>
+
             {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center gap-4">
-                    <button onClick={() => navigate('/treasury')} className="text-gray-500 hover:text-gray-700">
-                        ← {t('common.back')}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                    <button onClick={() => navigate('/treasury')} className="self-start text-gray-500 hover:text-gray-700">
+                        <span aria-hidden="true" className="inline-block rtl:rotate-180">←</span> {t('common.back')}
                     </button>
                     <div>
                         <h2 className="text-2xl font-bold text-gray-900">
-                            📖 {t('treasury.generalLedger', 'General Ledger')}
+                            <span aria-hidden="true">📖 </span>{t('treasury.generalLedger', 'General Ledger')}
                         </h2>
                         <p className="text-gray-600">
                             {t('treasury.transactionHistory', 'Account transaction history')}
@@ -170,12 +177,14 @@ export default function TreasuryGeneralLedger() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex w-full flex-wrap items-center gap-3 md:w-auto">
                     {/* Account Selector */}
+                    <label htmlFor="treasury-general-ledger-account" className="sr-only">{t('treasury.account', 'Account')}</label>
                     <select
+                        id="treasury-general-ledger-account"
                         value={selectedAccountId}
                         onChange={(e) => setSelectedAccountId(e.target.value)}
-                        className="input min-w-[250px]"
+                        className="input min-w-0 basis-full sm:min-w-[250px] sm:basis-auto"
                     >
                         <option value="">{t('treasury.selectAccount', 'Select an account...')}</option>
                         {accounts.map(acc => (
@@ -186,23 +195,31 @@ export default function TreasuryGeneralLedger() {
                     </select>
 
                     <input
+                        aria-label={t('common.startDate', 'Start Date')}
                         type="date"
-                        value={dateRange.from.toISOString().split('T')[0]}
-                        onChange={(e) => setDateRange(prev => ({ ...prev, from: new Date(e.target.value) }))}
-                        className="input"
+                        value={formatDateInputValue(dateRange.from)}
+                        onChange={(e) => {
+                            const date = parseDateInput(e.target.value)
+                            if (date) setDateRange(prev => ({ ...prev, from: date }))
+                        }}
+                        className="input min-w-0 flex-1 md:flex-none"
                     />
                     <span className="text-gray-500">-</span>
                     <input
+                        aria-label={t('common.endDate', 'End Date')}
                         type="date"
-                        value={dateRange.to.toISOString().split('T')[0]}
-                        onChange={(e) => setDateRange(prev => ({ ...prev, to: new Date(e.target.value) }))}
-                        className="input"
+                        value={formatDateInputValue(dateRange.to)}
+                        onChange={(e) => {
+                            const date = parseDateInput(e.target.value)
+                            if (date) setDateRange(prev => ({ ...prev, to: date }))
+                        }}
+                        className="input min-w-0 flex-1 md:flex-none"
                     />
 
                     {report && (
                         <>
-                            <button onClick={exportToExcel} className="btn-secondary text-sm">📊 Excel</button>
-                            <button onClick={exportToPdf} className="btn-secondary text-sm">📄 PDF</button>
+                            <button onClick={exportToExcel} className="btn-secondary flex-1 text-sm sm:flex-none">📊 Excel</button>
+                            <button onClick={exportToPdf} className="btn-secondary flex-1 text-sm sm:flex-none">📄 PDF</button>
                         </>
                     )}
                 </div>
@@ -210,7 +227,7 @@ export default function TreasuryGeneralLedger() {
 
             {!selectedAccountId ? (
                 <div className="card flex flex-col items-center justify-center py-16">
-                    <span className="text-6xl mb-4">📖</span>
+                    <span className="text-6xl mb-4" aria-hidden="true">📖</span>
                     <h3 className="text-xl font-semibold text-gray-700 mb-2">
                         {t('treasury.selectAccountPrompt', 'Select an Account')}
                     </h3>
@@ -221,20 +238,20 @@ export default function TreasuryGeneralLedger() {
             ) : loading ? (
                 <div className="flex items-center justify-center h-96">
                     <div className="text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-                        <p className="mt-4 text-gray-600">{t('common.loading')}</p>
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto" aria-hidden="true"></div>
+                        <p className="mt-4 text-gray-600" role="status">{t('common.loading')}</p>
                     </div>
                 </div>
             ) : (
                 <>
                     {/* Account Header */}
                     <div className="card bg-gradient-to-r from-blue-50 to-blue-100 border-blue-200">
-                        <div className="flex justify-between items-start">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div>
                                 <p className="text-sm text-blue-600 font-medium">{report?.accountCode}</p>
                                 <h3 className="text-xl font-bold text-blue-900">{report?.accountName}</h3>
                             </div>
-                            <div className="text-right">
+                            <div className="text-end">
                                 <p className="text-sm text-gray-500">{t('treasury.currentBalance', 'Current Balance')}</p>
                                 <p className="text-2xl font-bold text-blue-900">
                                     {formatCurrency(report?.closingBalance || 0)}
@@ -244,7 +261,7 @@ export default function TreasuryGeneralLedger() {
                     </div>
 
                     {/* Balance Summary */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                         <div className="card bg-gray-50">
                             <p className="text-sm text-gray-600">{t('treasury.openingBalance', 'Opening Balance')}</p>
                             <p className="text-xl font-bold text-gray-900">{formatCurrency(report?.openingBalance || 0)}</p>
@@ -279,25 +296,25 @@ export default function TreasuryGeneralLedger() {
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <thead className="bg-gray-50">
                                         <tr>
-                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.date', 'Date')}
                                             </th>
-                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.journalNumber', 'Journal #')}
                                             </th>
-                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.source', 'Source')}
                                             </th>
-                                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.description', 'Description')}
                                             </th>
-                                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-end text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.debit', 'Debit')}
                                             </th>
-                                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-end text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.credit', 'Credit')}
                                             </th>
-                                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                                            <th scope="col" className="px-4 py-3 text-end text-xs font-medium text-gray-500 uppercase">
                                                 {t('treasury.balance', 'Balance')}
                                             </th>
                                         </tr>
@@ -308,7 +325,7 @@ export default function TreasuryGeneralLedger() {
                                             <td colSpan={6} className="px-4 py-2 text-sm font-medium text-gray-700">
                                                 {t('treasury.openingBalance', 'Opening Balance')}
                                             </td>
-                                            <td className="px-4 py-2 text-sm text-right font-semibold text-gray-900">
+                                            <td className="px-4 py-2 text-sm text-end font-semibold text-gray-900">
                                                 {formatCurrency(report.openingBalance)}
                                             </td>
                                         </tr>
@@ -320,23 +337,23 @@ export default function TreasuryGeneralLedger() {
                                                     {formatDate(entry.journalDate, locale)}
                                                 </td>
                                                 <td className="px-4 py-3 text-sm font-mono text-gray-600">
-                                                    {entry.journalNumber}
+                                                    <bdi>{entry.journalNumber}</bdi>
                                                 </td>
                                                 <td className="px-4 py-3 text-sm">
                                                     <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
-                                                        {entry.sourceType}
+                                                        {t(`treasury.sourceTypes.${entry.sourceType}`, t('treasury.sourceTypes.Other', 'Other source'))}
                                                     </span>
                                                 </td>
                                                 <td className="px-4 py-3 text-sm text-gray-900 max-w-xs truncate">
                                                     {entry.description}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-right font-medium text-green-600">
+                                                <td className="px-4 py-3 text-sm text-end font-medium text-green-600">
                                                     {entry.debitAmount > 0 ? formatCurrency(entry.debitAmount) : '-'}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-right font-medium text-red-600">
+                                                <td className="px-4 py-3 text-sm text-end font-medium text-red-600">
                                                     {entry.creditAmount > 0 ? formatCurrency(entry.creditAmount) : '-'}
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-right font-semibold text-gray-900">
+                                                <td className="px-4 py-3 text-sm text-end font-semibold text-gray-900">
                                                     {formatCurrency(entry.balanceAfter)}
                                                 </td>
                                             </tr>
@@ -344,16 +361,16 @@ export default function TreasuryGeneralLedger() {
                                     </tbody>
                                     <tfoot className="bg-blue-50">
                                         <tr className="font-bold">
-                                            <td colSpan={4} className="px-4 py-3 text-right text-gray-900">
+                                            <td colSpan={4} className="px-4 py-3 text-end text-gray-900">
                                                 {t('treasury.closingBalance', 'Closing Balance')}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-green-700">
+                                            <td className="px-4 py-3 text-end text-green-700">
                                                 {formatCurrency(report.totalDebits)}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-red-700">
+                                            <td className="px-4 py-3 text-end text-red-700">
                                                 {formatCurrency(report.totalCredits)}
                                             </td>
-                                            <td className="px-4 py-3 text-right text-blue-900">
+                                            <td className="px-4 py-3 text-end text-blue-900">
                                                 {formatCurrency(report.closingBalance)}
                                             </td>
                                         </tr>
@@ -362,7 +379,7 @@ export default function TreasuryGeneralLedger() {
                             </div>
                         ) : (
                             <div className="flex flex-col items-center justify-center py-16">
-                                <span className="text-4xl mb-4">📭</span>
+                                <span className="text-4xl mb-4" aria-hidden="true">📭</span>
                                 <p className="text-gray-500">{t('treasury.noTransactions', 'No transactions in this period')}</p>
                             </div>
                         )}

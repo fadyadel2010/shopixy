@@ -548,8 +548,7 @@ public class FinancialPostingService : IFinancialPostingService
         var identityMatches =
             existingJournal.TenantId == request.TenantId &&
             existingJournal.SourceType == request.SourceType &&
-            existingJournal.SourceId == request.SourceId &&
-            existingJournal.JournalDate == request.JournalDate.Date;
+            existingJournal.SourceId == request.SourceId;
 
         if (!identityMatches || !existingLines.SequenceEqual(requestedLines))
         {
@@ -674,24 +673,40 @@ public class FinancialPostingService : IFinancialPostingService
                     payment.Amount > 0m)
                 .Select(payment => (decimal?)payment.Amount)
                 .FirstOrDefaultAsync(ct),
-            "GatewaySettlement" or "CODSettlement" => await _db.PaymentSettlementBatches
+            "GatewaySettlement" => await _db.PaymentSettlementBatches
                 .IgnoreQueryFilters()
                 .AsNoTracking()
                 .Where(batch =>
+                    batch.Id == request.SourceId &&
                     batch.TenantId == request.TenantId &&
                     !batch.IsDeleted &&
+                    batch.SettlementType == "GATEWAY" &&
                     batch.SettlementId == request.SourceReference &&
+                    batch.SettledAtUtc.Date == request.JournalDate.Date &&
                     batch.GrossAmount > 0m &&
                     batch.OrderCount > 0)
                 .Select(batch => (decimal?)batch.GrossAmount)
                 .FirstOrDefaultAsync(ct),
-            "CommerceHubFinancialTransaction" => await _db.CommerceHubFinancialTransactions
+            "CODSettlement" => await _db.PaymentSettlementBatches
+                .IgnoreQueryFilters()
                 .AsNoTracking()
-                .Where(transaction =>
-                    transaction.Id == request.SourceId &&
-                    transaction.Amount > 0m)
-                .Select(transaction => (decimal?)transaction.Amount)
+                .Where(batch =>
+                    batch.Id == request.SourceId &&
+                    batch.TenantId == request.TenantId &&
+                    !batch.IsDeleted &&
+                    batch.SettlementType == "OFFLINE_COLLECTION" &&
+                    batch.SettlementId == request.SourceReference &&
+                    batch.SettledAtUtc.Date == request.JournalDate.Date &&
+                    batch.GrossAmount > 0m &&
+                    batch.OrderCount > 0)
+                .Select(batch => (decimal?)batch.GrossAmount)
                 .FirstOrDefaultAsync(ct),
+            "CommerceHubFinancialTransaction" => await ResolveCommerceHubCashAuthorityAsync(
+                request,
+                CommerceHubFinancialTransactionDirection.Credit,
+                ct),
+            TreasuryInitialCapitalization.AccountingSourceType =>
+                await ValidateInitialCapitalizationAuthorityAsync(request, cashAccountIds, ct),
             "Reversal" => await _db.LedgerEntries
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -730,6 +745,172 @@ public class FinancialPostingService : IFinancialPostingService
             throw new InvalidJournalException(
                 $"Treasury inflow exceeds authoritative source amount for '{request.SourceType}' and source '{request.SourceId}'.");
         }
+    }
+
+    private async Task<decimal?> ValidateInitialCapitalizationAuthorityAsync(
+        PostingRequest request,
+        IReadOnlyCollection<Guid> cashAccountIds,
+        CancellationToken ct)
+    {
+        var document = await _db.TreasuryInitialCapitalizations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Include(item => item.Allocations)
+            .SingleOrDefaultAsync(item =>
+                item.Id == request.SourceId &&
+                item.TenantId == request.TenantId,
+                ct);
+        if (document == null || document.IsDeleted ||
+            document.Status != TreasuryInitialCapitalizationStatus.Draft ||
+            document.TotalAmount <= 0m ||
+            document.Allocations.Count == 0 ||
+            document.Allocations.Sum(item => item.Amount) != document.TotalAmount ||
+            request.UserId != document.CreatedByUserId ||
+            request.JournalDate.Date != document.CutoverDate.Date ||
+            !string.Equals(request.SourceReference, document.DocumentNumber, StringComparison.Ordinal) ||
+            !string.Equals(
+                request.IdempotencyKey,
+                $"TREASURY_INITIAL_CAPITALIZATION:{request.TenantId}:{document.OperationId}",
+                StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var ownerIsCurrent = await _db.Users
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .AnyAsync(user =>
+                user.Id == document.CreatedByUserId &&
+                user.TenantId == request.TenantId &&
+                user.Role == UserRole.Owner &&
+                user.IsActive &&
+                !user.IsDeleted,
+                ct);
+        if (!ownerIsCurrent)
+            return null;
+
+        var openingEquity = await _db.LedgerAccounts
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(account =>
+                account.Id == document.OpeningEquityLedgerAccountId &&
+                account.TenantId == request.TenantId,
+                ct);
+        if (openingEquity == null || !openingEquity.IsActive || openingEquity.IsDeleted ||
+            openingEquity.AccountType != AccountType.Equity || openingEquity.IsClearing ||
+            openingEquity.AccountCode != AccountCodes.OpeningBalanceEquity ||
+            document.OpeningEquityAccountCodeSnapshot != AccountCodes.OpeningBalanceEquity)
+        {
+            return null;
+        }
+
+        var destinationIds = document.Allocations.Select(item => item.TreasuryAccountId).ToList();
+        var destinations = await _db.TreasuryAccounts
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Include(item => item.Account)
+            .Where(item => item.TenantId == request.TenantId && destinationIds.Contains(item.Id))
+            .ToListAsync(ct);
+        if (destinations.Count != destinationIds.Count)
+            return null;
+
+        foreach (var allocation in document.Allocations)
+        {
+            var destination = destinations.SingleOrDefault(item => item.Id == allocation.TreasuryAccountId);
+            if (destination == null || !destination.IsActive || destination.IsDeleted ||
+                destination.Type is not (TreasuryAccountType.Cashbox or TreasuryAccountType.Bank) ||
+                destination.Type != allocation.TreasuryAccountTypeSnapshot ||
+                destination.AccountId != allocation.LedgerAccountId ||
+                !cashAccountIds.Contains(allocation.LedgerAccountId) ||
+                destination.Account == null || destination.Account.TenantId != request.TenantId ||
+                !destination.Account.IsActive || destination.Account.IsDeleted ||
+                destination.Account.AccountType != AccountType.Asset || destination.Account.IsClearing ||
+                destination.Account.AccountCode is "1020" or "1110" or "1040" or "2030" or "3010" ||
+                destination.Account.AccountCode != allocation.LedgerAccountCodeSnapshot ||
+                allocation.Amount <= 0m)
+            {
+                return null;
+            }
+        }
+
+        var groupedLines = request.Lines
+            .GroupBy(line => line.AccountId)
+            .ToDictionary(
+                group => group.Key,
+                group => new
+                {
+                    Debit = group.Sum(line => line.DebitAmount),
+                    Credit = group.Sum(line => line.CreditAmount)
+                });
+        if (groupedLines.Count != document.Allocations.Count + 1 ||
+            !groupedLines.TryGetValue(document.OpeningEquityLedgerAccountId, out var equityLine) ||
+            equityLine.Debit != 0m || equityLine.Credit != document.TotalAmount)
+        {
+            return null;
+        }
+
+        foreach (var allocation in document.Allocations)
+        {
+            if (!groupedLines.TryGetValue(allocation.LedgerAccountId, out var line) ||
+                line.Debit != allocation.Amount || line.Credit != 0m)
+            {
+                return null;
+            }
+        }
+
+        var activeDocumentCount = await _db.TreasuryInitialCapitalizations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .CountAsync(item =>
+                item.TenantId == request.TenantId &&
+                !item.IsDeleted &&
+                item.Status != TreasuryInitialCapitalizationStatus.Reversed,
+                ct);
+        if (activeDocumentCount != 1)
+            return null;
+
+        var priorDocuments = await _db.TreasuryInitialCapitalizations
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item => item.TenantId == request.TenantId && item.Id != document.Id)
+            .OrderBy(item => item.CreatedAtUtc)
+            .ToListAsync(ct);
+        if (priorDocuments.Count == 0 && document.PredecessorCapitalizationId.HasValue)
+            return null;
+        if (priorDocuments.Count > 0)
+        {
+            var predecessor = priorDocuments.SingleOrDefault(item => item.Id == document.PredecessorCapitalizationId);
+            if (predecessor == null || predecessor.Status != TreasuryInitialCapitalizationStatus.Reversed ||
+                predecessor.CutoverDate != document.CutoverDate || predecessor != priorDocuments[^1])
+            {
+                return null;
+            }
+        }
+
+        var allTreasuryAccountIds = await _db.TreasuryAccounts
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item => item.TenantId == request.TenantId &&
+                (item.Type == TreasuryAccountType.Cashbox || item.Type == TreasuryAccountType.Bank))
+            .Select(item => item.AccountId)
+            .Distinct()
+            .ToListAsync(ct);
+        var allowedJournalIds = priorDocuments
+            .Where(item => item.Status == TreasuryInitialCapitalizationStatus.Reversed)
+            .SelectMany(item => new[] { item.PostedJournalId, item.ReversalJournalId })
+            .Where(item => item.HasValue)
+            .Select(item => item!.Value)
+            .ToHashSet();
+        var unrelatedMovementExists = await _db.LedgerEntries
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .AnyAsync(entry =>
+                entry.TenantId == request.TenantId &&
+                allTreasuryAccountIds.Contains(entry.AccountId) &&
+                (entry.JournalEntry.Status == JournalStatus.Posted || entry.JournalEntry.Status == JournalStatus.Reversed) &&
+                !allowedJournalIds.Contains(entry.JournalEntryId),
+                ct);
+        return unrelatedMovementExists ? null : document.TotalAmount;
     }
 
     private async Task ValidateTreasuryOutflowAuthorityAsync(
@@ -782,6 +963,17 @@ public class FinancialPostingService : IFinancialPostingService
                     payment.Amount > 0m)
                 .Select(payment => (decimal?)payment.Amount)
                 .FirstOrDefaultAsync(ct),
+            "SupplierCardFunding" => await _db.SupplierCardFundings
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(funding =>
+                    funding.Id == request.SourceId &&
+                    funding.TenantId == request.TenantId &&
+                    !funding.IsDeleted &&
+                    funding.Amount > 0m &&
+                    cashAccountIds.Contains(funding.FundingSourceLedgerAccountId))
+                .Select(funding => (decimal?)funding.Amount)
+                .FirstOrDefaultAsync(ct),
             "Return" => await _db.Returns
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -815,17 +1007,10 @@ public class FinancialPostingService : IFinancialPostingService
                     (refund.FinancialPostingStatus == FinancialPostingStatus.Pending ||
                      refund.FinancialPostingStatus == FinancialPostingStatus.Posted))
                 .SumAsync(refund => (decimal?)refund.Amount, ct),
-            "CommerceHubFinancialTransaction" => await _db.CommerceHubFinancialTransactions
-                .AsNoTracking()
-                .Where(transaction =>
-                    transaction.Id == request.SourceId &&
-                    transaction.Direction == CommerceHubFinancialTransactionDirection.Debit &&
-                    transaction.FinancialBucket == CommerceHubFinancialBucket.Cash &&
-                    (transaction.TransactionType == CommerceHubFinancialTransactionType.Refund ||
-                     transaction.TransactionType == CommerceHubFinancialTransactionType.Payout) &&
-                    transaction.Amount > 0m)
-                .Select(transaction => (decimal?)transaction.Amount)
-                .FirstOrDefaultAsync(ct),
+            "CommerceHubFinancialTransaction" => await ResolveCommerceHubCashAuthorityAsync(
+                request,
+                CommerceHubFinancialTransactionDirection.Debit,
+                ct),
             "AffiliateCommissionPaid" => await _db.AffiliatePayoutTransferAllocations
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -870,6 +1055,40 @@ public class FinancialPostingService : IFinancialPostingService
             throw new InvalidJournalException(
                 $"Treasury outflow exceeds authoritative source amount for '{request.SourceType}' and source '{request.SourceId}'.");
         }
+    }
+
+    private async Task<decimal?> ResolveCommerceHubCashAuthorityAsync(
+        PostingRequest request,
+        CommerceHubFinancialTransactionDirection expectedDirection,
+        CancellationToken ct)
+    {
+        var transaction = await _db.CommerceHubFinancialTransactions
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item =>
+                item.Id == request.SourceId &&
+                item.Direction == expectedDirection &&
+                item.FinancialBucket == CommerceHubFinancialBucket.Cash &&
+                item.Amount > 0m &&
+                (expectedDirection != CommerceHubFinancialTransactionDirection.Debit ||
+                 item.TransactionType == CommerceHubFinancialTransactionType.Refund ||
+                 item.TransactionType == CommerceHubFinancialTransactionType.Payout),
+                ct);
+        if (transaction == null)
+            return null;
+
+        var hasTenantAuthority = await _db.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .AnyAsync(message =>
+                message.TenantId == request.TenantId &&
+                !message.IsDeleted &&
+                message.EventType == "CommerceHubLedgerPosting" &&
+                message.SourceType == "CommerceHubFinancialTransaction" &&
+                message.BusinessEntityId == transaction.Id &&
+                message.IdempotencyKey == request.IdempotencyKey,
+                ct);
+
+        return hasTenantAuthority ? transaction.Amount : null;
     }
     
     /// <summary>

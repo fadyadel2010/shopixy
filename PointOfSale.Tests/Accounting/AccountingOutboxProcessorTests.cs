@@ -790,10 +790,12 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
         _commerceAccounting
             .Setup(x => x.PostGatewaySettlementAsync(
                 _tenantId,
+                settlementBatch.Id,
                 "stripe",
                 100m,
                 3m,
                 settlementBatch.SettlementId,
+                settlementBatch.SettledAtUtc,
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(PostingResult.Succeeded(Guid.NewGuid(), "JE-SETTLEMENT-CURRENT"));
 
@@ -802,18 +804,92 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
         Assert.Equal(1, processedCount);
         _commerceAccounting.Verify(x => x.PostGatewaySettlementAsync(
             _tenantId,
+            settlementBatch.Id,
             "stripe",
             100m,
             3m,
             settlementBatch.SettlementId,
+            settlementBatch.SettledAtUtc,
             It.IsAny<CancellationToken>()), Times.Once);
         _commerceAccounting.Verify(x => x.PostGatewaySettlementAsync(
             _tenantId,
+            settlementBatch.Id,
             "stripe",
             500m,
             40m,
             settlementBatch.SettlementId,
+            settlementBatch.SettledAtUtc,
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ProcessPendingMessagesAsync_CodSettlement_UsesOfflineCollectionAuthority()
+    {
+        var order = SeedOrder(PaymentStatus.Settled);
+        var settlementBatch = new PaymentSettlementBatch
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            SettlementType = "OFFLINE_COLLECTION",
+            SettlementId = "cod_current",
+            GrossAmount = 100m,
+            Fees = 3m,
+            Currency = "EGP",
+            OrderCount = 1,
+            SettledAtUtc = DateTime.UtcNow
+        };
+        var settlementOrder = new PaymentSettlementOrder
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            SettlementBatchId = settlementBatch.Id,
+            OrderId = order.Id,
+            OrderTotal = order.Total,
+            Currency = order.Currency,
+            CreatedAt = DateTime.UtcNow
+        };
+        var message = AccountingOutboxMessage.Create(
+            _tenantId,
+            "CodSettlement",
+            settlementBatch.Id,
+            typeof(PaymentSettlementBatch).FullName ?? nameof(PaymentSettlementBatch),
+            JsonSerializer.Serialize(new
+            {
+                SettlementBatchId = settlementBatch.Id,
+                GrossAmount = 500m,
+                Fees = 40m,
+                SettlementId = settlementBatch.SettlementId
+            }),
+            $"COD_SETTLEMENT:{_tenantId}:{settlementBatch.SettlementId}");
+        message.Id = Guid.NewGuid();
+
+        _db.PaymentSettlementBatches.Add(settlementBatch);
+        _db.PaymentSettlementOrders.Add(settlementOrder);
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync();
+
+        _commerceAccounting
+            .Setup(service => service.PostCodSettlementAsync(
+                _tenantId,
+                settlementBatch.Id,
+                settlementBatch.GrossAmount,
+                settlementBatch.Fees,
+                settlementBatch.SettlementId,
+                settlementBatch.SettledAtUtc,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PostingResult.Succeeded(Guid.NewGuid(), "JE-COD-SETTLEMENT-CURRENT"));
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(1, processedCount);
+        _commerceAccounting.Verify(service => service.PostCodSettlementAsync(
+            _tenantId,
+            settlementBatch.Id,
+            settlementBatch.GrossAmount,
+            settlementBatch.Fees,
+            settlementBatch.SettlementId,
+            settlementBatch.SettledAtUtc,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -870,10 +946,12 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
         Assert.Equal(0, processedCount);
         _commerceAccounting.Verify(x => x.PostGatewaySettlementAsync(
             It.IsAny<Guid>(),
+            It.IsAny<Guid>(),
             It.IsAny<string>(),
             It.IsAny<decimal>(),
             It.IsAny<decimal>(),
             It.IsAny<string>(),
+            It.IsAny<DateTime>(),
             It.IsAny<CancellationToken>()), Times.Never);
 
         await _db.Entry(message).ReloadAsync();
@@ -1202,6 +1280,56 @@ public sealed class AccountingOutboxProcessorTests : IDisposable
             It.IsAny<string>(),
             It.IsAny<DateTime>(),
             It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("PosPurchase")]
+    [InlineData("PurchaseReversal")]
+    public async Task ProcessPendingMessagesAsync_LegacyProcessedCardPurchaseReplay_UsesExistingJournalWithoutDispatch(
+        string eventType)
+    {
+        var invoiceId = Guid.NewGuid();
+        var journal = CreateJournal(
+            $"JE-{eventType}",
+            "PurchaseInvoice",
+            invoiceId,
+            "PUR-LEGACY",
+            $"PURCHASE:{_tenantId}:{invoiceId}:legacy-operation");
+        var message = AccountingOutboxMessage.Create(
+            _tenantId,
+            eventType,
+            invoiceId,
+            typeof(PurchaseInvoice).FullName ?? nameof(PurchaseInvoice),
+            JsonSerializer.Serialize(new
+            {
+                InvoiceId = invoiceId,
+                CardAmount = 1.10m,
+                CashAmount = 0m,
+                MutationVersion = eventType == "PosPurchase" ? 0 : 1,
+                OperationKey = eventType == "PurchaseReversal" ? "legacy-operation" : null as string
+            }),
+            $"PURCHASE:{_tenantId}:{invoiceId}:C0.00:D1.10:V0");
+        message.Id = Guid.NewGuid();
+        message.JournalId = journal.Id;
+
+        using (LedgerMutationScope.Authorize())
+        {
+            _db.JournalEntries.Add(journal);
+            _db.AccountingOutboxMessages.Add(message);
+            await _db.SaveChangesAsync();
+        }
+
+        var processedCount = await _processor.ProcessPendingMessagesAsync();
+
+        Assert.Equal(1, processedCount);
+        _db.ChangeTracker.Clear();
+        var stored = await _db.AccountingOutboxMessages.SingleAsync(entry => entry.Id == message.Id);
+        Assert.NotNull(stored.ProcessedAtUtc);
+        Assert.Equal(journal.Id, stored.JournalId);
+        Assert.Single(await _db.JournalEntries.IgnoreQueryFilters().ToListAsync());
+        Assert.Empty(await _db.CommerceAccountingAudits.ToListAsync());
+        _postingService.VerifyNoOtherCalls();
+        _commerceAccounting.VerifyNoOtherCalls();
     }
 
     [Fact]

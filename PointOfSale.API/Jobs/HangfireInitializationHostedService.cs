@@ -75,17 +75,28 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
         // Try immediate initialization
         if (CanConnectToPostgres())
         {
-            _logger.LogInformation("PostgreSQL is available. Registering Hangfire recurring jobs immediately.");
-            RegisterRecurringJobs();
-            _isInitialized = true;
-            _reliabilityTelemetry?.RecordBackgroundJobExecution("hangfire_initialization", "success");
-            return Task.CompletedTask;
+            try
+            {
+                _logger.LogInformation("PostgreSQL is available. Registering Hangfire recurring jobs immediately.");
+                RegisterRecurringJobs();
+                _isInitialized = true;
+                _reliabilityTelemetry?.RecordBackgroundJobExecution("hangfire_initialization", "success");
+                return Task.CompletedTask;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Immediate Hangfire recurring job registration failed. Starting background retry.");
+                _reliabilityTelemetry?.RecordBackgroundJobExecution("hangfire_initialization", "retry");
+            }
         }
-
-        // PostgreSQL not available — start background retry
-        _logger.LogWarning(
-            "PostgreSQL is not available at startup. Starting background retry for Hangfire recurring job registration.");
-        _reliabilityTelemetry?.RecordBackgroundJobExecution("hangfire_initialization", "retry");
+        else
+        {
+            _logger.LogWarning(
+                "PostgreSQL is not available at startup. Starting background retry for Hangfire recurring job registration.");
+            _reliabilityTelemetry?.RecordBackgroundJobExecution("hangfire_initialization", "retry");
+        }
 
         _retryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _retryTask = RetryInitializationAsync(_retryCts.Token);
@@ -149,7 +160,7 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
         }
     }
 
-    private bool CanConnectToPostgres()
+    protected virtual bool CanConnectToPostgres()
     {
         if (string.IsNullOrWhiteSpace(_connectionString))
             return false;
@@ -177,7 +188,7 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
     /// Registers all Hangfire recurring jobs. This method is idempotent —
     /// RecurringJob.AddOrUpdate() adds or updates, so calling it multiple times is safe.
     /// </summary>
-    private void RegisterRecurringJobs()
+    protected virtual void RegisterRecurringJobs()
     {
         // =============================================================================
         // SHIPPING TRACKING SYNC JOB (P2 Hardening)

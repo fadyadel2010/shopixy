@@ -16,11 +16,15 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useToast } from '../../components/Toast'
-import LineChart from '../../components/LineChart'
 import DonutChart from '../../components/DonutChart'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
 import { isRequestCanceled } from '../../services/api'
 import * as finApi from '../../services/financialReportsApi'
+import * as treasuryApi from '../../services/treasuryApi'
+import {
+    partitionTreasuryCatalog,
+    sumTreasuryBalances,
+} from '../../services/treasuryAccountCatalog'
 import { useRTL } from '../../hooks/useRTL'
 import { formatDate, formatTime } from '../../utils/dateFormat'
 
@@ -35,6 +39,8 @@ export default function TreasuryDashboard() {
     const [loading, setLoading] = useState(true)
     const [refreshing, setRefreshing] = useState(false)
     const [dashboard, setDashboard] = useState(null)
+    const [treasuryCatalog, setTreasuryCatalog] = useState([])
+    const [catalogError, setCatalogError] = useState('')
     const [balanceSheet, setBalanceSheet] = useState(null)
     const [profitLoss, setProfitLoss] = useState(null)
     const [clearingAging, setClearingAging] = useState(null)
@@ -52,9 +58,11 @@ export default function TreasuryDashboard() {
 
             const { from, to } = dateRange
 
-            // Parallel API calls for performance
-            const [dashboardData, bsData, plData, clearingData, tbData] = await Promise.all([
+            // Parallel API calls for performance.
+            // Cash authority comes only from the Treasury catalog accountType.
+            const results = await Promise.allSettled([
                 finApi.getDashboard(from, to, !silent, { signal }),
+                treasuryApi.getTreasuryAccounts({ signal }),
                 finApi.getBalanceSheet(to, { signal }),
                 finApi.getProfitAndLoss(from, to, { signal }),
                 finApi.getClearingAging(to, { signal }),
@@ -66,11 +74,28 @@ export default function TreasuryDashboard() {
                 return
             }
 
-            setDashboard(dashboardData)
-            setBalanceSheet(bsData)
-            setProfitLoss(plData)
-            setClearingAging(clearingData)
-            setTrialBalance(tbData)
+            const [dashboardResult, catalogResult, bsResult, plResult, clearingResult, tbResult] = results
+
+            if (catalogResult.status === 'fulfilled') {
+                setTreasuryCatalog(Array.isArray(catalogResult.value) ? catalogResult.value : [])
+                setCatalogError('')
+            } else {
+                setTreasuryCatalog([])
+                setCatalogError(t('treasury.catalogLoadFailed', 'The Treasury catalog could not be loaded. Balances are hidden until you retry.'))
+            }
+
+            if (dashboardResult.status === 'fulfilled') setDashboard(dashboardResult.value)
+            if (bsResult.status === 'fulfilled') setBalanceSheet(bsResult.value)
+            if (plResult.status === 'fulfilled') setProfitLoss(plResult.value)
+            if (clearingResult.status === 'fulfilled') setClearingAging(clearingResult.value)
+            if (tbResult.status === 'fulfilled') setTrialBalance(tbResult.value)
+
+            const reportFailure = [dashboardResult, bsResult, plResult, clearingResult, tbResult]
+                .find(result => result.status === 'rejected')
+            if (reportFailure && !isRequestCanceled(reportFailure.reason)) {
+                console.error('Failed to load treasury report data:', reportFailure.reason)
+                if (!silent) showError(t('treasury.loadError', 'Failed to load financial data'))
+            }
         } catch (error) {
             if (isRequestCanceled(error)) {
                 return
@@ -117,23 +142,20 @@ export default function TreasuryDashboard() {
         }
     }, [runLoadData])
 
-    // Calculate cash position from balance sheet
+    // Cash position comes exclusively from the Treasury catalog accountType.
+    // Exact Cashbox/Bank = available now; exact Clearing = money in transit.
+    // No code parsing, numeric ranges, names, or report rows grant authority.
     const getCashPosition = () => {
-        if (!balanceSheet?.assetLines) return { cash: 0, bank: 0, clearing: 0 }
-
-        let cash = 0, bank = 0, clearing = 0
-
-        balanceSheet.assetLines.forEach(a => {
-            const code = parseInt(a.accountCode)
-            if (code >= 1000 && code < 1050) cash += a.balance  // Cashbox
-            else if (code >= 1050 && code < 1100) bank += a.balance  // Bank accounts
-            else if (code >= 1100 && code < 1200) clearing += a.balance  // Clearing accounts
-        })
-
-        return { cash, bank, clearing }
+        const { available, clearing } = partitionTreasuryCatalog(treasuryCatalog)
+        const cash = sumTreasuryBalances(available.filter(a => a.accountType === 'Cashbox'))
+        const bank = sumTreasuryBalances(available.filter(a => a.accountType === 'Bank'))
+        return { cash, bank, clearing: sumTreasuryBalances(clearing) }
     }
 
     const cashPosition = getCashPosition()
+    const clearingAccountsWithBalance = treasuryCatalog.filter(
+        account => account.accountType === 'Clearing' && (Number(account.currentBalance) || 0) !== 0,
+    ).length
 
     // Format date for display
     const formatDateRange = () => {
@@ -156,8 +178,8 @@ export default function TreasuryDashboard() {
         return (
             <div className="flex items-center justify-center h-96">
                 <div className="text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-                    <p className="mt-4 text-gray-600">{t('common.loading')}</p>
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto" aria-hidden="true"></div>
+                    <p className="mt-4 text-gray-600" role="status">{t('common.loading')}</p>
                 </div>
             </div>
         )
@@ -172,15 +194,15 @@ export default function TreasuryDashboard() {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h2 className="text-3xl font-bold text-gray-900">
-                        🏦 {t('treasury.title', 'Treasury & Finance')}
+                        <span aria-hidden="true">🏦 </span>{t('treasury.financeTitle', 'Treasury & Finance')}
                     </h2>
                     <p className="text-gray-600 mt-1">
-                        {t('treasury.subtitle', 'Financial Control Center')} • {formatDateRange()}
+                        {t('treasury.financeSubtitle', 'Financial Control Center')} • {formatDateRange()}
                     </p>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center md:w-auto">
                     {/* Date Range Shortcuts */}
-                    <div className="flex bg-gray-100 rounded-lg p-1">
+                    <div className="flex flex-wrap bg-gray-100 rounded-lg p-1" role="group" aria-label={t('treasury.periodFilters', 'Report period')}>
                         <button
                             onClick={setThisMonth}
                             className="px-3 py-1 text-sm rounded-md hover:bg-white hover:shadow-sm transition-all"
@@ -218,14 +240,14 @@ export default function TreasuryDashboard() {
             {/* ═══════════════════════════════════════════════════════════════════ */}
             {/* EXECUTIVE KPI STRIP - Top Bar */}
             {/* ═══════════════════════════════════════════════════════════════════ */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                 {/* Total Cash & Bank */}
                 <div className="card bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
                     <p className="text-sm font-medium text-emerald-600">
                         💵 {t('treasury.cashAndBank', 'Cash & Bank')}
                     </p>
-                    <p className="text-2xl font-bold text-emerald-900 mt-1">
-                        {formatCurrency(cashPosition.cash + cashPosition.bank)}
+                    <p className="mt-1 break-words text-xl font-bold text-emerald-900 sm:text-2xl">
+                        {catalogError ? t('common.unavailable', 'Unavailable') : formatCurrency(cashPosition.cash + cashPosition.bank)}
                     </p>
                 </div>
 
@@ -236,7 +258,7 @@ export default function TreasuryDashboard() {
                     <p className={`text-sm font-medium ${(dashboard?.netProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                         📈 {t('treasury.netProfit', 'Net Profit')}
                     </p>
-                    <p className={`text-2xl font-bold mt-1 ${(dashboard?.netProfit || 0) >= 0 ? 'text-green-900' : 'text-red-900'}`}>
+                    <p className={`mt-1 break-words text-xl font-bold sm:text-2xl ${(dashboard?.netProfit || 0) >= 0 ? 'text-green-900' : 'text-red-900'}`}>
                         {formatCurrency(dashboard?.netProfit || 0)}
                     </p>
                     {dashboard?.netProfitMargin !== undefined && (
@@ -251,7 +273,7 @@ export default function TreasuryDashboard() {
                     <p className="text-sm font-medium text-blue-600">
                         💰 {t('treasury.revenue', 'Revenue')}
                     </p>
-                    <p className="text-2xl font-bold text-blue-900 mt-1">
+                    <p className="mt-1 break-words text-xl font-bold text-blue-900 sm:text-2xl">
                         {formatCurrency(dashboard?.revenue || 0)}
                     </p>
                 </div>
@@ -261,24 +283,24 @@ export default function TreasuryDashboard() {
                     <p className="text-sm font-medium text-orange-600">
                         📉 {t('treasury.expenses', 'Expenses')}
                     </p>
-                    <p className="text-2xl font-bold text-orange-900 mt-1">
+                    <p className="mt-1 break-words text-xl font-bold text-orange-900 sm:text-2xl">
                         {formatCurrency((dashboard?.cogs || 0) + (dashboard?.expenses || 0))}
                     </p>
                 </div>
 
                 {/* Pending Clearing */}
-                <div className={`card bg-gradient-to-br ${(dashboard?.pendingClearingAmount || 0) > 0
+                <div className={`card bg-gradient-to-br ${cashPosition.clearing !== 0
                     ? 'from-amber-50 to-amber-100 border-amber-200'
                     : 'from-gray-50 to-gray-100 border-gray-200'}`}>
-                    <p className={`text-sm font-medium ${(dashboard?.pendingClearingAmount || 0) > 0 ? 'text-amber-600' : 'text-gray-600'}`}>
+                    <p className={`text-sm font-medium ${cashPosition.clearing !== 0 ? 'text-amber-600' : 'text-gray-600'}`}>
                         ⏳ {t('treasury.pendingClearing', 'Pending')}
                     </p>
-                    <p className={`text-2xl font-bold mt-1 ${(dashboard?.pendingClearingAmount || 0) > 0 ? 'text-amber-900' : 'text-gray-900'}`}>
-                        {formatCurrency(dashboard?.pendingClearingAmount || 0)}
+                    <p className={`mt-1 break-words text-xl font-bold sm:text-2xl ${cashPosition.clearing !== 0 ? 'text-amber-900' : 'text-gray-900'}`}>
+                        {catalogError ? t('common.unavailable', 'Unavailable') : formatCurrency(cashPosition.clearing)}
                     </p>
-                    {dashboard?.clearingAccountsWithBalance > 0 && (
+                    {!catalogError && clearingAccountsWithBalance > 0 && (
                         <p className="text-xs text-amber-600 mt-1">
-                            {dashboard.clearingAccountsWithBalance} {t('treasury.accounts', 'accounts')}
+                            {clearingAccountsWithBalance} {t('treasury.accounts', 'accounts')}
                         </p>
                     )}
                 </div>
@@ -295,9 +317,13 @@ export default function TreasuryDashboard() {
                     <p className="text-2xl font-bold text-gray-900 mt-1">
                         {(dashboard?.currentRatio || 0).toFixed(2)}
                     </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                        {(dashboard?.currentRatio || 0) >= 1.5 ? '✅ Healthy' :
-                            (dashboard?.currentRatio || 0) >= 1 ? '⚠️ Watch' : '❌ Risk'}
+                    <p className="text-xs text-gray-500 mt-1" role="status">
+                        <span aria-hidden="true">{(dashboard?.currentRatio || 0) >= 1.5 ? '✅' : (dashboard?.currentRatio || 0) >= 1 ? '⚠️' : '❌'} </span>
+                        {(dashboard?.currentRatio || 0) >= 1.5
+                            ? t('treasury.healthy', 'Healthy')
+                            : (dashboard?.currentRatio || 0) >= 1
+                                ? t('treasury.watch', 'Watch')
+                                : t('treasury.risk', 'Risk')}
                     </p>
                 </div>
             </div>
@@ -306,22 +332,34 @@ export default function TreasuryDashboard() {
             {/* CASH POSITION PANEL + PROFITABILITY PANEL */}
             {/* ═══════════════════════════════════════════════════════════════════ */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Cash Position Panel */}
+                {/* Cash Position Panel: available Cashbox + Bank only.
+                    Clearing is money in transit and is shown separately. */}
                 <div className="card">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
                         🏧 {t('treasury.cashPosition', 'Cash Position')}
                     </h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                        {t('treasury.cashPositionExplanation', 'Cash position means mapped Cashbox plus mapped Bank only. Clearing is shown separately and is never spendable cash.')}
+                    </p>
+                    {catalogError ? (
+                        <div className="p-4 bg-red-50 border border-red-200 rounded-lg flex flex-wrap items-center justify-between gap-3" role="alert">
+                            <p className="text-sm text-red-800">{catalogError}</p>
+                            <button type="button" onClick={() => runLoadData(true)} className="btn-secondary text-sm">
+                                {t('treasury.retry', 'Retry')}
+                            </button>
+                        </div>
+                    ) : (
+                    <>
                     <div className="h-64">
                         <DonutChart
                             data={[
                                 { label: t('treasury.cashbox', 'Cashbox'), value: cashPosition.cash },
                                 { label: t('treasury.bank', 'Bank'), value: cashPosition.bank },
-                                { label: t('treasury.clearing', 'Clearing'), value: cashPosition.clearing }
                             ].filter(d => d.value > 0)}
                             height={240}
                         />
                     </div>
-                    <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t">
+                    <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t">
                         <div className="text-center">
                             <p className="text-sm text-gray-500">{t('treasury.cashbox', 'Cashbox')}</p>
                             <p className="font-semibold text-gray-900">{formatCurrency(cashPosition.cash)}</p>
@@ -330,11 +368,15 @@ export default function TreasuryDashboard() {
                             <p className="text-sm text-gray-500">{t('treasury.bank', 'Bank')}</p>
                             <p className="font-semibold text-gray-900">{formatCurrency(cashPosition.bank)}</p>
                         </div>
-                        <div className="text-center">
-                            <p className="text-sm text-gray-500">{t('treasury.clearing', 'In Transit')}</p>
-                            <p className="font-semibold text-amber-600">{formatCurrency(cashPosition.clearing)}</p>
-                        </div>
                     </div>
+                    <div className="mt-4 pt-4 border-t bg-amber-50 -mx-6 -mb-6 px-6 py-4 rounded-b-lg">
+                        <p className="text-sm text-amber-700 font-medium text-center">
+                            {t('treasury.clearingSeparate', 'Clearing is money in transit, not available cash.')}{' '}
+                            <span className="font-bold">{formatCurrency(cashPosition.clearing)}</span>
+                        </p>
+                    </div>
+                    </>
+                    )}
                 </div>
 
                 {/* Profitability Panel */}
@@ -349,7 +391,7 @@ export default function TreasuryDashboard() {
                                 <span className="text-gray-600">{t('treasury.revenue', 'Revenue')}</span>
                                 <span className="font-semibold text-blue-600">{formatCurrency(dashboard?.revenue || 0)}</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div className="w-full bg-gray-200 rounded-full h-3" role="progressbar" aria-label={t('treasury.revenue', 'Revenue')} aria-valuenow={100} aria-valuemin={0} aria-valuemax={100}>
                                 <div className="bg-blue-500 h-3 rounded-full" style={{ width: '100%' }}></div>
                             </div>
                         </div>
@@ -360,10 +402,10 @@ export default function TreasuryDashboard() {
                                 <span className="text-gray-600">{t('treasury.cogs', 'Cost of Goods')}</span>
                                 <span className="font-semibold text-orange-600">{formatCurrency(dashboard?.cogs || 0)}</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div className="w-full bg-gray-200 rounded-full h-3" role="progressbar" aria-label={t('treasury.cogs', 'Cost of Goods')} aria-valuenow={Math.min(100, Math.max(0, dashboard?.revenue ? ((dashboard.cogs || 0) / dashboard.revenue * 100) : 0))} aria-valuemin={0} aria-valuemax={100}>
                                 <div
                                     className="bg-orange-500 h-3 rounded-full"
-                                    style={{ width: `${dashboard?.revenue ? ((dashboard.cogs || 0) / dashboard.revenue * 100) : 0}%` }}
+                                    style={{ width: `${Math.min(100, Math.max(0, dashboard?.revenue ? ((dashboard.cogs || 0) / dashboard.revenue * 100) : 0))}%` }}
                                 ></div>
                             </div>
                         </div>
@@ -385,10 +427,10 @@ export default function TreasuryDashboard() {
                                 <span className="text-gray-600">{t('treasury.expenses', 'Operating Expenses')}</span>
                                 <span className="font-semibold text-red-600">{formatCurrency(dashboard?.expenses || 0)}</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
+                            <div className="w-full bg-gray-200 rounded-full h-3" role="progressbar" aria-label={t('treasury.expenses', 'Operating Expenses')} aria-valuenow={Math.min(100, Math.max(0, dashboard?.revenue ? ((dashboard.expenses || 0) / dashboard.revenue * 100) : 0))} aria-valuemin={0} aria-valuemax={100}>
                                 <div
                                     className="bg-red-500 h-3 rounded-full"
-                                    style={{ width: `${dashboard?.revenue ? ((dashboard.expenses || 0) / dashboard.revenue * 100) : 0}%` }}
+                                    style={{ width: `${Math.min(100, Math.max(0, dashboard?.revenue ? ((dashboard.expenses || 0) / dashboard.revenue * 100) : 0))}%` }}
                                 ></div>
                             </div>
                         </div>
@@ -425,7 +467,7 @@ export default function TreasuryDashboard() {
                             onClick={() => navigate('/treasury/clearing-aging')}
                             className="text-sm text-primary-600 hover:text-primary-700"
                         >
-                            {t('common.viewAll')} →
+                            {t('common.viewAll')} <span aria-hidden="true" className="inline-block rtl:rotate-180">→</span>
                         </button>
                     </div>
 
@@ -434,30 +476,30 @@ export default function TreasuryDashboard() {
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-gray-50">
                                     <tr>
-                                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                                        <th scope="col" className="px-4 py-3 text-start text-xs font-medium text-gray-500 uppercase">
                                             {t('treasury.provider', 'Provider')}
                                         </th>
-                                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                                        <th scope="col" className="px-4 py-3 text-end text-xs font-medium text-gray-500 uppercase">
                                             {t('treasury.pending', 'Pending')}
                                         </th>
-                                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                                        <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                             {t('treasury.age', 'Age')}
                                         </th>
-                                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                                        <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">
                                             {t('treasury.status', 'Status')}
                                         </th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-200">
-                                    {clearingAging.lines.slice(0, 5).map((line, idx) => {
+                                    {clearingAging.lines.slice(0, 5).map((line) => {
                                         const isLate = (line.ageDays || 0) > 7
                                         return (
-                                            <tr key={idx} className={`hover:bg-gray-50 ${isLate ? 'bg-red-50' : ''}`}>
+                                            <tr key={line.accountId} className={`hover:bg-gray-50 ${isLate ? 'bg-red-50' : ''}`}>
                                                 <td className="px-4 py-3">
                                                     <div className="font-medium text-gray-900">{line.accountName}</div>
-                                                    <div className="text-xs text-gray-500">{line.accountCode}</div>
+                                                    <div className="text-xs text-gray-500"><bdi>{line.accountCode}</bdi></div>
                                                 </td>
-                                                <td className="px-4 py-3 text-right">
+                                                <td className="px-4 py-3 text-end">
                                                     <span className="font-semibold text-amber-600">
                                                         {formatCurrency(line.pendingAmount)}
                                                     </span>
@@ -535,7 +577,7 @@ export default function TreasuryDashboard() {
                         onClick={() => navigate('/treasury/trial-balance')}
                         className="w-full mt-4 btn-secondary text-sm"
                     >
-                        {t('treasury.viewTrialBalance', 'View Trial Balance')} →
+                        {t('treasury.viewTrialBalance', 'View Trial Balance')} <span aria-hidden="true" className="inline-block rtl:rotate-180">→</span>
                     </button>
                 </div>
             </div>
@@ -554,11 +596,14 @@ export default function TreasuryDashboard() {
                             ? 'bg-green-100 text-green-800'
                             : 'bg-red-100 text-red-800'
                             }`}>
-                            {dashboard?.balanceSheetBalanced ? '✓ Balanced' : '✗ Unbalanced'}
+                            <span aria-hidden="true">{dashboard?.balanceSheetBalanced ? '✓' : '✗'} </span>
+                            {dashboard?.balanceSheetBalanced
+                                ? t('treasury.balanced', 'Balanced')
+                                : t('treasury.unbalanced', 'Unbalanced')}
                         </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
                         {/* Assets */}
                         <div className="p-4 bg-blue-50 rounded-lg">
                             <p className="text-sm text-blue-600 font-medium">{t('treasury.totalAssets', 'Total Assets')}</p>
@@ -586,7 +631,7 @@ export default function TreasuryDashboard() {
 
                     {/* Equation Visualization */}
                     <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                        <div className="flex items-center justify-center text-lg">
+                        <div className="flex flex-wrap items-center justify-center gap-y-1 text-lg">
                             <span className="font-semibold text-blue-600">{formatCurrency(dashboard?.totalAssets || 0)}</span>
                             <span className="mx-3 text-gray-400">=</span>
                             <span className="font-semibold text-orange-600">{formatCurrency(dashboard?.totalLiabilities || 0)}</span>
@@ -607,7 +652,7 @@ export default function TreasuryDashboard() {
                     <div className="space-y-2">
                         <button
                             onClick={() => navigate('/treasury/trial-balance')}
-                            className="w-full p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
+                            className="w-full p-3 text-start bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
                         >
                             <span className="text-2xl">⚖️</span>
                             <div>
@@ -618,7 +663,7 @@ export default function TreasuryDashboard() {
 
                         <button
                             onClick={() => navigate('/treasury/profit-loss')}
-                            className="w-full p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
+                            className="w-full p-3 text-start bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
                         >
                             <span className="text-2xl">📈</span>
                             <div>
@@ -629,7 +674,7 @@ export default function TreasuryDashboard() {
 
                         <button
                             onClick={() => navigate('/treasury/balance-sheet')}
-                            className="w-full p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
+                            className="w-full p-3 text-start bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
                         >
                             <span className="text-2xl">📋</span>
                             <div>
@@ -640,7 +685,7 @@ export default function TreasuryDashboard() {
 
                         <button
                             onClick={() => navigate('/treasury/cash-flow')}
-                            className="w-full p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
+                            className="w-full p-3 text-start bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
                         >
                             <span className="text-2xl">💧</span>
                             <div>
@@ -651,7 +696,7 @@ export default function TreasuryDashboard() {
 
                         <button
                             onClick={() => navigate('/treasury/general-ledger')}
-                            className="w-full p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
+                            className="w-full p-3 text-start bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors flex items-center gap-3"
                         >
                             <span className="text-2xl">📖</span>
                             <div>

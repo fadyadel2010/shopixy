@@ -2119,6 +2119,7 @@ builder.Services.AddMassTransit(x =>
     // AffiliateSettlementOrchestrator inside the payout transaction.
     // AffiliateCommissionPaidEvent remains projection-only to avoid duplicate GL clearing.
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.AffiliateCommissionEarnedAccountingConsumer>();
+    x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.AffiliateCommissionReversedAccountingConsumer>();
 
     // AF-4: Analytics consumers — update click-to-conversion tracking.
     x.AddConsumer<PointOfSale.Infrastructure.Consumers.Affiliate.AffiliateLinkClickedConsumer>();

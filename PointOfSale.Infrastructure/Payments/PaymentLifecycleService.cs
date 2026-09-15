@@ -21,9 +21,11 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Financial;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Core.Interfaces.Affiliate;
 using PointOfSale.Core.Interfaces.Marketplace;
 using PointOfSale.Core.Interfaces.Payments;
+using PointOfSale.Core.Payments;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Data.Repositories;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -115,6 +117,14 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             return Task.FromResult(PaymentTransitionResult.Failed(
                 "Tenant authority is required for system payment lifecycle mutations.",
                 "PAYMENT_TENANT_AUTHORITY_REQUIRED"));
+        }
+
+        if (request.Source == PaymentLifecycleSource.GatewayWebhook &&
+            !TryResolveGatewayPaymentProvider(request.Gateway, out _))
+        {
+            return Task.FromResult(PaymentTransitionResult.Failed(
+                "Gateway webhook provider is not supported for payment lifecycle mutation.",
+                "PAYMENT_GATEWAY_UNSUPPORTED"));
         }
 
         return request.Outcome switch
@@ -600,6 +610,29 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 return RejectGatewaySettlement(tenantId, "Gateway is required for settlement.", "missing_gateway");
             }
 
+            // T-09: Fawry has no certified clearing or settlement authority.
+            // Fail before selector resolution or any durable mutation.
+            if (FawryFinancialAuthorityPolicy.IsFawry(request.Gateway))
+            {
+                _logger.LogWarning(
+                    "Gateway settlement rejected: Fawry financial authority unavailable | SettlementId: {SettlementId} | TenantId: {TenantId}",
+                    request.SettlementId,
+                    tenantId);
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
+
+            if (!IsSupportedGatewaySettlementProvider(request.Gateway))
+            {
+                return RejectGatewaySettlement(
+                    tenantId,
+                    $"Gateway settlement is not supported for provider '{request.Gateway.Trim()}'.",
+                    "unsupported_gateway");
+            }
+
+            request.Gateway = request.Gateway.Trim();
+
             if (string.IsNullOrWhiteSpace(normalizedCurrency))
             {
                 return RejectGatewaySettlement(tenantId, "Currency is required for gateway settlement.", "missing_currency");
@@ -642,6 +675,24 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             if (orders.Any(order => order.TenantId != tenantId))
             {
                 return RejectGatewaySettlement(tenantId, "Gateway settlement rejected: order tenant mismatch.", "tenant_mismatch");
+            }
+
+            if (orders.Any(IsFawryOrder))
+            {
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
+
+            var paymentIntentAuthorityFailure = await ValidateGatewaySettlementPaymentIntentAuthorityAsync(
+                tenantId,
+                orders,
+                resolution.PaymentIntentIdsByOrder,
+                request.Gateway,
+                ct);
+            if (paymentIntentAuthorityFailure != null)
+            {
+                return paymentIntentAuthorityFailure;
             }
 
             if (orders.Any(order => !CurrencyEquals(order.Currency, normalizedCurrency)))
@@ -904,6 +955,19 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     stateChanged: false);
             }
 
+            // T-09: no Fawry clearing or post-settlement lineage is certified, so an
+            // application refund for a Fawry order fails before any refund mutation.
+            if (IsFawryOrder(order) || await HasLatestPaidFawryPaymentIntentAsync(order, ct))
+            {
+                _logger.LogWarning(
+                    "Refund rejected: Fawry financial authority unavailable | OrderId: {OrderId} | TenantId: {TenantId}",
+                    order.Id,
+                    order.TenantId);
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
+
             if (order.PaymentStatus != PaymentStatus.Collected &&
                 order.PaymentStatus != PaymentStatus.Settled &&
                 order.PaymentStatus != PaymentStatus.PartiallyRefunded)
@@ -1006,6 +1070,19 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     await _accountingOutbox.EnqueueEcommerceRefundAsync(
                         order.TenantId, orderId, normalizedRefundAmount, normalizedRefundId, ct);
                 }
+
+                // T-08: link the financial refund to physical stock and COGS reversal
+                // atomically in this same transaction:
+                // - pre-commit refund: release open reservations (no COGS exists yet),
+                //   no COGS reversal is due;
+                // - post-commit refund: restore returnable stock (SalesReturn movement
+                //   + ReturnedQuantity) and stage one COGS reversal at the original
+                //   snapshot cost, capped so cumulative reversals never exceed posted COGS.
+                await LinkReturnStockAndCogsReversalForRefundAsync(
+                    order,
+                    refund,
+                    normalizedRefundId,
+                    ct);
 
                 await _eventPublisher.PublishAsync(new OrderRefundedEvent
                 {
@@ -1410,9 +1487,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 order.FulfillmentStatus == FulfillmentStatus.Delivered,
             CanApproveReviewedPayment = isWallet && awaitingWalletVerification,
             CanRejectReviewedPayment = isWallet && awaitingWalletVerification,
-            CanRefund = order.PaymentStatus == PaymentStatus.Collected ||
-                       order.PaymentStatus == PaymentStatus.Settled ||
-                       order.PaymentStatus == PaymentStatus.PartiallyRefunded,
+            CanRefund = !IsFawryOrder(order) &&
+                        latestPaymentIntent?.Provider != PaymentProvider.Fawry &&
+                        (order.PaymentStatus == PaymentStatus.Collected ||
+                         order.PaymentStatus == PaymentStatus.Settled ||
+                         order.PaymentStatus == PaymentStatus.PartiallyRefunded),
             StatusMessage = GetStatusMessage(order, latestPaymentIntent, isCod, isWallet, isOnline)
         };
     }
@@ -1886,11 +1965,137 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     private static bool CurrencyEquals(string? left, string? right) =>
         string.Equals(NormalizeCurrency(left), NormalizeCurrency(right), StringComparison.Ordinal);
 
-    private static bool GatewayMatches(Order order, string gateway)
+    private static bool GatewayMatches(Order order, string gateway) =>
+        GatewayAuthorityMatches(order.PaymentGateway, gateway) ||
+        GatewayAuthorityMatches(order.PaymentMethodCode, gateway);
+
+    private static bool GatewayAuthorityMatches(string? left, string? right)
     {
-        var normalizedGateway = gateway.Trim();
-        return string.Equals(order.PaymentGateway, normalizedGateway, StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(order.PaymentMethodCode, normalizedGateway, StringComparison.OrdinalIgnoreCase);
+        var leftProvider = NormalizeGatewayAuthority(left);
+        var rightProvider = NormalizeGatewayAuthority(right);
+        return leftProvider != null &&
+               string.Equals(leftProvider, rightProvider, StringComparison.Ordinal);
+    }
+
+    private static string? NormalizeGatewayAuthority(string? gateway) =>
+        gateway?.Trim().ToUpperInvariant() switch
+        {
+            "STRIPE" => "STRIPE",
+            "PAYMOB" or "CARD" or "VISA" => "PAYMOB",
+            "FAWRY" => "FAWRY",
+            _ => null
+        };
+
+    private static bool IsSupportedGatewaySettlementProvider(string gateway) =>
+        gateway.Trim().ToUpperInvariant() is "STRIPE" or "PAYMOB" or "CARD" or "VISA";
+
+    private async Task<PaymentTransitionResult?> ValidateGatewaySettlementPaymentIntentAuthorityAsync(
+        Guid tenantId,
+        IReadOnlyCollection<Order> orders,
+        IReadOnlyDictionary<Guid, Guid?> resolvedPaymentIntentIdsByOrder,
+        string gateway,
+        CancellationToken ct)
+    {
+        var orderIds = orders.Select(order => order.Id).Distinct().ToList();
+        var selectedIntentIds = resolvedPaymentIntentIdsByOrder.Values
+            .Where(id => id.HasValue)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToList();
+
+        var paymentIntents = await _db.PaymentIntents
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(intent =>
+                intent.TenantId == tenantId &&
+                orderIds.Contains(intent.OrderId) &&
+                !intent.IsDeleted &&
+                (selectedIntentIds.Contains(intent.Id) || intent.Status == PaymentIntentStatus.Paid))
+            .ToListAsync(ct);
+
+        foreach (var order in orders)
+        {
+            PaymentIntent? paymentIntent = null;
+            if (resolvedPaymentIntentIdsByOrder.TryGetValue(order.Id, out var selectedIntentId) &&
+                selectedIntentId.HasValue)
+            {
+                paymentIntent = paymentIntents.FirstOrDefault(intent => intent.Id == selectedIntentId.Value);
+            }
+            else
+            {
+                paymentIntent = paymentIntents
+                    .Where(intent => intent.OrderId == order.Id && intent.Status == PaymentIntentStatus.Paid)
+                    .OrderByDescending(intent => intent.CapturedAt ?? intent.UpdatedAt ?? intent.CreatedAt)
+                    .ThenByDescending(intent => intent.Id)
+                    .FirstOrDefault();
+            }
+
+            if (paymentIntent?.Provider == PaymentProvider.Fawry)
+            {
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
+
+            if (paymentIntent != null && !GatewayMatches(paymentIntent.Provider, gateway))
+            {
+                return RejectGatewaySettlement(
+                    tenantId,
+                    "Gateway settlement rejected: payment intent provider mismatch.",
+                    "payment_intent_provider_mismatch");
+            }
+        }
+
+        return null;
+    }
+
+    private static bool GatewayMatches(PaymentProvider provider, string gateway) =>
+        provider switch
+        {
+            PaymentProvider.Stripe => string.Equals(gateway.Trim(), "STRIPE", StringComparison.OrdinalIgnoreCase),
+            PaymentProvider.Paymob => gateway.Trim().ToUpperInvariant() is "PAYMOB" or "CARD" or "VISA",
+            _ => false
+        };
+
+    private static bool IsFawryOrder(Order order) =>
+        FawryFinancialAuthorityPolicy.IsFawry(order.PaymentGateway) ||
+        FawryFinancialAuthorityPolicy.IsFawry(order.PaymentMethodCode);
+
+    private async Task<bool> HasLatestPaidFawryPaymentIntentAsync(Order order, CancellationToken ct) =>
+        await _db.PaymentIntents
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(intent =>
+                intent.TenantId == order.TenantId &&
+                intent.OrderId == order.Id &&
+                !intent.IsDeleted &&
+                intent.Status == PaymentIntentStatus.Paid)
+            .OrderByDescending(intent => intent.CapturedAt ?? intent.UpdatedAt ?? intent.CreatedAt)
+            .ThenByDescending(intent => intent.Id)
+            .Select(intent => (PaymentProvider?)intent.Provider)
+            .FirstOrDefaultAsync(ct) == PaymentProvider.Fawry;
+
+    private static PaymentTransitionResult? ValidateGatewayWebhookProviderAuthority(
+        HandlePaymentResultRequest request)
+    {
+        if (request.Source != PaymentLifecycleSource.GatewayWebhook)
+        {
+            return null;
+        }
+
+        if (FawryFinancialAuthorityPolicy.IsFawry(request.Gateway))
+        {
+            return PaymentTransitionResult.Failed(
+                FawryFinancialAuthorityPolicy.Message,
+                FawryFinancialAuthorityPolicy.Code);
+        }
+
+        return TryResolveGatewayPaymentProvider(request.Gateway, out var provider) &&
+               provider is PaymentProvider.Stripe or PaymentProvider.Paymob
+            ? null
+            : PaymentTransitionResult.Failed(
+                "Gateway webhook provider is not supported for payment collection.",
+                "PAYMENT_GATEWAY_UNSUPPORTED");
     }
 
     private async Task<PaymentTransitionResult> HandleAuthorizedAsync(
@@ -1901,6 +2106,12 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
         try
         {
+            var providerAuthorityFailure = ValidateGatewayWebhookProviderAuthority(request);
+            if (providerAuthorityFailure != null)
+            {
+                return providerAuthorityFailure;
+            }
+
             var aggregate = await LoadAggregateAsync(request, ct);
             if (aggregate.Order == null)
             {
@@ -1909,6 +2120,18 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             var order = aggregate.Order;
             var paymentIntent = aggregate.PaymentIntent;
+
+            if (IsFawryOrder(order) ||
+                paymentIntent?.Provider == PaymentProvider.Fawry)
+            {
+                _logger.LogWarning(
+                    "[PAYMENT-LIFECYCLE] Rejected Fawry order authorization without financial authority | OrderId: {OrderId} | Source: {Source}",
+                    request.OrderId,
+                    request.Source);
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
 
             var supersededAttemptResult = await TryRejectSupersededTerminalAttemptAsync(
                 order,
@@ -2007,6 +2230,12 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
         try
         {
+            var providerAuthorityFailure = ValidateGatewayWebhookProviderAuthority(request);
+            if (providerAuthorityFailure != null)
+            {
+                return providerAuthorityFailure;
+            }
+
             var aggregate = await LoadAggregateAsync(request, ct);
             if (aggregate.Order == null)
             {
@@ -2017,6 +2246,20 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             var paymentIntent = aggregate.PaymentIntent;
             var now = request.ProcessedAtUtc ?? DateTime.UtcNow;
             var correlationId = _correlationIdAccessor.GetCorrelationId();
+
+            // T-09: authenticated Fawry transport evidence is not clearing or
+            // settlement authority. Reject before any money mutation.
+            if (IsFawryOrder(order) ||
+                paymentIntent?.Provider == PaymentProvider.Fawry)
+            {
+                _logger.LogWarning(
+                    "[PAYMENT-LIFECYCLE] Rejected Fawry success without financial authority | OrderId: {OrderId} | Source: {Source}",
+                    request.OrderId,
+                    request.Source);
+                return PaymentTransitionResult.Failed(
+                    FawryFinancialAuthorityPolicy.Message,
+                    FawryFinancialAuthorityPolicy.Code);
+            }
 
             var supersededAttemptSuccessResult = await TryRejectSupersededTerminalAttemptAsync(
                 order,
@@ -2039,6 +2282,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     checkoutStateRepaired = true;
                 }
 
+                // T-08: snapshot committed balances so a repair commit can stage its
+                // own per-commit COGS event atomically below.
+                var replayCogsCommittedBeforeByItem = await SnapshotCommittedQuantitiesByItemAsync(
+                    order.TenantId, order.Id, ct);
+
                 var (replayInventoryAction, replayQuantity) = await FinalizeReplayInventoryAsync(
                     order,
                     paymentIntent,
@@ -2052,6 +2300,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                 // Commit transaction once for both checkout state repair and inventory replay
                 if (checkoutStateRepaired || replayInventoryAction != PaymentInventoryAction.None)
                 {
+                    if (replayInventoryAction == PaymentInventoryAction.Commit && replayQuantity > 0m)
+                    {
+                        await TryEnqueueEcommerceCogsForCommittedDeltaAsync(
+                            order,
+                            replayCogsCommittedBeforeByItem,
+                            $"payment-replay-commit:{request.Source}",
+                            DateTime.UtcNow,
+                            ct);
+                    }
+
                     await _db.SaveChangesAsync(ct);
                     await transaction.CommitAsync(ct);
                     
@@ -2275,6 +2533,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
                     order.Status = OrderStatus.Confirmed;
                 }
 
+                // T-08: snapshot committed balances BEFORE the commit so the COGS event
+                // can prove exactly which quantities this transaction committed.
+                var cogsCommittedBeforeByItem = await SnapshotCommittedQuantitiesByItemAsync(
+                    order.TenantId, order.Id, ct);
+
                 await _stockRepository.CommitOrderReservationsAsync(order.TenantId, order.Id, ct);
                 if (paymentIntent != null)
                 {
@@ -2310,6 +2573,17 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
                 accountingStage = await EnqueueSuccessOutboxAsync(order, paymentIntent, request, amount, routedToSuspense, resolvedPaymentReference, ct);
                 outboxResult = accountingStage.OutboxResult;
+
+                // T-08: stage the merchandise-cost event atomically with the stock
+                // commit above. Enqueue is a no-op when this transaction committed
+                // no new quantities (replay/second capture), so duplicates cannot
+                // double-post: one commit event → one COGS journal.
+                await TryEnqueueEcommerceCogsForCommittedDeltaAsync(
+                    order,
+                    cogsCommittedBeforeByItem,
+                    BuildEcommerceCogsCommitEventId(order, request, resolvedPaymentReference, routedToSuspense),
+                    now,
+                    ct);
 
                 await PublishSuccessDomainEventAsync(order, request, amount, now, ct);
                 await PublishCanonicalSuccessOutcomeEventsAsync(order, paymentIntent, request, amount, now, ct);
@@ -2493,6 +2767,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
             if (order.PaymentStatus == targetStatus &&
                 IsMatchingIntentTerminal(paymentIntent, request.Outcome))
             {
+                // T-08: snapshot committed balances so a repair commit can stage its
+                // own per-commit COGS event atomically below.
+                var failureReplayCogsBeforeByItem = await SnapshotCommittedQuantitiesByItemAsync(
+                    order.TenantId, order.Id, ct);
+
                 var (replayInventoryAction, replayQuantity) = await FinalizeReplayInventoryAsync(
                     order,
                     paymentIntent,
@@ -2501,6 +2780,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
                 if (replayInventoryAction != PaymentInventoryAction.None)
                 {
+                    if (replayInventoryAction == PaymentInventoryAction.Commit && replayQuantity > 0m)
+                    {
+                        await TryEnqueueEcommerceCogsForCommittedDeltaAsync(
+                            order,
+                            failureReplayCogsBeforeByItem,
+                            $"payment-replay-commit:{request.Source}",
+                            DateTime.UtcNow,
+                            ct);
+                    }
+
                     await transaction.CommitAsync(ct);
                     
                     // Record metrics only after transaction is committed
@@ -2536,6 +2825,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             if (IsOrderSuccessfulTerminal(order))
             {
+                // T-08: snapshot committed balances so a repair commit can stage its
+                // own per-commit COGS event atomically below.
+                var staleFailureCogsBeforeByItem = await SnapshotCommittedQuantitiesByItemAsync(
+                    order.TenantId, order.Id, ct);
+
                 var (replayInventoryAction, replayQuantity) = await FinalizeReplayInventoryAsync(
                     order,
                     paymentIntent,
@@ -2548,6 +2842,16 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
                 if (replayInventoryAction != PaymentInventoryAction.None)
                 {
+                    if (replayInventoryAction == PaymentInventoryAction.Commit && replayQuantity > 0m)
+                    {
+                        await TryEnqueueEcommerceCogsForCommittedDeltaAsync(
+                            order,
+                            staleFailureCogsBeforeByItem,
+                            $"payment-replay-commit:{request.Source}",
+                            DateTime.UtcNow,
+                            ct);
+                    }
+
                     await transaction.CommitAsync(ct);
                     
                     // Record metrics only after transaction is committed
@@ -4327,13 +4631,33 @@ public class PaymentLifecycleService : IPaymentLifecycleService
     private static PaymentProvider? ResolvePaymentIntentProviderFilter(HandlePaymentResultRequest request)
     {
         if (request.Source == PaymentLifecycleSource.GatewayWebhook &&
-            !string.IsNullOrWhiteSpace(request.Gateway) &&
-            Enum.TryParse<PaymentProvider>(request.Gateway.Trim(), ignoreCase: true, out var provider))
+            TryResolveGatewayPaymentProvider(request.Gateway, out var provider))
         {
             return provider;
         }
 
         return null;
+    }
+
+    private static bool TryResolveGatewayPaymentProvider(string? gateway, out PaymentProvider provider)
+    {
+        switch (gateway?.Trim().ToUpperInvariant())
+        {
+            case "STRIPE":
+                provider = PaymentProvider.Stripe;
+                return true;
+            case "PAYMOB":
+            case "CARD":
+            case "VISA":
+                provider = PaymentProvider.Paymob;
+                return true;
+            case "FAWRY":
+                provider = PaymentProvider.Fawry;
+                return true;
+            default:
+                provider = default;
+                return false;
+        }
     }
 
     private static bool IsAmountMismatchTerminal(Order order, PaymentIntent? paymentIntent) =>
@@ -4667,6 +4991,308 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         var itemRefundAmount = NormalizeMoney(order.TotalRefundedAmount, order.Currency);
 
         return Math.Max(recordedRefundAmount, itemRefundAmount);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // T-08 STOREFRONT MERCHANDISE-COST (COGS) LIFECYCLE
+    //
+    // Policy: ProductVariant.CostPrice (moving weighted average) frozen at checkout
+    // into immutable OrderItem.CostPrice. COGS follows the actual inventory commit:
+    // each transaction that commits new reservation quantities stages exactly one
+    // COGS event for the committed delta (per-commit semantics, cumulative caps
+    // enforced by the outbox processor). Replays that commit nothing stage nothing.
+    //
+    // Partial-fulfillment accounting: the current architecture commits the whole
+    // open reservation set at once (CommitOrderReservationsAsync), so a normal
+    // order produces a single full-quantity COGS event. Genuine partial commits
+    // (distinct commit events) each produce their own event; the processor caps
+    // cumulative committed quantities per line at the ordered quantity.
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    private async Task<Dictionary<Guid, decimal>> SnapshotCommittedQuantitiesByItemAsync(
+        Guid tenantId,
+        Guid orderId,
+        CancellationToken ct)
+    {
+        return await _db.InventoryReservations
+            .IgnoreQueryFilters()
+            .Where(reservation =>
+                reservation.TenantId == tenantId &&
+                reservation.OrderId == orderId &&
+                !reservation.IsDeleted)
+            .GroupBy(reservation => reservation.OrderItemId)
+            .Select(group => new
+            {
+                OrderItemId = group.Key,
+                Committed = group.Sum(reservation => reservation.CommittedQuantity)
+            })
+            .ToDictionaryAsync(row => row.OrderItemId, row => row.Committed, ct);
+    }
+
+    private static string BuildEcommerceCogsCommitEventId(
+        Order order,
+        HandlePaymentResultRequest request,
+        string? resolvedPaymentReference,
+        bool routedToSuspense)
+    {
+        return request.Source switch
+        {
+            // Single-commit flows: one deterministic commit identity per order.
+            PaymentLifecycleSource.OfflineCollection => "cod-delivery-commit",
+            PaymentLifecycleSource.PaymentReviewApproval => "wallet-approval-commit",
+            _ when routedToSuspense && !string.IsNullOrWhiteSpace(request.WebhookEventId)
+                => $"suspense-resolution-commit:{request.WebhookEventId!.Trim()}",
+            _ when !string.IsNullOrWhiteSpace(resolvedPaymentReference)
+                => resolvedPaymentReference.Trim(),
+            _ => throw new InvalidOperationException(
+                $"Storefront COGS commit for order {order.Id} requires a payment commit event identity. Failing closed.")
+        };
+    }
+
+    /// <summary>
+    /// T-08: stages one COGS event for the quantities THIS transaction committed
+    /// (after-minus-before committed balances per order line), atomically with the
+    /// commit. Returns null when nothing new was committed. Fails closed when the
+    /// committed delta cannot be costed from immutable snapshots.
+    /// </summary>
+    private async Task<OutboxEnqueueResult?> TryEnqueueEcommerceCogsForCommittedDeltaAsync(
+        Order order,
+        Dictionary<Guid, decimal> committedBeforeByItem,
+        string commitEventId,
+        DateTime occurredAtUtc,
+        CancellationToken ct)
+    {
+        var committedAfterByItem = await SnapshotCommittedQuantitiesByItemAsync(
+            order.TenantId, order.Id, ct);
+
+        var items = await _db.OrderItems
+            .IgnoreQueryFilters()
+            .Where(item => item.OrderId == order.Id && !item.IsDeleted)
+            .ToListAsync(ct);
+
+        var lines = new List<EcommerceCogsOutboxLine>();
+        foreach (var item in items.OrderBy(candidate => candidate.Id))
+        {
+            if (item.Quantity <= 0 || item.CostPrice < 0m)
+            {
+                continue;
+            }
+
+            var delta = committedAfterByItem.GetValueOrDefault(item.Id)
+                - committedBeforeByItem.GetValueOrDefault(item.Id);
+            if (delta <= 0.0000001m)
+            {
+                continue;
+            }
+
+            if (delta - item.Quantity > 0.0001m)
+            {
+                throw new InvalidOperationException(
+                    $"Storefront COGS commit delta {delta} exceeds ordered quantity {item.Quantity} for line {item.Id}. Failing closed.");
+            }
+
+            var committedQty = Math.Min(delta, (decimal)item.Quantity);
+            var costAmount = Math.Round(item.CostPrice * committedQty, 2, MidpointRounding.AwayFromZero);
+            lines.Add(new EcommerceCogsOutboxLine(
+                item.Id, item.VariantId, committedQty, item.CostPrice, costAmount));
+        }
+
+        if (lines.Count == 0)
+        {
+            return null;
+        }
+
+        var currency = NormalizeCurrency(order.Currency) ?? order.Currency;
+        var payload = new EcommerceCogsOutboxPayload(
+            order.Id,
+            commitEventId,
+            currency,
+            occurredAtUtc,
+            lines,
+            lines.Sum(line => line.CostAmount));
+
+        return await _accountingOutbox.EnqueueEcommerceCogsAsync(
+            order.TenantId, order.Id, commitEventId, payload, ct);
+    }
+
+    /// <summary>
+    /// T-08: links a financial refund to physical stock and COGS reversal inside
+    /// the same refund transaction (no half-refunded/half-returned state):
+    /// - No COGS event ever staged for the order (pre-commit refund): release any
+    ///   open reservations so available stock is not stranded; no reversal is due.
+    /// - COGS staged (post-commit refund): restore the refunded share of the
+    ///   remaining returnable stock and stage one COGS reversal at the ORIGINAL
+    ///   snapshot cost. Cumulative restores/reversals are capped; over-return
+    ///   fails closed and rolls the refund back for operator review.
+    /// Pre-remediation orders committed before T-08 have no COGS event by design:
+    /// their refunds keep today's behavior (money only) under the historical boundary.
+    /// </summary>
+    private async Task LinkReturnStockAndCogsReversalForRefundAsync(
+        Order order,
+        OrderRefund refund,
+        string normalizedRefundId,
+        CancellationToken ct)
+    {
+        var cogsEverStaged = await _db.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .AnyAsync(message =>
+                message.TenantId == order.TenantId &&
+                message.BusinessEntityId == order.Id &&
+                message.EventType == EcommerceCogsPolicy.StorefrontCogsEventType,
+                ct);
+
+        if (!cogsEverStaged)
+        {
+            await _stockRepository.ReleaseOrderReservationsAsync(order.TenantId, order.Id, ct);
+            return;
+        }
+
+        var items = await _db.OrderItems
+            .IgnoreQueryFilters()
+            .Where(item => item.OrderId == order.Id && !item.IsDeleted)
+            .ToListAsync(ct);
+        var itemsById = items.ToDictionary(item => item.Id);
+
+        var priorReversalRows = await _db.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .Where(message =>
+                message.TenantId == order.TenantId &&
+                message.BusinessEntityId == order.Id &&
+                message.EventType == EcommerceCogsPolicy.StorefrontCogsReversalEventType)
+            .Select(message => message.PayloadJson)
+            .ToListAsync(ct);
+
+        var priorReversedAmt = new Dictionary<Guid, decimal>();
+        foreach (var priorJson in priorReversalRows)
+        {
+            var prior = JsonSerializer.Deserialize<EcommerceCogsReversalOutboxPayload>(priorJson);
+            if (prior == null)
+            {
+                continue;
+            }
+
+            foreach (var priorLine in prior.Lines)
+            {
+                priorReversedAmt[priorLine.OrderItemId] =
+                    priorReversedAmt.GetValueOrDefault(priorLine.OrderItemId) + priorLine.ReversalAmount;
+            }
+        }
+
+        var reservationRows = await _db.InventoryReservations
+            .IgnoreQueryFilters()
+            .Where(reservation =>
+                reservation.TenantId == order.TenantId &&
+                reservation.OrderId == order.Id &&
+                !reservation.IsDeleted)
+            .Select(reservation => new
+            {
+                reservation.OrderItemId,
+                reservation.CommittedQuantity,
+                reservation.ReturnedQuantity,
+                reservation.DamagedReturnedQuantity
+            })
+            .ToListAsync(ct);
+
+        var committedByItem = reservationRows
+            .GroupBy(row => row.OrderItemId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.Sum(row => row.CommittedQuantity));
+        var returnableByItem = reservationRows
+            .GroupBy(row => row.OrderItemId)
+            .ToDictionary(
+                group => group.Key,
+                group => Math.Max(0m, group.Sum(row =>
+                    row.CommittedQuantity - row.ReturnedQuantity - row.DamagedReturnedQuantity)));
+
+        var restoreByItem = new Dictionary<Guid, decimal>();
+        var reversalLines = new List<EcommerceCogsReversalOutboxLine>();
+
+        foreach (var refundLine in refund.Lines.OrderBy(line => line.OrderItemId))
+        {
+            if (refundLine.Amount <= 0m)
+            {
+                continue;
+            }
+
+            if (!itemsById.TryGetValue(refundLine.OrderItemId, out var item))
+            {
+                throw new InvalidOperationException(
+                    $"Refund line references unknown order item {refundLine.OrderItemId}. Failing closed.");
+            }
+
+            if (item.PaidAmount <= 0m)
+            {
+                throw new InvalidOperationException(
+                    $"Refund line {refundLine.OrderItemId} has no paid amount to relieve. Failing closed.");
+            }
+
+            var share = refundLine.Amount / item.PaidAmount;
+            if (share <= 0m)
+            {
+                continue;
+            }
+
+            if (share - 1m > 0.0001m)
+            {
+                throw new InvalidOperationException(
+                    $"Refund share {share} exceeds the paid amount for line {refundLine.OrderItemId}. Failing closed.");
+            }
+
+            share = Math.Min(share, 1m);
+
+            var returnable = returnableByItem.GetValueOrDefault(item.Id);
+            var committed = committedByItem.GetValueOrDefault(item.Id);
+            var returnQty = Math.Min(share * committed, returnable);
+            if (returnQty > 0m)
+            {
+                restoreByItem[item.Id] = returnQty;
+            }
+
+            var postedItemCogs = Math.Round(item.CostPrice * item.Quantity, 2, MidpointRounding.AwayFromZero);
+            if (postedItemCogs <= 0m || item.CostPrice <= 0m)
+            {
+                continue;
+            }
+
+            var reversal = Math.Round(postedItemCogs * share, 2, MidpointRounding.AwayFromZero);
+            var alreadyReversed = priorReversedAmt.GetValueOrDefault(item.Id);
+            var remaining = postedItemCogs - alreadyReversed;
+            if (reversal - remaining > 0.01m)
+            {
+                throw new InvalidOperationException(
+                    $"COGS reversal {reversal} exceeds remaining posted COGS {remaining} for line {item.Id}. Failing closed.");
+            }
+
+            reversal = Math.Min(reversal, Math.Max(0m, remaining));
+            if (reversal > 0m)
+            {
+                reversalLines.Add(new EcommerceCogsReversalOutboxLine(item.Id, returnQty, reversal));
+            }
+        }
+
+        if (restoreByItem.Count > 0)
+        {
+            await _stockRepository.RestoreCommittedReservationsForReturnAsync(
+                order.TenantId, order.Id, restoreByItem, refund.Id, ct);
+        }
+
+        if (reversalLines.Count == 0)
+        {
+            return;
+        }
+
+        var currency = NormalizeCurrency(order.Currency) ?? order.Currency;
+        var payload = new EcommerceCogsReversalOutboxPayload(
+            order.Id,
+            normalizedRefundId,
+            currency,
+            DateTime.UtcNow,
+            reversalLines,
+            reversalLines.Sum(line => line.ReversalAmount));
+
+        await _accountingOutbox.EnqueueEcommerceCogsReversalAsync(
+            order.TenantId, order.Id, normalizedRefundId, payload, ct);
     }
 
     private static void AllocateRefundAcrossItems(Order order, OrderRefund refund, decimal refundAmount)
@@ -5842,11 +6468,13 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             var postingResult = await _commerceAccounting.PostGatewaySettlementAsync(
                 tenantId,
+                settlementBatchId,
                 settlementAuthority.Provider ?? throw new InvalidOperationException(
                     $"Gateway settlement batch {settlementBatchId} is missing provider authority."),
                 settlementAuthority.GrossAmount,
                 settlementAuthority.Fees,
                 settlementAuthority.SettlementId,
+                settlementAuthority.SettledAtUtc,
                 ct);
 
             EnsurePostingSucceeded(postingResult, settlementBatchId, "settlement");
@@ -5899,9 +6527,11 @@ public class PaymentLifecycleService : IPaymentLifecycleService
 
             var postingResult = await _commerceAccounting.PostCodSettlementAsync(
                 tenantId,
+                settlementBatchId,
                 settlementAuthority.GrossAmount,
                 settlementAuthority.Fees,
                 settlementAuthority.SettlementId,
+                settlementAuthority.SettledAtUtc,
                 ct);
 
             EnsurePostingSucceeded(postingResult, settlementBatchId, "settlement");

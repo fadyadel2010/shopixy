@@ -102,7 +102,9 @@ public sealed class PaymentMethodAuthorityCertificationTests
         Assert.Contains("document.IsConfigurationValid == false", storefrontPaymentMethodsController, StringComparison.Ordinal);
         Assert.Contains("document.IsConfigurationValid == true", storefrontPaymentMethodsController, StringComparison.Ordinal);
         Assert.Contains("IsSupportedStorefrontPaymentMethod(document.Code)", storefrontPaymentMethodsController, StringComparison.Ordinal);
-        Assert.Contains("\"COD\" or \"STRIPE\" or \"PAYMOB\" or \"FAWRY\" or \"MANUALWALLET\"", storefrontPaymentMethodsController, StringComparison.Ordinal);
+        // T-09: Fawry is never an available storefront payment method.
+        Assert.Contains("\"COD\" or \"STRIPE\" or \"PAYMOB\" or \"MANUALWALLET\"", storefrontPaymentMethodsController, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"FAWRY\"", storefrontPaymentMethodsController, StringComparison.Ordinal);
 
         Assert.Contains("[HttpPost(\"pricing\")]", checkoutController, StringComparison.Ordinal);
         Assert.Contains("catch (CheckoutPaymentMethodException ex)", checkoutController, StringComparison.Ordinal);

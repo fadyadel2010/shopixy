@@ -6,10 +6,23 @@ const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const LOCALES_DIR = path.join(ROOT_DIR, 'src', 'i18n', 'locales')
 
 const AUDITED_FILES = [
+  'src/components/ReportTruthBadge.jsx',
+  'src/components/Sidebar.jsx',
   'src/components/LanguageSwitcher.jsx',
   'src/components/OpenCloseCashboxModal.jsx',
   'src/pages/Adjustments.jsx',
   'src/pages/CommerceHubSettings.jsx',
+  'src/pages/SupplierCardFundingInstruments.jsx',
+  'src/pages/treasury/TreasuryAccountViewer.jsx',
+  'src/pages/treasury/TreasuryBalanceSheet.jsx',
+  'src/pages/treasury/TreasuryCashFlow.jsx',
+  'src/pages/treasury/TreasuryClearingAging.jsx',
+  'src/pages/treasury/TreasuryDashboard.jsx',
+  'src/pages/treasury/TreasuryGeneralLedger.jsx',
+  'src/pages/treasury/TreasuryHub.jsx',
+  'src/pages/treasury/TreasuryProfitLoss.jsx',
+  'src/pages/treasury/TreasuryTransfers.jsx',
+  'src/pages/treasury/TreasuryTrialBalance.jsx',
   'src/marketplace/components/ChatMessage.tsx',
   'src/marketplace/components/Filters.tsx',
   'src/marketplace/components/ImageUpload.tsx',

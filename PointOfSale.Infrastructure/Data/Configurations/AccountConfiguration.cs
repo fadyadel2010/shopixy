@@ -74,6 +74,10 @@ public class AccountConfiguration : IEntityTypeConfiguration<Account>
         builder.Property(e => e.PreventNegative)
             .IsRequired()
             .HasDefaultValue(false);
+
+        builder.Property(e => e.IsSupplierCardFunding)
+            .IsRequired()
+            .HasDefaultValue(false);
         
         builder.Property(e => e.IsActive)
             .IsRequired()

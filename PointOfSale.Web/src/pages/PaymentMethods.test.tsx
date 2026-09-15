@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import PaymentMethods, { mergePaymentMethodCatalog } from './PaymentMethods.jsx'
+import PaymentMethods, { isUnsupportedMethod, mergePaymentMethodCatalog } from './PaymentMethods.jsx'
 
 const apiMock = vi.hoisted(() => ({
     get: vi.fn(),
@@ -72,7 +72,37 @@ describe('PaymentMethods provider catalog', () => {
         expect(screen.getByText('Fawry Pay')).toBeInTheDocument()
         expect(screen.getByText('Manual Wallet')).toBeInTheDocument()
         expect(screen.queryByText('No payment methods available')).not.toBeInTheDocument()
-        expect(screen.getAllByText('Not configured')).toHaveLength(10)
+        // T-09: Fawry renders as unsupported instead of "Not configured".
+        expect(screen.getAllByText('Not configured')).toHaveLength(9)
+        expect(screen.getByText('Unsupported')).toBeInTheDocument()
+        expect(screen.getByText('FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE')).toBeInTheDocument()
+    })
+
+    it('marks Fawry unsupported even when a stale tenant row says enabled', () => {
+        const methods = mergePaymentMethodCatalog(providerCatalog, [
+            { code: 'FAWRY', displayName: 'Fawry Pay', isEnabled: true, isSupported: true },
+        ])
+
+        const fawry = methods.find((method) => method.code === 'FAWRY')
+        expect(fawry).toBeDefined()
+        expect(isUnsupportedMethod(fawry)).toBe(true)
+        expect(fawry?.isSupported).toBe(false)
+    })
+
+    it('exposes no configure or enable action for Fawry', async () => {
+        apiMock.get.mockImplementation((url: string) => {
+            if (url === '/admin/payment-methods/catalog') {
+                return Promise.resolve({ data: providerCatalog })
+            }
+
+            return Promise.resolve({ data: [] })
+        })
+
+        render(<PaymentMethods />)
+
+        const fawryRow = (await screen.findByText('Fawry Pay')).closest('tr')
+        expect(fawryRow).not.toBeNull()
+        expect(within(fawryRow as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
     })
 
     it('configures COD without credentials through the existing tenant payment method mutation', async () => {

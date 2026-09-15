@@ -371,6 +371,74 @@ public class CommerceAccountingServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PostPosPurchaseAsync_Card_CreditsFrozenSupplierCardAccount()
+    {
+        var fundingInstrumentId = Guid.NewGuid();
+        var fundingLedgerAccountId = Guid.NewGuid();
+        var invoice = new PurchaseInvoice
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            WarehouseId = Guid.NewGuid(),
+            InvoiceNumber = "PUR-CARD",
+            InvoiceDate = DateTime.UtcNow,
+            PaymentMethod = PaymentMethodEnum.Card,
+            Subtotal = 100m,
+            TotalAmount = 100m,
+            PaidAmount = 100m
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPosPurchaseAsync(
+            invoice,
+            cashAmount: 0m,
+            cardAmount: 100m,
+            fundingInstrumentId: fundingInstrumentId,
+            fundingLedgerAccountId: fundingLedgerAccountId,
+            fundingInstrumentVersion: 1);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _inventoryId && line.DebitAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == fundingLedgerAccountId && line.CreditAmount == 100m);
+        Assert.DoesNotContain(capturedRequest.Lines, line => line.AccountId == _visaClearingId);
+    }
+
+    [Fact]
+    public async Task PostSupplierPaymentAsync_Card_CreditsFrozenSupplierCardAccount()
+    {
+        var fundingLedgerAccountId = Guid.NewGuid();
+        var payment = new SupplierPayment
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            SupplierId = Guid.NewGuid(),
+            PaymentDate = DateTime.UtcNow,
+            Amount = 75m,
+            PaymentMethod = PaymentMethodEnum.Card,
+            FundingInstrumentId = Guid.NewGuid(),
+            FundingLedgerAccountId = fundingLedgerAccountId,
+            FundingInstrumentVersion = 1,
+            ReferenceNumber = "SPAY-CARD"
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostSupplierPaymentAsync(payment);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _supplierPayablesId && line.DebitAmount == 75m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == fundingLedgerAccountId && line.CreditAmount == 75m);
+        Assert.DoesNotContain(capturedRequest.Lines, line => line.AccountId == _visaClearingId);
+    }
+
+    [Fact]
     public async Task PostPosRefundAsync_WithTax_ReversesRevenueAndSalesTaxPayable()
     {
         var returnObj = new Return
@@ -456,6 +524,37 @@ public class CommerceAccountingServiceTests : IDisposable
         var creditLine = capturedRequest.Lines.First(l => l.CreditAmount > 0);
         Assert.Equal(_ecomSalesId, creditLine.AccountId);
     }
+
+    [Fact]
+    public async Task PostUnresolvedPaymentAsync_UsesStableNonEmptySourceIdentity()
+    {
+        var requests = new List<PostingRequest>();
+        _mockPostingService
+            .Setup(service => service.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => requests.Add(request))
+            .ReturnsAsync((PostingRequest request, CancellationToken _) => JournalEntry.Create(
+                request.TenantId,
+                "JE-UNRESOLVED",
+                request.JournalDate,
+                request.SourceType,
+                request.SourceId,
+                request.SourceReference,
+                request.Description,
+                request.IdempotencyKey,
+                request.UserId));
+
+        var first = await _service.PostUnresolvedPaymentAsync(
+            _tenantId, "stripe", 125m, "EGP", "evt-unresolved-1");
+        var replay = await _service.PostUnresolvedPaymentAsync(
+            _tenantId, "stripe", 125m, "EGP", "evt-unresolved-1");
+
+        Assert.True(first.Success);
+        Assert.True(replay.Success);
+        Assert.Equal(2, requests.Count);
+        Assert.NotEqual(Guid.Empty, requests[0].SourceId);
+        Assert.Equal(requests[0].SourceId, requests[1].SourceId);
+        Assert.Equal(requests[0].IdempotencyKey, requests[1].IdempotencyKey);
+    }
     
     [Fact]
     public async Task PostCodDeliveredAsync_DebitsCodClearingCreditsEcomSales()
@@ -515,6 +614,8 @@ public class CommerceAccountingServiceTests : IDisposable
         var grossAmount = 1000m;
         var fees = 29m; // 2.9% Stripe fee
         var netAmount = grossAmount - fees;
+        var settlementBatchId = Guid.NewGuid();
+        var settledAtUtc = DateTime.UtcNow.AddDays(-1);
         
         PostingRequest? capturedRequest = null;
         _mockPostingService
@@ -524,10 +625,12 @@ public class CommerceAccountingServiceTests : IDisposable
         
         // Act
         var result = await _service.PostGatewaySettlementAsync(
-            _tenantId, "STRIPE", grossAmount, fees, "SETTLE-001");
+            _tenantId, settlementBatchId, "STRIPE", grossAmount, fees, "SETTLE-001", settledAtUtc);
         
         // Assert
         Assert.True(result.Success);
+        Assert.Equal(settlementBatchId, capturedRequest!.SourceId);
+        Assert.Equal(settledAtUtc, capturedRequest.JournalDate);
         
         // Should have 3 lines: Bank debit, Fees debit, Clearing credit
         Assert.Equal(3, capturedRequest!.Lines.Count);
@@ -541,6 +644,41 @@ public class CommerceAccountingServiceTests : IDisposable
         var clearingCredit = capturedRequest.Lines.First(l => l.CreditAmount > 0);
         Assert.Equal(_stripeClearingId, clearingCredit.AccountId);
         Assert.Equal(grossAmount, clearingCredit.CreditAmount);
+    }
+
+    [Theory]
+    [InlineData("PAYMOB")]
+    [InlineData("CARD")]
+    [InlineData("VISA")]
+    public async Task PostGatewaySettlementAsync_VisaProvidersCreditVisaClearing(string provider)
+    {
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostGatewaySettlementAsync(
+            _tenantId, Guid.NewGuid(), provider, 100m, 2m, $"SETTLE-{provider}", DateTime.UtcNow);
+
+        Assert.True(result.Success);
+        Assert.NotNull(capturedRequest);
+        var clearingCredit = capturedRequest!.Lines.Single(line => line.CreditAmount > 0m);
+        Assert.Equal(_visaClearingId, clearingCredit.AccountId);
+        Assert.Equal(100m, clearingCredit.CreditAmount);
+    }
+
+    [Fact]
+    public async Task PostGatewaySettlementAsync_UnsupportedProviderFailsWithoutPosting()
+    {
+        var result = await _service.PostGatewaySettlementAsync(
+            _tenantId, Guid.NewGuid(), "WALLET", 100m, 2m, "SETTLE-WALLET", DateTime.UtcNow);
+
+        Assert.False(result.Success);
+        Assert.Contains("no configured clearing-account authority", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        _mockPostingService.Verify(
+            service => service.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

@@ -24,6 +24,7 @@ using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Core.Pricing;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Mappers;
 
@@ -148,6 +149,19 @@ public class PurchasesController : ControllerBase
                     BadRequest(new { message = paymentSplit.ErrorMessage }));
             }
 
+            SupplierCardAuthoritySnapshot? cardAuthority;
+            try
+            {
+                cardAuthority = await ResolvePurchaseCardAuthorityAsync(request, paymentSplit.CardAmount);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return await CompletePurchaseIdempotencyAsync(
+                    transaction,
+                    idempotencyRecord,
+                    BadRequest(new { message = ex.Message, code = "SUPPLIER_CARD_AUTHORITY_INVALID" }));
+            }
+
             var cashboxValidationError = await ValidateCashboxCapacityAsync(
                 warehouse.Id,
                 paymentSplit.CashAmount,
@@ -181,7 +195,7 @@ public class PurchasesController : ControllerBase
                 Notes = request.Notes,
                 CreatedAt = DateTime.UtcNow
             };
-            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount);
+            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount, cardAuthority);
 
             var lockedStocks = await ProductVariantStockMutationSupport.LockMultipleStocksAsync(
                 _context,
@@ -332,19 +346,25 @@ public class PurchasesController : ControllerBase
             // ════════════════════════════════════════════════════════════════════════════
             // PHASE LCR: Enqueue to accounting outbox for ledger posting
             // ════════════════════════════════════════════════════════════════════════════
-            await _accountingOutbox.EnqueuePosPurchaseAsync(
+            await _accountingOutbox.EnqueuePosPurchaseWithCardAuthorityAsync(
                 invoice.TenantId,
                 invoice.Id,
                 invoice.AccountingMutationVersion,
                 paymentSplit.CashAmount,
-                paymentSplit.CardAmount);
+                paymentSplit.CardAmount,
+                cardAuthority?.FundingInstrumentId,
+                cardAuthority?.FundingLedgerAccountId,
+                cardAuthority?.FundingInstrumentVersion);
 
             var purchasePosting = await _commerceAccounting.PostPosPurchaseAsync(
                 invoice,
                 HttpContext.RequestAborted,
                 operationKey: null,
                 cashAmount: paymentSplit.CashAmount,
-                cardAmount: paymentSplit.CardAmount);
+                cardAmount: paymentSplit.CardAmount,
+                fundingInstrumentId: cardAuthority?.FundingInstrumentId,
+                fundingLedgerAccountId: cardAuthority?.FundingLedgerAccountId,
+                fundingInstrumentVersion: cardAuthority?.FundingInstrumentVersion);
             if (!purchasePosting.Success)
             {
                 throw new InvalidOperationException(
@@ -360,7 +380,8 @@ public class PurchasesController : ControllerBase
                     invoice.Id,
                     paymentSplit.CashAmount,
                     paymentSplit.CardAmount,
-                    invoice.AccountingMutationVersion),
+                    invoice.AccountingMutationVersion,
+                    cardAuthority),
                 invoice.AccountingMutationVersion,
                 purchasePosting.JournalId,
                 HttpContext.RequestAborted);
@@ -1003,6 +1024,28 @@ public class PurchasesController : ControllerBase
                     BadRequest(new { message = paymentSplit.ErrorMessage }));
             }
 
+            var pendingCardReversalCredit = invoice.Payments
+                .Where(payment =>
+                    !payment.IsDeleted &&
+                    payment.PaymentMethod == PaymentMethod.Card &&
+                    payment.FundingInstrumentId == request.FundingInstrumentId)
+                .Sum(payment => payment.Amount);
+            SupplierCardAuthoritySnapshot? cardAuthority;
+            try
+            {
+                cardAuthority = await ResolvePurchaseCardAuthorityAsync(
+                    request,
+                    paymentSplit.CardAmount,
+                    pendingCardReversalCredit);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return await CompletePurchaseIdempotencyAsync(
+                    transaction,
+                    idempotencyRecord,
+                    BadRequest(new { message = ex.Message, code = "SUPPLIER_CARD_AUTHORITY_INVALID" }));
+            }
+
             // Calculate net cash delta for cashbox capacity validation
             // Only validate the incremental cash exposure, not the full new amount
             // If warehouse changes, validate the full new amount for the new warehouse
@@ -1095,7 +1138,7 @@ public class PurchasesController : ControllerBase
 
             _context.PurchaseInvoicePayments.RemoveRange(invoice.Payments);
             invoice.Payments.Clear();
-            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount);
+            AddPurchasePayments(invoice, paymentSplit.CashAmount, paymentSplit.CardAmount, cardAuthority);
             _context.PurchaseInvoicePayments.AddRange(invoice.Payments);
 
             // 3. Clear old items
@@ -1252,20 +1295,24 @@ public class PurchasesController : ControllerBase
             // Always enqueue for both paid and credit-only purchases
             // ════════════════════════════════════════════════════════════════════════════
             var purchaseOperationKey = BuildPurchaseMutationOperationKey(idempotencyRecord.Id);
-            await _accountingOutbox.EnqueuePurchaseReversalAsync(
+            await _accountingOutbox.EnqueuePurchaseReversalWithCardAuthorityAsync(
                 invoice.TenantId,
                 invoice.Id,
                 purchaseOperationKey,
                 invoice.AccountingMutationVersion,
                 paymentSplit.CashAmount,
-                paymentSplit.CardAmount);
+                paymentSplit.CardAmount,
+                cardAuthority?.FundingInstrumentId,
+                cardAuthority?.FundingLedgerAccountId,
+                cardAuthority?.FundingInstrumentVersion);
 
             var purchasePosting = await PostUpdatedPurchaseAccountingSynchronouslyAsync(
                 invoice,
                 purchaseOperationKey,
                 HttpContext.RequestAborted,
                 paymentSplit.CashAmount,
-                paymentSplit.CardAmount);
+                paymentSplit.CardAmount,
+                cardAuthority);
 
             await MarkSynchronousPurchaseAccountingOutboxProcessedAsync(
                 invoice.TenantId,
@@ -1277,7 +1324,8 @@ public class PurchasesController : ControllerBase
                     purchaseOperationKey,
                     paymentSplit.CashAmount,
                     paymentSplit.CardAmount,
-                    invoice.AccountingMutationVersion),
+                    invoice.AccountingMutationVersion,
+                    cardAuthority),
                 invoice.AccountingMutationVersion,
                 purchasePosting.JournalId,
                 HttpContext.RequestAborted);
@@ -1880,8 +1928,9 @@ public class PurchasesController : ControllerBase
         Guid invoiceId,
         decimal cashAmount,
         decimal cardAmount,
-        int mutationVersion) =>
-        $"PURCHASE:{tenantId}:{invoiceId}:C{cashAmount.ToString("F2", CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", CultureInfo.InvariantCulture)}:V{mutationVersion}";
+        int mutationVersion,
+        SupplierCardAuthoritySnapshot? authority) =>
+        $"PURCHASE:{tenantId}:{invoiceId}:C{cashAmount.ToString("F2", CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", CultureInfo.InvariantCulture)}:V{mutationVersion}{BuildCardAuthorityKeySuffix(cardAmount, authority)}";
 
     private static string BuildPurchaseMutationAccountingOutboxIdempotencyKey(
         Guid tenantId,
@@ -1889,8 +1938,14 @@ public class PurchasesController : ControllerBase
         string operationKey,
         decimal cashAmount,
         decimal cardAmount,
-        int mutationVersion) =>
-        $"PURCHASE:{tenantId}:{invoiceId}:{operationKey}:C{cashAmount.ToString("F2", CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", CultureInfo.InvariantCulture)}:V{mutationVersion}";
+        int mutationVersion,
+        SupplierCardAuthoritySnapshot? authority) =>
+        $"PURCHASE:{tenantId}:{invoiceId}:{operationKey}:C{cashAmount.ToString("F2", CultureInfo.InvariantCulture)}:D{cardAmount.ToString("F2", CultureInfo.InvariantCulture)}:V{mutationVersion}{BuildCardAuthorityKeySuffix(cardAmount, authority)}";
+
+    private static string BuildCardAuthorityKeySuffix(decimal cardAmount, SupplierCardAuthoritySnapshot? authority) =>
+        cardAmount > 0m && authority != null
+            ? $":FI{authority.FundingInstrumentId:D}:FA{authority.FundingLedgerAccountId:D}:FV{authority.FundingInstrumentVersion}"
+            : string.Empty;
 
     private static string BuildPurchaseMutationOperationKey(Guid idempotencyRecordId) =>
         $"purchase-mutation-{idempotencyRecordId:N}";
@@ -1985,7 +2040,33 @@ public class PurchasesController : ControllerBase
         return PurchasePaymentSplitter.Resolve(request, totalAmount);
     }
 
-    private static void AddPurchasePayments(PurchaseInvoice invoice, decimal cashAmount, decimal cardAmount)
+    private async Task<SupplierCardAuthoritySnapshot?> ResolvePurchaseCardAuthorityAsync(
+        CreatePurchaseRequest request,
+        decimal cardAmount,
+        decimal pendingReversalCredit = 0m)
+    {
+        if (cardAmount <= 0m)
+        {
+            if (request.FundingInstrumentId.HasValue || request.FundingInstrumentVersion.HasValue)
+                throw new InvalidOperationException("FundingInstrumentId must be null when the purchase has no Card allocation.");
+            return null;
+        }
+
+        return await SupplierCardAuthority.ResolveForOutflowAsync(
+            _context,
+            _tenantContext.RequiredTenantId,
+            request.FundingInstrumentId,
+            request.FundingInstrumentVersion,
+            cardAmount,
+            pendingReversalCredit,
+            HttpContext.RequestAborted);
+    }
+
+    private static void AddPurchasePayments(
+        PurchaseInvoice invoice,
+        decimal cashAmount,
+        decimal cardAmount,
+        SupplierCardAuthoritySnapshot? cardAuthority)
     {
         var paymentDate = DateTime.UtcNow;
 
@@ -2013,6 +2094,9 @@ public class PurchasesController : ControllerBase
                 PaymentDate = paymentDate,
                 Amount = cardAmount,
                 PaymentMethod = PaymentMethod.Card,
+                FundingInstrumentId = cardAuthority?.FundingInstrumentId,
+                FundingLedgerAccountId = cardAuthority?.FundingLedgerAccountId,
+                FundingInstrumentVersion = cardAuthority?.FundingInstrumentVersion,
                 ReferenceNumber = invoice.InvoiceNumber,
                 Notes = $"Card payment for purchase invoice {invoice.InvoiceNumber}",
                 CreatedAt = paymentDate
@@ -2025,7 +2109,8 @@ public class PurchasesController : ControllerBase
         string operationKey,
         CancellationToken cancellationToken,
         decimal cashAmount,
-        decimal cardAmount)
+        decimal cardAmount,
+        SupplierCardAuthoritySnapshot? cardAuthority)
     {
         var journalsToReverse = await _context.JournalEntries
             .IgnoreQueryFilters()
@@ -2053,7 +2138,10 @@ public class PurchasesController : ControllerBase
             cancellationToken,
             operationKey,
             cashAmount,
-            cardAmount);
+            cardAmount,
+            cardAuthority?.FundingInstrumentId,
+            cardAuthority?.FundingLedgerAccountId,
+            cardAuthority?.FundingInstrumentVersion);
         if (!purchasePosting.Success)
         {
             throw new InvalidOperationException(
@@ -2084,6 +2172,8 @@ public record CreatePurchaseRequest
     public decimal? CashAmount { get; set; }
     [Range(typeof(decimal), "0", "79228162514264337593543950335")]
     public decimal? CardAmount { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
     [MaxLength(1000)]
     public string? Notes { get; set; }
 }

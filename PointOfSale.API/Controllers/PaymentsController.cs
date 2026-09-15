@@ -8,6 +8,7 @@ using PointOfSale.API.Security;
 using PointOfSale.API.Services.Payments;
 using PointOfSale.API.Services.Payments.Paymob;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Payments;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
@@ -79,6 +80,7 @@ public class PaymentsController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     public async Task<IActionResult> CreatePaymentIntent(
         [FromRoute] Guid orderId,
         [FromBody] CreatePaymentIntentRequestDto? request,
@@ -121,6 +123,16 @@ public class PaymentsController : ControllerBase
                 .Where(order => order.Id == orderId && order.TenantId == tenantId && !order.IsDeleted)
                 .Select(order => order.PaymentMethodCode)
                 .FirstOrDefaultAsync(cancellationToken);
+
+            if (FawryFinancialAuthorityPolicy.IsFawry(orderPaymentMethodCode))
+            {
+                return StatusCode(
+                    StatusCodes.Status422UnprocessableEntity,
+                    new ApiErrorResponse(
+                        FawryFinancialAuthorityPolicy.Code,
+                        FawryFinancialAuthorityPolicy.Message,
+                        traceId));
+            }
 
             var hasManualWalletRequestFields =
                 !string.IsNullOrWhiteSpace(request.WalletType) ||
@@ -185,6 +197,14 @@ public class PaymentsController : ControllerBase
         catch (PaymentManualWalletCheckoutOnlyException ex)
         {
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (PaymentFawryFinancialAuthorityException ex)
+        {
+            _logger.LogWarning(
+                "Fawry payment rejected without financial authority | OrderId: {OrderId} | TraceId: {TraceId}",
+                orderId,
+                traceId);
+            return StatusCode(StatusCodes.Status422UnprocessableEntity, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
         catch (PaymentUnauthorizedAccessException ex)
         {

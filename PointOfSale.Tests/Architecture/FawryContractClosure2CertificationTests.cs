@@ -215,8 +215,11 @@ public sealed class FawryContractClosure2CertificationTests
         Assert.DoesNotContain("FawryWebhookReplayRecord", adapter, StringComparison.Ordinal);
         Assert.DoesNotContain("ApplicationDbContext", adapter, StringComparison.Ordinal);
         Assert.Contains("IFawryWebhookRuntimeIntegrationService", controller, StringComparison.Ordinal);
-        Assert.Contains("FawryWebhookLifecycleAdmission.CreateRequest", controller, StringComparison.Ordinal);
-        Assert.Contains("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
+        // T-09: successful Fawry webhook admission is fail-closed with the stable
+        // authority code and must never enter the money-mutation lifecycle.
+        Assert.Contains("FawryFinancialAuthorityPolicy", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("FawryWebhookLifecycleAdmission.CreateRequest", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
         Assert.Contains("AddScoped<IFawryWebhookRuntimeIntegrationService, FawryWebhookRuntimeIntegrationService>", application, StringComparison.Ordinal);
     }
 

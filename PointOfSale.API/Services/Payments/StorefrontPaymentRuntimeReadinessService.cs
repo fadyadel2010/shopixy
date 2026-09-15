@@ -90,6 +90,11 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
             return StorefrontPaymentRuntimeReadiness.Blocked("PROVIDER_UNSUPPORTED");
         }
 
+        if (FawryFinancialAuthorityPolicy.IsFawry(normalizedCode))
+        {
+            return StorefrontPaymentRuntimeReadiness.Blocked(FawryFinancialAuthorityPolicy.Code);
+        }
+
         var paymentMethod = await _dbContext.TenantPaymentMethods
             .IgnoreQueryFilters()
             .AsNoTracking()
@@ -111,7 +116,6 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
                 "COD" => StorefrontPaymentRuntimeReadiness.Ready,
                 "STRIPE" => await EvaluateStripeAsync(tenantId, cancellationToken),
                 "PAYMOB" => await EvaluatePaymobAsync(tenantId, cancellationToken),
-                "FAWRY" => await EvaluateFawryAsync(tenantId, cancellationToken),
                 "MANUALWALLET" => await EvaluateManualPaymentAsync(tenantId, paymentMethod!, cancellationToken),
                 _ => StorefrontPaymentRuntimeReadiness.Blocked("PROVIDER_UNSUPPORTED")
             };
@@ -257,21 +261,6 @@ public sealed class StorefrontPaymentRuntimeReadinessService : IStorefrontPaymen
         await _paymobResolver.ResolveCredentialsAsync(tenantId, PaymobOperationalCapability.PaymentIntent, cancellationToken);
         await _paymobResolver.ResolveCredentialsAsync(tenantId, PaymobOperationalCapability.Webhook, cancellationToken);
         await _paymobResolver.ResolveCredentialsAsync(tenantId, PaymobOperationalCapability.Callback, cancellationToken);
-        return StorefrontPaymentRuntimeReadiness.Ready;
-    }
-
-    private async Task<StorefrontPaymentRuntimeReadiness> EvaluateFawryAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken)
-    {
-        var options = _fawryOptions.Value;
-        if (!FawryOptionsValidator.IsRuntimeEnabled(options))
-        {
-            return StorefrontPaymentRuntimeReadiness.Blocked("FAWRY_RUNTIME_DISABLED");
-        }
-
-        await _fawryResolver.ResolveCredentialsAsync(tenantId, FawryOperationalCapability.PaymentExecution, cancellationToken);
-        await _fawryResolver.ResolveCredentialsAsync(tenantId, FawryOperationalCapability.WebhookAuthentication, cancellationToken);
         return StorefrontPaymentRuntimeReadiness.Ready;
     }
 

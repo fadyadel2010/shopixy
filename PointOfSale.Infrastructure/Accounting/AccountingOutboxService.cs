@@ -7,6 +7,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Core.Models.Refunds;
 using PointOfSale.Infrastructure.Data;
 
@@ -87,6 +88,19 @@ public class AccountingOutboxService : IAccountingOutboxService
         decimal cashAmount = 0m,
         decimal cardAmount = 0m,
         CancellationToken ct = default)
+        => await EnqueuePosPurchaseWithCardAuthorityAsync(
+            tenantId, invoiceId, mutationVersion, cashAmount, cardAmount, null, null, null, ct);
+
+    public async Task EnqueuePosPurchaseWithCardAuthorityAsync(
+        Guid tenantId,
+        Guid invoiceId,
+        int mutationVersion,
+        decimal cashAmount,
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion,
+        CancellationToken ct = default)
     {
         if (cashAmount < 0m)
         {
@@ -104,13 +118,20 @@ public class AccountingOutboxService : IAccountingOutboxService
                 "Card amount cannot be negative.");
         }
 
-        var idempotencyKey = BuildPurchasePostingIdempotencyKey(tenantId, invoiceId, null, cashAmount, cardAmount, mutationVersion);
+        ValidateCardAuthority(cardAmount, fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
+
+        var idempotencyKey = BuildPurchasePostingIdempotencyKey(
+            tenantId, invoiceId, null, cashAmount, cardAmount, mutationVersion,
+            fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
         await EnqueueMessageAsync(tenantId, "PosPurchase", invoiceId,
             new
             {
                 InvoiceId = invoiceId,
                 CashAmount = cashAmount,
                 CardAmount = cardAmount,
+                FundingInstrumentId = fundingInstrumentId,
+                FundingLedgerAccountId = fundingLedgerAccountId,
+                FundingInstrumentVersion = fundingInstrumentVersion,
                 MutationVersion = mutationVersion
             },
             idempotencyKey,
@@ -125,6 +146,20 @@ public class AccountingOutboxService : IAccountingOutboxService
         int mutationVersion,
         decimal cashAmount = 0m,
         decimal cardAmount = 0m,
+        CancellationToken ct = default)
+        => await EnqueuePurchaseReversalWithCardAuthorityAsync(
+            tenantId, invoiceId, operationKey, mutationVersion, cashAmount, cardAmount, null, null, null, ct);
+
+    public async Task EnqueuePurchaseReversalWithCardAuthorityAsync(
+        Guid tenantId,
+        Guid invoiceId,
+        string operationKey,
+        int mutationVersion,
+        decimal cashAmount,
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion,
         CancellationToken ct = default)
     {
         ValidateOperationKey(operationKey);
@@ -145,7 +180,11 @@ public class AccountingOutboxService : IAccountingOutboxService
                 "Card amount cannot be negative.");
         }
 
-        var idempotencyKey = BuildPurchasePostingIdempotencyKey(tenantId, invoiceId, operationKey, cashAmount, cardAmount, mutationVersion);
+        ValidateCardAuthority(cardAmount, fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
+
+        var idempotencyKey = BuildPurchasePostingIdempotencyKey(
+            tenantId, invoiceId, operationKey, cashAmount, cardAmount, mutationVersion,
+            fundingInstrumentId, fundingLedgerAccountId, fundingInstrumentVersion);
 
         await EnqueueMessageAsync(
             tenantId,
@@ -157,6 +196,9 @@ public class AccountingOutboxService : IAccountingOutboxService
                 OperationKey = operationKey,
                 CashAmount = cashAmount,
                 CardAmount = cardAmount,
+                FundingInstrumentId = fundingInstrumentId,
+                FundingLedgerAccountId = fundingLedgerAccountId,
+                FundingInstrumentVersion = fundingInstrumentVersion,
                 MutationVersion = mutationVersion
             },
             idempotencyKey,
@@ -166,9 +208,27 @@ public class AccountingOutboxService : IAccountingOutboxService
     
     public async Task EnqueueSupplierPaymentAsync(Guid tenantId, Guid paymentId, CancellationToken ct = default)
     {
-        var idempotencyKey = $"SUPPLIER_PAYMENT:{tenantId}:{paymentId}";
+        var payment = _db.SupplierPayments.Local.FirstOrDefault(item => item.Id == paymentId && item.TenantId == tenantId)
+            ?? await _db.SupplierPayments.IgnoreQueryFilters().AsNoTracking()
+                .SingleOrDefaultAsync(item => item.Id == paymentId && item.TenantId == tenantId, ct)
+            ?? throw new InvalidOperationException($"SupplierPayment {paymentId} was not found in tenant scope.");
+        ValidateCardAuthority(
+            payment.PaymentMethod == PointOfSale.Core.Enums.PaymentMethod.Card ? payment.Amount : 0m,
+            payment.FundingInstrumentId,
+            payment.FundingLedgerAccountId,
+            payment.FundingInstrumentVersion);
+        var authorityKey = payment.PaymentMethod == PointOfSale.Core.Enums.PaymentMethod.Card
+            ? $":FI{payment.FundingInstrumentId:D}:FA{payment.FundingLedgerAccountId:D}:FV{payment.FundingInstrumentVersion}"
+            : string.Empty;
+        var idempotencyKey = $"SUPPLIER_PAYMENT:{tenantId}:{paymentId}{authorityKey}";
         await EnqueueMessageAsync(tenantId, "SupplierPayment", paymentId,
-            new { PaymentId = paymentId }, idempotencyKey, null, ct);
+            new
+            {
+                PaymentId = paymentId,
+                payment.FundingInstrumentId,
+                payment.FundingLedgerAccountId,
+                payment.FundingInstrumentVersion
+            }, idempotencyKey, null, ct);
     }
 
     public async Task EnqueueCustomerPaymentAsync(Guid tenantId, Guid paymentId, CancellationToken ct = default)
@@ -539,6 +599,214 @@ public class AccountingOutboxService : IAccountingOutboxService
             ct);
     }
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // T-08: E-commerce / CommerceHub merchandise-cost (COGS) events.
+    // The COGS event is created atomically with the source inventory-commit
+    // event inside the caller's transaction. Duplicate commit-event keys are
+    // idempotent; a changed payload under the same key fails closed.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    public async Task<OutboxEnqueueResult> EnqueueEcommerceCogsAsync(
+        Guid tenantId,
+        Guid orderId,
+        string commitEventId,
+        object payload,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        var idempotencyKey = EcommerceCogsPolicy.BuildStorefrontCogsKey(tenantId, orderId, commitEventId);
+        var aggregateVersion = await ResolveRequiredOrderAggregateVersionAsync(
+            tenantId, orderId, EcommerceCogsPolicy.StorefrontCogsEventType, ct);
+        return await EnqueueCogsMessageAsync(
+            tenantId, EcommerceCogsPolicy.StorefrontCogsEventType, orderId,
+            payload, idempotencyKey, aggregateVersion, ct);
+    }
+
+    public async Task<OutboxEnqueueResult> EnqueueEcommerceCogsReversalAsync(
+        Guid tenantId,
+        Guid orderId,
+        string returnEventId,
+        object payload,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        var idempotencyKey = EcommerceCogsPolicy.BuildStorefrontCogsReversalKey(tenantId, orderId, returnEventId);
+        var aggregateVersion = await ResolveRequiredOrderAggregateVersionAsync(
+            tenantId, orderId, EcommerceCogsPolicy.StorefrontCogsReversalEventType, ct);
+        return await EnqueueCogsMessageAsync(
+            tenantId, EcommerceCogsPolicy.StorefrontCogsReversalEventType, orderId,
+            payload, idempotencyKey, aggregateVersion, ct);
+    }
+
+    public async Task<OutboxEnqueueResult> EnqueueCommerceHubCogsAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string deliveryCommitEventId,
+        object payload,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        var idempotencyKey = EcommerceCogsPolicy.BuildCommerceHubCogsKey(tenantId, subOrderId, deliveryCommitEventId);
+        var aggregateVersion = await ResolveRequiredCommerceHubSubOrderAggregateVersionAsync(
+            tenantId, subOrderId, EcommerceCogsPolicy.CommerceHubCogsEventType, ct);
+        return await EnqueueCogsMessageAsync(
+            tenantId, EcommerceCogsPolicy.CommerceHubCogsEventType, subOrderId,
+            payload, idempotencyKey, aggregateVersion, ct);
+    }
+
+    public async Task<OutboxEnqueueResult> EnqueueCommerceHubCogsReversalAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string returnEventId,
+        object payload,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(payload);
+        var idempotencyKey = EcommerceCogsPolicy.BuildCommerceHubCogsReversalKey(tenantId, subOrderId, returnEventId);
+        var aggregateVersion = await ResolveRequiredCommerceHubSubOrderAggregateVersionAsync(
+            tenantId, subOrderId, EcommerceCogsPolicy.CommerceHubCogsReversalEventType, ct);
+        return await EnqueueCogsMessageAsync(
+            tenantId, EcommerceCogsPolicy.CommerceHubCogsReversalEventType, subOrderId,
+            payload, idempotencyKey, aggregateVersion, ct);
+    }
+
+    private async Task<OutboxEnqueueResult> EnqueueCogsMessageAsync(
+        Guid tenantId,
+        string eventType,
+        Guid businessEntityId,
+        object payload,
+        string idempotencyKey,
+        int? aggregateVersion,
+        CancellationToken ct)
+    {
+        var correlationId = _correlationIdAccessor.GetCorrelationId();
+        EnsureTransactionalEnqueueBoundary(eventType, businessEntityId, idempotencyKey);
+
+        var payloadJson = JsonSerializer.Serialize(payload);
+
+        var existingMessage = await _db.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .Where(m => m.TenantId == tenantId && m.IdempotencyKey == idempotencyKey)
+            .Select(m => new { m.Id, m.PayloadJson, m.ProcessedAtUtc, m.IsFailed, m.NextRetryAtUtc, m.AttemptCount })
+            .FirstOrDefaultAsync(ct);
+
+        if (existingMessage != null)
+        {
+            if (!CogsPayloadsEqual(existingMessage.PayloadJson, payloadJson))
+            {
+                throw new InvalidOperationException(
+                    $"COGS idempotency conflict: key {idempotencyKey} already exists with a different payload. " +
+                    "The duplicate event carries changed cost/quantity data and is rejected to prevent double or diverging COGS postings.");
+            }
+
+            var status = existingMessage.ProcessedAtUtc != null ? "PROCESSED" :
+                         existingMessage.IsFailed ? "FAILED" :
+                         existingMessage.NextRetryAtUtc > DateTime.UtcNow ? "WAITING_RETRY" : "PENDING";
+
+            _logger.LogWarning(
+                "[OUTBOX-T08] COGS message already exists | IdempotencyKey: {IdempotencyKey} | ExistingId: {ExistingId} | Status: {Status} | CorrelationId: {CorrelationId}",
+                idempotencyKey, existingMessage.Id, status, correlationId);
+
+            return OutboxEnqueueResult.Exists(existingMessage.Id, status, idempotencyKey);
+        }
+
+        aggregateVersion ??= TryExtractAggregateVersion(payloadJson);
+        aggregateVersion ??= ResolveTrackedAggregateVersion(businessEntityId);
+
+        var message = AccountingOutboxMessage.Create(
+            tenantId,
+            eventType,
+            businessEntityId,
+            eventType,
+            payloadJson,
+            idempotencyKey,
+            correlationId,
+            aggregateVersion);
+
+        _db.AccountingOutboxMessages.Add(message);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "[OUTBOX-T08] COGS message staged | EventType: {EventType} | MessageId: {MessageId} | EntityId: {EntityId} | CorrelationId: {CorrelationId}",
+            eventType, message.Id, businessEntityId, correlationId);
+
+        return OutboxEnqueueResult.Created(message.Id, idempotencyKey);
+    }
+
+    private static bool CogsPayloadsEqual(string existingPayloadJson, string newPayloadJson)
+    {
+        if (string.Equals(existingPayloadJson, newPayloadJson, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        try
+        {
+            using var existing = JsonDocument.Parse(existingPayloadJson);
+            using var incoming = JsonDocument.Parse(newPayloadJson);
+            return JsonElementsEqual(existing.RootElement, incoming.RootElement);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static bool JsonElementsEqual(JsonElement left, JsonElement right)
+    {
+        if (left.ValueKind != right.ValueKind)
+        {
+            if (left.ValueKind == JsonValueKind.Number && right.ValueKind == JsonValueKind.Number)
+            {
+                return left.GetDecimal() == right.GetDecimal();
+            }
+
+            return false;
+        }
+
+        return left.ValueKind switch
+        {
+            JsonValueKind.Object => JsonObjectsEqual(left, right),
+            JsonValueKind.Array => JsonArraysEqual(left, right),
+            JsonValueKind.String => left.GetString() == right.GetString(),
+            JsonValueKind.Number => left.GetDecimal() == right.GetDecimal(),
+            JsonValueKind.True or JsonValueKind.False => left.GetBoolean() == right.GetBoolean(),
+            JsonValueKind.Null or JsonValueKind.Undefined => true,
+            _ => left.GetRawText() == right.GetRawText()
+        };
+    }
+
+    private static bool JsonObjectsEqual(JsonElement left, JsonElement right)
+    {
+        var leftProperties = left.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
+        var rightProperties = right.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.Ordinal);
+
+        if (leftProperties.Count != rightProperties.Count)
+        {
+            return false;
+        }
+
+        foreach (var (name, leftValue) in leftProperties)
+        {
+            if (!rightProperties.TryGetValue(name, out var rightValue) || !JsonElementsEqual(leftValue, rightValue))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool JsonArraysEqual(JsonElement left, JsonElement right)
+    {
+        if (left.GetArrayLength() != right.GetArrayLength())
+        {
+            return false;
+        }
+
+        return left.EnumerateArray().Zip(right.EnumerateArray(), JsonElementsEqual).All(equal => equal);
+    }
+
     private static readonly Regex OperationKeyPattern = new(@"^[A-Za-z0-9._-]+$", RegexOptions.Compiled);
 
     /// <summary>
@@ -569,7 +837,10 @@ public class AccountingOutboxService : IAccountingOutboxService
         string? operationKey = null,
         decimal? cashAmount = null,
         decimal? cardAmount = null,
-        int? mutationVersion = null)
+        int? mutationVersion = null,
+        Guid? fundingInstrumentId = null,
+        Guid? fundingLedgerAccountId = null,
+        int? fundingInstrumentVersion = null)
     {
         var baseKey = operationKey == null
             ? $"PURCHASE:{tenantId}:{invoiceId}"
@@ -589,7 +860,31 @@ public class AccountingOutboxService : IAccountingOutboxService
             baseKey = $"{baseKey}:V{mutationVersion.Value}";
         }
 
+        if (cardAmount > 0m)
+        {
+            baseKey = $"{baseKey}:FI{fundingInstrumentId:D}:FA{fundingLedgerAccountId:D}:FV{fundingInstrumentVersion}";
+        }
+
         return baseKey;
+    }
+
+    private static void ValidateCardAuthority(
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion)
+    {
+        var hasAnyAuthority = fundingInstrumentId.HasValue || fundingLedgerAccountId.HasValue || fundingInstrumentVersion.HasValue;
+        if (cardAmount > 0m &&
+            (!fundingInstrumentId.HasValue || fundingInstrumentId == Guid.Empty ||
+             !fundingLedgerAccountId.HasValue || fundingLedgerAccountId == Guid.Empty ||
+             !fundingInstrumentVersion.HasValue || fundingInstrumentVersion <= 0))
+        {
+            throw new InvalidOperationException("Supplier Card outbox messages require immutable funding authority.");
+        }
+
+        if (cardAmount <= 0m && hasAnyAuthority)
+            throw new InvalidOperationException("Non-Card outbox messages cannot carry supplier card funding authority.");
     }
 
     private static string BuildExpensePostingIdempotencyKey(Guid tenantId, Guid expenseId, string? operationKey) =>
@@ -856,6 +1151,36 @@ public class AccountingOutboxService : IAccountingOutboxService
         return version;
     }
 
+    private async Task<int> ResolveRequiredCommerceHubSubOrderAggregateVersionAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string eventType,
+        CancellationToken cancellationToken)
+    {
+        var trackedVersion = ResolveTrackedAggregateVersion(subOrderId);
+        if (trackedVersion is > 0)
+        {
+            return trackedVersion.Value;
+        }
+
+        var persistedVersion = await _db.CommerceHubSubOrders
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(subOrder => subOrder.StoreId == tenantId && subOrder.Id == subOrderId && !subOrder.IsDeleted)
+            .Select(subOrder => (long?)subOrder.ProjectionMutationVersion)
+            .FirstOrDefaultAsync(cancellationToken);
+        var version = persistedVersion.HasValue
+            ? ProductEventVersionHelper.ToProductEventVersion(persistedVersion.Value)
+            : 0;
+        if (version <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Critical accounting event {eventType} for CommerceHub sub-order {subOrderId} requires positive tenant-scoped aggregate authority.");
+        }
+
+        return version;
+    }
+
     private static long ResolvePendingProjectionVersion(
         Microsoft.EntityFrameworkCore.ChangeTracking.EntityEntry<IProjectionVersioned> entry)
     {
@@ -884,6 +1209,15 @@ public class AccountingOutboxService : IAccountingOutboxService
         string idempotencyKey)
     {
         if (_db.Database.CurrentTransaction != null)
+        {
+            return;
+        }
+
+        // T-08: non-relational providers (InMemory test doubles) have no ambient
+        // transactions; atomicity there comes from the single pending SaveChanges
+        // that already includes the business mutation. Production providers are
+        // always relational, so this exemption cannot weaken production safety.
+        if (!_db.Database.IsRelational())
         {
             return;
         }

@@ -413,26 +413,152 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
         
         // 1. Get P&L for net profit
         var pnl = await GetProfitAndLossAsync(tenantId, fromDate, toDate, ct);
-        
+
+        // Resolve once the mapped cash equivalents: active, non-deleted, same-tenant
+        // Asset accounts mapped by active, non-deleted Cashbox/Bank Treasury rows.
+        // Clearing stays outside cash equivalents. No prefix fallback.
+        var cashAccountIds = await (
+                from treasury in _db.TreasuryAccounts.AsNoTracking()
+                join account in _db.LedgerAccounts.AsNoTracking()
+                    on new { treasury.TenantId, treasury.AccountId }
+                    equals new { account.TenantId, AccountId = account.Id }
+                where treasury.TenantId == tenantId &&
+                      account.TenantId == tenantId &&
+                      treasury.IsActive &&
+                      !treasury.IsDeleted &&
+                      account.IsActive &&
+                      !account.IsDeleted &&
+                      account.AccountType == AccountType.Asset &&
+                      (treasury.Type == TreasuryAccountType.Cashbox ||
+                       treasury.Type == TreasuryAccountType.Bank)
+                select treasury.AccountId)
+            .ToHashSetAsync(ct);
+
         // Snapshot all balances once per boundary instead of querying per account.
         var openingBalances = await GetAccountBalancesAsOfAsync(tenantId, fromDate.AddDays(-1), ct);
         var closingBalances = await GetAccountBalancesAsOfAsync(tenantId, toDate, ct);
 
         var openingCash = openingBalances
-            .Where(IsCashEquivalent)
+            .Where(account => cashAccountIds.Contains(account.AccountId))
             .Sum(account => account.Balance);
 
         var closingCash = closingBalances
-            .Where(IsCashEquivalent)
+            .Where(account => cashAccountIds.Contains(account.AccountId))
             .Sum(account => account.Balance);
-        
+
+        var periodLedgerLines = await (
+            from line in _db.LedgerEntries.AsNoTracking()
+            join journal in _db.JournalEntries.AsNoTracking() on line.JournalEntryId equals journal.Id
+            join account in _db.LedgerAccounts.AsNoTracking() on line.AccountId equals account.Id
+            where line.TenantId == tenantId &&
+                  journal.TenantId == tenantId &&
+                  account.TenantId == tenantId &&
+                  journal.JournalDate >= fromDate &&
+                  journal.JournalDate <= toDate &&
+                  (journal.Status == JournalStatus.Posted || journal.Status == JournalStatus.Reversed)
+            select new PeriodLedgerLine
+            {
+                JournalId = journal.Id,
+                JournalDescription = journal.Description,
+                AccountId = account.Id,
+                AccountCode = account.AccountCode,
+                AccountName = account.Name,
+                AccountType = account.AccountType,
+                IsClearing = account.IsClearing,
+                DebitAmount = line.DebitAmount,
+                CreditAmount = line.CreditAmount
+            })
+            .ToListAsync(ct);
+
+        var investingActivities = new List<CashFlowItem>();
+        var financingActivities = new List<CashFlowItem>();
+        var operatingCashMovement = 0m;
+        foreach (var journal in periodLedgerLines.GroupBy(line => new { line.JournalId, line.JournalDescription }))
+        {
+            var cashLines = journal.Where(line => cashAccountIds.Contains(line.AccountId)).ToList();
+            var cashMovement = cashLines.Sum(line => line.DebitAmount - line.CreditAmount);
+            if (cashMovement == 0m)
+            {
+                continue;
+            }
+
+            var activity = ClassifyCashFlowActivity(journal, cashAccountIds);
+            if (activity == CashFlowActivity.Operating)
+            {
+                operatingCashMovement += cashMovement;
+                continue;
+            }
+
+            var cashAccountCodes = string.Join(
+                "/",
+                cashLines.Select(line => line.AccountCode).Distinct().OrderBy(code => code));
+            var item = new CashFlowItem
+            {
+                Description = journal.Key.JournalDescription,
+                AccountId = cashLines.Select(line => line.AccountId).Distinct().Count() == 1
+                    ? cashLines[0].AccountId
+                    : null,
+                AccountCode = cashAccountCodes,
+                Amount = cashMovement
+            };
+            if (activity == CashFlowActivity.Investing)
+            {
+                investingActivities.Add(item);
+            }
+            else
+            {
+                financingActivities.Add(item);
+            }
+        }
+
+        var partyOpeningJournalIds = await _db.JournalEntries
+            .AsNoTracking()
+            .Where(journal =>
+                journal.TenantId == tenantId &&
+                journal.JournalDate >= fromDate &&
+                journal.JournalDate <= toDate &&
+                (journal.Status == JournalStatus.Posted || journal.Status == JournalStatus.Reversed) &&
+                (journal.SourceType == "CustomerOpeningBalance" ||
+                 journal.SourceType == "SupplierOpeningBalance" ||
+                 (journal.SourceType == "Reversal" && _db.JournalEntries
+                     .IgnoreQueryFilters()
+                     .Any(original =>
+                         original.TenantId == tenantId &&
+                         original.Id == journal.SourceId &&
+                         (original.SourceType == "CustomerOpeningBalance" ||
+                          original.SourceType == "SupplierOpeningBalance")))))
+            .Select(journal => journal.Id)
+            .ToListAsync(ct);
+        var partyOpeningLines = await (
+            from line in _db.LedgerEntries.AsNoTracking()
+            join account in _db.LedgerAccounts.AsNoTracking() on line.AccountId equals account.Id
+            where line.TenantId == tenantId &&
+                  account.TenantId == tenantId &&
+                  partyOpeningJournalIds.Contains(line.JournalEntryId)
+            select new
+            {
+                account.AccountCode,
+                account.AccountType,
+                line.DebitAmount,
+                line.CreditAmount
+            })
+            .ToListAsync(ct);
+        var partyOpeningReceivablesChange = partyOpeningLines
+            .Where(line => line.AccountCode is AccountCodes.AccountsReceivable or AccountCodes.MarketplaceVendorReceivable)
+            .Sum(line => line.DebitAmount - line.CreditAmount);
+        var partyOpeningPayablesChange = partyOpeningLines
+            .Where(line => line.AccountType == AccountType.Liability &&
+                (line.AccountCode.StartsWith("20", StringComparison.Ordinal) ||
+                 line.AccountCode == AccountCodes.AffiliatePayable))
+            .Sum(line => line.CreditAmount - line.DebitAmount);
         // 3. Calculate working capital changes
         var workingCapitalChanges = new List<CashFlowAdjustment>();
         
         // Receivables - increase = cash outflow
         var receivablesChange =
             GetAccountCodesBalance(closingBalances, AccountCodes.AccountsReceivable, AccountCodes.MarketplaceVendorReceivable) -
-            GetAccountCodesBalance(openingBalances, AccountCodes.AccountsReceivable, AccountCodes.MarketplaceVendorReceivable);
+            GetAccountCodesBalance(openingBalances, AccountCodes.AccountsReceivable, AccountCodes.MarketplaceVendorReceivable) -
+            partyOpeningReceivablesChange;
         if (receivablesChange != 0)
         {
             workingCapitalChanges.Add(new CashFlowAdjustment
@@ -455,31 +581,29 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             });
         }
         
-        // Payables (2000-2099) - increase = cash inflow
-        var payablesChange = GetPrefixBalance(closingBalances, "20") - GetPrefixBalance(openingBalances, "20");
+        // Current operating liabilities - increase = cash inflow
+        var payablesChange = closingBalances.Where(IsWorkingCapitalLiability).Sum(account => account.Balance) -
+                             openingBalances.Where(IsWorkingCapitalLiability).Sum(account => account.Balance) -
+                             partyOpeningPayablesChange;
         if (payablesChange != 0)
         {
             workingCapitalChanges.Add(new CashFlowAdjustment
             {
                 Description = "Change in Accounts Payable",
-                AccountCode = "20xx",
+                AccountCode = $"20xx/{AccountCodes.AffiliatePayable}",
                 Amount = payablesChange // Increase in AP = cash increase
             });
         }
         
-        var financingActivities = new List<CashFlowItem>();
-        var equityChange = closingBalances
-            .Where(account => account.AccountType == AccountType.Equity)
-            .Sum(account => account.Balance) - openingBalances
-            .Where(account => account.AccountType == AccountType.Equity)
-            .Sum(account => account.Balance);
-        if (equityChange != 0m)
+        var indirectOperatingCashFlow = pnl.NetProfit + workingCapitalChanges.Sum(adjustment => adjustment.Amount);
+        var settlementAdjustment = operatingCashMovement - indirectOperatingCashFlow;
+        if (settlementAdjustment != 0m)
         {
-            financingActivities.Add(new CashFlowItem
+            workingCapitalChanges.Add(new CashFlowAdjustment
             {
-                Description = "Net owner equity movement",
-                AccountCode = "3xxx",
-                Amount = equityChange
+                Description = "Ledger-derived non-cash settlement adjustment",
+                AccountCode = "Mapped Cashbox/Bank",
+                Amount = settlementAdjustment
             });
         }
 
@@ -493,8 +617,8 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             NetProfit = pnl.NetProfit,
             WorkingCapitalChanges = workingCapitalChanges,
             NonCashAdjustments = new List<CashFlowAdjustment>(), // Would need depreciation accounts
-            InvestingActivities = new List<CashFlowItem>(),
-            FinancingActivities = financingActivities
+            InvestingActivities = AggregateCashFlowItems(investingActivities, "Net investing cash movement"),
+            FinancingActivities = AggregateCashFlowItems(financingActivities, "Net financing cash movement")
         };
     }
     
@@ -607,6 +731,23 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
         var balances = await GetAccountBalancesAsOfAsync(tenantId, DateTime.UtcNow, ct);
         var balanceLookup = balances.ToDictionary(account => account.AccountId, account => account.Balance);
 
+        var treasuryAccountIds = await (
+                from treasury in _db.TreasuryAccounts.AsNoTracking()
+                join account in _db.LedgerAccounts.AsNoTracking()
+                    on new { treasury.TenantId, treasury.AccountId }
+                    equals new { account.TenantId, AccountId = account.Id }
+                where treasury.TenantId == tenantId &&
+                      treasury.IsActive &&
+                      !treasury.IsDeleted &&
+                      account.IsActive &&
+                      !account.IsDeleted &&
+                      account.AccountType == AccountType.Asset &&
+                      (treasury.Type == TreasuryAccountType.Cashbox ||
+                       treasury.Type == TreasuryAccountType.Bank ||
+                       treasury.Type == TreasuryAccountType.Clearing)
+                select treasury.AccountId)
+            .ToHashSetAsync(ct);
+
         var accountRows = await _db.LedgerAccounts
             .AsNoTracking()
             .Where(a => a.TenantId == tenantId)
@@ -617,8 +758,7 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
                 a.AccountCode,
                 a.Name,
                 AccountType = a.AccountType.ToString(),
-                a.IsClearing,
-                IsTreasury = a.IsSystem
+                a.IsClearing
             })
             .ToListAsync(ct);
 
@@ -631,7 +771,7 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
                 AccountType = account.AccountType,
                 CurrentBalance = balanceLookup.GetValueOrDefault(account.Id),
                 IsClearing = account.IsClearing,
-                IsTreasury = account.IsTreasury
+                IsTreasury = treasuryAccountIds.Contains(account.Id)
             })
             .ToList();
     }
@@ -770,9 +910,90 @@ public class FinancialReportService : IFinancialReportService, ILedgerOnlyServic
             .Sum(balance => balance.Balance);
     }
 
-    private static bool IsCashEquivalent(AccountBalanceAggregate account) =>
-        account.AccountCode.StartsWith("10", StringComparison.Ordinal) ||
-        account.AccountCode.StartsWith("11", StringComparison.Ordinal);
+    private static bool IsWorkingCapitalLiability(AccountBalanceAggregate account) =>
+        account.AccountType == AccountType.Liability &&
+        (account.AccountCode.StartsWith("20", StringComparison.Ordinal) ||
+         account.AccountCode == AccountCodes.AffiliatePayable);
+
+    private static bool IsWorkingCapitalLiability(PeriodLedgerLine line) =>
+        line.AccountType == AccountType.Liability &&
+        (line.AccountCode.StartsWith("20", StringComparison.Ordinal) ||
+         line.AccountCode == AccountCodes.AffiliatePayable);
+
+    private static CashFlowActivity ClassifyCashFlowActivity(
+        IEnumerable<PeriodLedgerLine> journalLines,
+        ISet<Guid> cashAccountIds)
+    {
+        var lines = journalLines.ToList();
+        if (lines.Any(line => line.AccountType == AccountType.Equity))
+        {
+            return CashFlowActivity.Financing;
+        }
+
+        if (lines.Any(line =>
+                line.AccountType is AccountType.Revenue or AccountType.CostOfGoodsSold or AccountType.Expense ||
+                line.AccountCode.StartsWith("13", StringComparison.Ordinal) ||
+                line.AccountCode is AccountCodes.AccountsReceivable or AccountCodes.MarketplaceVendorReceivable ||
+                IsWorkingCapitalLiability(line)))
+        {
+            return CashFlowActivity.Operating;
+        }
+
+        // Clearing-to-cash settlements (e.g. clearing collection settled to Bank)
+        // are operating cash movements. Uses existing Account.IsClearing metadata
+        // (read-only; no Treasury mutation authority required).
+        if (lines.Any(line => line.IsClearing))
+        {
+            return CashFlowActivity.Operating;
+        }
+
+        if (lines.Any(line => line.AccountType == AccountType.Asset && !cashAccountIds.Contains(line.AccountId)))
+        {
+            return CashFlowActivity.Investing;
+        }
+
+        return lines.Any(line => line.AccountType == AccountType.Liability)
+            ? CashFlowActivity.Financing
+            : CashFlowActivity.Operating;
+    }
+
+    private static List<CashFlowItem> AggregateCashFlowItems(
+        IEnumerable<CashFlowItem> items,
+        string description)
+    {
+        return items
+            .GroupBy(item => new { item.AccountId, item.AccountCode })
+            .Select(group => new CashFlowItem
+            {
+                Description = description,
+                AccountId = group.Key.AccountId,
+                AccountCode = group.Key.AccountCode,
+                Amount = group.Sum(item => item.Amount)
+            })
+            .Where(item => item.Amount != 0m)
+            .OrderBy(item => item.AccountCode)
+            .ToList();
+    }
+
+    private enum CashFlowActivity
+    {
+        Operating,
+        Investing,
+        Financing
+    }
+
+    private sealed class PeriodLedgerLine
+    {
+        public Guid JournalId { get; init; }
+        public string JournalDescription { get; init; } = string.Empty;
+        public Guid AccountId { get; init; }
+        public string AccountCode { get; init; } = string.Empty;
+        public string AccountName { get; init; } = string.Empty;
+        public AccountType AccountType { get; init; }
+        public bool IsClearing { get; init; }
+        public decimal DebitAmount { get; init; }
+        public decimal CreditAmount { get; init; }
+    }
 
     private sealed class AccountBalanceAggregate
     {

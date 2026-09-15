@@ -175,6 +175,28 @@ public class AccountingOutboxMessage : BaseEntity, ITenantOwned
             return "Return";
         }
 
+        // T-08: COGS outbox source types mirror their journal source types so
+        // journal-coverage reconciliation can match event to ledger posting.
+        if (string.Equals(eventType, "EcommerceCogs", StringComparison.Ordinal))
+        {
+            return "Order_COGS";
+        }
+
+        if (string.Equals(eventType, "EcommerceCogsReversal", StringComparison.Ordinal))
+        {
+            return "Order_COGS_Reversal";
+        }
+
+        if (string.Equals(eventType, "CommerceHubCogs", StringComparison.Ordinal))
+        {
+            return "CommerceHub_COGS";
+        }
+
+        if (string.Equals(eventType, "CommerceHubCogsReversal", StringComparison.Ordinal))
+        {
+            return "CommerceHub_COGS_Reversal";
+        }
+
         // Fallback logic with truncation to respect [MaxLength(50)] on SourceType
         string fallback;
         if (string.IsNullOrWhiteSpace(entityTypeName))

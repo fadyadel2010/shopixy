@@ -1,14 +1,10 @@
 /**
  * Treasury Account Viewer
- * 
- * PHASE FTM: Ledger-Driven Treasury UI
- * 
- * Generic account viewer that displays movements from the Ledger.
- * Routes:
- *   /treasury/account/1010 → Cash Account
- *   /treasury/account/1030 → Bank Account
- *   /treasury/account/1110 → Visa Clearing
- *   /treasury/account/1120 → Stripe Clearing
+ *
+ * Catalog-backed identity. The route code is resolved against
+ * GET /api/treasury/accounts; the server row owns the localized name and the
+ * accountType role. Absent mappings fail closed before any balance or
+ * movement request: no invented names, no code-owned icons.
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -18,80 +14,128 @@ import { useSettings } from '../../contexts/SettingsContext'
 import { useToast } from '../../components/Toast'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
 import * as treasuryApi from '../../services/treasuryApi'
+import {
+    findTreasuryAccountByCode,
+    getLocalizedTreasuryAccountName,
+    isAvailableCashAccount,
+    isClearingAccount,
+} from '../../services/treasuryAccountCatalog'
+import { isRequestCanceled } from '../../services/api'
 import { useRTL } from '../../hooks/useRTL'
-import { formatDate } from '../../utils/dateFormat'
+import { formatDate, formatDateInputValue } from '../../utils/dateFormat'
+
+const ICON_FOR_TYPE = {
+    Cashbox: '💵',
+    Bank: '🏦',
+    Clearing: '⏳',
+}
+
+const ROLE_KEY_FOR_TYPE = {
+    Cashbox: 'treasury.cashboxRole',
+    Bank: 'treasury.bankRole',
+    Clearing: 'treasury.clearingRole',
+}
+
+const ROLE_LABEL_KEY_FOR_TYPE = {
+    Cashbox: 'treasury.cashbox',
+    Bank: 'treasury.bank',
+    Clearing: 'treasury.clearingAccount',
+}
 
 export default function TreasuryAccountViewer() {
     const { accountCode } = useParams()
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const navigate = useNavigate()
     const { formatCurrency } = useSettings()
     const { dir, locale } = useRTL()
     const { showError } = useToast()
 
-    // State
     const [loading, setLoading] = useState(true)
     const [refreshing, setRefreshing] = useState(false)
+    const [catalogAccount, setCatalogAccount] = useState(null)
+    const [catalogResolved, setCatalogResolved] = useState(false)
+    const [catalogError, setCatalogError] = useState('')
     const [balance, setBalance] = useState(0)
     const [movements, setMovements] = useState([])
 
-    // Date filters
     const [startDate, setStartDate] = useState(() => {
         const date = new Date()
         date.setMonth(date.getMonth() - 1)
-        return date.toISOString().split('T')[0]
+        return formatDateInputValue(date)
     })
-    const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0])
+    const [endDate, setEndDate] = useState(() => formatDateInputValue(new Date()))
 
-    // Get account display name
-    const accountName = treasuryApi.ACCOUNT_NAMES[accountCode] || `Account ${accountCode}`
+    const displayName = catalogAccount
+        ? getLocalizedTreasuryAccountName(catalogAccount, i18n?.language)
+        : ''
+    const accountIcon = (catalogAccount && ICON_FOR_TYPE[catalogAccount.accountType]) || '📊'
+    const roleKey = catalogAccount ? ROLE_KEY_FOR_TYPE[catalogAccount.accountType] : null
+    const roleLabelKey = catalogAccount ? ROLE_LABEL_KEY_FOR_TYPE[catalogAccount.accountType] : null
 
-    // Get account icon
-    const getAccountIcon = (code) => {
-        switch (code) {
-            case treasuryApi.ACCOUNT_CODES.CASHBOX_MAIN: return '💵'
-            case treasuryApi.ACCOUNT_CODES.BANK_ACCOUNT: return '🏦'
-            case treasuryApi.ACCOUNT_CODES.VISA_CLEARING: return '💳'
-            case treasuryApi.ACCOUNT_CODES.STRIPE_CLEARING: return '⚡'
-            case treasuryApi.ACCOUNT_CODES.COD_CLEARING: return '📦'
-            case treasuryApi.ACCOUNT_CODES.WALLET_CLEARING: return '📱'
-            default: return '📊'
-        }
-    }
-
-    // Load data
-    const loadData = useCallback(async (silent = false) => {
+    const loadData = useCallback(async (silent = false, signal) => {
         try {
             if (!silent) setLoading(true)
             else setRefreshing(true)
+            setCatalogError('')
+
+            let catalog
+            try {
+                catalog = await treasuryApi.getTreasuryAccounts({ signal })
+            } catch (error) {
+                if (isRequestCanceled(error)) return
+                setCatalogAccount(null)
+                setCatalogResolved(false)
+                setBalance(0)
+                setMovements([])
+                setCatalogError(t('treasury.catalogLoadFailed', 'The Treasury catalog could not be loaded. Balances are hidden until you retry.'))
+                if (!silent) showError(t('treasury.loadError', 'Failed to load account data'))
+                return
+            }
+            if (signal?.aborted) return
+            const candidate = findTreasuryAccountByCode(catalog, accountCode)
+            const match = candidate && (isAvailableCashAccount(candidate) || isClearingAccount(candidate))
+                ? candidate
+                : null
+            setCatalogAccount(match)
+            setCatalogResolved(true)
+
+            // Fail closed: an absent mapping never triggers balance/movement calls.
+            if (!match) {
+                setBalance(0)
+                setMovements([])
+                return
+            }
 
             const from = startDate ? new Date(startDate) : null
             const to = endDate ? new Date(endDate) : null
 
-            // Parallel API calls
             const [balanceData, movementsData] = await Promise.all([
-                treasuryApi.getTreasuryBalance(accountCode),
-                treasuryApi.getTreasuryMovements(accountCode, from, to)
+                treasuryApi.getTreasuryBalance(accountCode, { signal }),
+                treasuryApi.getTreasuryMovements(accountCode, from, to, { signal }),
             ])
+            if (signal?.aborted) return
 
             setBalance(balanceData.balance || 0)
             setMovements(movementsData || [])
         } catch (error) {
+            if (signal && isRequestCanceled(error)) return
+            if (!signal && error?.code === 'ERR_CANCELED') return
             console.error('Failed to load account data:', error)
-            if (!silent) {
-                showError(t('treasury.loadError', 'Failed to load account data'))
-            }
+            if (!silent) showError(t('treasury.loadError', 'Failed to load account data'))
         } finally {
-            setLoading(false)
-            setRefreshing(false)
+            if (!signal?.aborted) {
+                setLoading(false)
+                setRefreshing(false)
+            }
         }
     }, [accountCode, startDate, endDate, showError, t])
 
     useEffect(() => {
-        loadData()
+        const controller = new AbortController()
+        void loadData(false, controller.signal)
+        return () => controller.abort()
     }, [loadData])
 
-    // Calculate totals from movements
     const totals = movements.reduce((acc, m) => ({
         debits: acc.debits + (m.debit || 0),
         credits: acc.credits + (m.credit || 0)
@@ -108,28 +152,81 @@ export default function TreasuryAccountViewer() {
         )
     }
 
+    if (catalogError && !catalogResolved) {
+        return (
+            <div dir={dir} className="space-y-6">
+                <ReportTruthBadge type="financial" />
+                <div className="bg-red-50 border border-red-200 rounded-lg p-6 text-center" role="alert">
+                    <p className="font-semibold text-red-800">{catalogError}</p>
+                    <div className="mt-4 flex justify-center gap-3">
+                        <button type="button" onClick={() => loadData()} className="btn-secondary text-sm">
+                            {t('treasury.retry', 'Retry')}
+                        </button>
+                        <button type="button" onClick={() => navigate('/treasury/hub')} className="btn-secondary text-sm">
+                            {t('treasury.backToHub', 'Back to Treasury Hub')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
+    if (catalogResolved && !catalogAccount) {
+        return (
+            <div dir={dir} className="space-y-6">
+                <ReportTruthBadge type="financial" />
+                <div className="bg-white rounded-lg shadow p-10 text-center" role="alert">
+                    <p className="text-4xl" aria-hidden="true">🔒</p>
+                    <h2 className="mt-3 text-2xl font-bold text-gray-900">
+                        {t('treasury.accountUnavailable', 'This account is not part of the Treasury catalog.')}
+                    </h2>
+                    <p className="mt-2 text-sm text-gray-600 max-w-2xl mx-auto">
+                        {t('treasury.accountUnavailableHint', 'It may be unmapped, inactive, deleted, foreign, or a report-only ledger account. Report visibility grants no Treasury authority.')}
+                    </p>
+                    <p className="mt-2 text-xs text-gray-500 font-mono">
+                        {t('treasury.accountCode', 'Account Code')}: {accountCode}
+                    </p>
+                    <div className="mt-6 flex justify-center gap-3">
+                        <button type="button" onClick={() => navigate('/treasury/hub')} className="btn-primary text-sm">
+                            {t('treasury.backToHub', 'Back to Treasury Hub')}
+                        </button>
+                        <button type="button" onClick={() => navigate('/treasury/general-ledger')} className="btn-secondary text-sm">
+                            {t('treasury.viewGeneralLedger', 'View General Ledger')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )
+    }
+
     return (
         <div dir={dir} className="space-y-6">
-            {/* Phase C4: UI Truth Label */}
             <ReportTruthBadge type="financial" />
 
-            {/* Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                     <button
-                        onClick={() => navigate('/treasury')}
-                        className="text-gray-500 hover:text-gray-700"
+                        onClick={() => navigate('/treasury/hub')}
+                        className="self-start text-gray-500 hover:text-gray-700"
                     >
-                        ← {t('common.back')}
+                        <span aria-hidden="true" className="inline-block rtl:rotate-180">←</span> {t('common.back')}
                     </button>
                     <div>
                         <h2 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                            <span>{getAccountIcon(accountCode)}</span>
-                            {accountName}
+                            <span aria-hidden="true">{accountIcon}</span>
+                            {displayName}
                         </h2>
                         <p className="text-gray-600 mt-1">
                             {t('treasury.accountCode', 'Account Code')}: {accountCode}
                         </p>
+                        <p className="mt-2">
+                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${isClearingAccount(catalogAccount) ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                {t('treasury.role', 'Treasury role')}: {roleLabelKey ? t(roleLabelKey, catalogAccount.accountType) : ''}
+                            </span>
+                        </p>
+                        {roleKey && (
+                            <p className="text-sm text-gray-600 mt-1">{t(roleKey)}</p>
+                        )}
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -146,7 +243,6 @@ export default function TreasuryAccountViewer() {
                 </div>
             </div>
 
-            {/* Balance Card */}
             <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 border border-emerald-200 rounded-xl p-6">
                 <div className="flex justify-between items-center">
                     <div>
@@ -157,13 +253,12 @@ export default function TreasuryAccountViewer() {
                             {formatCurrency(balance)}
                         </p>
                     </div>
-                    <div className="text-6xl opacity-50">
-                        {getAccountIcon(accountCode)}
+                    <div className="text-6xl opacity-50" aria-hidden="true">
+                        {accountIcon}
                     </div>
                 </div>
             </div>
 
-            {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="bg-white rounded-lg shadow p-6">
                     <p className="text-sm font-medium text-gray-500 mb-1">
@@ -191,14 +286,14 @@ export default function TreasuryAccountViewer() {
                 </div>
             </div>
 
-            {/* Filters */}
             <div className="bg-white rounded-lg shadow p-4">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-account-viewer-from" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('common.startDate', 'Start Date')}
                         </label>
                         <input
+                            id="treasury-account-viewer-from"
                             type="date"
                             value={startDate}
                             onChange={(e) => setStartDate(e.target.value)}
@@ -206,10 +301,11 @@ export default function TreasuryAccountViewer() {
                         />
                     </div>
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-account-viewer-to" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('common.endDate', 'End Date')}
                         </label>
                         <input
+                            id="treasury-account-viewer-to"
                             type="date"
                             value={endDate}
                             onChange={(e) => setEndDate(e.target.value)}
@@ -228,8 +324,8 @@ export default function TreasuryAccountViewer() {
                         <button
                             onClick={() => {
                                 const date = new Date()
-                                setStartDate(new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0])
-                                setEndDate(date.toISOString().split('T')[0])
+                                setStartDate(formatDateInputValue(new Date(date.getFullYear(), date.getMonth(), 1)))
+                                setEndDate(formatDateInputValue(date))
                             }}
                             className="btn-secondary w-full"
                         >
@@ -239,31 +335,30 @@ export default function TreasuryAccountViewer() {
                 </div>
             </div>
 
-            {/* Movements Table */}
             <div className="bg-white rounded-lg shadow overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full">
                         <thead className="bg-gray-50 border-b border-gray-200">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.date', 'Date')}
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.journal', 'Journal #')}
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.description', 'Description')}
                                 </th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.source', 'Source')}
                                 </th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-end text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.debit', 'Debit')}
                                 </th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-end text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.credit', 'Credit')}
                                 </th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th scope="col" className="px-6 py-3 text-end text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     {t('treasury.balance', 'Balance')}
                                 </th>
                             </tr>
@@ -285,38 +380,38 @@ export default function TreasuryAccountViewer() {
                                             {formatDate(m.date, locale)}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                            <span className="text-primary-600 font-medium">
+                                            <bdi className="text-primary-600 font-medium">
                                                 {m.journalNumber}
-                                            </span>
+                                            </bdi>
                                         </td>
                                         <td className="px-6 py-4 text-sm text-gray-900">
                                             {m.description}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
-                                                {m.sourceType}
+                                                {t(`treasury.sourceTypes.${m.sourceType}`, t('treasury.sourceTypes.Other', 'Other source'))}
                                             </span>
                                             {m.sourceReference && (
-                                                <span className="ml-2 text-gray-400">
+                                                <bdi className="ms-2 text-gray-400">
                                                     {m.sourceReference}
-                                                </span>
+                                                </bdi>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-end">
                                             {m.debit > 0 && (
                                                 <span className="font-medium text-green-600">
                                                     {formatCurrency(m.debit)}
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-end">
                                             {m.credit > 0 && (
                                                 <span className="font-medium text-red-600">
                                                     {formatCurrency(m.credit)}
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-bold text-gray-900">
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-end font-bold text-gray-900">
                                             {formatCurrency(m.balanceAfter)}
                                         </td>
                                     </tr>
@@ -327,7 +422,6 @@ export default function TreasuryAccountViewer() {
                 </div>
             </div>
 
-            {/* Trust Footer */}
             <div className="text-center py-4 text-sm text-gray-500 border-t">
                 <p>
                     📊 {t('treasury.ledgerSourced', 'All data sourced from immutable ledger')} •

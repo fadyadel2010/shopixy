@@ -11,6 +11,7 @@ using Npgsql;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.Core.Exceptions.Accounting;
 using RabbitMQ.Client.Exceptions;
 using StackExchange.Redis;
 using MongoDB.Driver;
@@ -69,6 +70,30 @@ public sealed class GlobalExceptionMiddleware
         var userId = RequestContextMetadata.GetUserId(context) ?? "anonymous";
         var (statusCode, code, message, details, logLevel) = exception switch
         {
+            TreasuryInitialCapitalizationException capitalizationException => (
+                capitalizationException.Kind switch
+                {
+                    TreasuryInitialCapitalizationErrorKind.Validation => StatusCodes.Status400BadRequest,
+                    TreasuryInitialCapitalizationErrorKind.NotFound => StatusCodes.Status404NotFound,
+                    TreasuryInitialCapitalizationErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+                    _ => StatusCodes.Status409Conflict
+                },
+                capitalizationException.Code,
+                capitalizationException.Message,
+                null,
+                LogLevel.Warning),
+            InsufficientFundsException insufficientFundsException => (
+                StatusCodes.Status409Conflict,
+                "INSUFFICIENT_FUNDS",
+                "The selected account does not have sufficient available funds.",
+                new
+                {
+                    accountCode = insufficientFundsException.AccountCode,
+                    availableBalance = insufficientFundsException.CurrentBalance,
+                    requiredAmount = insufficientFundsException.RequestedAmount,
+                    shortfall = insufficientFundsException.ShortfallAmount
+                },
+                LogLevel.Warning),
             ValidationException validationException => (
                 StatusCodes.Status400BadRequest,
                 "VALIDATION_ERROR",

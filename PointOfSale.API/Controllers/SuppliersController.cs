@@ -15,6 +15,7 @@ using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Mappers;
 
@@ -43,6 +44,7 @@ public class SuppliersController : ControllerBase
     private readonly ITreasuryReadService _treasuryReadService;
     private readonly ICashboxLedgerAccountService _cashboxLedgerAccountService;
     private readonly IFinancialMutationIdempotencyService _financialMutationIdempotency;
+    private readonly ICommerceAccountingService? _commerceAccounting;
 
     public SuppliersController(
         ApplicationDbContext context,
@@ -55,7 +57,8 @@ public class SuppliersController : ControllerBase
         IAccountResolver accountResolver,
         ITreasuryReadService treasuryReadService,
         ICashboxLedgerAccountService cashboxLedgerAccountService,
-        IFinancialMutationIdempotencyService financialMutationIdempotency)
+        IFinancialMutationIdempotencyService financialMutationIdempotency,
+        ICommerceAccountingService? commerceAccounting = null)
     {
         _context = context;
         _tenantContext = tenantContext;
@@ -68,6 +71,7 @@ public class SuppliersController : ControllerBase
         _treasuryReadService = treasuryReadService;
         _cashboxLedgerAccountService = cashboxLedgerAccountService;
         _financialMutationIdempotency = financialMutationIdempotency;
+        _commerceAccounting = commerceAccounting;
     }
 
     [HttpGet]
@@ -225,10 +229,43 @@ public class SuppliersController : ControllerBase
                 ? null
                 : request.Notes.Trim();
 
-            var fundingValidation = await ValidateSupplierFundingAvailabilityAsync(
-                request.PaymentMethod,
-                request.Amount,
-                cancellationToken);
+            SupplierCardAuthoritySnapshot? cardAuthority = null;
+            IActionResult? fundingValidation = null;
+            if (request.PaymentMethod == PaymentMethod.Card)
+            {
+                try
+                {
+                    cardAuthority = await SupplierCardAuthority.ResolveForOutflowAsync(
+                        _context,
+                        _tenantContext.RequiredTenantId,
+                        request.FundingInstrumentId,
+                        request.FundingInstrumentVersion,
+                        RoundCurrency(request.Amount),
+                        cancellationToken: cancellationToken);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    fundingValidation = BadRequest(new { message = ex.Message, code = "SUPPLIER_CARD_AUTHORITY_INVALID" });
+                }
+            }
+            else
+            {
+                if (request.FundingInstrumentId.HasValue || request.FundingInstrumentVersion.HasValue)
+                {
+                    fundingValidation = BadRequest(new
+                    {
+                        message = "FundingInstrumentId must be null for non-Card supplier payments.",
+                        code = "SUPPLIER_CARD_AUTHORITY_NOT_ALLOWED"
+                    });
+                }
+                else
+                {
+                    fundingValidation = await ValidateSupplierFundingAvailabilityAsync(
+                        request.PaymentMethod,
+                        request.Amount,
+                        cancellationToken);
+                }
+            }
 
             if (fundingValidation is not null)
             {
@@ -249,6 +286,9 @@ public class SuppliersController : ControllerBase
                 PaymentDate = paymentTimestamp,
                 Amount = RoundCurrency(request.Amount),
                 PaymentMethod = request.PaymentMethod,
+                FundingInstrumentId = cardAuthority?.FundingInstrumentId,
+                FundingLedgerAccountId = cardAuthority?.FundingLedgerAccountId,
+                FundingInstrumentVersion = cardAuthority?.FundingInstrumentVersion,
                 IdempotencyKey = operationId,
                 ReferenceNumber = normalizedReference,
                 Notes = normalizedNotes,
@@ -292,6 +332,25 @@ public class SuppliersController : ControllerBase
             await _accountingOutbox.EnqueueSupplierPaymentAsync(payment.TenantId, payment.Id, cancellationToken);
             await _context.SaveChangesAsync(cancellationToken);
 
+            if (payment.PaymentMethod == PaymentMethod.Card)
+            {
+                if (_commerceAccounting == null)
+                    throw new InvalidOperationException("Supplier Card accounting authority is unavailable.");
+                var posting = await _commerceAccounting.PostSupplierPaymentAsync(payment, cancellationToken);
+                if (!posting.Success || !posting.JournalId.HasValue)
+                    throw new InvalidOperationException(posting.ErrorMessage ?? "Supplier Card accounting posting failed.");
+
+                var outbox = await _context.AccountingOutboxMessages
+                    .IgnoreQueryFilters()
+                    .SingleAsync(message =>
+                        message.TenantId == payment.TenantId &&
+                        message.EventType == "SupplierPayment" &&
+                        message.BusinessEntityId == payment.Id,
+                        cancellationToken);
+                outbox.MarkProcessed(posting.JournalId.Value);
+                await _context.SaveChangesAsync(cancellationToken);
+            }
+
             var response = new SupplierPaymentResponse
             {
                 Id = payment.Id,
@@ -300,6 +359,8 @@ public class SuppliersController : ControllerBase
                 PaymentDate = payment.PaymentDate,
                 Amount = payment.Amount,
                 PaymentMethod = payment.PaymentMethod,
+                FundingInstrumentId = payment.FundingInstrumentId,
+                FundingInstrumentVersion = payment.FundingInstrumentVersion,
                 ReferenceNumber = payment.ReferenceNumber,
                 Notes = payment.Notes,
                 BalanceAfter = balanceAfter,
@@ -368,6 +429,8 @@ public class SuppliersController : ControllerBase
                 TransactionDate = payment.PaymentDate,
                 Amount = payment.Amount,
                 PaymentMethod = payment.PaymentMethod,
+                FundingInstrumentId = payment.FundingInstrumentId,
+                FundingInstrumentVersion = payment.FundingInstrumentVersion,
                 ReferenceNumber = payment.ReferenceNumber,
                 Notes = payment.Notes,
                 IdempotencyKey = payment.IdempotencyKey,
@@ -745,9 +808,7 @@ public class SuppliersController : ControllerBase
                 accountName = cashboxAccount.Name;
                 break;
             case PaymentMethod.Card:
-                accountCode = AccountCodes.VisaClearing;
-                accountName = AccountCodes.VisaClearing;
-                break;
+                throw new InvalidOperationException("Supplier Card funding must use explicit instrument authority.");
             case PaymentMethod.BankTransfer:
                 accountCode = AccountCodes.BankAccount;
                 accountName = AccountCodes.BankAccount;
@@ -842,6 +903,8 @@ public class SuppliersController : ControllerBase
             supplierId,
             request.Amount,
             request.PaymentMethod,
+            request.FundingInstrumentId,
+            request.FundingInstrumentVersion,
             request.ReferenceNumber,
             request.Notes,
         }, FinancialMutationJsonOptions);
@@ -1063,6 +1126,8 @@ public record CreateSupplierPaymentRequest
 {
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
     public string? ReferenceNumber { get; set; }
     public string? Notes { get; set; }
 }
@@ -1075,6 +1140,8 @@ public record SupplierPaymentResponse
     public DateTime PaymentDate { get; set; }
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
     public string? ReferenceNumber { get; set; }
     public string? Notes { get; set; }
     public decimal BalanceAfter { get; set; }
@@ -1088,6 +1155,8 @@ public record SupplierPaymentHistoryResponse
     public DateTime TransactionDate { get; set; }
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
     public string? ReferenceNumber { get; set; }
     public string? Notes { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;

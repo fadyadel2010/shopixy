@@ -162,8 +162,7 @@ export default function Sidebar({ isOpen, onClose }) {
             icon: '💼',
             children: [
                 { path: '/financial-accounts?tab=main', label: t('accounts.mainAccounts'), icon: '🏦' },
-                { path: '/financial-accounts?tab=sub', label: t('accounts.subAccounts'), icon: '📂' },
-                { path: '/balance-transfer', label: t('nav.accountsDepositWithdrawal'), icon: '💸' }
+                { path: '/financial-accounts?tab=sub', label: t('accounts.subAccounts'), icon: '📂' }
             ]
         },
         // 4) Opening Balance
@@ -172,7 +171,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.openingBalance'),
             icon: '🏁',
             children: [
-                { path: '/opening-balance/cashbox', label: t('nav.treasuryOpeningBalance'), icon: '💵' },
+                { path: '/treasury/initial-capitalization', label: t('nav.treasuryInitialCapitalization'), icon: '💵', requiredRoles: ['Owner'] },
                 { path: '/opening-balance/customers', label: t('nav.customersOpeningBalance'), icon: '👥' },
                 { path: '/opening-balance/suppliers', label: t('nav.suppliersOpeningBalance'), icon: '🏢' },
                 { path: '/opening-balance/warehouse-stock', label: t('nav.warehouseOpeningBalance'), icon: '📦' }
@@ -196,12 +195,12 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.treasury'),
             icon: '💰',
             children: [
-                // All Ledger-based routes
+                // All Ledger-based routes (no fixed account-code identities)
                 { path: '/treasury', label: t('nav.financeDashboard'), icon: '📊' },
                 { path: '/treasury/hub', label: t('nav.treasuryHub'), icon: '🏦' },
-                { path: '/treasury/account/1010', label: t('nav.cashAccount'), icon: '💵' },
-                { path: '/treasury/account/1030', label: t('nav.bankAccount'), icon: '🏦' },
-                { path: '/treasury/account/1110', label: t('nav.visaClearing'), icon: '💳' },
+                { path: '/treasury/clearing-aging', label: t('treasury.clearingNav', 'Clearing Aging'), icon: '⏳' },
+                { path: '/treasury/general-ledger', label: t('treasury.generalLedgerNav', 'General Ledger'), icon: '📖' },
+                { path: '/supplier-card-funding', label: t('nav.supplierCardFunding'), icon: '💳', requiredRoles: ['Owner', 'Admin', 'Manager'] },
                 // Operational screens (not showing balance)
                 { path: '/payments', label: t('nav.customerSupplierPayments'), icon: '💸' },
                 { path: '/adjustments', label: t('nav.customerSupplierSettlement'), icon: '⚙️' },
@@ -236,9 +235,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.accountStatement'),
             icon: '📄',
             children: [
-                { path: '/statement-of-account', label: t('nav.supplierCustomerStatement'), icon: '📋' },
-                { path: '/reports/bank-statement', label: t('nav.bankStatement'), icon: '🏦' },
-                { path: '/reports/visa-statement', label: t('nav.visaStatement'), icon: '💳' }
+                { path: '/statement-of-account', label: t('nav.supplierCustomerStatement'), icon: '📋' }
             ]
         },
         // Wave 2: Unified Storefront product — Design + Operations under one root

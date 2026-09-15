@@ -83,19 +83,20 @@ public sealed class CheckoutPaymentIntentRecoveryService
                 order.CreatedAt <= repairCutoffUtc &&
                 (order.CheckoutState == CheckoutState.PendingPaymentIntent ||
                  (order.CheckoutState == CheckoutState.PaymentPending &&
-                  // Only include PaymentPending orders that lack a complete active intent
-                  !_dbContext.PaymentIntents
-                      .IgnoreQueryFilters()
+                   // Only include PaymentPending orders that lack a complete active intent
+                   ((order.PaymentMethodCode != null && order.PaymentMethodCode.ToUpper() == "FAWRY") ||
+                    !_dbContext.PaymentIntents
+                       .IgnoreQueryFilters()
                       .Any(intent =>
                           intent.TenantId == order.TenantId &&
                           intent.OrderId == order.Id &&
                           !intent.IsDeleted &&
-                          ActiveIntentStatuses.Contains(intent.Status) &&
-                          // Exclude intents with incomplete provider initiation
-                          (intent.Provider == PaymentProvider.Cod ||
-                           intent.Provider == PaymentProvider.ManualWallet && intent.Status != PaymentIntentStatus.Pending ||
+                           ActiveIntentStatuses.Contains(intent.Status) &&
+                           // Exclude intents with incomplete provider initiation
+                           (intent.Provider == PaymentProvider.Cod ||
+                            intent.Provider == PaymentProvider.ManualWallet && intent.Status != PaymentIntentStatus.Pending ||
                            (!string.IsNullOrWhiteSpace(intent.ProviderIntentId) &&
-                            (intent.Provider != PaymentProvider.Fawry || !string.IsNullOrWhiteSpace(intent.ReferenceCode))))))))
+                             (intent.Provider != PaymentProvider.Fawry || !string.IsNullOrWhiteSpace(intent.ReferenceCode)))))))))
             .OrderBy(order => order.CreatedAt)
             .Take(MaxBatchSize)
             .ToListAsync(cancellationToken);
@@ -175,6 +176,24 @@ public sealed class CheckoutPaymentIntentRecoveryService
         var existingIntent = isManualWalletOrder
             ? activeIntents.FirstOrDefault(intent => intent.Provider == PaymentProvider.ManualWallet)
             : activeIntents.FirstOrDefault();
+
+        // T-09: Fawry has no certified financial settlement authority. Never
+        // initiate or resume Fawry; follow the existing safe unrecoverable/expiry
+        // path and leave no new financial facts.
+        if (IsFawryPaymentMethod(order.PaymentMethodCode) ||
+            activeIntents.Any(intent => intent.Provider == PaymentProvider.Fawry))
+        {
+            _logger.LogWarning(
+                "Fawry checkout recovery rejected without financial authority | TenantId: {TenantId} | OrderId: {OrderId} | PaymentMethodCode: {PaymentMethodCode}",
+                order.TenantId,
+                order.Id,
+                order.PaymentMethodCode);
+            return await ExpireUnrecoverableOrderIfReservationWindowElapsedAsync(
+                order,
+                nowUtc,
+                cancellationToken,
+                ignoreFawryPaymentIntents: true);
+        }
 
         if (existingIntent != null)
         {
@@ -274,7 +293,6 @@ public sealed class CheckoutPaymentIntentRecoveryService
         {
             case "STRIPE":
             case "PAYMOB":
-            case "FAWRY":
                 await _paymentGateway.CreateSessionAsync(
                     new CanonicalPaymentRequest
                     {
@@ -316,7 +334,8 @@ public sealed class CheckoutPaymentIntentRecoveryService
     private async Task<bool> ExpireUnrecoverableOrderIfReservationWindowElapsedAsync(
         Order order,
         DateTime nowUtc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool ignoreFawryPaymentIntents = false)
     {
         if (order.CreatedAt > nowUtc.Subtract(ReservationExpiryGracePeriod))
         {
@@ -353,6 +372,7 @@ public sealed class CheckoutPaymentIntentRecoveryService
             .AnyAsync(intent =>
                 intent.TenantId == lockedOrder.TenantId &&
                 intent.OrderId == lockedOrder.Id &&
+                (!ignoreFawryPaymentIntents || intent.Provider != PaymentProvider.Fawry) &&
                 ActiveIntentStatuses.Contains(intent.Status),
                 cancellationToken);
 
@@ -450,13 +470,17 @@ public sealed class CheckoutPaymentIntentRecoveryService
 
     private static bool IsRecoverablePaymentMethod(string? paymentMethodCode)
     {
+        // T-09: Fawry is not recoverable; recovery follows the expiry path.
         return paymentMethodCode?.Trim().ToUpperInvariant() switch
         {
-            "STRIPE" or "PAYMOB" or "FAWRY" or "COD" => true,
+            "STRIPE" or "PAYMOB" or "COD" => true,
             "MANUALWALLET" => false,
             _ => false
         };
     }
+
+    private static bool IsFawryPaymentMethod(string? paymentMethodCode) =>
+        string.Equals(paymentMethodCode?.Trim(), "FAWRY", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsManualWalletPaymentMethod(string? paymentMethodCode) =>
         string.Equals(paymentMethodCode?.Trim(), "MANUALWALLET", StringComparison.OrdinalIgnoreCase);

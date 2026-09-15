@@ -123,6 +123,7 @@ public class CheckoutController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status409Conflict)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status500InternalServerError)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
@@ -374,6 +375,20 @@ public class CheckoutController : ControllerBase
         {
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (PaymentFawryFinancialAuthorityException ex)
+        {
+            // T-09 safety net: any checkout-internal Fawry provider boundary
+            // surfaces the stable permanent authority rejection, never a
+            // transient-outage 503 or a generic 500. Must precede the
+            // PaymentException catch below.
+            _logger.LogWarning(
+                "Checkout rejected without Fawry financial authority | CartId: {CartId} | TraceId: {TraceId}",
+                request.CartId,
+                traceId);
+            return StatusCode(
+                StatusCodes.Status422UnprocessableEntity,
+                new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
         catch (PaymentException ex)
         {
             _logger.LogError(
@@ -467,6 +482,7 @@ public class CheckoutController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status403Forbidden)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> PreviewPricing(
         [FromBody] CheckoutPricingPreviewRequestDto request,
@@ -529,6 +545,13 @@ public class CheckoutController : ControllerBase
         catch (CheckoutPaymentMethodException ex)
         {
             return BadRequest(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
+        catch (CheckoutFawryFinancialAuthorityException ex)
+        {
+            // T-09: Fawry preview is fail-closed with the stable authority code.
+            return StatusCode(
+                StatusCodes.Status422UnprocessableEntity,
+                new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
         catch (CheckoutPromotionCalculationException ex)
         {
@@ -1328,6 +1351,8 @@ public class CheckoutController : ControllerBase
 
         "AFFILIATE_AUTHORITY_STALE" or
         "AFFILIATE_PROMOTION_LINK_STALE" => StatusCodes.Status409Conflict,
+
+        "FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE" => StatusCodes.Status422UnprocessableEntity,
 
         "GEOGRAPHIC_ADMISSION_UNAVAILABLE" or
         "GEOGRAPHIC_ADDRESS_ADMISSION_FAILED" or

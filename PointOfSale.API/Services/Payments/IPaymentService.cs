@@ -398,6 +398,21 @@ public class CodNotApplicableException : PaymentException
 }
 
 /// <summary>
+/// T-09: Thrown when Fawry financial activity is attempted without certified
+/// clearing, accounting mapping, or settlement authority.
+/// HTTP 422 - permanent authority failure, never a transient provider outage.
+/// </summary>
+public class PaymentFawryFinancialAuthorityException : PaymentException
+{
+    public PaymentFawryFinancialAuthorityException()
+        : base(
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Message)
+    {
+    }
+}
+
+/// <summary>
 /// Thrown when payment lifecycle operation fails and compensation rollback also fails.
 /// This indicates the payment is in an inconsistent state requiring manual reconciliation.
 /// HTTP 500

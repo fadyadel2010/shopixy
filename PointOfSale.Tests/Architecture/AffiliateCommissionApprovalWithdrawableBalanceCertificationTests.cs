@@ -130,12 +130,15 @@ public sealed class AffiliateCommissionApprovalWithdrawableBalanceCertificationT
     public void EarnedAccountingReplay_MustAcceptEquivalentJournalAcrossProcessingDates()
     {
         var consumer = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Consumers/Affiliate/AffiliateAccountingConsumer.cs");
+        var earnedEquivalence = Slice(
+            consumer,
+            "EnsureEquivalentEarnedJournal(",
+            "public class AffiliateCommissionReversedAccountingConsumer");
 
         Assert.Contains("GetJournalByIdempotencyKeyAsync", consumer, StringComparison.Ordinal);
-        Assert.Contains("EnsureEquivalentEarnedJournal", consumer, StringComparison.Ordinal);
-        Assert.Contains("existingJournal.SourceId != request.SourceId", consumer, StringComparison.Ordinal);
-        Assert.Contains("!existingLines.SequenceEqual(requestedLines)", consumer, StringComparison.Ordinal);
-        Assert.DoesNotContain("existingJournal.JournalDate != request.JournalDate", consumer, StringComparison.Ordinal);
+        Assert.Contains("existingJournal.SourceId != request.SourceId", earnedEquivalence, StringComparison.Ordinal);
+        Assert.Contains("!existingLines.SequenceEqual(requestedLines)", earnedEquivalence, StringComparison.Ordinal);
+        Assert.DoesNotContain("existingJournal.JournalDate != request.JournalDate", earnedEquivalence, StringComparison.Ordinal);
     }
 
     [Fact]

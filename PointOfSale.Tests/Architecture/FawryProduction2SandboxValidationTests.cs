@@ -84,10 +84,13 @@ public sealed class FawryProduction2SandboxValidationTests
         Assert.Contains("ProcessingStatus == WebhookProcessingStatus.Completed", integration, StringComparison.Ordinal);
         Assert.Contains("ProcessingStatus == WebhookProcessingStatus.Skipped", integration, StringComparison.Ordinal);
         Assert.Contains("_orchestrator.Execute", integration, StringComparison.Ordinal);
-        Assert.Contains("FawryWebhookLifecycleAdmission.IsLifecyclePersistenceAllowed", controller, StringComparison.Ordinal);
-        Assert.Contains("_paymentLifecycleService.HandlePaymentResultAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("admissionResult.AdmittedToRuntime", controller, StringComparison.Ordinal);
+        // T-09: successful Fawry webhook admission is fail-closed with the stable
+        // authority code and must never enter the money-mutation lifecycle.
+        Assert.Contains("FawryFinancialAuthorityPolicy", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("_paymentLifecycleService.HandlePaymentResultAsync", controller, StringComparison.Ordinal);
         Assert.Contains("IsolationLevel.Serializable", controller, StringComparison.Ordinal);
-        Assert.Contains("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
     }
 
     [Fact]

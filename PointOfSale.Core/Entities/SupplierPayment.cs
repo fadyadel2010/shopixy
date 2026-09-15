@@ -25,6 +25,9 @@ public class SupplierPayment : BaseEntity, ITenantOwned
     public DateTime PaymentDate { get; set; }
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public Guid? FundingLedgerAccountId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
 
     /// <summary>
     /// Business idempotency key supplied by the caller.
@@ -37,4 +40,6 @@ public class SupplierPayment : BaseEntity, ITenantOwned
 
     public Supplier Supplier { get; set; } = null!;
     public PurchaseInvoice? PurchaseInvoice { get; set; }
+    public Accounting.SupplierCardFundingInstrument? FundingInstrument { get; set; }
+    public Accounting.Account? FundingLedgerAccount { get; set; }
 }

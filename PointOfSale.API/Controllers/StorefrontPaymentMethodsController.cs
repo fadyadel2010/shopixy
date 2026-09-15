@@ -144,6 +144,20 @@ public class StorefrontPaymentMethodsController : ControllerBase
                 .Select(MapToDto)
                 .ToList();
 
+            // T-09: Fawry is never selectable in the storefront, even if a stale
+            // Mongo projection says enabled/configured and a SQL tenant row is enabled.
+            var suppressedFawry = documents.Count(document =>
+                PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(document.Code));
+            if (suppressedFawry > 0)
+            {
+                _logger.LogWarning(
+                    "Suppressed Fawry storefront payment method without financial authority | TenantId: {TenantId} | Suppressed: {Suppressed} | ReasonCode: {ReasonCode} | TraceId: {TraceId}",
+                    tenantId,
+                    suppressedFawry,
+                    PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+                    traceId);
+            }
+
             _logger.LogDebug(
                 "GetPaymentMethods | TenantId: {TenantId} | Count: {Count} | TraceId: {TraceId}",
                 tenantId, response.Count, traceId);
@@ -194,7 +208,10 @@ public class StorefrontPaymentMethodsController : ControllerBase
 
     private static bool IsSupportedStorefrontPaymentMethod(string? code)
     {
-        return code?.Trim().ToUpperInvariant() is "COD" or "STRIPE" or "PAYMOB" or "FAWRY" or "MANUALWALLET";
+        // T-09: Fawry is never an available storefront payment method. The SQL
+        // runtime authority additionally blocks Fawry with
+        // FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE.
+        return code?.Trim().ToUpperInvariant() is "COD" or "STRIPE" or "PAYMOB" or "MANUALWALLET";
     }
 
     private string GetTraceId()

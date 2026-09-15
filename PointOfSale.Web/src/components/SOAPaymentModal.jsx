@@ -3,8 +3,21 @@ import { useTranslation } from 'react-i18next'
 import { useSettings } from '../contexts/SettingsContext'
 import { useRTL } from '../hooks/useRTL'
 import { getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
+import { formatSupplierCardLabel } from '../services/supplierCardFundingApi'
 
-const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, balanceType, type, loading }) => {
+const PaymentModal = ({
+    isOpen,
+    onClose,
+    onSubmit,
+    partyName,
+    currentBalance,
+    balanceType,
+    type,
+    loading,
+    cardInstruments = [],
+    cardInstrumentsLoading = false,
+    cardInstrumentsError = '',
+}) => {
     const { t } = useTranslation()
     const { isRTL, dir } = useRTL()
     const { formatCurrency } = useSettings()
@@ -13,15 +26,28 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
         paymentDate: new Date().toISOString().split('T')[0],
         paymentMethod: 'Cash',
         cashAmount: '',
+        fundingInstrumentId: '',
         notes: '',
     })
+    const [validationMessage, setValidationMessage] = useState('')
 
     if (!isOpen) return null
 
     const handleSubmit = (e) => {
         e.preventDefault()
+        setValidationMessage('')
         if (loading) {
             return
+        }
+
+        if (type === 'make' && formData.paymentMethod === 'Card') {
+            const instrument = cardInstruments.find(item => item.id === formData.fundingInstrumentId)
+            if (!instrument) {
+                setValidationMessage(t(cardInstruments.length === 0
+                    ? 'purchases.noCardInstruments'
+                    : 'purchases.cardInstrumentRequired'))
+                return
+            }
         }
 
         const submitData = {
@@ -33,6 +59,11 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
 
         if (formData.paymentMethod === 'Mixed') {
             submitData.cashAmount = parseFloat(formData.cashAmount)
+        }
+        if (type === 'make' && formData.paymentMethod === 'Card') {
+            const instrument = cardInstruments.find(item => item.id === formData.fundingInstrumentId)
+            submitData.fundingInstrumentId = instrument.id
+            submitData.fundingInstrumentVersion = instrument.authorityVersion
         }
 
         onSubmit(submitData)
@@ -80,10 +111,11 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
                     <form onSubmit={handleSubmit} className="space-y-4">
                         {/* Amount */}
                         <div>
-                            <label className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            <label htmlFor="soa-payment-amount" className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
                                 {t('cashbox.amountRequired')}
                             </label>
                             <input
+                                id="soa-payment-amount"
                                 type="number"
                                 step="0.01"
                                 required
@@ -97,10 +129,11 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
 
                         {/* Payment Date */}
                         <div>
-                            <label className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            <label htmlFor="soa-payment-date" className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
                                 {t('accounts.paymentDateRequired')}
                             </label>
                             <input
+                                id="soa-payment-date"
                                 type="date"
                                 required
                                 value={formData.paymentDate}
@@ -112,13 +145,18 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
 
                         {/* Payment Method */}
                         <div>
-                            <label className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
+                            <label htmlFor="soa-payment-method" className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
                                 {t('accounts.paymentMethodRequired')}
                             </label>
                             <select
+                                id="soa-payment-method"
                                 required
                                 value={formData.paymentMethod}
-                                onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                                onChange={(e) => setFormData({
+                                     ...formData,
+                                    paymentMethod: e.target.value,
+                                    fundingInstrumentId: '',
+                                })}
                                 className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 ${isRTL ? 'text-right' : 'text-left'}`}
                                 disabled={loading}
                             >
@@ -128,6 +166,44 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
                                 {type === 'receive' && <option value="Mixed">{t('accounts.mixed')}</option>}
                             </select>
                         </div>
+
+                        {type === 'make' && formData.paymentMethod === 'Card' && (
+                            <div>
+                                <label htmlFor="soa-funding-instrument" className={`block text-sm font-medium text-gray-700 mb-2 ${isRTL ? 'text-right' : 'text-left'}`}>
+                                    {t('purchases.fundingInstrument')}
+                                </label>
+                                <select
+                                    id="soa-funding-instrument"
+                                    required
+                                    value={formData.fundingInstrumentId}
+                                    onChange={(e) => {
+                                        setValidationMessage('')
+                                        setFormData({ ...formData, fundingInstrumentId: e.target.value })
+                                    }}
+                                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg ${isRTL ? 'text-right' : 'text-left'}`}
+                                    disabled={loading || cardInstrumentsLoading || cardInstruments.length === 0}
+                                    onInvalid={() => setValidationMessage(t('purchases.cardInstrumentRequired'))}
+                                >
+                                    <option value="">{cardInstrumentsLoading ? t('common.loading') : t('purchases.selectFundingInstrument')}</option>
+                                    {cardInstruments.map(instrument => (
+                                        <option key={instrument.id} value={instrument.id}>
+                                            {formatSupplierCardLabel(instrument)} · {formatCurrency(instrument.availableBalance)}
+                                        </option>
+                                    ))}
+                                </select>
+                                {!cardInstrumentsLoading && cardInstrumentsError && (
+                                    <p className="mt-1 text-sm text-red-700" role="alert">{cardInstrumentsError}</p>
+                                )}
+                                {!cardInstrumentsLoading && !cardInstrumentsError && cardInstruments.length === 0 && (
+                                    <p className="mt-1 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700" role="alert">{t('purchases.noCardInstruments')}</p>
+                                )}
+                                {formData.fundingInstrumentId && (() => {
+                                    const instrument = cardInstruments.find(item => item.id === formData.fundingInstrumentId)
+                                    return instrument ? <p className="mt-1 text-xs text-gray-600">{t('purchases.cardBalance')}: {formatCurrency(instrument.availableBalance)} · {t('purchases.fundingSource')}: {instrument.fundingSourceName}</p> : null
+                                })()}
+                                <p className="mt-2 text-xs font-medium text-blue-700">{t('accounts.supplierCardPaymentFlow')}</p>
+                            </div>
+                        )}
 
                         {/* Cash Amount (for Mixed) */}
                         {formData.paymentMethod === 'Mixed' && (
@@ -167,6 +243,7 @@ const PaymentModal = ({ isOpen, onClose, onSubmit, partyName, currentBalance, ba
                         </div>
 
                         {/* Buttons */}
+                        {validationMessage && <p className="text-sm text-red-700" role="alert">{validationMessage}</p>}
                         <div className={`flex gap-3 pt-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                             <button
                                 type="button"

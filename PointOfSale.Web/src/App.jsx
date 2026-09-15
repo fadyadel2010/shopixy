@@ -26,12 +26,12 @@ import Inventory from './pages/Inventory'
 // import Cashbox from './pages/Cashbox'
 import StatementOfAccount from './pages/StatementOfAccount'
 import Payments from './pages/Payments'
+import SupplierCardFundingInstruments from './pages/SupplierCardFundingInstruments'
 import OutstandingBalances from './pages/OutstandingBalances'
 import Adjustments from './pages/Adjustments'
 import StockTransfers from './pages/StockTransfers'
 import FinancialAccounts from './pages/FinancialAccounts'
-import BalanceTransfer from './pages/BalanceTransfer'
-import CashboxOpeningBalance from './pages/CashboxOpeningBalance'
+import TreasuryInitialCapitalization from './pages/TreasuryInitialCapitalization'
 import CustomerOpeningBalance from './pages/CustomerOpeningBalance'
 import SupplierOpeningBalance from './pages/SupplierOpeningBalance'
 import WarehouseOpeningStock from './pages/WarehouseOpeningStock'
@@ -274,29 +274,35 @@ function App() {
                                         <Route path="sales-returns" element={<SalesReturns />} />
                                         <Route path="warehouses" element={<Warehouses />} />
                                         <Route path="inventory" element={<Inventory />} />
-                                        {/* PHASE LTSR: Legacy cashbox → Ledger redirect */}
-                                        <Route path="cashbox" element={<Navigate to="/treasury/account/1010" replace />} />
-                                        <Route path="opening-balance/cashbox" element={<CashboxOpeningBalance />} />
+                                        {/* PHASE LTSR: Legacy cashbox → dynamic Treasury Hub (no fixed account identity) */}
+                                        <Route path="cashbox" element={<Navigate to="/treasury/hub" replace />} />
+                                        <Route path="opening-balance/cashbox" element={<Navigate to="/treasury/initial-capitalization" replace />} />
                                         <Route path="opening-balance/customers" element={<CustomerOpeningBalance />} />
                                         <Route path="opening-balance/suppliers" element={<SupplierOpeningBalance />} />
                                         <Route path="opening-balance/warehouse-stock" element={<WarehouseOpeningStock />} />
-                                        <Route path="opening-balance/banks" element={<Navigate to="/treasury/account/1030" replace />} />
+                                        <Route path="opening-balance/banks" element={<Navigate to="/treasury/initial-capitalization" replace />} />
                                         <Route path="statement-of-account" element={<StatementOfAccount />} />
                                         <Route path="payments" element={<Payments />} />
+                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
+                                            <Route path="supplier-card-funding" element={<SupplierCardFundingInstruments />} />
+                                        </Route>
+                                        <Route element={<PosRoleRouteGuard roles={['Owner']} />}>
+                                            <Route path="treasury/initial-capitalization" element={<TreasuryInitialCapitalization />} />
+                                        </Route>
                                         <Route path="outstanding-balances" element={<OutstandingBalances />} />
                                         <Route path="adjustments" element={<Adjustments />} />
                                         <Route path="stock-transfers" element={<StockTransfers />} />
                                         <Route path="financial-accounts" element={<FinancialAccounts />} />
-                                        <Route path="balance-transfer" element={<BalanceTransfer />} />
+                                        <Route path="balance-transfer" element={<Navigate to="/treasury/transfers" replace />} />
                                         <Route path="banks" element={<Banks />} />
                                         <Route path="expense-categories" element={<ExpenseCategories />} />
                                         <Route path="expenses" element={<Expenses />} />
                                         {/* PHASE LTSR: Legacy treasury-movements → Ledger redirect */}
                                         <Route path="treasury-movements" element={<Navigate to="/treasury/hub" replace />} />
-                                        {/* PHASE LTSR: Legacy bank-statement → Ledger redirect */}
-                                        <Route path="reports/bank-statement" element={<Navigate to="/treasury/account/1030" replace />} />
-                                        {/* PHASE LTSR: Legacy visa-statement → Ledger redirect */}
-                                        <Route path="reports/visa-statement" element={<Navigate to="/treasury/account/1110" replace />} />
+                                        {/* PHASE LTSR: Legacy bank-statement → dynamic Treasury Hub (no fixed account identity) */}
+                                        <Route path="reports/bank-statement" element={<Navigate to="/treasury/hub" replace />} />
+                                        {/* PHASE LTSR: Legacy visa-statement → dynamic Clearing Aging (no fixed account identity) */}
+                                        <Route path="reports/visa-statement" element={<Navigate to="/treasury/clearing-aging" replace />} />
                                         <Route path="reports/sales-analysis" element={<SalesAnalysis />} />
                                         <Route path="reports/sales-summary" element={<SalesSummaryReport />} />
                                         <Route path="reports/sales-by-category" element={<SalesByCategoryReport />} />

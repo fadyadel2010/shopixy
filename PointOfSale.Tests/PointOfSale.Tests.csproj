@@ -40,11 +40,13 @@
     <Compile Remove="WhatsApp\*.cs" />
     <Compile Remove="Accounting\*.cs" />
     <Compile Include="Accounting\AffiliateAccountingBridgeTests.cs" />
+    <Compile Include="Accounting\AffiliateReversalAccountingConsumerTests.cs" />
     <Compile Include="Accounting\AccountingOutboxProcessorTests.cs" />
     <Compile Include="Accounting\CommerceAccountingServiceTests.cs" />
     <Compile Include="Accounting\FinancialReportServiceTests.cs" />
+    <Compile Include="Accounting\T08EcommerceCogsPostingTests.cs" />
+    <Compile Include="Accounting\T08EcommerceCogsOutboxProcessorTests.cs" />
   </ItemGroup>
 
 
 </Project>
-

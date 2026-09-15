@@ -101,6 +101,25 @@ public sealed class TreasuryAccountingAuthorityCertificationTests
     }
 
     [Fact]
+    public async Task IdempotencyReplay_OnLaterProcessingDate_ReturnsOriginalJournal()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var db = CreateDbContext();
+        var fixture = await SeedSaleFixtureAsync(db, tenantId, 25m);
+        var posting = CreatePostingService(db);
+        var idempotencyKey = $"T7:LATE-REPLAY:{Guid.NewGuid():N}";
+        var originalRequest = BuildSalePosting(fixture, 25m, idempotencyKey);
+
+        var original = await posting.PostJournalAsync(originalRequest);
+        var replayRequest = BuildSalePosting(fixture, 25m, idempotencyKey);
+        replayRequest.JournalDate = originalRequest.JournalDate.AddDays(1);
+        var replay = await posting.PostJournalAsync(replayRequest);
+
+        Assert.Equal(original.Id, replay.Id);
+        Assert.Single(db.JournalEntries.IgnoreQueryFilters());
+    }
+
+    [Fact]
     public async Task ReversalJournal_MustOnlyBeCreatedThroughReversalWorkflow()
     {
         var tenantId = Guid.NewGuid();

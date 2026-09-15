@@ -69,7 +69,7 @@ public sealed class AccountingLedgerAuthorityTests
         {
             Id = batchId,
             TenantId = tenantId,
-            SettlementType = "COD",
+            SettlementType = "OFFLINE_COLLECTION",
             SettlementId = "set-drift",
             GrossAmount = 50m,
             Fees = 0m,
@@ -94,7 +94,7 @@ public sealed class AccountingLedgerAuthorityTests
             dbContext,
             tenantId,
             batchId,
-            "COD",
+            "OFFLINE_COLLECTION",
             "set-drift");
 
         var decision = AccountingLedgerAuthority.EvaluateSettlementPosting(settlement);

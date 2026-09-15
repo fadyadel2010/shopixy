@@ -8,6 +8,10 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Helpers;
+using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Models.Accounting;
+using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Reliability;
 using PointOfSale.Infrastructure.Utilities;
@@ -117,6 +121,7 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<InventoryConsistencyService> _logger;
+    private readonly IAccountingOutboxService _accountingOutbox;
 
     private sealed record MarketplaceReservationAuthorityItem(
         Guid TenantId,
@@ -130,10 +135,26 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
 
     public InventoryConsistencyService(
         ApplicationDbContext dbContext,
-        ILogger<InventoryConsistencyService> logger)
+        ILogger<InventoryConsistencyService> logger,
+        IAccountingOutboxService? accountingOutbox = null)
     {
         _dbContext = dbContext;
         _logger = logger;
+        // T-08: optional so existing call sites and tests keep compiling; production
+        // DI supplies the real outbox service. The fallback shares this scope's
+        // DbContext, so COGS events stay atomic with the inventory transaction.
+        _accountingOutbox = accountingOutbox
+            ?? new AccountingOutboxService(
+                dbContext,
+                T08FallbackCorrelation.Instance,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AccountingOutboxService>.Instance);
+    }
+
+    private sealed class T08FallbackCorrelation : ICorrelationIdAccessor
+    {
+        public static readonly T08FallbackCorrelation Instance = new();
+
+        public string GetCorrelationId() => string.Empty;
     }
 
     public async Task<bool> ReserveOrderItemAsync(
@@ -1311,6 +1332,12 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
             inbox.StockMovementId = movements.FirstOrDefault()?.Id;
             inbox.UpdatedAt = nowUtc;
 
+            // T-08: stage the merchandise-cost event atomically with this delivery
+            // commit. committedNow is exactly what this call moved (per-commit
+            // semantics); replays that commit nothing stage nothing.
+            var committedNow = request.Quantity - alreadyCommitted - remainingToCommit;
+            await EnqueueDeliveryCogsAsync(request, committedNow, nowUtc, cancellationToken);
+
             await _dbContext.SaveChangesAsync(cancellationToken);
             await EnqueueStockSyncOutboxMessagesAsync(
                 request.TenantId,
@@ -1364,6 +1391,31 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
                     "RETURN_NOT_FOUND",
                     "Return request was not found.");
 
+            if (trackedReturn.VendorId != request.TenantId ||
+                trackedReturn.OrderItemId != request.OrderItemId ||
+                trackedReturn.RefundId != request.RefundId)
+            {
+                throw BuildInvariantException(
+                    "RETURN_AUTHORITY_MISMATCH",
+                    "Return receipt tenant, item, or refund identity does not match SQL return authority.");
+            }
+
+            var refundBindingExists = await _dbContext.CommerceHubRefundRequests
+                .IgnoreQueryFilters()
+                .AnyAsync(refund =>
+                    refund.Id == request.RefundId &&
+                    refund.VendorId == request.TenantId &&
+                    refund.OrderId == request.OrderId &&
+                    refund.OrderItemId == request.OrderItemId &&
+                    !refund.IsDeleted,
+                    cancellationToken);
+            if (!refundBindingExists)
+            {
+                throw BuildInvariantException(
+                    "RETURN_REFUND_AUTHORITY_MISMATCH",
+                    "Return receipt does not match an authoritative tenant-scoped refund request.");
+            }
+
             if (trackedReturn.Status == CommerceHubReturnStatus.Confirmed)
             {
                 var alreadyApplied =
@@ -1388,6 +1440,7 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
                 .IgnoreQueryFilters()
                 .AsNoTracking()
                 .Where(item =>
+                    item.VendorId == request.TenantId &&
                     item.OrderItemId == request.OrderItemId &&
                     item.Id != request.ReturnId &&
                     !item.IsDeleted &&
@@ -1458,6 +1511,11 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
             inbox.StockMovementId = movements.FirstOrDefault()?.Id;
             inbox.UpdatedAt = nowUtc;
 
+            // T-08: stage the COGS reversal atomically with this return receipt.
+            // The reversal uses the ReturnId as the single return identity shared
+            // by the stock receipt, the financial refund, and the COGS reversal.
+            await EnqueueReturnCogsReversalAsync(request, nowUtc, cancellationToken);
+
             await _dbContext.SaveChangesAsync(cancellationToken);
             await EnqueueStockSyncOutboxMessagesAsync(
                 request.TenantId,
@@ -1465,6 +1523,180 @@ public sealed class InventoryConsistencyService : IInventoryConsistencyService
                 cancellationToken);
             return 0;
         }, cancellationToken);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // T-08 COMMERCEHUB MERCHANDISE-COST (COGS) LIFECYCLE
+    //
+    // Cost authority: immutable CommerceHubSubOrderItem.UnitCostSnapshot frozen at
+    // checkout from tenant-scoped ProductVariant.CostPrice. Live cost is never read.
+    // Each delivery commit stages its own event (per-commit semantics); the outbox
+    // processor caps cumulative quantities/costs per line and fails closed.
+    // Pre-remediation rows without a snapshot deliver/return WITHOUT a COGS leg
+    // under the historical boundary (warned, never guessed).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private async Task EnqueueDeliveryCogsAsync(
+        InventoryDeliveryCommitRequest request,
+        decimal committedNow,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        if (committedNow <= 0m)
+        {
+            return;
+        }
+
+        // No sub-order line row (legacy callers, repair seeds): there is no cost
+        // basis, so the delivery commits without a COGS leg under the historical
+        // boundary. Positive binding evidence below still fails closed.
+        var item = await TryLoadCogsSubOrderItemAsync(request.TenantId, request.OrderItemId, request.ProductId, request.VariantId, cancellationToken);
+        if (item == null)
+        {
+            _logger.LogWarning(
+                "CommerceHub delivery without sub-order line; COGS skipped | TenantId: {TenantId} | OrderItemId: {OrderItemId}",
+                request.TenantId, request.OrderItemId);
+            return;
+        }
+
+        if (request.SubOrderId.HasValue && request.SubOrderId.Value != Guid.Empty && request.SubOrderId.Value != item.SubOrderId)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub delivery line {request.OrderItemId} does not belong to sub-order {request.SubOrderId}. Failing closed.");
+        }
+
+        if (!item.CostSnapshotCapturedAtUtc.HasValue)
+        {
+            _logger.LogWarning(
+                "CommerceHub delivery without cost snapshot; COGS skipped under the pre-remediation historical boundary | TenantId: {TenantId} | SubOrderItemId: {SubOrderItemId}",
+                request.TenantId, item.Id);
+            return;
+        }
+
+        ValidateCapturedCostSnapshot(item);
+
+        var costAmount = Math.Round(item.UnitCostSnapshot * committedNow, 2, MidpointRounding.AwayFromZero);
+        var deliveryCommitEventId = request.EventId.ToString("D");
+        var payload = new CommerceHubCogsOutboxPayload(
+            item.SubOrder.MarketplaceOrderId,
+            item.SubOrderId,
+            item.Id,
+            deliveryCommitEventId,
+            item.SubOrder.Currency,
+            nowUtc,
+            committedNow,
+            item.UnitCostSnapshot,
+            costAmount);
+
+        await _accountingOutbox.EnqueueCommerceHubCogsAsync(
+            request.TenantId, item.SubOrderId, deliveryCommitEventId, payload, cancellationToken);
+    }
+
+    private async Task EnqueueReturnCogsReversalAsync(
+        InventoryReturnReceiptRequest request,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        // Damaged goods stay in COGS by policy (impairment handling is out of scope);
+        // only resellable quantities relieve inventory.
+        if (request.ResellableQuantity <= 0m)
+        {
+            return;
+        }
+
+        var item = await TryLoadCogsSubOrderItemAsync(request.TenantId, request.OrderItemId, request.ProductId, request.VariantId, cancellationToken);
+        if (item == null)
+        {
+            _logger.LogWarning(
+                "CommerceHub return without sub-order line; COGS reversal skipped | TenantId: {TenantId} | OrderItemId: {OrderItemId} | ReturnId: {ReturnId}",
+                request.TenantId, request.OrderItemId, request.ReturnId);
+            return;
+        }
+
+        if (!item.CostSnapshotCapturedAtUtc.HasValue)
+        {
+            _logger.LogWarning(
+                "CommerceHub return without cost snapshot; COGS reversal skipped under the pre-remediation historical boundary | TenantId: {TenantId} | SubOrderItemId: {SubOrderItemId} | ReturnId: {ReturnId}",
+                request.TenantId, item.Id, request.ReturnId);
+            return;
+        }
+
+        ValidateCapturedCostSnapshot(item);
+
+        var reversalAmount = Math.Round(item.UnitCostSnapshot * request.ResellableQuantity, 2, MidpointRounding.AwayFromZero);
+        if (reversalAmount <= 0m)
+        {
+            return;
+        }
+
+        var returnEventId = request.ReturnId.ToString("D");
+        var payload = new CommerceHubCogsReversalOutboxPayload(
+            item.SubOrder.MarketplaceOrderId,
+            item.SubOrderId,
+            item.Id,
+            request.ReturnId,
+            returnEventId,
+            item.SubOrder.Currency,
+            nowUtc,
+            request.ResellableQuantity,
+            item.UnitCostSnapshot,
+            reversalAmount);
+
+        await _accountingOutbox.EnqueueCommerceHubCogsReversalAsync(
+            request.TenantId, item.SubOrderId, returnEventId, payload, cancellationToken);
+    }
+
+    private static void ValidateCapturedCostSnapshot(CommerceHubSubOrderItem item)
+    {
+        if (item.UnitCostSnapshot < 0m || item.CostAmountSnapshot < 0m)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub sub-order line {item.Id} has a negative captured cost snapshot. Failing closed.");
+        }
+
+        var expectedAmount = Math.Round(
+            item.UnitCostSnapshot * item.Quantity,
+            2,
+            MidpointRounding.AwayFromZero);
+        if (Math.Abs(expectedAmount - item.CostAmountSnapshot) > 0.01m)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub sub-order line {item.Id} cost amount {item.CostAmountSnapshot} does not match its immutable snapshot basis {expectedAmount}. Failing closed.");
+        }
+    }
+
+    private async Task<CommerceHubSubOrderItem?> TryLoadCogsSubOrderItemAsync(
+        Guid tenantId,
+        Guid orderItemId,
+        Guid productId,
+        Guid variantId,
+        CancellationToken cancellationToken)
+    {
+        var item = await _dbContext.CommerceHubSubOrderItems
+            .IgnoreQueryFilters()
+            .Include(candidate => candidate.SubOrder)
+            .FirstOrDefaultAsync(candidate =>
+                candidate.Id == orderItemId && !candidate.IsDeleted,
+                cancellationToken);
+
+        if (item == null || item.SubOrder == null || item.SubOrder.IsDeleted)
+        {
+            return null;
+        }
+
+        if (item.SubOrder.StoreId != tenantId)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub inventory event tenant {tenantId} does not own sub-order {item.SubOrderId}. Failing closed.");
+        }
+
+        if (item.ProductId != productId || item.VariantId != variantId)
+        {
+            throw new InvalidOperationException(
+                $"CommerceHub inventory event product binding does not match sub-order line {orderItemId}. Failing closed.");
+        }
+
+        return item;
     }
 
     private async Task EnsureReturnStockLineageAuthorityAsync(

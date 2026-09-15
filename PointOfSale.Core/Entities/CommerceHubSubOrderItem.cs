@@ -16,6 +16,24 @@ public class CommerceHubSubOrderItem : BaseEntity
     public string? ImageUrl { get; set; }
     public int Quantity { get; set; }
     public decimal UnitPrice { get; set; }
+    /// <summary>
+    /// T-08: Immutable merchandise-cost authority for this marketplace line.
+    /// Frozen from tenant-scoped ProductVariant.CostPrice (moving weighted average)
+    /// at checkout commit. Never populated for pre-remediation rows (they remain
+    /// cost-unknown historical data and must NOT be backfilled).
+    /// Guarded immutable after creation by the CommerceHub order-lifecycle boundary.
+    /// </summary>
+    public decimal UnitCostSnapshot { get; set; }
+    /// <summary>
+    /// T-08: UnitCostSnapshot × Quantity at checkout commit. Reversals must reuse
+    /// this frozen basis, never live ProductVariant.CostPrice.
+    /// </summary>
+    public decimal CostAmountSnapshot { get; set; }
+    /// <summary>
+    /// T-08: When the cost snapshot was captured. Null means cost-unknown
+    /// (pre-remediation historical row): COGS consumers must fail closed.
+    /// </summary>
+    public DateTime? CostSnapshotCapturedAtUtc { get; set; }
     public decimal PlatformCommissionRate { get; set; }
     public decimal PlatformCommissionAmount { get; set; }
     public decimal FinalPlatformCommissionAmount { get; set; }

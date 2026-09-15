@@ -90,7 +90,11 @@ public sealed class FawryPaymentAuthorityCertificationTests
         Assert.Contains("request.OrderId", runtimeApplication, StringComparison.Ordinal);
         Assert.Contains("request.IdempotencyKey", runtimeApplication, StringComparison.Ordinal);
 
-        Assert.Contains("case \"FAWRY\":", recoveryService, StringComparison.Ordinal);
+        // T-09: checkout recovery must never initiate or resume Fawry. Fawry
+        // recovery follows the existing safe unrecoverable/expiry path.
+        Assert.DoesNotContain("case \"FAWRY\":", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("IsFawryPaymentMethod", recoveryService, StringComparison.Ordinal);
+        Assert.Contains("ExpireUnrecoverableOrderIfReservationWindowElapsedAsync", recoveryService, StringComparison.Ordinal);
         Assert.Contains("_paymentGateway.CreateSessionAsync", recoveryService, StringComparison.Ordinal);
         Assert.Contains("intent.Provider == PaymentProvider.Fawry && string.IsNullOrWhiteSpace(intent.ReferenceCode)", recoveryService, StringComparison.Ordinal);
         Assert.Contains("IX_PaymentIntents_Active_OrderId_Provider_Unique", dbContext, StringComparison.Ordinal);
@@ -129,10 +133,17 @@ public sealed class FawryPaymentAuthorityCertificationTests
         Assert.Contains("Duplicate event ignored", webhookController, StringComparison.Ordinal);
         Assert.Contains("webhookLog.PaymentIntentId = admissionResult.PaymentIntentId", webhookController, StringComparison.Ordinal);
         Assert.Contains("webhookLog.OrderId = admissionResult.OrderId", webhookController, StringComparison.Ordinal);
-        Assert.Contains("FawryWebhookLifecycleAdmission.CreateRequest", webhookController, StringComparison.Ordinal);
-        Assert.Contains("_paymentLifecycleService.HandlePaymentResultAsync", webhookController, StringComparison.Ordinal);
-        Assert.Contains("PersistReplayRecordAsync", webhookController, StringComparison.Ordinal);
-        Assert.Contains("StorefrontSuspenseRecoveryPolicy.ApplyManualReviewMarker", webhookController, StringComparison.Ordinal);
+        // T-09: successful Fawry webhook admission is fail-closed. The controller
+        // keeps the Skipped audit log and returns the stable authority rejection
+        // without ever entering the canonical money-mutation lifecycle.
+        Assert.Contains("FawryFinancialAuthorityPolicy", webhookController, StringComparison.Ordinal);
+        Assert.Contains("Status422UnprocessableEntity", webhookController, StringComparison.Ordinal);
+        Assert.DoesNotContain("FawryWebhookLifecycleAdmission.CreateRequest", webhookController, StringComparison.Ordinal);
+        Assert.DoesNotContain("_paymentLifecycleService.HandlePaymentResultAsync", webhookController, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistReplayRecordAsync", webhookController, StringComparison.Ordinal);
+        // T-09: quarantined suspense recovery is unreachable for Fawry success
+        // admission because the lifecycle is never entered.
+        Assert.DoesNotContain("StorefrontSuspenseRecoveryPolicy.ApplyManualReviewMarker", webhookController, StringComparison.Ordinal);
         Assert.Contains("PersistWebhookFailureAsync", webhookController, StringComparison.Ordinal);
 
         Assert.Contains("\"fawry\" => await ResolveFawryAsync(root", tenantResolver, StringComparison.Ordinal);

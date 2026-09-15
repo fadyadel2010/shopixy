@@ -14,19 +14,12 @@ public sealed class FawryPaymentGateway : IProviderPaymentGateway
 
     public ProviderCode ProviderCode { get; } = new("FAWRY");
 
-    public async Task<CanonicalPaymentSession> CreateSessionAsync(
+    public Task<CanonicalPaymentSession> CreateSessionAsync(
         CanonicalPaymentRequest request,
         CancellationToken cancellationToken = default)
     {
-        var response = await _paymentService.CreatePaymentIntentAsync(
-            request.TenantId,
-            request.OrderId,
-            new CreatePaymentIntentRequestDto { Provider = "Fawry" },
-            request.PromotionCalculationFailed,
-            request.RequestId,
-            request.CorrelationId,
-            cancellationToken);
-
-        return CanonicalPaymentSession.FromPaymentIntent(response);
+        // T-09 defense in depth: Fawry has no certified financial settlement
+        // authority. The PaymentService boundary is the primary guard.
+        throw new PaymentFawryFinancialAuthorityException();
     }
 }

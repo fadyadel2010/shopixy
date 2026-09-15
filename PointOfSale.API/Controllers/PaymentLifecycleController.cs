@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Payments;
 
@@ -203,128 +204,59 @@ public class PaymentLifecycleController : ControllerBase
     // ═══════════════════════════════════════════════════════════════════════════
     
     /// <summary>
-    /// Record a COD settlement from shipping company.
-    /// 
+    /// COD settlement ingress is contained (T-10).
+    ///
     /// POST /api/payments/lifecycle/settlements/cod
-    /// 
-    /// TRIGGERS:
-    /// - PaymentStatus: Collected → Settled (for included orders)
-    /// - Journal: DEBIT Bank (net), DEBIT Shipping Fees, CREDIT COD Clearing (gross)
+    ///
+    /// No authenticated carrier remittance evidence source exists, so this route
+    /// always returns HTTP 409 SETTLEMENT_EVIDENCE_REQUIRED before trusting or
+    /// validating any caller-authored settlement facts and without calling
+    /// <c>RecordOfflineSettlementAsync</c>. Existing settlement entities, SQL
+    /// replay readers, outbox handlers, journal shapes and refund lineage remain
+    /// intact as dormant/recovery code for historical rows.
     /// </summary>
     [HttpPost("settlements/cod")]
     [Authorize(Roles = "Owner,Admin")]
-    [ProducesResponseType(typeof(PaymentActionResponse), 200)]
-    [ProducesResponseType(400)]
-    public async Task<IActionResult> RecordCodSettlement([FromBody] CodSettlementApiRequest request)
+    [ProducesResponseType(409)]
+    public Task<IActionResult> RecordCodSettlement(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] CodSettlementApiRequest? _)
     {
-        if (string.IsNullOrWhiteSpace(request.SettlementId))
-            return BadRequest(new { error = "Settlement ID is required" });
-
-        if (request.Fees < 0)
-            return BadRequest(new { error = "Fees cannot be negative" });
-
-        if (string.IsNullOrWhiteSpace(request.Currency))
-            return BadRequest(new { error = "Currency is required" });
-        
-        var result = await _lifecycleService.RecordOfflineSettlementAsync(new OfflineSettlementRequest
+        // T-10 containment: reject before trusting/validating caller-authored
+        // carrier, settlement ID, amount, fees, selector, bank reference or
+        // destination facts. Never call RecordOfflineSettlementAsync.
+        return Task.FromResult<IActionResult>(Conflict(new
         {
-            TenantId = _tenantContext.RequiredTenantId,
-            SettlementId = request.SettlementId,
-            GrossAmount = request.GrossAmount,
-            Fees = request.Fees,
-            Currency = request.Currency,
-            ShippingCompany = request.ShippingCompany,
-            OrderIds = request.OrderIds,
-            BankReference = request.BankReference
-        });
-        
-        if (!result.Success)
-            return SettlementFailure(result);
-        
-        return Ok(new PaymentActionResponse
-        {
-            Success = true,
-            NewStatus = "Settled",
-            Message = $"COD settlement recorded. {request.OrderIds.Count} orders settled.",
-            JournalNumber = result.JournalNumber
-        });
+            error = "COD settlement is unavailable: authenticated carrier remittance evidence is unavailable.",
+            code = "SETTLEMENT_EVIDENCE_REQUIRED"
+        }));
     }
-    
+
     /// <summary>
-    /// Record a gateway settlement.
-    /// 
+    /// Gateway settlement ingress is contained (T-10).
+    ///
     /// POST /api/payments/lifecycle/settlements/gateway
-    /// 
-    /// TRIGGERS:
-    /// - Journal: DEBIT Bank (net), DEBIT Gateway Fees, CREDIT Gateway Clearing (gross)
+    ///
+    /// No authenticated provider payout evidence source exists, so this route
+    /// always returns HTTP 409 SETTLEMENT_EVIDENCE_REQUIRED before trusting or
+    /// validating any caller-authored settlement facts and without calling
+    /// <c>RecordGatewaySettlementAsync</c>. Existing settlement entities, SQL
+    /// replay readers, outbox handlers, journal shapes and refund lineage remain
+    /// intact as dormant/recovery code for historical rows.
     /// </summary>
     [HttpPost("settlements/gateway")]
     [Authorize(Roles = "Owner,Admin")]
-    [ProducesResponseType(typeof(PaymentActionResponse), 200)]
-    [ProducesResponseType(400)]
-    public async Task<IActionResult> RecordGatewaySettlement([FromBody] GatewaySettlementApiRequest request)
+    [ProducesResponseType(409)]
+    public Task<IActionResult> RecordGatewaySettlement(
+        [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] GatewaySettlementApiRequest? _)
     {
-        if (string.IsNullOrWhiteSpace(request.SettlementId))
-            return BadRequest(new { error = "Settlement ID is required" });
-        
-        if (string.IsNullOrWhiteSpace(request.Gateway))
-            return BadRequest(new { error = "Gateway is required" });
-        
-        if (request.GrossAmount <= 0)
-            return BadRequest(new { error = "Gross amount must be positive" });
-
-        if (request.Fees < 0)
-            return BadRequest(new { error = "Fees cannot be negative" });
-
-        if (string.IsNullOrWhiteSpace(request.Currency))
-            return BadRequest(new { error = "Currency is required" });
-
-        // Validate that exactly one selector is provided (null-safe)
-        var hasPayoutBatchId = !string.IsNullOrWhiteSpace(request.PayoutBatchId) ? 1 : 0;
-        var hasOrderIds = (request.OrderIds?.Count ?? 0) > 0 ? 1 : 0;
-        var hasPaymentIntentIds = (request.PaymentIntentIds?.Count ?? 0) > 0 ? 1 : 0;
-        var selectorCount = hasPayoutBatchId + hasOrderIds + hasPaymentIntentIds;
-
-        if (selectorCount == 0)
+        // T-10 containment: reject before trusting/validating caller-authored
+        // provider, settlement ID, amount, fees, selector, bank reference or
+        // destination facts. Never call RecordGatewaySettlementAsync.
+        return Task.FromResult<IActionResult>(Conflict(new
         {
-            return BadRequest(new
-            {
-                error = "Gateway settlement requires exactly one of: payoutBatchId, orderIds, or paymentIntentIds"
-            });
-        }
-
-        if (selectorCount > 1)
-        {
-            return BadRequest(new
-            {
-                error = "Gateway settlement requires exactly one selector - cannot mix payoutBatchId, orderIds, and paymentIntentIds"
-            });
-        }
-        
-        var result = await _lifecycleService.RecordGatewaySettlementAsync(new GatewaySettlementRequest
-        {
-            TenantId = _tenantContext.RequiredTenantId,
-            SettlementId = request.SettlementId,
-            Gateway = request.Gateway,
-            PayoutBatchId = request.PayoutBatchId,
-            OrderIds = request.OrderIds,
-            PaymentIntentIds = request.PaymentIntentIds,
-            GrossAmount = request.GrossAmount,
-            Fees = request.Fees,
-            Currency = request.Currency,
-            BankReference = request.BankReference
-        });
-        
-        if (!result.Success)
-            return SettlementFailure(result);
-        
-        return Ok(new PaymentActionResponse
-        {
-            Success = true,
-            NewStatus = "Settled",
-            Message = "Gateway settlement recorded",
-            JournalNumber = result.JournalNumber
-        });
+            error = "Gateway settlement is unavailable: authenticated provider payout evidence is unavailable.",
+            code = "SETTLEMENT_EVIDENCE_REQUIRED"
+        }));
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

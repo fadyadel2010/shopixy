@@ -32,10 +32,14 @@ public sealed class FawryConvergence1CertificationTests
         Assert.Contains("IFawryWebhookRuntimeIntegrationService", controller, StringComparison.Ordinal);
         Assert.Contains("EvaluateAndExecuteAsync", controller, StringComparison.Ordinal);
         Assert.Contains("FawryWebhookRuntimeAdmissionRequest", controller, StringComparison.Ordinal);
-        Assert.Contains("FawryWebhookLifecycleAdmission.IsLifecyclePersistenceAllowed", controller, StringComparison.Ordinal);
-        Assert.Contains("FawryWebhookLifecycleAdmission.CreateRequest", controller, StringComparison.Ordinal);
-        Assert.Contains("_paymentLifecycleService.HandlePaymentResultAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("admissionResult.AdmittedToRuntime", controller, StringComparison.Ordinal);
+        // T-09: successful Fawry webhook admission is fail-closed with the stable
+        // authority code and must never enter the money-mutation lifecycle.
+        Assert.Contains("FawryFinancialAuthorityPolicy", controller, StringComparison.Ordinal);
+        Assert.Contains("Status422UnprocessableEntity", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("FawryWebhookLifecycleAdmission.CreateRequest", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("_paymentLifecycleService.HandlePaymentResultAsync", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("PersistReplayRecordAsync", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("VerifySignature(", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("FawryWebhookDto", controller, StringComparison.Ordinal);
     }

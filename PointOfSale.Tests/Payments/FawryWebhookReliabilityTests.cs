@@ -34,9 +34,14 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         _databaseScope = TestDatabaseScope.Open();
     }
 
+    private const string FinancialAuthorityCode = "FAWRY_FINANCIAL_AUTHORITY_UNAVAILABLE";
+
     [Fact]
-    public async Task Handle_WhenLifecycleFails_Returns500AndPersistsFailedWebhookLog()
+    public async Task Handle_PaidWebhook_FailsClosedWithStableAuthorityAndSkipsLifecycle()
     {
+        // T-09: authenticated Fawry transport evidence is not clearing or
+        // settlement authority. Success admission returns the stable permanent
+        // rejection without entering the money-mutation lifecycle.
         var tenantId = Guid.NewGuid();
         const string referenceNumber = "123456789";
         const string eventId = "fawry-event-1";
@@ -51,31 +56,36 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         // Use a fresh context for the controller invocation
         await using var dbContext = CreateDbContext(tenantId);
 
-        var lifecycleService = new Mock<IPaymentLifecycleService>();
-        lifecycleService
-            .Setup(service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(PaymentTransitionResult.Failed("transient processing failure"));
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
 
         var payload = BuildPayload(eventId, referenceNumber, "PAID");
         var controller = CreateController(dbContext, lifecycleService.Object, tenantId, payload, webhookSecret);
 
         var result = await controller.Handle(CancellationToken.None);
 
-        var failed = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(StatusCodes.Status500InternalServerError, failed.StatusCode);
-        var response = Assert.IsType<WebhookResponseDto>(failed.Value);
+        var rejected = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, rejected.StatusCode);
+        var response = Assert.IsType<WebhookResponseDto>(rejected.Value);
         Assert.False(response.Processed);
+        Assert.Equal(FinancialAuthorityCode, response.ErrorCode);
+
+        lifecycleService.Verify(
+            service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
 
         var log = Assert.Single(dbContext.PaymentWebhookLogs);
         Assert.Equal("fawry", log.Provider);
         Assert.Equal(eventId, log.ProviderEventId);
-        Assert.Equal(WebhookProcessingStatus.Failed, log.ProcessingStatus);
-        Assert.Contains("transient", log.ProcessingError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(WebhookProcessingStatus.Skipped, log.ProcessingStatus);
+        Assert.Contains(FinancialAuthorityCode, log.ProcessingError, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task Handle_DuplicateWebhook_IsProcessedOnceOnly()
+    public async Task Handle_DuplicateWebhook_ReplaysStableAuthorityRejection()
     {
+        // T-09: the first success-shaped callback is rejected with the stable
+        // authority code and kept as a Skipped audit log; the retry is an
+        // idempotent duplicate that never enters the lifecycle.
         var tenantId = Guid.NewGuid();
         const string referenceNumber = "223456789";
         const string eventId = "fawry-event-2";
@@ -87,13 +97,7 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
             await SeedAsync(seedContext, tenantId, referenceNumber, webhookSecret);
         }
 
-        var lifecycleService = new Mock<IPaymentLifecycleService>();
-        lifecycleService
-            .Setup(service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(PaymentTransitionResult.Succeeded(
-                PaymentStatus.Collected,
-                stateChanged: true,
-                inventoryAction: PaymentInventoryAction.Commit));
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
 
         var payload = BuildPayload(eventId, referenceNumber, "PAID");
 
@@ -107,22 +111,29 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         var secondController = CreateController(secondContext, lifecycleService.Object, tenantId, payload, webhookSecret);
         var secondResult = await secondController.Handle(CancellationToken.None);
 
-        Assert.IsType<OkObjectResult>(firstResult);
-        Assert.IsType<OkObjectResult>(secondResult);
+        var rejected = Assert.IsType<ObjectResult>(firstResult);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, rejected.StatusCode);
+        var secondRejection = Assert.IsType<ObjectResult>(secondResult);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, secondRejection.StatusCode);
+        var secondResponse = Assert.IsType<WebhookResponseDto>(secondRejection.Value);
+        Assert.False(secondResponse.Processed);
+        Assert.Equal(FinancialAuthorityCode, secondResponse.ErrorCode);
 
         lifecycleService.Verify(
             service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
         // Use a fresh context for verification
         await using var verifyContext = CreateDbContext(tenantId);
         var log = Assert.Single(verifyContext.PaymentWebhookLogs);
-        Assert.Equal(WebhookProcessingStatus.Completed, log.ProcessingStatus);
+        Assert.Equal(WebhookProcessingStatus.Skipped, log.ProcessingStatus);
         Assert.Equal(eventId, log.ProviderEventId);
     }
 
     [Fact]
-    public async Task Handle_PaidWebhook_PassesProviderConfirmedAmountAndCurrencyToLifecycle()
+    public async Task Handle_PaidWebhook_NeverEntersLifecycle()
     {
+        // T-09: provider-confirmed amounts are transport evidence, not
+        // settlement authority. The lifecycle money mutation is never invoked.
         var tenantId = Guid.NewGuid();
         const string referenceNumber = "423456789";
         const string eventId = "fawry-event-provider-authority";
@@ -133,15 +144,7 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
             await SeedAsync(seedContext, tenantId, referenceNumber, webhookSecret);
         }
 
-        HandlePaymentResultRequest? capturedRequest = null;
-        var lifecycleService = new Mock<IPaymentLifecycleService>();
-        lifecycleService
-            .Setup(service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<HandlePaymentResultRequest, CancellationToken>((request, _) => capturedRequest = request)
-            .ReturnsAsync(PaymentTransitionResult.Succeeded(
-                PaymentStatus.Collected,
-                stateChanged: true,
-                inventoryAction: PaymentInventoryAction.Commit));
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
 
         var payload = BuildPayload(eventId, referenceNumber, "PAID", amount: 150m, currency: "EGP");
         await using var dbContext = CreateDbContext(tenantId);
@@ -149,20 +152,22 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
 
         var result = await controller.Handle(CancellationToken.None);
 
-        Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(capturedRequest);
-        Assert.Equal(PaymentLifecycleOutcome.Succeeded, capturedRequest.Outcome);
-        Assert.Equal(PaymentLifecycleSource.GatewayWebhook, capturedRequest.Source);
-        Assert.Equal("fawry", capturedRequest.Gateway);
-        Assert.Equal(150m, capturedRequest.ProviderAmount);
-        Assert.Equal("EGP", capturedRequest.ProviderCurrency);
-        Assert.Equal(150m, capturedRequest.Amount);
-        Assert.Equal("EGP", capturedRequest.Currency);
+        var rejected = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, rejected.StatusCode);
+        var response = Assert.IsType<WebhookResponseDto>(rejected.Value);
+        Assert.False(response.Processed);
+        Assert.Equal(FinancialAuthorityCode, response.ErrorCode);
+
+        lifecycleService.Verify(
+            service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
-    public async Task Handle_ReplayAfterFailure_ReusesSameEventIdAndCompletesIdempotently()
+    public async Task Handle_ReplayAfterRejection_ReusesSameEventIdAndStaysSkipped()
     {
+        // T-09: a retry of a fail-closed callback reuses the same audit log and
+        // stays out of the lifecycle.
         var tenantId = Guid.NewGuid();
         const string referenceNumber = "323456789";
         const string eventId = "fawry-event-3";
@@ -174,14 +179,7 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
             await SeedAsync(seedContext, tenantId, referenceNumber, webhookSecret);
         }
 
-        var lifecycleService = new Mock<IPaymentLifecycleService>();
-        lifecycleService
-            .SetupSequence(service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(PaymentTransitionResult.Failed("first attempt crashed"))
-            .ReturnsAsync(PaymentTransitionResult.Succeeded(
-                PaymentStatus.Collected,
-                stateChanged: false,
-                inventoryAction: PaymentInventoryAction.Commit));
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
 
         var payload = BuildPayload(eventId, referenceNumber, "PAID");
 
@@ -195,18 +193,57 @@ public sealed class FawryWebhookReliabilityTests : IDisposable
         var secondController = CreateController(secondContext, lifecycleService.Object, tenantId, payload, webhookSecret);
         var secondResult = await secondController.Handle(CancellationToken.None);
 
-        var firstFailure = Assert.IsType<ObjectResult>(firstResult);
-        Assert.Equal(StatusCodes.Status500InternalServerError, firstFailure.StatusCode);
-        Assert.IsType<OkObjectResult>(secondResult);
+        var firstRejection = Assert.IsType<ObjectResult>(firstResult);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, firstRejection.StatusCode);
+        var secondRejection = Assert.IsType<ObjectResult>(secondResult);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, secondRejection.StatusCode);
+        Assert.Equal(
+            FinancialAuthorityCode,
+            Assert.IsType<WebhookResponseDto>(secondRejection.Value).ErrorCode);
 
         lifecycleService.Verify(
             service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(2));
+            Times.Never);
         // Use a fresh context for verification
         await using var verifyContext = CreateDbContext(tenantId);
         var log = Assert.Single(verifyContext.PaymentWebhookLogs);
         Assert.Equal(eventId, log.ProviderEventId);
-        Assert.Equal(WebhookProcessingStatus.Completed, log.ProcessingStatus);
+        Assert.Equal(WebhookProcessingStatus.Skipped, log.ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Handle_AuthorizedWebhook_FailsClosedWithStableAuthority()
+    {
+        var tenantId = Guid.NewGuid();
+        const string referenceNumber = "523456789";
+        const string eventId = "fawry-event-authorized";
+        const string webhookSecret = "fawry-secret";
+
+        await using (var seedContext = CreateDbContext(tenantId))
+        {
+            await SeedAsync(seedContext, tenantId, referenceNumber, webhookSecret);
+        }
+
+        var lifecycleService = new Mock<IPaymentLifecycleService>(MockBehavior.Strict);
+        var payload = BuildPayload(eventId, referenceNumber, "AUTHORIZED");
+        await using var dbContext = CreateDbContext(tenantId);
+
+        var result = await CreateController(
+                dbContext,
+                lifecycleService.Object,
+                tenantId,
+                payload,
+                webhookSecret)
+            .Handle(CancellationToken.None);
+
+        var rejection = Assert.IsType<ObjectResult>(result);
+        Assert.Equal(StatusCodes.Status422UnprocessableEntity, rejection.StatusCode);
+        var response = Assert.IsType<WebhookResponseDto>(rejection.Value);
+        Assert.False(response.Processed);
+        Assert.Equal(FinancialAuthorityCode, response.ErrorCode);
+        lifecycleService.Verify(
+            service => service.HandlePaymentResultAsync(It.IsAny<HandlePaymentResultRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     private ApplicationDbContext CreateDbContext(Guid tenantId)

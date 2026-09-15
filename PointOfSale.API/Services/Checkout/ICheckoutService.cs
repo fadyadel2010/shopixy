@@ -434,6 +434,24 @@ public sealed class CheckoutPaymentRuntimeUnavailableException : CheckoutExcepti
 }
 
 /// <summary>
+/// T-09: Thrown when Fawry checkout is attempted without certified financial
+/// settlement authority. Permanent authority failure, never a transient outage.
+/// </summary>
+public sealed class CheckoutFawryFinancialAuthorityException : CheckoutException
+{
+    public string PaymentMethodCode { get; }
+
+    public CheckoutFawryFinancialAuthorityException(string paymentMethodCode)
+        : base(
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Message,
+            "PaymentMethodValidation")
+    {
+        PaymentMethodCode = paymentMethodCode;
+    }
+}
+
+/// <summary>
 /// Thrown when checkout lock infrastructure is unavailable.
 /// HTTP 503 Service Unavailable.
 /// </summary>

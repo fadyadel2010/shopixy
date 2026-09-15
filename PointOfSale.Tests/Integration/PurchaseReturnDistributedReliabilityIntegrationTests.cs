@@ -497,7 +497,9 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
         Assert.Equal(1, snapshot.PurchaseReturnOutboxAggregateVersion);
         Assert.Equal(1, snapshot.PurchaseReturnOutboxPayloadMutationVersion);
         Assert.Equal(seeded.InvoiceId, snapshot.PurchaseReturnOutboxPayloadOriginalInvoiceId);
-        Assert.NotNull(snapshot.PurchaseReturnOutboxProcessedAtUtc);
+        Assert.True(
+            snapshot.PurchaseReturnOutboxProcessedAtUtc.HasValue,
+            $"Purchase return outbox was not marked processed. Progress: {string.Join(" | ", progressEntries)}");
         Assert.NotNull(snapshot.PurchaseReturnOutboxJournalId);
         Assert.Equal(1, snapshot.InvoiceMutationVersion);
         Assert.Equal(HistoricalReceivedBaseQuantity - RequestedReturnBaseQuantity, snapshot.RemainingReturnableQuantity);
@@ -555,7 +557,9 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
         Assert.Equal(1, snapshot.PurchaseReturnOutboxAggregateVersion);
         Assert.Equal(1, snapshot.PurchaseReturnOutboxPayloadMutationVersion);
         Assert.Equal(seeded.InvoiceId, snapshot.PurchaseReturnOutboxPayloadOriginalInvoiceId);
-        Assert.NotNull(snapshot.PurchaseReturnOutboxProcessedAtUtc);
+        Assert.True(
+            snapshot.PurchaseReturnOutboxProcessedAtUtc.HasValue,
+            $"Purchase return outbox was not marked processed. Progress: {string.Join(" | ", progressEntries)}");
         Assert.NotNull(snapshot.PurchaseReturnOutboxJournalId);
         Assert.Equal(1, snapshot.InvoiceMutationVersion);
         Assert.Equal(HistoricalReceivedBaseQuantity - RequestedReturnBaseQuantity, snapshot.RemainingReturnableQuantity);
@@ -1726,6 +1730,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
     {
         context.LedgerAccounts.AddRange(
             Account.Create(TenantId, AccountCodes.Inventory, "Inventory", AccountType.Asset, isSystem: true),
+            Account.Create(TenantId, AccountCodes.InputTaxReceivable, "Input Tax Receivable", AccountType.Asset, isSystem: true),
             Account.Create(TenantId, AccountCodes.SupplierPayables, "Supplier Payables", AccountType.Liability, isSystem: true));
     }
 

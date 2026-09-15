@@ -15,6 +15,7 @@ using PointOfSale.API.Services.Payments.Fawry;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces.Payments;
+using PointOfSale.Core.Payments;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
@@ -69,6 +70,7 @@ public class FawryWebhookController : ControllerBase
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status413PayloadTooLarge)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status429TooManyRequests)]
+    [ProducesResponseType(typeof(WebhookResponseDto), StatusCodes.Status422UnprocessableEntity)]
     [ProducesResponseType(typeof(WebhookResponseDto), StatusCodes.Status500InternalServerError)]
     public async Task<IActionResult> Handle(CancellationToken ct = default)
     {
@@ -162,6 +164,11 @@ public class FawryWebhookController : ControllerBase
                 {
                     await transaction.RollbackAsync(ct);
 
+                    if (IsFinancialAuthorityRejection(webhookLog))
+                    {
+                        return FinancialAuthorityRejection(webhookLog.Id);
+                    }
+
                     _logger.LogInformation(
                         "[Fawry Webhook] Duplicate event ignored | EventId: {EventId} | TenantId: {TenantId} | TraceId: {TraceId}",
                         eventId, webhookContext.TenantId, traceId);
@@ -196,56 +203,34 @@ public class FawryWebhookController : ControllerBase
                 await _dbContext.SaveChangesAsync(ct);
 
                 WebhookResponseDto result;
-                if (FawryWebhookLifecycleAdmission.IsLifecyclePersistenceAllowed(admissionResult))
+                if (admissionResult.AdmittedToRuntime)
                 {
-                    var processedAtUtc = DateTime.UtcNow;
-                    var lifecycleRequest = FawryWebhookLifecycleAdmission.CreateRequest(
-                        admissionResult,
-                        processedAtUtc);
+                    // T-09: authenticated Fawry transport evidence is not clearing
+                    // or settlement authority. Reject before any order, payment
+                    // intent, inventory, accounting outbox, COGS outbox, or journal
+                    // mutation. The Skipped webhook log is kept as audit evidence.
+                    _logger.LogWarning(
+                        "[Fawry Webhook] Rejected success admission without financial authority | EventId: {EventId} | TenantId: {TenantId} | TraceId: {TraceId}",
+                        eventId, webhookContext.TenantId, traceId);
 
-                    var lifecycleResult = await _paymentLifecycleService.HandlePaymentResultAsync(
-                        lifecycleRequest,
-                        ct);
+                    webhookLog.ProcessingStatus = WebhookProcessingStatus.Skipped;
+                    webhookLog.ProcessingError =
+                        $"{FawryFinancialAuthorityPolicy.Code}: {FawryFinancialAuthorityPolicy.Message}";
+                    webhookLog.ProcessedAt = DateTime.UtcNow;
+                    webhookLog.ProcessingDurationMs = Math.Max(0, (long)(DateTime.UtcNow - webhookLog.CreatedAt).TotalMilliseconds);
 
-                    if (!lifecycleResult.Success)
-                    {
-                        if (lifecycleResult.RequiresManualReview)
+                    await _dbContext.SaveChangesAsync(ct);
+                    await transaction.CommitAsync(ct);
+
+                    return StatusCode(
+                        StatusCodes.Status422UnprocessableEntity,
+                        new WebhookResponseDto
                         {
-                            StorefrontSuspenseRecoveryPolicy.ApplyManualReviewMarker(
-                                lifecycleResult,
-                                webhookLog,
-                                lifecycleRequest.PaymentReference);
-
-                            result = new WebhookResponseDto
-                            {
-                                Processed = true,
-                                Message = lifecycleResult.ErrorMessage ?? "Payment quarantined for manual review.",
-                                EventLogId = webhookLog.Id
-                            };
-                        }
-                        else
-                        {
-                            throw new InvalidOperationException(
-                                $"Failed to record Fawry payment outcome: {lifecycleResult.ErrorMessage}");
-                        }
-                    }
-                    else
-                    {
-                        await _fawryWebhookRuntimeIntegrationService.PersistReplayRecordAsync(
-                            admissionResult,
-                            admissionResult.PaymentIntentId,
-                            admissionResult.OrderId,
-                            ct);
-
-                        result = new WebhookResponseDto
-                        {
-                            Processed = true,
-                            Message = lifecycleResult.StateChanged
-                                ? "Webhook processed successfully"
-                                : "Webhook replay processed idempotently",
+                            Processed = false,
+                            ErrorCode = FawryFinancialAuthorityPolicy.Code,
+                            Message = FawryFinancialAuthorityPolicy.Message,
                             EventLogId = webhookLog.Id
-                        };
-                    }
+                        });
                 }
                 else
                 {
@@ -283,6 +268,11 @@ public class FawryWebhookController : ControllerBase
                     (existingLog.ProcessingStatus == WebhookProcessingStatus.Completed ||
                      existingLog.ProcessingStatus == WebhookProcessingStatus.Skipped))
                 {
+                    if (IsFinancialAuthorityRejection(existingLog))
+                    {
+                        return FinancialAuthorityRejection(existingLog.Id);
+                    }
+
                     return Ok(new WebhookResponseDto
                     {
                         Processed = true,
@@ -511,6 +501,23 @@ public class FawryWebhookController : ControllerBase
         Processed = false,
         Message = message
     };
+
+    private static bool IsFinancialAuthorityRejection(PaymentWebhookLog log) =>
+        log.ProcessingStatus == WebhookProcessingStatus.Skipped &&
+        log.ProcessingError?.StartsWith(
+            FawryFinancialAuthorityPolicy.Code,
+            StringComparison.Ordinal) == true;
+
+    private ObjectResult FinancialAuthorityRejection(Guid eventLogId) =>
+        StatusCode(
+            StatusCodes.Status422UnprocessableEntity,
+            new WebhookResponseDto
+            {
+                Processed = false,
+                ErrorCode = FawryFinancialAuthorityPolicy.Code,
+                Message = FawryFinancialAuthorityPolicy.Message,
+                EventLogId = eventLogId
+            });
 
     private static string? ExtractMessageSignature(string rawPayload)
     {

@@ -18,6 +18,13 @@ import { useDebounce } from '../hooks/useDebounce'
 import { searchSuppliers } from '../services/entityLookup'
 import { getProductUnitsForProduct, loadProductUnitsMap } from '../services/productUnitsApi'
 import { buildIdempotencyHeaders, stableStringify } from '../utils/requestSafety'
+import {
+    formatSupplierCardLabel,
+    getSupplierCardAuthorityFields,
+    getSupplierCardErrorMessage,
+    purchaseRequiresSupplierCardInstrument,
+    supplierCardFundingApi,
+} from '../services/supplierCardFundingApi'
 
 const buildRequestId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
@@ -63,6 +70,10 @@ export default function PurchaseInvoice() {
     const [initialPaymentMethod, setInitialPaymentMethod] = useState('Cash')
     const [cashAmount, setCashAmount] = useState(0)
     const [cardAmount, setCardAmount] = useState(0)
+    const [cardInstruments, setCardInstruments] = useState([])
+    const [cardInstrumentsLoading, setCardInstrumentsLoading] = useState(true)
+    const [cardInstrumentsError, setCardInstrumentsError] = useState('')
+    const [fundingInstrumentId, setFundingInstrumentId] = useState('')
     const [dueDate, setDueDate] = useState('')
 
     // Search State (Product)
@@ -102,16 +113,36 @@ export default function PurchaseInvoice() {
 
     const fetchInitialData = useCallback(async (signal) => {
         setWarehousesLoading(true)
+        setCardInstrumentsLoading(true)
         setWarehousesError('')
+        setCardInstrumentsError('')
         try {
-            const warehousesRes = await api.get('/warehouses', { signal })
+            const [warehousesResult, instrumentsResult] = await Promise.allSettled([
+                api.get('/warehouses', { signal }),
+                supplierCardFundingApi.list({ activeOnly: true, signal }),
+            ])
 
             if (signal.aborted) {
                 return
             }
 
-            const warehouseOptions = Array.isArray(warehousesRes.data) ? warehousesRes.data : []
+            if (warehousesResult.status === 'rejected') {
+                throw warehousesResult.reason
+            }
+
+            const warehouseOptions = Array.isArray(warehousesResult.value.data) ? warehousesResult.value.data : []
             setWarehouses(warehouseOptions)
+            if (instrumentsResult.status === 'fulfilled') {
+                const instrumentOptions = instrumentsResult.value
+                setCardInstruments(instrumentOptions)
+                setFundingInstrumentId(current => instrumentOptions.some(instrument => instrument.id === current) ? current : '')
+            } else if (!isRequestCanceled(instrumentsResult.reason)) {
+                const message = getSupplierCardErrorMessage(instrumentsResult.reason, t, 'purchases.failedToLoadCardInstruments')
+                setCardInstruments([])
+                setFundingInstrumentId('')
+                setCardInstrumentsError(message)
+                showError(message)
+            }
 
             setWarehouseId(currentWarehouseId => {
                 if (currentWarehouseId && warehouseOptions.some(warehouse => warehouse.id === currentWarehouseId)) {
@@ -132,6 +163,7 @@ export default function PurchaseInvoice() {
         } finally {
             if (!signal.aborted) {
                 setWarehousesLoading(false)
+                setCardInstrumentsLoading(false)
             }
         }
     }, [showError, t])
@@ -417,6 +449,7 @@ export default function PurchaseInvoice() {
         setInitialPaymentMethod('Cash')
         setCashAmount(0)
         setCardAmount(0)
+        setFundingInstrumentId('')
         setDueDate('')
         setSearchTerm('')
         setSearchResults([])
@@ -476,6 +509,9 @@ export default function PurchaseInvoice() {
             setInitialPaymentMethod(paymentAllocationMethod)
             setCashAmount(restoredCashAmount)
             setCardAmount(restoredCardAmount)
+            const restoredCardPayment = (fullInvoice.payments || [])
+                .find(payment => payment.paymentMethod === 'Card')
+            setFundingInstrumentId(restoredCardPayment?.fundingInstrumentId || '')
             setPaidAmount(roundCurrency(fullInvoice.paidAmount))
             if (fullInvoice.paymentMethod === 'Credit' && fullInvoice.dueDate) {
                 setDueDate(fullInvoice.dueDate.split('T')[0])
@@ -636,6 +672,17 @@ export default function PurchaseInvoice() {
             showError(t('purchases.mixedRequiresBoth'))
             return
         }
+        const requiresCardInstrument = purchaseRequiresSupplierCardInstrument({
+            paymentMethod,
+            paidAmount: resolvedPaidAmount,
+            initialPaymentMethod,
+            cardAmount: paymentMethod === 'Card' ? resolvedPaidAmount : cardAmount,
+        })
+        const selectedInstrument = cardInstruments.find(instrument => instrument.id === fundingInstrumentId)
+        if (requiresCardInstrument && !selectedInstrument) {
+            showError(t('purchases.cardInstrumentRequired'))
+            return
+        }
 
         setLoading(true)
         try {
@@ -656,6 +703,7 @@ export default function PurchaseInvoice() {
                 paidAmount: resolvedPaidAmount,
                 cashAmount: usesMixedSplit ? roundCurrency(cashAmount) : null,
                 cardAmount: usesMixedSplit ? roundCurrency(cardAmount) : null,
+                ...getSupplierCardAuthorityFields(requiresCardInstrument, selectedInstrument),
                 expectedMutationVersion: editingId ? editingMutationVersion : null,
                 dueDate: paymentMethod === 'Credit' ? dueDate : null,
                 notes
@@ -700,7 +748,9 @@ export default function PurchaseInvoice() {
             }
         } catch (error) {
             console.error('Error saving purchase:', error)
-            const errorMsg = error.response?.data?.error || error.response?.data?.message || t('purchases.failedToCreate')
+            const errorMsg = error.response?.data?.code?.startsWith('SUPPLIER_CARD_')
+                ? getSupplierCardErrorMessage(error, t, 'purchases.failedToCreate')
+                : error.response?.data?.error || error.response?.data?.message || t('purchases.failedToCreate')
             showError(errorMsg)
         } finally {
             submissionLockRef.current = false
@@ -717,6 +767,13 @@ export default function PurchaseInvoice() {
         : paymentMethod === 'Credit'
             ? roundCurrency(paidAmount)
             : totals.total
+    const requiresCardInstrument = purchaseRequiresSupplierCardInstrument({
+        paymentMethod,
+        paidAmount: resolvedPaidAmount,
+        initialPaymentMethod,
+        cardAmount: paymentMethod === 'Card' ? resolvedPaidAmount : cardAmount,
+    })
+    const selectedCardInstrument = cardInstruments.find(instrument => instrument.id === fundingInstrumentId)
     const currencyIndicator = settings?.currencyCode || settings?.currencySymbol || ''
 
     return (
@@ -1059,6 +1116,7 @@ export default function PurchaseInvoice() {
                                         setPaymentMethod(nextMethod)
                                         setCashAmount(0)
                                         setCardAmount(0)
+                                        if (!['Card', 'Mixed'].includes(nextMethod)) setFundingInstrumentId('')
                                         if (nextMethod === 'Credit') {
                                             setPaidAmount(0)
                                         } else if (nextMethod === 'Mixed') {
@@ -1109,6 +1167,7 @@ export default function PurchaseInvoice() {
                                                     } else {
                                                         setCashAmount(0)
                                                         setCardAmount(0)
+                                                        if (nextInitialMethod !== 'Card') setFundingInstrumentId('')
                                                     }
                                                 }}
                                                 className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
@@ -1155,6 +1214,36 @@ export default function PurchaseInvoice() {
                                     </div>
                                 </div>
                             ) : null}
+
+                            {requiresCardInstrument && (
+                                <div>
+                                    <label htmlFor="purchase-funding-instrument" className={`label ${isRTL ? 'text-right' : 'text-left'}`}>
+                                        {t('purchases.fundingInstrument')} <span className="text-red-500">*</span>
+                                    </label>
+                                    <select
+                                        id="purchase-funding-instrument"
+                                        value={fundingInstrumentId}
+                                        onChange={(event) => setFundingInstrumentId(event.target.value)}
+                                        className={`input w-full ${isRTL ? 'text-right' : 'text-left'}`}
+                                        required
+                                        disabled={isBusy || cardInstrumentsLoading || cardInstruments.length === 0}
+                                    >
+                                        <option value="">{cardInstrumentsLoading ? t('common.loading') : t('purchases.selectFundingInstrument')}</option>
+                                        {cardInstruments.map(instrument => (
+                                            <option key={instrument.id} value={instrument.id}>
+                                                {formatSupplierCardLabel(instrument)} · {formatCurrency(instrument.availableBalance)}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {!cardInstrumentsLoading && cardInstrumentsError && (
+                                        <p className="mt-1 text-sm text-red-700" role="alert">{cardInstrumentsError}</p>
+                                    )}
+                                    {!cardInstrumentsLoading && !cardInstrumentsError && cardInstruments.length === 0 && (
+                                        <p className="mt-1 rounded-lg border border-red-200 bg-red-50 p-3 text-sm font-medium text-red-700" role="alert">{t('purchases.noCardInstruments')}</p>
+                                    )}
+                                    {selectedCardInstrument && <p className="mt-1 text-xs text-slate-600">{t('purchases.cardBalance')}: {formatCurrency(selectedCardInstrument.availableBalance)} · {t('purchases.fundingSource')}: {selectedCardInstrument.fundingSourceName}</p>}
+                                </div>
+                            )}
 
                             <div className="pt-2">
                                 <div className={`flex justify-between text-sm mb-2 ${isRTL ? 'flex-row-reverse' : ''}`}>

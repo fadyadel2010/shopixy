@@ -265,6 +265,8 @@ public sealed class PurchaseInvoicePaymentResponseDto
     public DateTime PaymentDate { get; set; }
     public decimal Amount { get; set; }
     public PaymentMethod PaymentMethod { get; set; }
+    public Guid? FundingInstrumentId { get; set; }
+    public int? FundingInstrumentVersion { get; set; }
     public string? ReferenceNumber { get; set; }
 }
 

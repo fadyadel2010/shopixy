@@ -25,8 +25,11 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class FawryCertificationClosure5Tests
 {
     [Fact]
-    public async Task RegistrationIntent_MustBePersistedBeforeProviderExecution_AndRetryMustReuseCompletion()
+    public async Task RegistrationIntent_MustFailClosedWithStableAuthorityBeforeProviderExecution()
     {
+        // T-09: Fawry has no certified financial settlement authority. New Fawry
+        // financial activity fails closed before any intent, checkpoint, or
+        // provider call is created.
         var tenantId = Guid.NewGuid();
         await using var dbContext = CreateDbContext(tenantId);
         var order = SeedOrder(tenantId);
@@ -35,114 +38,78 @@ public sealed class FawryCertificationClosure5Tests
 
         var checkpointStore = new FawryProviderCheckpointStore(dbContext);
         var application = new Mock<IFawryRuntimeApplicationService>(MockBehavior.Strict);
-        application
-            .Setup(service => service.CreatePaymentIntentAsync(
-                It.IsAny<FawryRuntimePaymentIntentApplicationRequest>(),
-                It.IsAny<CancellationToken>()))
-            .Returns(async (FawryRuntimePaymentIntentApplicationRequest _, CancellationToken cancellationToken) =>
-            {
-                var persistedIntent = await dbContext.PaymentIntents.SingleAsync(cancellationToken);
-                Assert.Equal(
-                    FawryProviderCheckpointState.RegistrationStarted,
-                    checkpointStore.Load(persistedIntent).State);
-                Assert.Null(persistedIntent.ProviderIntentId);
-                Assert.Null(persistedIntent.ReferenceCode);
-
-                return SuccessfulApplicationResult("963455678");
-            });
 
         var service = CreateService(dbContext, checkpointStore, application.Object);
         const string requestId = "fawry-checkpoint-success";
 
-        var response = await service.CreatePaymentIntentAsync(
-            tenantId,
-            order.Id,
-            new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
-            promotionCalculationFailed: false,
-            requestId,
-            correlationId: "fawry-checkpoint-success",
-            CancellationToken.None);
-
-        dbContext.ChangeTracker.Clear();
-        var completedIntent = await dbContext.PaymentIntents.SingleAsync();
-        Assert.Equal("963455678", response.ReferenceCode);
-        Assert.Equal("963455678", completedIntent.ProviderIntentId);
-        Assert.Equal("963455678", completedIntent.ReferenceCode);
-        Assert.Equal(FawryProviderCheckpointState.Completed, checkpointStore.Load(completedIntent).State);
-
-        var replay = await service.CreatePaymentIntentAsync(
-            tenantId,
-            order.Id,
-            new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
-            promotionCalculationFailed: false,
-            requestId,
-            correlationId: "fawry-checkpoint-replay",
-            CancellationToken.None);
-
-        Assert.Equal("963455678", replay.ReferenceCode);
-        application.Verify(
-            candidate => candidate.CreatePaymentIntentAsync(
-                It.IsAny<FawryRuntimePaymentIntentApplicationRequest>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-    }
-
-    [Fact]
-    public async Task AmbiguousProviderOutcome_MustKeepStartedCheckpoint_AndBlockDuplicateCharge()
-    {
-        var tenantId = Guid.NewGuid();
-        await using var dbContext = CreateDbContext(tenantId);
-        var order = SeedOrder(tenantId);
-        dbContext.Orders.Add(order);
-        await dbContext.SaveChangesAsync();
-
-        var checkpointStore = new FawryProviderCheckpointStore(dbContext);
-        var application = new Mock<IFawryRuntimeApplicationService>(MockBehavior.Strict);
-        application
-            .Setup(service => service.CreatePaymentIntentAsync(
-                It.IsAny<FawryRuntimePaymentIntentApplicationRequest>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new HttpRequestException("response lost after submission"));
-
-        var service = CreateService(dbContext, checkpointStore, application.Object);
-        const string requestId = "fawry-checkpoint-ambiguous";
-
-        await Assert.ThrowsAsync<HttpRequestException>(() => service.CreatePaymentIntentAsync(
-            tenantId,
-            order.Id,
-            new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
-            promotionCalculationFailed: false,
-            requestId,
-            correlationId: "fawry-checkpoint-first",
-            CancellationToken.None));
-
-        dbContext.ChangeTracker.Clear();
-        var fencedIntent = await dbContext.PaymentIntents.SingleAsync();
-        Assert.Equal(
-            FawryProviderCheckpointState.RegistrationStarted,
-            checkpointStore.Load(fencedIntent).State);
-
-        var retry = await Assert.ThrowsAsync<PaymentOrderInvalidStateException>(() =>
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
             service.CreatePaymentIntentAsync(
                 tenantId,
                 order.Id,
                 new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
                 promotionCalculationFailed: false,
                 requestId,
-                correlationId: "fawry-checkpoint-retry",
+                correlationId: "fawry-checkpoint-success",
                 CancellationToken.None));
 
-        Assert.Equal("FAWRY_PROVIDER_CHARGE_OUTCOME_UNKNOWN", retry.ErrorCode);
+        Assert.Equal(
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+            exception.ErrorCode);
+        Assert.Empty(await dbContext.PaymentIntents.ToListAsync());
         application.Verify(
             candidate => candidate.CreatePaymentIntentAsync(
                 It.IsAny<FawryRuntimePaymentIntentApplicationRequest>(),
                 It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
     }
 
     [Fact]
-    public async Task Recovery_MustFinalizeAcceptedReferenceWithoutAnotherProviderCall()
+    public async Task AmbiguousProviderOutcome_MustFailClosedWithStableAuthorityBeforeProviderExecution()
     {
+        // T-09: Fawry initiation never reaches provider execution, so no
+        // ambiguous provider outcome can exist. The stable authority rejection
+        // is returned before any intent, checkpoint, or provider call.
+        var tenantId = Guid.NewGuid();
+        await using var dbContext = CreateDbContext(tenantId);
+        var order = SeedOrder(tenantId);
+        dbContext.Orders.Add(order);
+        await dbContext.SaveChangesAsync();
+
+        var checkpointStore = new FawryProviderCheckpointStore(dbContext);
+        var application = new Mock<IFawryRuntimeApplicationService>(MockBehavior.Strict);
+
+        var service = CreateService(dbContext, checkpointStore, application.Object);
+        const string requestId = "fawry-checkpoint-ambiguous";
+
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
+            service.CreatePaymentIntentAsync(
+                tenantId,
+                order.Id,
+                new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
+                promotionCalculationFailed: false,
+                requestId,
+                correlationId: "fawry-checkpoint-first",
+                CancellationToken.None));
+
+        Assert.Equal(
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+            exception.ErrorCode);
+
+        dbContext.ChangeTracker.Clear();
+        Assert.Empty(await dbContext.PaymentIntents.ToListAsync());
+        application.Verify(
+            candidate => candidate.CreatePaymentIntentAsync(
+                It.IsAny<FawryRuntimePaymentIntentApplicationRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task Recovery_MustFailClosedWithStableAuthorityWithoutAnotherProviderCall()
+    {
+        // T-09: checkout payment-intent recovery must not initiate or resume
+        // Fawry. The direct initiation boundary fails closed with the stable
+        // authority code and the provider is never called.
         var tenantId = Guid.NewGuid();
         await using var dbContext = CreateDbContext(tenantId);
         var order = SeedOrder(tenantId);
@@ -166,19 +133,21 @@ public sealed class FawryCertificationClosure5Tests
         var application = new Mock<IFawryRuntimeApplicationService>(MockBehavior.Strict);
         var service = CreateService(dbContext, checkpointStore, application.Object);
 
-        var response = await service.CreatePaymentIntentAsync(
-            tenantId,
-            order.Id,
-            new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
-            promotionCalculationFailed: false,
-            intent.IdempotencyKey,
-            correlationId: "fawry-checkpoint-recovery",
-            CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<PaymentFawryFinancialAuthorityException>(() =>
+            service.CreatePaymentIntentAsync(
+                tenantId,
+                order.Id,
+                new CreatePaymentIntentRequestDto { Provider = PaymentProvider.Fawry.ToString() },
+                promotionCalculationFailed: false,
+                intent.IdempotencyKey,
+                correlationId: "fawry-checkpoint-recovery",
+                CancellationToken.None));
 
-        Assert.Equal("963455679", response.ReferenceCode);
+        Assert.Equal(
+            PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.Code,
+            exception.ErrorCode);
         dbContext.ChangeTracker.Clear();
-        var recovered = await dbContext.PaymentIntents.SingleAsync();
-        Assert.Equal(FawryProviderCheckpointState.Completed, checkpointStore.Load(recovered).State);
+        Assert.Single(await dbContext.PaymentIntents.ToListAsync());
         application.VerifyNoOtherCalls();
     }
 

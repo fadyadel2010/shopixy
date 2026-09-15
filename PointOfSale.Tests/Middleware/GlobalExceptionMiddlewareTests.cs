@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Middleware;
 using PointOfSale.API.Services.Feeds;
+using PointOfSale.Core.Exceptions.Accounting;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.MultiTenancy;
 
@@ -55,8 +56,8 @@ public class GlobalExceptionMiddlewareTests
         using var document = await JsonDocument.ParseAsync(httpContext.Response.Body);
         Assert.Equal("DEPENDENCY_UNAVAILABLE", document.RootElement.GetProperty("code").GetString());
         Assert.Equal("A required service is temporarily unavailable. Please try again.", document.RootElement.GetProperty("message").GetString());
-        Assert.Equal("corr-dependency-1", document.RootElement.GetProperty("correlationId").GetString());
-        Assert.False(document.RootElement.TryGetProperty("traceId", out _));
+        Assert.Equal("corr-dependency-1", document.RootElement.GetProperty("traceId").GetString());
+        Assert.False(document.RootElement.TryGetProperty("correlationId", out _));
         Assert.DoesNotContain("bucket-down", document.RootElement.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -91,8 +92,8 @@ public class GlobalExceptionMiddlewareTests
         using var document = await JsonDocument.ParseAsync(httpContext.Response.Body);
         Assert.Equal("CONFLICT", document.RootElement.GetProperty("code").GetString());
         Assert.Equal("Resource was modified by another process", document.RootElement.GetProperty("message").GetString());
-        Assert.Equal("corr-concurrency-1", document.RootElement.GetProperty("correlationId").GetString());
-        Assert.False(document.RootElement.TryGetProperty("traceId", out _));
+        Assert.Equal("corr-concurrency-1", document.RootElement.GetProperty("traceId").GetString());
+        Assert.False(document.RootElement.TryGetProperty("correlationId", out _));
     }
 
     [Fact]
@@ -133,12 +134,44 @@ public class GlobalExceptionMiddlewareTests
         using var document = await JsonDocument.ParseAsync(httpContext.Response.Body);
         Assert.Equal("ORDER_INVALID_STATE", document.RootElement.GetProperty("code").GetString());
         Assert.Equal("Order transition is not allowed.", document.RootElement.GetProperty("message").GetString());
-        Assert.Equal("corr-domain-1", document.RootElement.GetProperty("correlationId").GetString());
-        Assert.False(document.RootElement.TryGetProperty("traceId", out _));
+        Assert.Equal("corr-domain-1", document.RootElement.GetProperty("traceId").GetString());
+        Assert.False(document.RootElement.TryGetProperty("correlationId", out _));
 
-        var details = document.RootElement.GetProperty("details");
-        Assert.Equal("completed", details.GetProperty("currentState").GetString());
-        Assert.Equal("capture_payment", details.GetProperty("operation").GetString());
+        var data = document.RootElement.GetProperty("data");
+        Assert.Equal("completed", data.GetProperty("currentState").GetString());
+        Assert.Equal("capture_payment", data.GetProperty("operation").GetString());
+    }
+
+    [Fact]
+    public async Task InvokeAsync_InsufficientFunds_ReturnsStableConflictWithoutLeakingException()
+    {
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection().BuildServiceProvider(),
+            TraceIdentifier = "funding-insufficient-1"
+        };
+        httpContext.Request.Path = "/api/supplier-card-funding-instruments/card-id/fundings";
+        httpContext.Request.Method = HttpMethods.Post;
+        httpContext.Response.Body = new MemoryStream();
+
+        var middleware = new GlobalExceptionMiddleware(
+            _ => throw new InsufficientFundsException("1010", 20m, 80m),
+            NullLogger<GlobalExceptionMiddleware>.Instance);
+
+        await middleware.InvokeAsync(httpContext);
+
+        Assert.Equal(StatusCodes.Status409Conflict, httpContext.Response.StatusCode);
+        httpContext.Response.Body.Position = 0;
+        using var document = await JsonDocument.ParseAsync(httpContext.Response.Body);
+        Assert.Equal("INSUFFICIENT_FUNDS", document.RootElement.GetProperty("code").GetString());
+        Assert.Equal("The selected account does not have sufficient available funds.", document.RootElement.GetProperty("message").GetString());
+        Assert.Equal("funding-insufficient-1", document.RootElement.GetProperty("traceId").GetString());
+        var data = document.RootElement.GetProperty("data");
+        Assert.Equal("1010", data.GetProperty("accountCode").GetString());
+        Assert.Equal(20m, data.GetProperty("availableBalance").GetDecimal());
+        Assert.Equal(80m, data.GetProperty("requiredAmount").GetDecimal());
+        Assert.Equal(60m, data.GetProperty("shortfall").GetDecimal());
+        Assert.DoesNotContain(nameof(InsufficientFundsException), document.RootElement.ToString(), StringComparison.Ordinal);
     }
 
     [Fact]

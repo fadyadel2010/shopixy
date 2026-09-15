@@ -795,6 +795,14 @@ public class CheckoutService : ICheckoutService
                     throw new CheckoutIdempotencyInProgressException(durableReplay.CheckoutId ?? checkoutId);
             }
 
+            // Completed historical requests above are read-only replays. New
+            // Fawry checkout admission stops here before locks, cart mutation,
+            // idempotency claims, events, orders, reservations, or provider work.
+            if (PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(request.PaymentMethod))
+            {
+                throw new CheckoutFawryFinancialAuthorityException(request.PaymentMethod);
+            }
+
             // Completed idempotent replays above do not create new authority.
             // Any new checkout execution must prove SQL StoreConfig is live.
             activeStep = "StorefrontAvailability";
@@ -3682,20 +3690,9 @@ public class CheckoutService : ICheckoutService
                     cancellationToken: cancellationToken);
                 break;
             case "FAWRY":
-                await CreateCheckoutPaymentSessionAsync(
-                    tenantId,
-                    order,
-                    paymentMethodCode,
-                    checkoutToken: null,
-                    customerId: null,
-                    promotionCalculationFailed: order.PromotionCalculationFailed,
-                    requestId: checkoutId,
-                    correlationId: correlationId,
-                    walletType: null,
-                    walletPhoneNumber: null,
-                    proofFileKey: null,
-                    cancellationToken: cancellationToken);
-                break;
+                // T-09: Fawry has no certified financial settlement authority.
+                // Replay must not initiate provider execution.
+                throw new CheckoutFawryFinancialAuthorityException(paymentMethodCode);
             case "MANUALWALLET":
                 // Resolve wallet details first to check configuration before creating intent
                 var walletDetails = await ResolveManualWalletDetailsAsync(
@@ -3887,6 +3884,13 @@ public class CheckoutService : ICheckoutService
             !CanRegenerateOnlineProviderHandoff(paymentIntent))
         {
             return paymentIntent;
+        }
+
+        // T-09: Fawry handoff regeneration would initiate provider execution
+        // without certified financial settlement authority.
+        if (PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(paymentMethodCode))
+        {
+            throw new CheckoutFawryFinancialAuthorityException(paymentMethodCode ?? "FAWRY");
         }
 
         _logger.LogWarning(
@@ -5889,6 +5893,17 @@ public class CheckoutService : ICheckoutService
         bool lockAuthorityRow = false)
     {
         var normalizedCode = NormalizePaymentMethodCode(paymentMethodCode);
+
+        // T-09: Fawry has no certified financial settlement authority. Reject at
+        // the earliest provider-specific boundary, before any order, inventory
+        // reservation, payment intent, provider call, or outbox mutation.
+        if (PointOfSale.Core.Payments.FawryFinancialAuthorityPolicy.IsFawry(normalizedCode))
+        {
+            _logger.LogWarning(
+                "Payment method rejected without Fawry financial authority | Code: {Code} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+                normalizedCode, tenantId, correlationId);
+            throw new CheckoutFawryFinancialAuthorityException(normalizedCode);
+        }
 
         var paymentMethod = await LoadPaymentMethodAuthorityAsync(
             normalizedCode,

@@ -103,6 +103,8 @@ public class ApplicationDbContext : DbContext
     public DbSet<PurchaseInvoiceItem> PurchaseInvoiceItems => Set<PurchaseInvoiceItem>();
     public DbSet<PurchaseInvoicePayment> PurchaseInvoicePayments => Set<PurchaseInvoicePayment>();
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+    public DbSet<SupplierCardFundingInstrument> SupplierCardFundingInstruments => Set<SupplierCardFundingInstrument>();
+    public DbSet<SupplierCardFunding> SupplierCardFundings => Set<SupplierCardFunding>();
     public DbSet<PurchaseRequestIdempotency> PurchaseRequestIdempotencyRecords => Set<PurchaseRequestIdempotency>();
     public DbSet<PurchaseReturnRequestIdempotency> PurchaseReturnRequestIdempotencyRecords => Set<PurchaseReturnRequestIdempotency>();
     public DbSet<ProductRequestIdempotency> ProductRequestIdempotencyRecords => Set<ProductRequestIdempotency>();
@@ -431,6 +433,8 @@ public class ApplicationDbContext : DbContext
     
     // Treasury Accounts (cashboxes, banks, clearing accounts)
     public DbSet<TreasuryAccount> TreasuryAccounts => Set<TreasuryAccount>();
+    public DbSet<TreasuryInitialCapitalization> TreasuryInitialCapitalizations => Set<TreasuryInitialCapitalization>();
+    public DbSet<TreasuryInitialCapitalizationAllocation> TreasuryInitialCapitalizationAllocations => Set<TreasuryInitialCapitalizationAllocation>();
     
     // ═══════════════════════════════════════════════════════════════════════════
     // UNIFIED FINANCIAL ENGINE (Phase 3.5 - Production Hardening)
@@ -736,6 +740,10 @@ public class ApplicationDbContext : DbContext
 
         modelBuilder.Entity<SupplierPayment>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<SupplierCardFundingInstrument>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<SupplierCardFunding>().HasQueryFilter(e =>
+            !e.IsDeleted && e.TenantId == CurrentTenantId);
 
         modelBuilder.Entity<PartyLedgerAdjustment>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -945,6 +953,10 @@ public class ApplicationDbContext : DbContext
         
         // Treasury Accounts (cashboxes, banks, clearing accounts)
         modelBuilder.Entity<TreasuryAccount>().HasQueryFilter(e =>
+            e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<TreasuryInitialCapitalization>().HasQueryFilter(e =>
+            e.TenantId == CurrentTenantId);
+        modelBuilder.Entity<TreasuryInitialCapitalizationAllocation>().HasQueryFilter(e =>
             e.TenantId == CurrentTenantId);
         
         // -------------------------------------------------------------------------
@@ -2536,6 +2548,10 @@ public class ApplicationDbContext : DbContext
             entity.Property(item => item.VariantName).HasMaxLength(250);
             entity.Property(item => item.ImageUrl).HasMaxLength(1000);
             entity.Property(item => item.UnitPrice).HasPrecision(18, 2);
+            // T-08: immutable merchandise-cost authority. Unit precision matches the
+            // POS CostPriceSnapshot convention (18,6); amount matches CostAmountSnapshot (18,2).
+            entity.Property(item => item.UnitCostSnapshot).HasPrecision(18, 6);
+            entity.Property(item => item.CostAmountSnapshot).HasPrecision(18, 2);
             entity.Property(item => item.PlatformCommissionRate).HasPrecision(8, 6);
             entity.Property(item => item.PlatformCommissionAmount).HasPrecision(18, 2);
             entity.Property(item => item.Total).HasPrecision(18, 2);
@@ -3730,6 +3746,7 @@ public class ApplicationDbContext : DbContext
         GuardCommerceHubFinancialLifecycleRecordImmutability();
         GuardCommerceHubFinancialLedgerImmutability();
         GuardTreasuryCashAuthority();
+        GuardSupplierCardAuthority();
         GuardCommerceHubFinancialSafetyGuardImmutability();
         GuardCommerceHubVendorSettlementImmutability();
         GuardCommerceHubPriceAuthority();
@@ -7020,6 +7037,51 @@ public class ApplicationDbContext : DbContext
 
     private void GuardTreasuryCashAuthority()
     {
+        foreach (var entry in ChangeTracker.Entries<TreasuryInitialCapitalizationAllocation>())
+        {
+            if (entry.State is EntityState.Modified or EntityState.Deleted)
+            {
+                throw new InvalidOperationException(
+                    "Treasury initial capitalization allocations are immutable.");
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<TreasuryInitialCapitalization>())
+        {
+            if (entry.State == EntityState.Deleted)
+            {
+                throw new InvalidOperationException(
+                    "Treasury initial capitalization documents cannot be deleted.");
+            }
+
+            if (entry.State != EntityState.Modified)
+            {
+                continue;
+            }
+
+            var allowedProperties = new HashSet<string>(StringComparer.Ordinal)
+            {
+                nameof(TreasuryInitialCapitalization.Status),
+                nameof(TreasuryInitialCapitalization.PostedAtUtc),
+                nameof(TreasuryInitialCapitalization.PostedJournalId),
+                nameof(TreasuryInitialCapitalization.ReversalJournalId),
+                nameof(TreasuryInitialCapitalization.ReversalOperationId),
+                nameof(TreasuryInitialCapitalization.ReversalRequestHash),
+                nameof(TreasuryInitialCapitalization.ReversalReason),
+                nameof(TreasuryInitialCapitalization.ReversedAtUtc),
+                nameof(TreasuryInitialCapitalization.MutationVersion),
+                nameof(BaseEntity.UpdatedAt),
+                nameof(BaseEntity.UpdatedBy)
+            };
+
+            if (entry.Properties.Any(property =>
+                    property.IsModified && !allowedProperties.Contains(property.Metadata.Name)))
+            {
+                throw new InvalidOperationException(
+                    "Treasury initial capitalization source authority is immutable after creation.");
+            }
+        }
+
         foreach (var entry in ChangeTracker.Entries<LedgerEntry>())
         {
             if (entry.State == EntityState.Added &&
@@ -7045,7 +7107,8 @@ public class ApplicationDbContext : DbContext
 
             if (entry.Property(nameof(Account.TenantId)).IsModified ||
                 entry.Property(nameof(Account.AccountCode)).IsModified ||
-                entry.Property(nameof(Account.AccountType)).IsModified)
+                entry.Property(nameof(Account.AccountType)).IsModified ||
+                entry.Property(nameof(Account.IsSupplierCardFunding)).IsModified)
             {
                 throw new InvalidOperationException(
                     $"{nameof(Account)} tenant, code, and classification are immutable.");
@@ -7121,6 +7184,92 @@ public class ApplicationDbContext : DbContext
                 throw new InvalidOperationException(
                     $"{nameof(TreasuryAccount)} tenant, ledger account, and type are immutable.");
             }
+        }
+    }
+
+    private void GuardSupplierCardAuthority()
+    {
+        GuardImmutableCommerceHubEntity<SupplierCardFunding>();
+
+        foreach (var entry in ChangeTracker.Entries<SupplierCardFundingInstrument>())
+        {
+            if (entry.State == EntityState.Deleted)
+                throw new InvalidOperationException("Supplier card funding instruments cannot be deleted; deactivate them instead.");
+            if (entry.State != EntityState.Modified)
+                continue;
+
+            var immutableProperties = new[]
+            {
+                nameof(SupplierCardFundingInstrument.TenantId),
+                nameof(SupplierCardFundingInstrument.InstrumentType),
+                nameof(SupplierCardFundingInstrument.LedgerAccountId),
+                nameof(SupplierCardFundingInstrument.FundingSourceTreasuryAccountId),
+                nameof(SupplierCardFundingInstrument.AuthorityVersion)
+            };
+            if (immutableProperties.Any(name => entry.Property(name).IsModified))
+                throw new InvalidOperationException("Supplier card instrument accounting authority is immutable.");
+        }
+
+        foreach (var entry in ChangeTracker.Entries<PurchaseInvoicePayment>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                GuardNewSupplierCardSnapshot(
+                    entry.Entity.PaymentMethod,
+                    entry.Entity.FundingInstrumentId,
+                    entry.Entity.FundingLedgerAccountId,
+                    entry.Entity.FundingInstrumentVersion,
+                    nameof(PurchaseInvoicePayment));
+            }
+            else if (entry.State == EntityState.Modified &&
+                (entry.Property(nameof(PurchaseInvoicePayment.PaymentMethod)).IsModified ||
+                 entry.Property(nameof(PurchaseInvoicePayment.FundingInstrumentId)).IsModified ||
+                 entry.Property(nameof(PurchaseInvoicePayment.FundingLedgerAccountId)).IsModified ||
+                 entry.Property(nameof(PurchaseInvoicePayment.FundingInstrumentVersion)).IsModified))
+            {
+                throw new InvalidOperationException("Purchase payment method and supplier card authority snapshots are immutable.");
+            }
+        }
+
+        foreach (var entry in ChangeTracker.Entries<SupplierPayment>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                GuardNewSupplierCardSnapshot(
+                    entry.Entity.PaymentMethod,
+                    entry.Entity.FundingInstrumentId,
+                    entry.Entity.FundingLedgerAccountId,
+                    entry.Entity.FundingInstrumentVersion,
+                    nameof(SupplierPayment));
+            }
+            else if (entry.State == EntityState.Modified &&
+                (entry.Property(nameof(SupplierPayment.PaymentMethod)).IsModified ||
+                 entry.Property(nameof(SupplierPayment.FundingInstrumentId)).IsModified ||
+                 entry.Property(nameof(SupplierPayment.FundingLedgerAccountId)).IsModified ||
+                 entry.Property(nameof(SupplierPayment.FundingInstrumentVersion)).IsModified))
+            {
+                throw new InvalidOperationException("Supplier payment method and card authority snapshots are immutable.");
+            }
+        }
+    }
+
+    private static void GuardNewSupplierCardSnapshot(
+        PointOfSale.Core.Enums.PaymentMethod paymentMethod,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion,
+        string entityName)
+    {
+        var hasCompleteAuthority = fundingInstrumentId.HasValue && fundingInstrumentId != Guid.Empty &&
+            fundingLedgerAccountId.HasValue && fundingLedgerAccountId != Guid.Empty &&
+            fundingInstrumentVersion > 0;
+        var hasAnyAuthority = fundingInstrumentId.HasValue || fundingLedgerAccountId.HasValue || fundingInstrumentVersion.HasValue;
+
+        if ((paymentMethod == PointOfSale.Core.Enums.PaymentMethod.Card && !hasCompleteAuthority) ||
+            (paymentMethod != PointOfSale.Core.Enums.PaymentMethod.Card && hasAnyAuthority))
+        {
+            throw new InvalidOperationException(
+                $"{entityName} supplier card authority must be complete for Card payments and absent otherwise.");
         }
     }
 

@@ -1,0 +1,4 @@
+# M4 per-run raw artifacts are local-only validation evidence and are never committed.
+# The committed record for each phase is tests/load/M*_REPORT.md.
+*
+!.gitignore

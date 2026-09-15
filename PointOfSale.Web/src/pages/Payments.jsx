@@ -9,6 +9,12 @@ import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
 import { toSafeNumber } from '../utils/financialMath'
 import { getPartyBalanceColorClass } from '../utils/partyBalancePresentation'
+import { stableStringify } from '../utils/requestSafety'
+import {
+    getSupplierCardErrorMessage,
+    resolveSupplierCardAttempt,
+    supplierCardFundingApi,
+} from '../services/supplierCardFundingApi'
 
 const Payments = () => {
     const { t } = useTranslation()
@@ -20,9 +26,13 @@ const Payments = () => {
     const [selectedParty, setSelectedParty] = useState(null)
     const [partyBalance, setPartyBalance] = useState(null)
     const [paymentHistory, setPaymentHistory] = useState([])
+    const [cardInstruments, setCardInstruments] = useState([])
+    const [cardInstrumentsLoading, setCardInstrumentsLoading] = useState(false)
+    const [cardInstrumentsError, setCardInstrumentsError] = useState('')
     const [showPaymentModal, setShowPaymentModal] = useState(false)
     const [loading, setLoading] = useState(false)
     const submissionLockRef = useRef(false)
+    const supplierPaymentAttemptRef = useRef(null)
 
     const partyType = activeTab === 'receive' ? 'Customer' : 'Supplier'
     const isBusy = loading
@@ -34,6 +44,33 @@ const Payments = () => {
 
         return () => controller.abort()
     }, [activeTab])
+
+    useEffect(() => {
+        if (activeTab !== 'make') {
+            setCardInstruments([])
+            setCardInstrumentsError('')
+            setCardInstrumentsLoading(false)
+            return
+        }
+
+        const controller = new AbortController()
+        setCardInstrumentsLoading(true)
+        setCardInstrumentsError('')
+        supplierCardFundingApi.list({ activeOnly: true, signal: controller.signal })
+            .then(setCardInstruments)
+            .catch(error => {
+                if (!isRequestCanceled(error)) {
+                    const message = getSupplierCardErrorMessage(error, t, 'purchases.failedToLoadCardInstruments')
+                    setCardInstruments([])
+                    setCardInstrumentsError(message)
+                    showError(message)
+                }
+            })
+            .finally(() => {
+                if (!controller.signal.aborted) setCardInstrumentsLoading(false)
+            })
+        return () => controller.abort()
+    }, [activeTab, showError, t])
 
     useEffect(() => {
         if (selectedParty) {
@@ -140,10 +177,18 @@ const Payments = () => {
                 })
                 showSuccess(t('accounts.paymentReceivedSuccess'))
             } else {
+                const fingerprint = stableStringify({ supplierId: selectedParty, ...sanitizedPaymentData })
+                const attempt = resolveSupplierCardAttempt(
+                    supplierPaymentAttemptRef.current,
+                    fingerprint,
+                    'supplier-payment',
+                )
+                supplierPaymentAttemptRef.current = attempt
                 await paymentsApi.makePayment({
                     supplierId: selectedParty,
                     ...sanitizedPaymentData,
-                })
+                }, { idempotencyKey: attempt.idempotencyKey })
+                supplierPaymentAttemptRef.current = null
                 showSuccess(t('accounts.paymentMadeSuccess'))
             }
             setShowPaymentModal(false)
@@ -152,7 +197,9 @@ const Payments = () => {
                 loadPaymentHistory(refreshController.signal)
             ])
         } catch (error) {
-            showError(t('accounts.failedToProcessPayment'))
+            showError(activeTab === 'make'
+                ? getSupplierCardErrorMessage(error, t, 'accounts.failedToProcessPayment')
+                : (error.response?.data?.message || t('accounts.failedToProcessPayment')))
         } finally {
             submissionLockRef.current = false
             setLoading(false)
@@ -320,6 +367,9 @@ const Payments = () => {
                     balanceType={partyBalance?.balanceType}
                     type={activeTab}
                     loading={loading}
+                    cardInstruments={cardInstruments}
+                    cardInstrumentsLoading={cardInstrumentsLoading}
+                    cardInstrumentsError={cardInstrumentsError}
                 />
             )}
         </div>

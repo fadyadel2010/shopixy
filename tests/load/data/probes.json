@@ -1,0 +1,57 @@
+{
+  "marker": "NON-PRODUCTION TEST DATA",
+  "seedVersion": "m2.1",
+  "probes": [
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-a",
+      "tenantId": "8242b275-ee28-5e42-b37c-62eb48e2c1b6",
+      "slug": "loadtest-tenant-a",
+      "probeProductId": "adc0e08b-64e5-59d6-9153-06456aeb5c5c",
+      "probeName": "TEST-PROBE-TENANT-A",
+      "probeSlug": "lt-probe-tenant-a",
+      "probeSku": "LT-PROBE-A",
+      "probeBarcode": "LTBCPROBEA001",
+      "probePrice": "111.11",
+      "probeCategoryId": "5fd607ce-179f-5af4-887c-92ec3941956d",
+      "probeCategoryName": "TEST-PROBE-CAT-A",
+      "probeCustomerId": "18909a41-2693-562c-950d-70d197827c09",
+      "probeCustomerEmail": "test-probe-customer-a@loadtest.local",
+      "sentinelOrderCreated": false
+    },
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-b",
+      "tenantId": "d74f075b-e0f5-57a2-80cd-cd3ab6ed616e",
+      "slug": "loadtest-tenant-b",
+      "probeProductId": "a6b0668b-823f-56b8-81c6-cee6f5b8b5fb",
+      "probeName": "TEST-PROBE-TENANT-B",
+      "probeSlug": "lt-probe-tenant-b",
+      "probeSku": "LT-PROBE-B",
+      "probeBarcode": "LTBCPROBEB001",
+      "probePrice": "222.22",
+      "probeCategoryId": "7850d3c8-20f8-5238-9330-5435c669a97a",
+      "probeCategoryName": "TEST-PROBE-CAT-B",
+      "probeCustomerId": "8cfef1d8-c32c-5e78-a7de-4d54ffab1b74",
+      "probeCustomerEmail": "test-probe-customer-b@loadtest.local",
+      "sentinelOrderCreated": false
+    },
+    {
+      "marker": "NON-PRODUCTION TEST DATA",
+      "tenantKey": "tenant-c",
+      "tenantId": "6b9c21af-8eba-5b8a-87d7-da4a40263717",
+      "slug": "loadtest-tenant-c",
+      "probeProductId": "cdf712a5-e2ae-56c7-bead-a2cc85f84570",
+      "probeName": "TEST-PROBE-TENANT-C",
+      "probeSlug": "lt-probe-tenant-c",
+      "probeSku": "LT-PROBE-C",
+      "probeBarcode": "LTBCPROBEC001",
+      "probePrice": "333.33",
+      "probeCategoryId": "4f7279e2-ba68-5ef4-b64c-9ea730ff6ef1",
+      "probeCategoryName": "TEST-PROBE-CAT-C",
+      "probeCustomerId": "e5083ae7-52b9-5744-946f-682584dd6906",
+      "probeCustomerEmail": "test-probe-customer-c@loadtest.local",
+      "sentinelOrderCreated": false
+    }
+  ]
+}

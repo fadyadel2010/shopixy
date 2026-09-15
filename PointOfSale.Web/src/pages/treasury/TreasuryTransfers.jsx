@@ -3,8 +3,8 @@
  * 
  * ENTERPRISE FINANCIAL CONTROL SCREEN
  * 
- * This screen allows administrators to settle clearing balances and move funds
- * between accounts in a ledger-safe, auditable, and controlled way.
+ * This screen moves funds between cashbox and bank accounts in a ledger-safe,
+ * auditable, and controlled way. Clearing settlement belongs to Payment Lifecycle.
  * 
  * HARD RULES (Non-Negotiable):
  * ❌ UI NEVER modifies balances
@@ -17,19 +17,26 @@
  * PHASE: Treasury Operations Layer Completion
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useSettings } from '../../contexts/SettingsContext'
 import { useToast } from '../../components/Toast'
 import ReportTruthBadge from '../../components/ReportTruthBadge'
-import api from '../../services/api'
+import api, { isRequestCanceled } from '../../services/api'
+import { getTreasuryAccounts } from '../../services/treasuryApi'
+import {
+    getLocalizedTreasuryAccountName,
+    isTransferEligibleAccount,
+} from '../../services/treasuryAccountCatalog'
+import { useRTL } from '../../hooks/useRTL'
 
 export default function TreasuryTransfers() {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const navigate = useNavigate()
     const { showError, showSuccess } = useToast()
     const { formatCurrency } = useSettings()
+    const { dir } = useRTL()
     const location = useLocation()
 
     // Form state
@@ -41,6 +48,7 @@ export default function TreasuryTransfers() {
     
     // Data state
     const [accounts, setAccounts] = useState([])
+    const [accountsError, setAccountsError] = useState('')
     const [loading, setLoading] = useState(false)
     const [submitting, setSubmitting] = useState(false)
     
@@ -51,13 +59,16 @@ export default function TreasuryTransfers() {
     // Confirmation modal
     const [showConfirmation, setShowConfirmation] = useState(false)
     const [confirmationData, setConfirmationData] = useState(null)
+    const confirmationDialogRef = useRef(null)
 
     useEffect(() => {
-        loadAccounts()
+        const controller = new AbortController()
+        void loadAccounts(controller.signal)
+        return () => controller.abort()
     }, [])
 
     useEffect(() => {
-        // Pre-fill form from navigation state (from Clearing Aging "Settle" button)
+        // Pre-fill generic cashbox/bank transfers from navigation state.
         if (location.state) {
             const { fromAccountCode: from, toAccountCode: to, amount: amt, description: desc, reference: ref } = location.state
             if (from) setFromAccountCode(from)
@@ -89,14 +100,40 @@ export default function TreasuryTransfers() {
         }
     }, [fromAccountCode, amount, accounts, t])
 
-    const loadAccounts = async () => {
+    useEffect(() => {
+        if (!showConfirmation) return undefined
+
+        const previouslyFocused = document.activeElement
+        const dialog = confirmationDialogRef.current
+        dialog?.querySelector('button')?.focus()
+
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape' && !submitting) setShowConfirmation(false)
+        }
+        document.addEventListener('keydown', handleKeyDown)
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown)
+            previouslyFocused?.focus?.()
+        }
+    }, [showConfirmation, submitting])
+
+    const loadAccounts = async (signal) => {
         try {
             setLoading(true)
-            const response = await api.get('/treasury/accounts')
-            setAccounts(response.data)
+            setAccountsError('')
+            // The catalog is the authority; only exact Cashbox/Bank rows are
+            // transferable. Clearing, unknown, supplier-card, and report-only
+            // accounts never appear here.
+            const catalog = await getTreasuryAccounts({ signal })
+            if (signal?.aborted) return
+            setAccounts((Array.isArray(catalog) ? catalog : []).filter(isTransferEligibleAccount))
         } catch (error) {
+            if (isRequestCanceled(error)) return
             console.error('Failed to load accounts:', error)
-            showError(t('treasury.loadAccountsError', 'Failed to load accounts'))
+            setAccounts([])
+            const message = t('treasury.catalogLoadFailed', 'The Treasury catalog could not be loaded. Balances are hidden until you retry.')
+            setAccountsError(message)
+            showError(message)
         } finally {
             setLoading(false)
         }
@@ -124,6 +161,17 @@ export default function TreasuryTransfers() {
         }
         
         const fromAccount = accounts.find(a => a.accountCode === fromAccountCode)
+        if (!fromAccount) {
+            setValidationError(t('treasury.transferableSourceRequired', 'Select a cashbox or bank source account'))
+            return false
+        }
+
+        const toAccount = accounts.find(a => a.accountCode === toAccountCode)
+        if (!toAccount) {
+            setValidationError(t('treasury.transferableDestinationRequired', 'Select a cashbox or bank destination account'))
+            return false
+        }
+
         if (parseFloat(amount) > (fromAccount?.currentBalance || 0)) {
             setValidationError(t('treasury.insufficientBalance', 'Insufficient balance'))
             return false
@@ -138,6 +186,10 @@ export default function TreasuryTransfers() {
         return true
     }
 
+    const getAccountTypeLabel = (account) => account.accountType === 'Cashbox'
+        ? t('treasury.cashbox', 'Cashbox')
+        : t('treasury.bank', 'Bank')
+
     const handleSubmit = (e) => {
         e.preventDefault()
         
@@ -150,8 +202,8 @@ export default function TreasuryTransfers() {
         const toAccount = accounts.find(a => a.accountCode === toAccountCode)
         
         setConfirmationData({
-            fromAccount: `${fromAccount.accountCode} - ${fromAccount.name}`,
-            toAccount: `${toAccount.accountCode} - ${toAccount.name}`,
+            fromAccount: `${fromAccount.accountCode} - ${getLocalizedTreasuryAccountName(fromAccount, i18n?.language)} [${getAccountTypeLabel(fromAccount)}]`,
+            toAccount: `${toAccount.accountCode} - ${getLocalizedTreasuryAccountName(toAccount, i18n?.language)} [${getAccountTypeLabel(toAccount)}]`,
             amount: parseFloat(amount),
             description,
             reference
@@ -206,7 +258,8 @@ export default function TreasuryTransfers() {
     }
 
     const getAccountDisplay = (account) => {
-        return `${account.accountCode} - ${account.name} (${formatCurrency(account.currentBalance)})`
+        const name = getLocalizedTreasuryAccountName(account, i18n?.language)
+        return `${account.accountCode} - ${name} [${getAccountTypeLabel(account)}] (${formatCurrency(account.currentBalance)})`
     }
 
     if (loading) {
@@ -221,22 +274,25 @@ export default function TreasuryTransfers() {
     }
 
     return (
-        <div className="space-y-6">
+        <div dir={dir} className="space-y-6">
             {/* Phase C4: UI Truth Label */}
             <ReportTruthBadge type="financial" />
 
             {/* Header */}
             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <button onClick={() => navigate('/treasury')} className="text-gray-500 hover:text-gray-700">
-                        ← {t('common.back')}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                    <button onClick={() => navigate('/treasury')} className="self-start text-gray-500 hover:text-gray-700">
+                        <span aria-hidden="true" className="inline-block rtl:rotate-180">←</span> {t('common.back')}
                     </button>
                     <div>
                         <h2 className="text-2xl font-bold text-gray-900">
                             💸 {t('treasury.transfers', 'Treasury Transfers')}
                         </h2>
                         <p className="text-gray-600">
-                            {t('treasury.transfersSubtitle', 'Move funds between accounts with full audit trail')}
+                            {t('treasury.transfersSubtitle', 'Move funds between cashbox and bank accounts with full audit trail')}
+                        </p>
+                        <p className="text-sm text-gray-500 mt-1">
+                            {t('treasury.transferableOnly', 'Only mapped Cashbox and Bank accounts can send or receive Treasury transfers.')}
                         </p>
                     </div>
                 </div>
@@ -245,7 +301,7 @@ export default function TreasuryTransfers() {
             {/* Architecture Guarantee Badge */}
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                 <div className="flex items-start gap-3">
-                    <div className="text-green-600 text-2xl">✅</div>
+                        <div className="text-green-600 text-2xl" aria-hidden="true">✅</div>
                     <div className="flex-1">
                         <h3 className="font-semibold text-green-900">
                             {t('treasury.ledgerGuarantee', 'Ledger-First Architecture')}
@@ -260,6 +316,15 @@ export default function TreasuryTransfers() {
                 </div>
             </div>
 
+            {accountsError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex flex-wrap items-center justify-between gap-3" role="alert">
+                    <p className="text-sm text-red-800">{accountsError}</p>
+                    <button type="button" onClick={() => loadAccounts()} className="btn-secondary text-sm">
+                        {t('treasury.retry', 'Retry')}
+                    </button>
+                </div>
+            )}
+
             {/* Transfer Form */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
@@ -269,10 +334,11 @@ export default function TreasuryTransfers() {
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {/* From Account */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-transfer-from" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('treasury.fromAccount', 'From Account')} *
                         </label>
                         <select
+                            id="treasury-transfer-from"
                             value={fromAccountCode}
                             onChange={(e) => setFromAccountCode(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -294,10 +360,11 @@ export default function TreasuryTransfers() {
 
                     {/* To Account */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-transfer-to" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('treasury.toAccount', 'To Account')} *
                         </label>
                         <select
+                            id="treasury-transfer-to"
                             value={toAccountCode}
                             onChange={(e) => setToAccountCode(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -316,10 +383,11 @@ export default function TreasuryTransfers() {
 
                     {/* Amount */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-transfer-amount" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('treasury.amount', 'Amount')} *
                         </label>
                         <input
+                            id="treasury-transfer-amount"
                             type="number"
                             step="0.01"
                             min="0.01"
@@ -333,42 +401,44 @@ export default function TreasuryTransfers() {
 
                     {/* Description */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-transfer-description" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('treasury.description', 'Description')} *
                         </label>
                         <input
+                            id="treasury-transfer-description"
                             type="text"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                            placeholder={t('treasury.descriptionPlaceholder', 'e.g., COD settlement - Aramex')}
+                            placeholder={t('treasury.descriptionPlaceholder', 'e.g., Daily cashbox deposit')}
                             required
                         />
                     </div>
 
                     {/* Reference (Optional) */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                        <label htmlFor="treasury-transfer-reference" className="block text-sm font-medium text-gray-700 mb-1">
                             {t('treasury.reference', 'Reference')} ({t('common.optional', 'Optional')})
                         </label>
                         <input
+                            id="treasury-transfer-reference"
                             type="text"
                             value={reference}
                             onChange={(e) => setReference(e.target.value)}
                             className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                            placeholder={t('treasury.referencePlaceholder', 'e.g., SETTLE-ARX-0001')}
+                            placeholder={t('treasury.referencePlaceholder', 'e.g., TRANSFER-0001')}
                         />
                     </div>
 
                     {/* Validation Error */}
                     {validationError && (
-                        <div className="bg-red-50 border border-red-200 rounded-md p-3">
-                            <p className="text-sm text-red-700">⚠️ {validationError}</p>
+                        <div className="bg-red-50 border border-red-200 rounded-md p-3" role="alert">
+                            <p className="text-sm text-red-700"><span aria-hidden="true">⚠️ </span>{validationError}</p>
                         </div>
                     )}
 
                     {/* Submit Button */}
-                    <div className="flex gap-3 pt-4">
+                    <div className="flex flex-col gap-3 pt-4 sm:flex-row">
                         <button
                             type="submit"
                             disabled={submitting || !!validationError}
@@ -396,34 +466,34 @@ export default function TreasuryTransfers() {
 
             {/* Confirmation Modal */}
             {showConfirmation && confirmationData && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4" role="dialog" aria-modal="true" aria-labelledby="treasury-transfer-confirmation-title">
+                    <div ref={confirmationDialogRef} className="max-h-full w-full max-w-md overflow-y-auto rounded-lg bg-white shadow-xl">
                         <div className="p-6">
-                            <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                                ⚠️ {t('treasury.confirmTransfer', 'Confirm Transfer')}
+                            <h3 id="treasury-transfer-confirmation-title" className="text-lg font-semibold text-gray-900 mb-4">
+                                <span aria-hidden="true">⚠️ </span>{t('treasury.confirmTransfer', 'Confirm Transfer')}
                             </h3>
                             
                             <div className="space-y-3 mb-6">
-                                <div className="flex justify-between text-sm">
+                                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between">
                                     <span className="text-gray-600">{t('treasury.from', 'From')}:</span>
                                     <span className="font-medium">{confirmationData.fromAccount}</span>
                                 </div>
-                                <div className="flex justify-between text-sm">
+                                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between">
                                     <span className="text-gray-600">{t('treasury.to', 'To')}:</span>
                                     <span className="font-medium">{confirmationData.toAccount}</span>
                                 </div>
-                                <div className="flex justify-between text-sm">
+                                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between">
                                     <span className="text-gray-600">{t('treasury.amount', 'Amount')}:</span>
                                     <span className="font-bold text-lg text-primary-600">
                                         {formatCurrency(confirmationData.amount)}
                                     </span>
                                 </div>
-                                <div className="flex justify-between text-sm">
+                                <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between">
                                     <span className="text-gray-600">{t('treasury.description', 'Description')}:</span>
                                     <span className="font-medium">{confirmationData.description}</span>
                                 </div>
                                 {confirmationData.reference && (
-                                    <div className="flex justify-between text-sm">
+                                    <div className="flex flex-col gap-1 text-sm sm:flex-row sm:justify-between">
                                         <span className="text-gray-600">{t('treasury.reference', 'Reference')}:</span>
                                         <span className="font-medium">{confirmationData.reference}</span>
                                     </div>
@@ -436,7 +506,7 @@ export default function TreasuryTransfers() {
                                 </p>
                             </div>
 
-                            <div className="flex gap-3">
+                            <div className="flex flex-col gap-3 sm:flex-row">
                                 <button
                                     onClick={executeTransfer}
                                     disabled={submitting}
@@ -470,13 +540,13 @@ export default function TreasuryTransfers() {
                         📊 {t('treasury.viewClearingAging', 'View Clearing Aging')}
                     </button>
                     <button
-                        onClick={() => navigate('/reports/general-ledger')}
+                        onClick={() => navigate('/treasury/general-ledger')}
                         className="px-4 py-2 bg-white border border-blue-300 rounded-md hover:bg-blue-50 text-sm"
                     >
                         📖 {t('treasury.viewGeneralLedger', 'View General Ledger')}
                     </button>
                     <button
-                        onClick={() => navigate('/reports/trial-balance')}
+                        onClick={() => navigate('/treasury/trial-balance')}
                         className="px-4 py-2 bg-white border border-blue-300 rounded-md hover:bg-blue-50 text-sm"
                     >
                         ⚖️ {t('treasury.viewTrialBalance', 'View Trial Balance')}

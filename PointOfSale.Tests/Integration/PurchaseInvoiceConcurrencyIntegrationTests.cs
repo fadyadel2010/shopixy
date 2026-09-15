@@ -419,10 +419,6 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
             ?? throw new InvalidOperationException("The test database connection string was not available.");
 
         var progressEntries = new ConcurrentQueue<string>();
-        var stockLockRendezvous = new PurchaseStockLockRendezvous(
-            participantCount: 2,
-            timeout: TimeSpan.FromSeconds(30),
-            progressEntries);
         var commitWindow = new PurchaseCommitOverlapWindow(
             timeout: TimeSpan.FromSeconds(30),
             progressEntries);
@@ -446,8 +442,8 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
         Task<PurchaseActorResult> actorBTask;
 
         // Alternate launch order across repetitions so the eventual invoice order is not
-        // coupled to a single task-scheduling pattern. The authoritative stock-row barrier
-        // still forces both requests to contend at ProductVariantStocks FOR UPDATE.
+        // coupled to a single task-scheduling pattern. The product-cost authority lock now
+        // serializes same-product requests before the stock lock is reached.
         if (iteration % 2 == 0)
         {
             actorATask = ExecutePurchaseActorAsync(
@@ -456,7 +452,6 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
                 seeded,
                 actorA,
                 progressEntries,
-                new ProductVariantStockLockInterceptor(actorA.Name, stockLockRendezvous, progressEntries),
                 new PurchaseCommitPauseTransactionInterceptor(actorA.Name, commitWindow));
             actorBTask = ExecutePurchaseActorAsync(
                 connectionString,
@@ -464,7 +459,6 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
                 seeded,
                 actorB,
                 progressEntries,
-                new ProductVariantStockLockInterceptor(actorB.Name, stockLockRendezvous, progressEntries),
                 new PurchaseCommitPauseTransactionInterceptor(actorB.Name, commitWindow));
         }
         else
@@ -475,7 +469,6 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
                 seeded,
                 actorB,
                 progressEntries,
-                new ProductVariantStockLockInterceptor(actorB.Name, stockLockRendezvous, progressEntries),
                 new PurchaseCommitPauseTransactionInterceptor(actorB.Name, commitWindow));
             actorATask = ExecutePurchaseActorAsync(
                 connectionString,
@@ -483,15 +476,10 @@ public sealed class PurchaseInvoiceConcurrencyIntegrationTests
                 seeded,
                 actorA,
                 progressEntries,
-                new ProductVariantStockLockInterceptor(actorA.Name, stockLockRendezvous, progressEntries),
                 new PurchaseCommitPauseTransactionInterceptor(actorA.Name, commitWindow));
         }
 
         await commitWindow.WaitForOriginalCommitPauseAsync();
-
-        Assert.Equal(
-            2,
-            stockLockRendezvous.ArrivalCount);
 
         await AssertNoUncommittedDurableStateVisibleAsync(
             scope,

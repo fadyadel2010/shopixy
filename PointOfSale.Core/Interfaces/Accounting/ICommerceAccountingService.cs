@@ -1,4 +1,5 @@
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Models.Accounting;
 using PointOfSale.Core.Models.Refunds;
 
 namespace PointOfSale.Core.Interfaces.Accounting;
@@ -77,7 +78,10 @@ public interface ICommerceAccountingService
         CancellationToken ct = default,
         string? operationKey = null,
         decimal? cashAmount = null,
-        decimal? cardAmount = null);
+        decimal? cardAmount = null,
+        Guid? fundingInstrumentId = null,
+        Guid? fundingLedgerAccountId = null,
+        int? fundingInstrumentVersion = null);
     
     /// <summary>
     /// Posts journal entry for supplier payment.
@@ -313,6 +317,63 @@ public interface ICommerceAccountingService
         CancellationToken ct = default);
     
     // ═══════════════════════════════════════════════════════════════════════════
+    // T-08 E-COMMERCE / COMMERCEHUB MERCHANDISE-COST (COGS) OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+    //
+    // Forward-looking cost lifecycle only. Historical e-commerce volume without
+    // COGS is immutable pre-remediation history and must never be back-posted here.
+    //
+    // Sale:   DEBIT 5010 COGS / CREDIT 1310 Inventory (from frozen line snapshots)
+    // Return: DEBIT 1310 Inventory / CREDIT 5010 COGS (original snapshot × returned qty)
+    //
+    // COGS journals touch only 5010/1310: no cash, clearing, AR/AP, or revenue leg.
+
+    /// <summary>
+    /// Posts the Storefront sale COGS journal for one inventory-commit event.
+    /// Cost basis is the immutable OrderItem.CostPrice snapshot captured at checkout.
+    ///
+    /// Idempotency: ECOM_COGS:{TenantId}:{OrderId}:{CommitEventId}
+    /// SourceType on the <c>JournalEntry</c>: <c>"Order_COGS"</c>
+    /// </summary>
+    Task<PostingResult> PostEcommerceCogsAsync(
+        EcommerceCogsPostingRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Posts the Storefront COGS reversal journal for one return event.
+    /// Reversal reuses the original snapshot cost, never live cost, and cumulative
+    /// reversals for an order line can never exceed the posted COGS for that line.
+    ///
+    /// Idempotency: ECOM_COGS_REV:{TenantId}:{OrderId}:{ReturnEventId}
+    /// SourceType on the <c>JournalEntry</c>: <c>"Order_COGS_Reversal"</c>
+    /// </summary>
+    Task<PostingResult> PostEcommerceCogsReversalAsync(
+        EcommerceCogsReversalPostingRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Posts the CommerceHub sale COGS journal for one item delivery-commit event.
+    /// Cost basis is the immutable CommerceHubSubOrderItem snapshot captured at checkout.
+    ///
+    /// Idempotency: CH_COGS:{TenantId}:{SubOrderId}:{DeliveryCommitEventId}
+    /// SourceType on the <c>JournalEntry</c>: <c>"CommerceHub_COGS"</c>
+    /// </summary>
+    Task<PostingResult> PostCommerceHubCogsAsync(
+        CommerceHubCogsPostingRequest request,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// Posts the CommerceHub COGS reversal journal for one return receipt event
+    /// (resellable quantity only; damaged goods stay in COGS by policy).
+    ///
+    /// Idempotency: CH_COGS_REV:{TenantId}:{SubOrderId}:{ReturnEventId}
+    /// SourceType on the <c>JournalEntry</c>: <c>"CommerceHub_COGS_Reversal"</c>
+    /// </summary>
+    Task<PostingResult> PostCommerceHubCogsReversalAsync(
+        CommerceHubCogsReversalPostingRequest request,
+        CancellationToken ct = default);
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // SETTLEMENT OPERATIONS
     // ═══════════════════════════════════════════════════════════════════════════
     
@@ -327,10 +388,12 @@ public interface ICommerceAccountingService
     /// </summary>
     Task<PostingResult> PostGatewaySettlementAsync(
         Guid tenantId,
+        Guid settlementBatchId,
         string gateway,
         decimal grossAmount,
         decimal fees,
         string settlementId,
+        DateTime settledAtUtc,
         CancellationToken ct = default);
     
     /// <summary>
@@ -344,9 +407,11 @@ public interface ICommerceAccountingService
     /// </summary>
     Task<PostingResult> PostCodSettlementAsync(
         Guid tenantId,
+        Guid settlementBatchId,
         decimal grossAmount,
         decimal fees,
         string settlementId,
+        DateTime settledAtUtc,
         CancellationToken ct = default);
     
     // ═══════════════════════════════════════════════════════════════════════════

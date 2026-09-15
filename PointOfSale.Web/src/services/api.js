@@ -189,7 +189,7 @@ const shouldRetryRequest = (error) => {
     const config = error?.config
     const method = String(config?.method || 'get').toLowerCase()
 
-    if (!config || isAuthEndpoint(config.url) || !IDEMPOTENT_RETRY_METHODS.has(method)) {
+    if (config?.skipAutomaticRetry || !config || isAuthEndpoint(config.url) || !IDEMPOTENT_RETRY_METHODS.has(method)) {
         return false
     }
 

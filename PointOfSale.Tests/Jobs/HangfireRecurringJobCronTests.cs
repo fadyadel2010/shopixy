@@ -1,4 +1,6 @@
 using Hangfire;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using PointOfSale.API.Jobs;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Infrastructure.Shipping.BackgroundJobs;
@@ -7,6 +9,23 @@ namespace PointOfSale.Tests.Jobs;
 
 public sealed class HangfireRecurringJobCronTests
 {
+    [Fact]
+    public async Task ImmediateRegistrationFailure_DoesNotAbortHostStartup()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:DefaultConnection"] = "Host=unused"
+            })
+            .Build();
+
+        using var service = new RegistrationFailureHostedService(configuration);
+
+        await service.StartAsync(CancellationToken.None);
+
+        Assert.Equal(1, service.RegistrationAttempts);
+    }
+
     [Fact]
     public void PreviouslyFailingRenewalCronExpression_IsRejectedByHangfireCronosParser()
     {
@@ -79,5 +98,27 @@ public sealed class HangfireRecurringJobCronTests
 
             Assert.Equal(job.CronExpression, cron);
         }
+    }
+
+    private sealed class RegistrationFailureHostedService(IConfiguration configuration)
+        : HangfireInitializationHostedService(
+            new EmptyServiceProvider(),
+            NullLogger<HangfireInitializationHostedService>.Instance,
+            configuration)
+    {
+        public int RegistrationAttempts { get; private set; }
+
+        protected override bool CanConnectToPostgres() => true;
+
+        protected override void RegisterRecurringJobs()
+        {
+            RegistrationAttempts++;
+            throw new TimeoutException("Simulated distributed lock timeout.");
+        }
+    }
+
+    private sealed class EmptyServiceProvider : IServiceProvider
+    {
+        public object? GetService(Type serviceType) => null;
     }
 }

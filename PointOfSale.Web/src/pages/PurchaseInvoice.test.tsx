@@ -6,6 +6,7 @@ import PurchaseInvoice from './PurchaseInvoice.jsx'
 const apiGetMock = vi.hoisted(() => vi.fn())
 const showErrorMock = vi.hoisted(() => vi.fn())
 const translateMock = vi.hoisted(() => (key: string) => key)
+let cardInstrumentResponse: unknown[] = []
 
 vi.mock('../services/api', () => ({
     default: {
@@ -50,11 +51,16 @@ describe('PurchaseInvoice', () => {
     beforeEach(() => {
         apiGetMock.mockReset()
         showErrorMock.mockReset()
+        cardInstrumentResponse = []
         apiGetMock.mockImplementation((url: string) => {
             if (url === '/warehouses') {
                 return Promise.resolve({
                     data: [{ id: 'warehouse-1', name: 'Main Warehouse', isDefault: true }],
                 })
+            }
+
+            if (url === '/supplier-card-funding-instruments') {
+                return Promise.resolve({ data: cardInstrumentResponse })
             }
 
             if (url === '/products/search') {
@@ -117,5 +123,31 @@ describe('PurchaseInvoice', () => {
         expect(await screen.findByText('Samsung TV')).toBeInTheDocument()
         expect(screen.queryByText('purchases.noItems')).not.toBeInTheDocument()
         expect(showErrorMock).not.toHaveBeenCalled()
+    })
+
+    it('does not silently select the first supplier card funding instrument', async () => {
+        cardInstrumentResponse = [{
+            id: 'instrument-1',
+            displayName: 'Company Visa',
+            last4: '4521',
+            authorityVersion: 2,
+            availableBalance: 100,
+            fundingSourceName: 'Main Bank',
+        }]
+        render(<PurchaseInvoice />)
+
+        const cardOption = await screen.findByRole('option', { name: 'purchases.card' })
+        fireEvent.change(cardOption.closest('select')!, { target: { value: 'Card' } })
+        const instrumentOption = await screen.findByRole('option', { name: /Company Visa/ })
+
+        expect(instrumentOption.closest('select')).toHaveValue('')
+        expect(screen.queryByText('purchases.noCardInstruments')).not.toBeInTheDocument()
+    })
+
+    it('shows a clear blocked state when Card has no active instrument', async () => {
+        render(<PurchaseInvoice />)
+        const cardOption = await screen.findByRole('option', { name: 'purchases.card' })
+        fireEvent.change(cardOption.closest('select')!, { target: { value: 'Card' } })
+        expect(await screen.findByText('purchases.noCardInstruments')).toHaveAttribute('role', 'alert')
     })
 })

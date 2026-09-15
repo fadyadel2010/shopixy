@@ -68,6 +68,17 @@ public interface IAccountingOutboxService
         decimal cardAmount = 0m,
         CancellationToken ct = default);
 
+    Task EnqueuePosPurchaseWithCardAuthorityAsync(
+        Guid tenantId,
+        Guid invoiceId,
+        int mutationVersion,
+        decimal cashAmount,
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion,
+        CancellationToken ct = default);
+
     /// <summary>
     /// Enqueues a purchase mutation that reverses any currently posted purchase journals
     /// and reposts the current purchase state using a distinct operation key.
@@ -79,6 +90,18 @@ public interface IAccountingOutboxService
         int mutationVersion,
         decimal cashAmount = 0m,
         decimal cardAmount = 0m,
+        CancellationToken ct = default);
+
+    Task EnqueuePurchaseReversalWithCardAuthorityAsync(
+        Guid tenantId,
+        Guid invoiceId,
+        string operationKey,
+        int mutationVersion,
+        decimal cashAmount,
+        decimal cardAmount,
+        Guid? fundingInstrumentId,
+        Guid? fundingLedgerAccountId,
+        int? fundingInstrumentVersion,
         CancellationToken ct = default);
     
     /// <summary>
@@ -206,6 +229,55 @@ public interface IAccountingOutboxService
         EcommerceRefundAccountingContext settlementContext,
         CancellationToken ct = default);
     
+    /// <summary>
+    /// T-08: Enqueues a Storefront sale COGS event for accounting processing.
+    /// Must be called WITHIN the same transaction as the inventory-commit event
+    /// that makes the COGS financially due. The commit event id is mandatory
+    /// (never OrderId alone): ECOM_COGS:{tenant}:{order}:{commitEventId}.
+    /// Duplicate key with a changed payload fails closed (conflict).
+    /// </summary>
+    Task<OutboxEnqueueResult> EnqueueEcommerceCogsAsync(
+        Guid tenantId,
+        Guid orderId,
+        string commitEventId,
+        object payload,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// T-08: Enqueues a Storefront COGS reversal event for a return/refund.
+    /// Key: ECOM_COGS_REV:{tenant}:{order}:{returnEventId}. One return event maps
+    /// to at most one reversal journal; changed payload fails closed.
+    /// </summary>
+    Task<OutboxEnqueueResult> EnqueueEcommerceCogsReversalAsync(
+        Guid tenantId,
+        Guid orderId,
+        string returnEventId,
+        object payload,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// T-08: Enqueues a CommerceHub sale COGS event for one item delivery-commit.
+    /// Must be called WITHIN the same transaction as CommitDeliveryAsync.
+    /// Key: CH_COGS:{tenant}:{subOrder}:{deliveryCommitEventId}.
+    /// </summary>
+    Task<OutboxEnqueueResult> EnqueueCommerceHubCogsAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string deliveryCommitEventId,
+        object payload,
+        CancellationToken ct = default);
+
+    /// <summary>
+    /// T-08: Enqueues a CommerceHub COGS reversal event for a return receipt.
+    /// Key: CH_COGS_REV:{tenant}:{subOrder}:{returnEventId}.
+    /// </summary>
+    Task<OutboxEnqueueResult> EnqueueCommerceHubCogsReversalAsync(
+        Guid tenantId,
+        Guid subOrderId,
+        string returnEventId,
+        object payload,
+        CancellationToken ct = default);
+
     /// <summary>
     /// Enqueues a gateway settlement for accounting processing.
     /// </summary>

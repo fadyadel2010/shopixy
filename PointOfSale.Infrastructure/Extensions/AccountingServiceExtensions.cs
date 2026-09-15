@@ -30,6 +30,7 @@ public static class AccountingServiceExtensions
         services.AddScoped<ITenantAccountSeeder, TenantAccountSeeder>();
         services.AddScoped<ITreasuryTransferService, TreasuryTransferService>();
         services.AddScoped<ICashboxLedgerAccountService, CashboxLedgerAccountService>();
+        services.AddScoped<ITreasuryInitialCapitalizationService, TreasuryInitialCapitalizationService>();
         
         // Phase 3: Commerce-to-Ledger Integration
         services.AddScoped<IAccountResolver, AccountResolver>();
@@ -74,4 +75,3 @@ public static class AccountingServiceExtensions
         return services;
     }
 }
-

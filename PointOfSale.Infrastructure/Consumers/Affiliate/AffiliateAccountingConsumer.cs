@@ -1,11 +1,15 @@
 using System.Diagnostics;
 using MassTransit;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using PointOfSale.Core.Entities.Affiliate;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Core.Exceptions.Accounting;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Interfaces.Treasury;
 using PointOfSale.Core.Models.Accounting;
+using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 
 namespace PointOfSale.Infrastructure.Consumers.Affiliate;
@@ -217,6 +221,306 @@ public class AffiliateCommissionEarnedAccountingConsumer : IConsumer<AffiliateCo
         {
             throw new PointOfSale.Core.Exceptions.Accounting.InvalidJournalException(
                 $"Idempotency key '{request.IdempotencyKey}' is already bound to a different affiliate commission posting.");
+        }
+
+        return existingJournal;
+    }
+}
+
+/// <summary>
+/// Posts the non-cash GL effect of one immutable affiliate commission reversal.
+///
+/// Journal:
+///   Debit  : Affiliate Payable (2105)
+///   Credit : Affiliate Marketing Expense (6110)
+///
+/// Idempotency Key: AFFILIATE_COMM_REVERSED:{TenantId}:{ReversalLedgerEntryId}
+/// </summary>
+public class AffiliateCommissionReversedAccountingConsumer : IConsumer<AffiliateCommissionReversedEvent>
+{
+    private const string EventType = "accounting_reversed";
+    private const string SourceType = "AffiliateCommissionReversed";
+
+    private readonly ApplicationDbContext _db;
+    private readonly IAccountResolver _accountResolver;
+    private readonly IFinancialPostingService _postingService;
+    private readonly AffiliateTelemetry _telemetry;
+    private readonly ILogger<AffiliateCommissionReversedAccountingConsumer> _logger;
+
+    public AffiliateCommissionReversedAccountingConsumer(
+        ApplicationDbContext db,
+        IAccountResolver accountResolver,
+        IFinancialPostingService postingService,
+        AffiliateTelemetry telemetry,
+        ILogger<AffiliateCommissionReversedAccountingConsumer> logger)
+    {
+        _db = db;
+        _accountResolver = accountResolver;
+        _postingService = postingService;
+        _telemetry = telemetry;
+        _logger = logger;
+    }
+
+    public async Task Consume(ConsumeContext<AffiliateCommissionReversedEvent> context)
+    {
+        var evt = context.Message;
+        var ct = context.CancellationToken;
+        var tenantId = evt.StoreTenantId;
+        var sw = Stopwatch.StartNew();
+
+        using var scope = _logger.BeginScope(new Dictionary<string, object>
+        {
+            ["CorrelationId"] = evt.CorrelationId ?? evt.OrderId.ToString(),
+            ["TenantId"] = tenantId,
+            ["EventType"] = EventType,
+            ["EventId"] = evt.EventId,
+            ["ReversalLedgerEntryId"] = evt.ReversalLedgerEntryId
+        });
+
+        AffiliateConsumerHelper.DetectAndRecordLag(
+            _logger, _telemetry, tenantId, EventType, evt.OccurredAtUtc);
+
+        try
+        {
+            ValidateEventIdentity(evt);
+
+            var reversal = await _db.AffiliateCommissionLedger
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(entry =>
+                    entry.Id == evt.ReversalLedgerEntryId &&
+                    entry.StoreTenantId == tenantId,
+                    ct)
+                ?? throw new InvalidOperationException(
+                    $"AFFILIATE_REVERSAL_SOURCE_NOT_FOUND: Reversal {evt.ReversalLedgerEntryId} was not found for tenant {tenantId}.");
+
+            EnsureEventMatchesSource(evt, reversal);
+
+            var original = await _db.AffiliateCommissionLedger
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .FirstOrDefaultAsync(entry =>
+                    entry.Id == reversal.OriginalEntryId &&
+                    entry.StoreTenantId == tenantId &&
+                    entry.EntryType == CommissionEntryType.Earned,
+                    ct)
+                ?? throw new InvalidOperationException(
+                    $"AFFILIATE_REVERSAL_ORIGINAL_EARNED_NOT_FOUND: Original entry {reversal.OriginalEntryId} was not found for reversal {reversal.Id} and tenant {tenantId}.");
+
+            EnsureReversalMatchesOriginal(reversal, original);
+
+            var reversalTotal = await _db.AffiliateCommissionLedger
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(entry =>
+                    entry.StoreTenantId == tenantId &&
+                    entry.EntryType == CommissionEntryType.Reversed &&
+                    entry.OriginalEntryId == original.Id)
+                .SumAsync(entry => entry.CommissionAmount, ct);
+
+            if (reversalTotal > original.CommissionAmount)
+            {
+                throw new InvalidOperationException(
+                    $"AFFILIATE_REVERSAL_EXCEEDS_EARNED: Reversals total {reversalTotal:F4}, exceeding original earned commission {original.CommissionAmount:F4}. OriginalEntryId={original.Id}.");
+            }
+
+            var accounts = await _accountResolver.GetByCodesAsync(
+                tenantId,
+                new[] { AccountCodes.AffiliateMarketingExpense, AccountCodes.AffiliatePayable },
+                ct);
+            var expenseAccount = accounts[AccountCodes.AffiliateMarketingExpense];
+            var payableAccount = accounts[AccountCodes.AffiliatePayable];
+
+            await EnsureOriginalEarnedJournalAsync(
+                tenantId,
+                original.OrderId,
+                expenseAccount.Id,
+                payableAccount.Id,
+                ct);
+
+            var idempotencyKey = $"AFFILIATE_COMM_REVERSED:{tenantId}:{reversal.Id}";
+            var request = new PostingRequest
+            {
+                TenantId = tenantId,
+                JournalDate = reversal.RecordedAtUtc,
+                SourceType = SourceType,
+                SourceId = reversal.Id,
+                SourceReference = $"AFFILIATE_COMM_REVERSED:{reversal.Id}",
+                Description = $"Affiliate commission reversed for order {evt.OrderNumber} " +
+                              $"(Order item: {reversal.OrderItemId}, Affiliate: {reversal.AffiliateAccountId}, Amount: {reversal.CommissionAmount:F2} {reversal.Currency})",
+                IdempotencyKey = idempotencyKey,
+                UserId = null,
+                Lines =
+                [
+                    PostingLine.Debit(payableAccount.Id, reversal.CommissionAmount,
+                        $"Affiliate payable reversed - Order {evt.OrderNumber}"),
+                    PostingLine.Credit(expenseAccount.Id, reversal.CommissionAmount,
+                        $"Affiliate commission expense reversed - Order {evt.OrderNumber}")
+                ]
+            };
+
+            var existingJournal = await _db.JournalEntries
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Include(journal => journal.LedgerEntries)
+                .FirstOrDefaultAsync(journal =>
+                    journal.TenantId == tenantId &&
+                    journal.IdempotencyKey == idempotencyKey,
+                    ct);
+
+            var journal = existingJournal == null
+                ? await _postingService.PostJournalAsync(request, ct)
+                : EnsureEquivalentReversalJournal(existingJournal, request);
+
+            sw.Stop();
+            _telemetry.RecordProcessingDuration(tenantId, EventType, sw.Elapsed.TotalMilliseconds);
+            _logger.LogInformation(
+                "[Affiliate:Accounting:Reversed] Journal posted | ReversalLedgerEntryId: {ReversalLedgerEntryId} | JournalNumber: {JournalNumber} | Amount: {Amount} | Duration: {DurationMs}ms",
+                reversal.Id,
+                journal.JournalNumber,
+                reversal.CommissionAmount,
+                sw.Elapsed.TotalMilliseconds);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _telemetry.RecordFailed(tenantId, EventType);
+            _telemetry.RecordProcessingDuration(tenantId, EventType, sw.Elapsed.TotalMilliseconds);
+            _logger.LogError(
+                ex,
+                "[Affiliate:Accounting:Reversed] Failed | ReversalLedgerEntryId: {ReversalLedgerEntryId} | Duration: {DurationMs}ms",
+                evt.ReversalLedgerEntryId,
+                sw.Elapsed.TotalMilliseconds);
+            throw;
+        }
+    }
+
+    private static void ValidateEventIdentity(AffiliateCommissionReversedEvent evt)
+    {
+        if (evt.StoreTenantId == Guid.Empty ||
+            evt.OrderId == Guid.Empty ||
+            evt.OrderItemId == Guid.Empty ||
+            evt.AffiliateAccountId == Guid.Empty ||
+            evt.OriginalLedgerEntryId == Guid.Empty ||
+            evt.ReversalLedgerEntryId == Guid.Empty ||
+            evt.ReversedAmount <= 0m ||
+            string.IsNullOrWhiteSpace(evt.Currency))
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_REVERSAL_EVENT_INVALID: Reversal event {evt.EventId} has incomplete accounting authority.");
+        }
+
+        if (evt.TenantId.HasValue && evt.TenantId.Value != evt.StoreTenantId)
+        {
+            throw new InvalidOperationException(
+                $"AFFILIATE_REVERSAL_EVENT_TENANT_MISMATCH: Event tenant {evt.TenantId} does not match store tenant {evt.StoreTenantId}.");
+        }
+    }
+
+    private static void EnsureEventMatchesSource(
+        AffiliateCommissionReversedEvent evt,
+        AffiliateCommissionLedger reversal)
+    {
+        if (reversal.EntryType != CommissionEntryType.Reversed ||
+            reversal.OriginalEntryId != evt.OriginalLedgerEntryId ||
+            reversal.OrderId != evt.OrderId ||
+            reversal.OrderItemId != evt.OrderItemId ||
+            reversal.AffiliateAccountId != evt.AffiliateAccountId ||
+            reversal.CommissionAmount != evt.ReversedAmount ||
+            !string.Equals(reversal.Currency, evt.Currency, StringComparison.Ordinal))
+        {
+            throw new InvalidJournalException(
+                $"Affiliate reversal event {evt.EventId} does not match immutable reversal source {reversal.Id}.");
+        }
+    }
+
+    private static void EnsureReversalMatchesOriginal(
+        AffiliateCommissionLedger reversal,
+        AffiliateCommissionLedger original)
+    {
+        if (reversal.OrderId != original.OrderId ||
+            reversal.OrderItemId != original.OrderItemId ||
+            reversal.AffiliateAccountId != original.AffiliateAccountId ||
+            !string.Equals(reversal.Currency, original.Currency, StringComparison.Ordinal))
+        {
+            throw new InvalidJournalException(
+                $"Affiliate reversal {reversal.Id} does not match original earned commission {original.Id}.");
+        }
+    }
+
+    private async Task EnsureOriginalEarnedJournalAsync(
+        Guid tenantId,
+        Guid orderId,
+        Guid expenseAccountId,
+        Guid payableAccountId,
+        CancellationToken ct)
+    {
+        var earnedKey = $"AFFILIATE_COMM_EARNED:{tenantId}:{orderId}";
+        var earnedJournal = await _db.JournalEntries
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Include(journal => journal.LedgerEntries)
+            .FirstOrDefaultAsync(journal =>
+                journal.TenantId == tenantId &&
+                journal.IdempotencyKey == earnedKey,
+                ct);
+
+        if (earnedJournal == null)
+        {
+            _telemetry.RecordOutOfOrderBlocked(tenantId);
+            throw new InvalidOperationException(
+                $"AFFILIATE_REVERSAL_EARNED_JOURNAL_NOT_READY: Earned journal {earnedKey} does not exist; reversal will be retried.");
+        }
+
+        var earnedCommission = await _db.AffiliateCommissionLedger
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(entry =>
+                entry.StoreTenantId == tenantId &&
+                entry.OrderId == orderId &&
+                entry.EntryType == CommissionEntryType.Earned)
+            .SumAsync(entry => entry.CommissionAmount, ct);
+
+        var expenseDebit = earnedJournal.LedgerEntries
+            .Where(line => line.AccountId == expenseAccountId)
+            .Sum(line => line.DebitAmount - line.CreditAmount);
+        var payableCredit = earnedJournal.LedgerEntries
+            .Where(line => line.AccountId == payableAccountId)
+            .Sum(line => line.CreditAmount - line.DebitAmount);
+
+        if (earnedJournal.Status != JournalStatus.Posted ||
+            earnedJournal.SourceType != "AffiliateCommissionEarned" ||
+            earnedJournal.SourceId != orderId ||
+            earnedCommission <= 0m ||
+            expenseDebit != earnedCommission ||
+            payableCredit != earnedCommission)
+        {
+            throw new InvalidJournalException(
+                $"Earned affiliate journal {earnedJournal.Id} does not match immutable commission authority for order {orderId}.");
+        }
+    }
+
+    private static PointOfSale.Core.Entities.Accounting.JournalEntry EnsureEquivalentReversalJournal(
+        PointOfSale.Core.Entities.Accounting.JournalEntry existingJournal,
+        PostingRequest request)
+    {
+        var existingLines = existingJournal.LedgerEntries
+            .OrderBy(line => line.LineNumber)
+            .Select(line => (line.AccountId, line.DebitAmount, line.CreditAmount))
+            .ToList();
+        var requestedLines = request.Lines
+            .Select(line => (line.AccountId, line.DebitAmount, line.CreditAmount))
+            .ToList();
+
+        if (existingJournal.TenantId != request.TenantId ||
+            existingJournal.SourceType != request.SourceType ||
+            existingJournal.SourceId != request.SourceId ||
+            existingJournal.SourceReference != request.SourceReference ||
+            existingJournal.JournalDate != request.JournalDate.Date ||
+            !existingLines.SequenceEqual(requestedLines))
+        {
+            throw new InvalidJournalException(
+                $"Idempotency key '{request.IdempotencyKey}' is already bound to a different affiliate reversal posting.");
         }
 
         return existingJournal;
