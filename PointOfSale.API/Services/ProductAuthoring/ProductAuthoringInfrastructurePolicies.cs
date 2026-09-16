@@ -59,6 +59,16 @@ public sealed class ProductAuthoringValidator : IProductAuthoringValidator
                 "Product template must not exceed 100 characters."));
         }
 
+        // WAVE 3: simple-product online price (default-variant OnlinePrice).
+        // Null/zero = "use the POS price". Negative is never valid.
+        if (!command.Inventory.HasVariants && command.Pricing.OnlinePrice is < 0m)
+        {
+            errors.Add(new ProductAuthoringValidationError(
+                "PRODUCT_VARIANT_ONLINE_PRICE_INVALID",
+                "onlinePrice",
+                "Simple product online price cannot be negative."));
+        }
+
         if (command.Pricing.TaxRate is < 0m or > 100m)
         {
             errors.Add(new ProductAuthoringValidationError(

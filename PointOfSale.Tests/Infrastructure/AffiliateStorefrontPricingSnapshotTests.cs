@@ -5,8 +5,10 @@ namespace PointOfSale.Tests.Infrastructure;
 public sealed class AffiliateStorefrontPricingSnapshotTests
 {
     [Fact]
-    public void TryResolveAffiliatePublicPricing_SimpleProductUsesDefaultUnitPriceAndVariantStockFallback()
+    public void TryResolveAffiliatePublicPricing_SimpleProductPrefersConfiguredOnlinePrice()
     {
+        // WAVE 3: a configured simple storefront price (default-variant
+        // OnlinePrice) is the public price; variant stock still feeds availability.
         var product = new ProductDocument
         {
             HasVariants = false,
@@ -32,7 +34,7 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
         var resolved = product.TryResolveAffiliatePublicPricing(out var snapshot);
 
         Assert.True(resolved);
-        Assert.Equal(25m, snapshot.Price);
+        Assert.Equal(999m, snapshot.Price);
         Assert.Null(snapshot.MinVariantPrice);
         Assert.Null(snapshot.MaxVariantPrice);
         Assert.True(snapshot.InStock);
@@ -40,8 +42,10 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
     }
 
     [Fact]
-    public void TryResolveAffiliateDiscoveryBasePrice_SimpleProductUsesDefaultUnitPrice()
+    public void TryResolveAffiliateDiscoveryBasePrice_SimpleProductPrefersConfiguredOnlinePrice()
     {
+        // WAVE 3: discovery base price follows the configured simple
+        // storefront price instead of the default-unit POS price.
         var product = new ProductDocument
         {
             HasVariants = false,
@@ -67,7 +71,7 @@ public sealed class AffiliateStorefrontPricingSnapshotTests
         var resolved = product.TryResolveAffiliateDiscoveryBasePrice(out var basePrice);
 
         Assert.True(resolved);
-        Assert.Equal(25m, basePrice);
+        Assert.Equal(60m, basePrice);
     }
 
     [Fact]

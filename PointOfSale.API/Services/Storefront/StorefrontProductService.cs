@@ -319,6 +319,7 @@ public class StorefrontProductService : IStorefrontProductService
             Name = document.Name,
             NameAr = document.NameAr,
             Description = document.Description,
+            DescriptionAr = document.DescriptionAr,
             SKU = document.SKU,
             Barcode = document.Barcode,
             Price = effectivePrice, // Use effective price for display

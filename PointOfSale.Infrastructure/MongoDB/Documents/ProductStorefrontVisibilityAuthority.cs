@@ -2,8 +2,25 @@ namespace PointOfSale.Infrastructure.MongoDB.Documents;
 
 public static class ProductStorefrontVisibilityAuthority
 {
-    public static decimal ResolveSimpleProductPrice(ProductDocument product) =>
-        product.DefaultUnit?.SalePrice ?? 0m;
+    /// <summary>
+    /// WAVE 3 — simple-product storefront price.
+    /// Prefers the simple default variant's explicit online price when one is
+    /// configured; otherwise falls back to the
+    /// default-unit POS selling price so products authored before Wave 3
+    /// (default-variant <c>OnlinePrice = null</c>) resolve exactly as before.
+    /// </summary>
+    public static decimal ResolveSimpleProductPrice(ProductDocument product)
+    {
+        var defaultVariantOnlinePrice = product.Variants
+            ?.FirstOrDefault(variant => variant.IsDefault)
+            ?.OnlinePrice ?? 0m;
+        if (defaultVariantOnlinePrice > 0m)
+        {
+            return defaultVariantOnlinePrice;
+        }
+
+        return product.DefaultUnit?.SalePrice ?? 0m;
+    }
 
     public static StorefrontPurchasabilityResult Evaluate(ProductDocument product)
     {

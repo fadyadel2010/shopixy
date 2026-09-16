@@ -1,9 +1,12 @@
+using System.Data;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Storage;
 using PointOfSale.API.Infrastructure.Idempotency;
 using PointOfSale.API.Services.Catalog;
 using PointOfSale.Core.Application.ProductAuthoring;
@@ -27,6 +30,40 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         IReadOnlyList<ProductVariant> Created,
         IReadOnlyList<(ProductVariant Variant, IReadOnlyList<string> ChangedFields)> Updated,
         IReadOnlyList<ProductVariant> Deleted);
+
+    /// <summary>
+    /// Wave 2: deterministic variant-identity conflict detected before persistence.
+    /// Mapped to <see cref="ProductAuthoringStatus.Conflict"/> with the same error
+    /// codes the database classifier reports, so pre-commit and commit-time
+    /// conflicts share one API contract.
+    /// </summary>
+    private sealed class ProductAuthoringVariantIdentityConflictException(
+        string code,
+        string field,
+        string message)
+        : InvalidOperationException(message)
+    {
+        public string Code { get; } = code;
+        public string Field { get; } = field;
+    }
+
+    /// <summary>
+    /// WAVE 2A: an authoring save (or Remove) attempted to destroy a variant or
+    /// product that still has protected financial, inventory, operational, or
+    /// historical references. Mapped to
+    /// <see cref="ProductAuthoringStatus.ValidationFailed"/> with one error per
+    /// blocker so the UI can explain WHY the operation was refused.
+    /// Historical rows are never mutated by this path.
+    /// </summary>
+    private sealed class ProductAuthoringProtectedHistoryException(
+        IReadOnlyList<ProductVariantDeleteBlocker> blockers)
+        : InvalidOperationException(
+            blockers.Count == 0
+                ? "Protected history blocks this operation."
+                : string.Join(" ", blockers.Select(blocker => blocker.MessageEn)))
+    {
+        public IReadOnlyList<ProductVariantDeleteBlocker> Blockers { get; } = blockers;
+    }
 
     private readonly IProductAuthoringPolicy _policy;
     private readonly ApplicationDbContext _context;
@@ -162,6 +199,26 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
     {
         var tenantId = _tenantContext!.RequiredTenantId;
         var productId = command.Identity.ProductId ?? DeterministicProductId(tenantId, command.Metadata.IdempotencyKey);
+        await using var slugTransaction = await BeginSlugAuthorityTransactionAsync(tenantId, cancellationToken);
+
+        // WAVE 1 slug authority: resolved BEFORE the idempotency fingerprint is
+        // taken, so replays of the same command converge on the same slug.
+        // The deterministic product id is excluded from collision checks, matching
+        // SKU resolution semantics for same-key retries.
+        command = command with
+        {
+            Seo = command.Seo with
+            {
+                Slug = await ResolveTenantUniqueSlugAsync(
+                    tenantId,
+                    productId,
+                    command.Seo.Slug,
+                    command.Content.Name,
+                    excludeProductId: productId,
+                    cancellationToken)
+            }
+        };
+
         var existingIdempotencyResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
             command,
             tenantId,
@@ -226,36 +283,59 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return command.ToResult(unitDecision.Status, unitDecision.Errors);
         }
 
-        var product = BuildProduct(command, tenantId, productId, resolvedSimpleSku);
+        try
+        {
+            // WAVE 2 SKU integrity: matrix SKUs/barcodes/combinations are validated
+            // server-side before persistence with the same conflict contract the
+            // database classifier reports. Keep these checks inside the conflict
+            // mapping boundary so known create conflicts return 409 rather than 500.
+            ThrowOnDuplicateAuthoredVariantIdentities(command.Variants);
+            await ThrowOnOwnedAuthoredVariantIdentitiesForCreateAsync(
+                tenantId,
+                productId,
+                command.Variants,
+                cancellationToken);
 
-        return await CommitProductAuthoringTransactionAsync(
-            command,
-            tenantId,
-            product,
-            async () =>
-            {
-                _context.Products.Add(product);
-                ApplyAuthoredProductUnits(product, authoredUnits, unitLookup);
-                await _transactionObserver.AfterUnitSynchronizationAsync(command, product, cancellationToken);
-                var authoredVariantSync = ApplyAuthoredVariants(product, command.Variants);
-                var defaultVariantSync = await _productVariantService!.EnsureDefaultVariantAlignedAsync(product, cancellationToken);
-                ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(product, defaultVariantSync.Variant);
-                ApplyProductPricingCompatibilityMirror(product);
-                await _transactionObserver.AfterVariantSynchronizationAsync(command, product, cancellationToken);
+            var product = BuildProduct(command, tenantId, productId, resolvedSimpleSku);
 
-                await StageAuthoritativeOutboxAsync(
-                    command,
-                    product,
-                    previousPublishStatus: null,
-                    previousIsOnlineVisible: null,
-                    defaultVariantSync,
-                    authoredVariantSync,
-                    wasArchivedBeforeMutation: false,
-                    remove: false,
-                    liveVariants: Array.Empty<ProductVariant>(),
-                    cancellationToken);
-            },
-            cancellationToken);
+            return await CommitProductAuthoringTransactionAsync(
+                command,
+                tenantId,
+                product,
+                async () =>
+                {
+                    _context.Products.Add(product);
+                    ApplyAuthoredProductUnits(product, authoredUnits, unitLookup);
+                    await _transactionObserver.AfterUnitSynchronizationAsync(command, product, cancellationToken);
+                    var authoredVariantSync = ApplyAuthoredVariants(product, command.Variants);
+                    var defaultVariantSync = await _productVariantService!.EnsureDefaultVariantAlignedAsync(product, cancellationToken);
+                    defaultVariantSync = ApplySimpleProductOnlinePrice(command, product, defaultVariantSync);
+                    ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(product, defaultVariantSync.Variant);
+                    ApplyProductPricingCompatibilityMirror(product);
+                    await _transactionObserver.AfterVariantSynchronizationAsync(command, product, cancellationToken);
+
+                    await StageAuthoritativeOutboxAsync(
+                        command,
+                        product,
+                        previousPublishStatus: null,
+                        previousIsOnlineVisible: null,
+                        defaultVariantSync,
+                        authoredVariantSync,
+                        wasArchivedBeforeMutation: false,
+                        remove: false,
+                        liveVariants: Array.Empty<ProductVariant>(),
+                        cancellationToken);
+                },
+                cancellationToken,
+                existingTransaction: slugTransaction);
+        }
+        catch (ProductAuthoringVariantIdentityConflictException exception)
+        {
+            _context!.ChangeTracker.Clear();
+            return command.ToResult(
+                ProductAuthoringStatus.Conflict,
+                [new ProductAuthoringValidationError(exception.Code, exception.Field, exception.Message)]);
+        }
     }
 
     private async Task<ProductAuthoringResult> ExecuteUpdateAsync(
@@ -278,6 +358,26 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         }
 
         product = product ?? throw new InvalidOperationException("Product authoring lifecycle admitted a missing product.");
+        await using var slugTransaction = await BeginSlugAuthorityTransactionAsync(tenantId, cancellationToken);
+
+        // WAVE 1 slug stability: resolved BEFORE the idempotency fingerprint is
+        // taken so replays converge. A blank slug preserves the stored slug
+        // (renaming a product never rewrites its public URL); a missing stored
+        // slug is derived deterministically instead of persisting a blank value.
+        var preservedSlug = ProductSlugAuthority.Normalize(command.Seo.Slug) ?? product.Slug;
+        command = command with
+        {
+            Seo = command.Seo with
+            {
+                Slug = await ResolveTenantUniqueSlugAsync(
+                    tenantId,
+                    product.Id,
+                    preservedSlug,
+                    command.Content.Name,
+                    excludeProductId: product.Id,
+                    cancellationToken)
+            }
+        };
 
         var existingIdempotencyResult = await TryResolveExistingProductAuthoringIdempotencyAsync(
             command,
@@ -333,6 +433,19 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 currentDefaultVariantId,
                 cancellationToken);
 
+        // Product type is immutable after creation. Generic product updates do
+        // not implement the unit, variant, SKU, stock, and price migration that
+        // a safe conversion would require.
+        if (command.Inventory.HasVariants != product.HasVariants)
+        {
+            return command.ToResult(
+                ProductAuthoringStatus.ValidationFailed,
+                [new ProductAuthoringValidationError(
+                    "PRODUCT_TYPE_CONVERSION_UNSUPPORTED",
+                    "hasVariants",
+                    "Product type cannot be changed after creation. Create a new product instead.")]);
+        }
+
         var previousPublishStatus = product.PublishStatus;
         var previousIsOnlineVisible = product.IsOnlineVisible;
         var wasArchivedBeforeMutation = !product.IsActive || product.PublishStatus == PublishStatus.Archived;
@@ -354,42 +467,63 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             return command.ToResult(unitDecision.Status, unitDecision.Errors);
         }
 
-        return await CommitProductAuthoringTransactionAsync(
-            command,
-            tenantId,
-            product,
-            async () =>
-            {
-                ApplyProduct(command, product, resolvedSimpleSku);
-
-                if (shouldSyncUnits)
+        try
+        {
+            return await CommitProductAuthoringTransactionAsync(
+                command,
+                tenantId,
+                product,
+                async () =>
                 {
-                    await SyncAuthoredProductUnitsAsync(product, authoredUnits, unitLookup, cancellationToken);
-                    await _transactionObserver.AfterUnitSynchronizationAsync(command, product, cancellationToken);
-                }
+                    ApplyProduct(command, product, resolvedSimpleSku);
 
-                var authoredVariantSync = MetadataFlag(command, "variantsSubmitted")
-                    ? await SyncAuthoredVariantsAsync(product, command.Variants, cancellationToken)
-                    : EmptyVariantSync();
-                await _transactionObserver.AfterVariantSynchronizationAsync(command, product, cancellationToken);
-                var defaultVariantSync = await _productVariantService!.EnsureDefaultVariantAlignedAsync(product, cancellationToken);
-                ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(product, defaultVariantSync.Variant);
-                ApplyProductPricingCompatibilityMirror(product);
+                    if (shouldSyncUnits)
+                    {
+                        await SyncAuthoredProductUnitsAsync(product, authoredUnits, unitLookup, cancellationToken);
+                        await _transactionObserver.AfterUnitSynchronizationAsync(command, product, cancellationToken);
+                    }
 
-                await StageAuthoritativeOutboxAsync(
-                    command,
-                    product,
-                    previousPublishStatus,
-                    previousIsOnlineVisible,
-                    defaultVariantSync,
-                    authoredVariantSync,
-                    wasArchivedBeforeMutation,
-                    remove: false,
-                    liveVariants: Array.Empty<ProductVariant>(),
-                    cancellationToken);
-            },
-            cancellationToken,
-            beforeAuditData);
+                    var authoredVariantSync = MetadataFlag(command, "variantsSubmitted")
+                        ? await SyncAuthoredVariantsAsync(product, command.Variants, cancellationToken)
+                        : EmptyVariantSync();
+                    await _transactionObserver.AfterVariantSynchronizationAsync(command, product, cancellationToken);
+                    var defaultVariantSync = await _productVariantService!.EnsureDefaultVariantAlignedAsync(product, cancellationToken);
+                    defaultVariantSync = ApplySimpleProductOnlinePrice(command, product, defaultVariantSync);
+                    ProductVariantCloneImportAuthority.ApplySimpleProductIdentityFromDefaultVariant(product, defaultVariantSync.Variant);
+                    ApplyProductPricingCompatibilityMirror(product);
+
+                    await StageAuthoritativeOutboxAsync(
+                        command,
+                        product,
+                        previousPublishStatus,
+                        previousIsOnlineVisible,
+                        defaultVariantSync,
+                        authoredVariantSync,
+                        wasArchivedBeforeMutation,
+                        remove: false,
+                        liveVariants: Array.Empty<ProductVariant>(),
+                        cancellationToken);
+                },
+                cancellationToken,
+                beforeAuditData,
+                slugTransaction);
+        }
+        catch (ProductAuthoringVariantIdentityConflictException exception)
+        {
+            _context!.ChangeTracker.Clear();
+            return command.ToResult(
+                ProductAuthoringStatus.Conflict,
+                [new ProductAuthoringValidationError(exception.Code, exception.Field, exception.Message)]);
+        }
+        catch (ProductAuthoringProtectedHistoryException exception)
+        {
+            _context!.ChangeTracker.Clear();
+            return command.ToResult(
+                ProductAuthoringStatus.ValidationFailed,
+                exception.Blockers
+                    .Select(blocker => new ProductAuthoringValidationError(blocker.Code, "variants", blocker.MessageEn))
+                    .ToList());
+        }
     }
 
     private async Task<ProductAuthoringResult> ExecuteArchiveOrRemoveAsync(
@@ -437,55 +571,87 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
                 [new ProductAuthoringValidationError("PRODUCT_EXPECTED_VERSION_STALE", "expectedVersion", "Product has been changed by a newer authoring command.")]);
         }
 
-        var liveVariants = await _context!.ProductVariants
-            .Where(variant => variant.TenantId == tenantId && variant.ProductId == product.Id && !variant.IsDeleted)
-            .ToListAsync(cancellationToken);
-
-        var previousPublishStatus = product.PublishStatus;
-        var previousIsOnlineVisible = product.IsOnlineVisible;
-        var wasArchivedBeforeMutation = !product.IsActive || product.PublishStatus == PublishStatus.Archived;
-        var beforeAuditData = BuildProductAuthoringAuditData(command, product, null);
-
-        return await CommitProductAuthoringTransactionAsync(
-            command,
-            tenantId,
-            product,
-            async () =>
+        try
+        {
+            if (remove)
             {
-                product.IsActive = false;
-                product.IsOnlineVisible = false;
-                product.PublishStatus = PublishStatus.Archived;
-                product.UpdatedAt = DateTime.UtcNow;
+                // WAVE 2A: defense in depth. Controllers and bulk already
+                // pre-validate, but direct orchestrator callers must not bypass
+                // historical protection. A second check runs inside the
+                // transaction below to narrow the check-then-mutate race.
+                await ThrowOnProtectedProductRemoveAsync(product.Id, tenantId, cancellationToken);
+            }
 
-                if (remove)
-                {
-                    product.IsDeleted = true;
-                }
+            var liveVariants = await _context!.ProductVariants
+                .Where(variant => variant.TenantId == tenantId && variant.ProductId == product.Id && !variant.IsDeleted)
+                .ToListAsync(cancellationToken);
 
-                foreach (var variant in liveVariants)
+            var previousPublishStatus = product.PublishStatus;
+            var previousIsOnlineVisible = product.IsOnlineVisible;
+            var wasArchivedBeforeMutation = !product.IsActive || product.PublishStatus == PublishStatus.Archived;
+            var beforeAuditData = BuildProductAuthoringAuditData(command, product, null);
+
+            return await CommitProductAuthoringTransactionAsync(
+                command,
+                tenantId,
+                product,
+                async () =>
                 {
                     if (remove)
                     {
-                        variant.IsActive = false;
-                        variant.IsDeleted = true;
-                        variant.UpdatedAt = product.UpdatedAt;
+                        // WAVE 2A: re-validate inside the authoring transaction
+                        // so history committed between admission and this commit
+                        // is observed before any IsDeleted mutation.
+                        await ThrowOnProtectedProductRemoveAsync(product.Id, tenantId, cancellationToken);
                     }
-                }
 
-                await StageAuthoritativeOutboxAsync(
-                    command,
-                    product,
-                    previousPublishStatus,
-                    previousIsOnlineVisible,
-                    defaultVariantSync: null,
-                    authoredVariantSync: EmptyVariantSync(),
-                    wasArchivedBeforeMutation,
-                    remove,
-                    liveVariants,
-                    cancellationToken);
-            },
-            cancellationToken,
-            beforeAuditData);
+                    product.IsActive = false;
+                    product.IsOnlineVisible = false;
+                    product.PublishStatus = PublishStatus.Archived;
+                    product.UpdatedAt = DateTime.UtcNow;
+
+                    if (remove)
+                    {
+                        product.IsDeleted = true;
+                    }
+
+                    foreach (var variant in liveVariants)
+                    {
+                        if (remove)
+                        {
+                            variant.IsActive = false;
+                            variant.IsDeleted = true;
+                            variant.UpdatedAt = product.UpdatedAt;
+                        }
+                    }
+
+                    await StageAuthoritativeOutboxAsync(
+                        command,
+                        product,
+                        previousPublishStatus,
+                        previousIsOnlineVisible,
+                        defaultVariantSync: null,
+                        authoredVariantSync: EmptyVariantSync(),
+                        wasArchivedBeforeMutation,
+                        remove,
+                        liveVariants,
+                        cancellationToken);
+                },
+                cancellationToken,
+                beforeAuditData);
+        }
+        catch (ProductAuthoringProtectedHistoryException exception)
+        {
+            // The owned transaction (if any) rolls back on dispose; nothing
+            // was mutated before the guard threw, and tracked state is
+            // cleared so no partial delete can be flushed later.
+            _context!.ChangeTracker.Clear();
+            return command.ToResult(
+                ProductAuthoringStatus.ValidationFailed,
+                exception.Blockers
+                    .Select(blocker => new ProductAuthoringValidationError(blocker.Code, "product", blocker.MessageEn))
+                    .ToList());
+        }
     }
 
     private async Task<ProductAuthoringResult> CommitProductAuthoringTransactionAsync(
@@ -494,9 +660,13 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         Product product,
         Func<Task> mutateAndStageAsync,
         CancellationToken cancellationToken,
-        object? beforeAuditData = null)
+        object? beforeAuditData = null,
+        IDbContextTransaction? existingTransaction = null)
     {
-        await using var transaction = await _context!.Database.BeginTransactionAsync(cancellationToken);
+        await using var ownedTransaction = existingTransaction is null
+            ? await _context!.Database.BeginTransactionAsync(cancellationToken)
+            : null;
+        var transaction = existingTransaction ?? ownedTransaction!;
         var (idempotencyRecord, idempotencyResult) = await TryClaimProductAuthoringIdempotencyAsync(
             command,
             tenantId,
@@ -1146,6 +1316,63 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         product.UpdatedAt = DateTime.UtcNow;
     }
 
+    /// <summary>
+    /// WAVE 1 slug authority: derives the deterministic base slug
+    /// (<see cref="ProductSlugAuthority.GenerateBase"/>) and makes it unique
+    /// within the tenant ("-2", "-3", ...) excluding the product being written.
+    /// Comparison is case-insensitive because historical rows may predate
+    /// lowercase normalization while reads case-fold.
+    /// </summary>
+    private async Task<string> ResolveTenantUniqueSlugAsync(
+        Guid tenantId,
+        Guid productId,
+        string? requestedSlug,
+        string? name,
+        Guid? excludeProductId,
+        CancellationToken cancellationToken)
+    {
+        var baseSlug = ProductSlugAuthority.GenerateBase(requestedSlug, name, productId);
+        var collisionPrefix = baseSlug + "-";
+
+        var taken = await _context.Products
+            .AsNoTracking()
+            .Where(product => product.TenantId == tenantId
+                && product.Slug != null
+                && (product.Slug.ToLower() == baseSlug || product.Slug.ToLower().StartsWith(collisionPrefix))
+                && (excludeProductId == null || product.Id != excludeProductId.Value))
+            .Select(product => product.Slug!)
+            .ToListAsync(cancellationToken);
+
+        var takenSet = new HashSet<string>(taken, StringComparer.OrdinalIgnoreCase);
+        return ProductSlugAuthority.EnsureUnique(baseSlug, takenSet.Contains);
+    }
+
+    private async Task<IDbContextTransaction?> BeginSlugAuthorityTransactionAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        if (!_context.Database.IsRelational())
+        {
+            return null;
+        }
+
+        var transaction = await _context.Database.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
+
+        if (_context.Database.ProviderName?.Contains("Npgsql", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"product-slug:{tenantId:N}"));
+            var lockKey = BitConverter.ToInt64(hash, 0);
+            await _context.Database.ExecuteSqlRawAsync(
+                "SELECT pg_advisory_xact_lock({0});",
+                new object[] { lockKey },
+                cancellationToken);
+        }
+
+        return transaction;
+    }
+
     private async Task<Product?> LoadTrackedProductAsync(
         Guid? productId,
         Guid tenantId,
@@ -1312,6 +1539,44 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         }
     }
 
+    /// <summary>
+    /// WAVE 3 — persists the simple-product online price onto the simple
+    /// default variant's <see cref="ProductVariant.OnlinePrice"/> (same convention
+    /// as multi-variant products). The requested value comes from
+    /// <c>command.Pricing.OnlinePrice</c> (the product authoring
+    /// <c>onlinePrice</c> field). Null/zero clears the override so readers
+    /// fall back to the POS price; negatives are rejected by
+    /// validation before this point. POS truth (<c>Price</c>/<c>CostPrice</c>)
+    /// is never touched here.
+    /// </summary>
+    private static DefaultVariantSyncResult ApplySimpleProductOnlinePrice(
+        ProductAuthoringCommand command,
+        Product product,
+        DefaultVariantSyncResult defaultVariantSync)
+    {
+        if (product.HasVariants)
+        {
+            return defaultVariantSync;
+        }
+
+        var desired = CatalogPricingAuthority.NormalizeSimpleOnlinePrice(command.Pricing.OnlinePrice);
+        var variant = defaultVariantSync.Variant;
+        if (variant.OnlinePrice == desired)
+        {
+            return defaultVariantSync;
+        }
+
+        variant.OnlinePrice = desired;
+        variant.UpdatedAt = DateTime.UtcNow;
+        return defaultVariantSync with
+        {
+            ChangedFields = defaultVariantSync.ChangedFields
+                .Concat([nameof(ProductVariant.OnlinePrice)])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray()
+        };
+    }
+
     private ProductUnit? ResolveTrackedDefaultProductUnit(Product product)
     {
         var attachedDefaultUnit = product.ProductUnits
@@ -1421,6 +1686,64 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         return new AuthoredVariantSyncResult(created, [], []);
     }
 
+    /// <summary>
+    /// WAVE 2A: refuses to soft-delete (via save omission) any existing variant
+    /// that still has protected history or stock. The check runs inside the
+    /// authoring transaction before any tracked mutation, so a concurrent
+    /// history write that commits first is observed here rather than silently
+    /// destroyed. Simple products are covered identically: their default
+    /// variant is an ordinary variant row.
+    /// </summary>
+    private async Task ThrowOnProtectedAuthoredVariantOmissionsAsync(
+        Product product,
+        IReadOnlyList<ProductVariant> existingVariants,
+        HashSet<Guid> desiredExistingIds,
+        CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantContext!.RequiredTenantId;
+        foreach (var existing in existingVariants)
+        {
+            if (desiredExistingIds.Contains(existing.Id))
+            {
+                continue;
+            }
+
+            var blockers = await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+                _context!,
+                tenantId,
+                product.Id,
+                existing.Id,
+                cancellationToken);
+            if (blockers.Count > 0)
+            {
+                throw new ProductAuthoringProtectedHistoryException(blockers);
+            }
+        }
+    }
+
+    /// <summary>
+    /// WAVE 2A: refuses a Remove (destructive soft-delete) when the product or
+    /// any of its variants still has protected history or stock. Archive
+    /// (deactivate) is intentionally not guarded: retiring from active use is
+    /// the safe lifecycle for history-bearing products.
+    /// </summary>
+    private async Task ThrowOnProtectedProductRemoveAsync(
+        Guid productId,
+        Guid tenantId,
+        CancellationToken cancellationToken)
+    {
+        var blockers = await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+            _context!,
+            tenantId,
+            productId,
+            variantId: null,
+            cancellationToken);
+        if (blockers.Count > 0)
+        {
+            throw new ProductAuthoringProtectedHistoryException(blockers);
+        }
+    }
+
     private async Task<AuthoredVariantSyncResult> SyncAuthoredVariantsAsync(
         Product product,
         IReadOnlyList<ProductAuthoringVariant> authoredVariants,
@@ -1449,6 +1772,22 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             .ToDictionary(group => group.Key, group => group.First().Variant, StringComparer.Ordinal);
         var desiredExistingIds = ResolveAuthoredExistingVariantIds(authoredVariants, existingById, existingByAttributeKey);
 
+        // WAVE 2 SKU integrity: reject duplicate combinations/SKUs/barcodes within
+        // the request before any mutation so a conflicting save never partially
+        // applies. Cross-request ownership is checked after identity resolution
+        // below; the filtered unique indexes remain the final authority.
+        ThrowOnDuplicateAuthoredVariantIdentities(authoredVariants);
+
+        // WAVE 2A: variants omitted from the save must not silently destroy
+        // protected financial/inventory/operational history. Throw before any
+        // tracked mutation so the save is rejected atomically; the caller can
+        // keep the variant and deactivate it instead.
+        await ThrowOnProtectedAuthoredVariantOmissionsAsync(
+            product,
+            existingVariants,
+            desiredExistingIds,
+            cancellationToken);
+
         var created = new List<ProductVariant>();
         var updated = new List<(ProductVariant Variant, IReadOnlyList<string> ChangedFields)>();
         var deleted = new List<ProductVariant>();
@@ -1466,14 +1805,27 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
             }
         }
 
+        var resolutions = new List<(ProductAuthoringVariant Authored, ProductVariant? Existing)>(authoredVariants.Count);
         foreach (var authoredVariant in authoredVariants)
         {
-            var existing = ResolveExistingAuthoredVariant(
+            resolutions.Add((
                 authoredVariant,
-                existingById,
-                existingByAttributeKey,
-                matchedExistingIds);
+                ResolveExistingAuthoredVariant(
+                    authoredVariant,
+                    existingById,
+                    existingByAttributeKey,
+                    matchedExistingIds)));
+        }
 
+        await ThrowOnOwnedAuthoredVariantIdentitiesForUpdateAsync(
+            product,
+            resolutions,
+            desiredExistingIds,
+            existingById,
+            cancellationToken);
+
+        foreach (var (authoredVariant, existing) in resolutions)
+        {
             if (existing is null)
             {
                 var createdVariant = new ProductVariant
@@ -1532,6 +1884,207 @@ public sealed class ProductAuthoringOrchestrator : IProductAuthoringOrchestrator
         EnsureSingleDefaultVariant(existingVariants.Where(variant => !variant.IsDeleted).Concat(created).ToList());
         return new AuthoredVariantSyncResult(created, updated, deleted);
     }
+
+    /// <summary>
+    /// Wave 2: deterministic intra-request variant-identity conflicts. Uses the
+    /// same error codes as <see cref="ProductAuthoringDatabaseConflictClassifier"/>
+    /// so early and commit-time conflicts share one contract.
+    /// </summary>
+    private static void ThrowOnDuplicateAuthoredVariantIdentities(
+        IReadOnlyList<ProductAuthoringVariant> authoredVariants)
+    {
+        if (ProductAuthoringVariantIdentityAuthority.FindDuplicateCombinationKey(authoredVariants) is not null)
+        {
+            throw new ProductAuthoringVariantIdentityConflictException(
+                "PRODUCT_ATTRIBUTE_CONFLICT",
+                "variants.attributes",
+                "A product variant with the same attribute combination already exists.");
+        }
+
+        if (ProductAuthoringVariantIdentityAuthority.FindDuplicateSku(authoredVariants) is not null)
+        {
+            throw new ProductAuthoringVariantIdentityConflictException(
+                "PRODUCT_SKU_CONFLICT",
+                "variants.sku",
+                "SKU is already assigned to another product variant.");
+        }
+
+        if (ProductAuthoringVariantIdentityAuthority.FindDuplicateBarcode(authoredVariants) is not null)
+        {
+            throw new ProductAuthoringVariantIdentityConflictException(
+                "PRODUCT_BARCODE_CONFLICT",
+                "variants.barcode",
+                "Barcode is already assigned to another product variant.");
+        }
+    }
+
+    private async Task ThrowOnOwnedAuthoredVariantIdentitiesForUpdateAsync(
+        Product product,
+        IReadOnlyList<(ProductAuthoringVariant Authored, ProductVariant? Existing)> resolutions,
+        ISet<Guid> desiredExistingIds,
+        IReadOnlyDictionary<Guid, ProductVariant> existingById,
+        CancellationToken cancellationToken)
+    {
+        var excludedVariantIds = new HashSet<Guid>(
+            resolutions
+                .Select(resolution => resolution.Existing?.Id)
+                .Where(id => id.HasValue)
+                .Select(id => id!.Value));
+        foreach (var existingId in existingById.Keys)
+        {
+            // Variants omitted from this save are soft-deleted atomically in the
+            // same commit, so they must not block SKU/barcode reuse. Every other
+            // surviving variant keeps blocking, exactly like the unique indexes.
+            if (!desiredExistingIds.Contains(existingId))
+            {
+                excludedVariantIds.Add(existingId);
+            }
+        }
+
+        await ThrowOnOwnedVariantIdentitiesAsync(
+            product.TenantId,
+            product.Id,
+            CollectTrimmedCandidates(resolutions.Select(resolution => resolution.Authored.Sku)),
+            CollectTrimmedCandidates(resolutions.Select(resolution => resolution.Authored.Barcode)),
+            excludedVariantIds,
+            cancellationToken);
+    }
+
+    private async Task ThrowOnOwnedAuthoredVariantIdentitiesForCreateAsync(
+        Guid tenantId,
+        Guid productId,
+        IReadOnlyList<ProductAuthoringVariant> authoredVariants,
+        CancellationToken cancellationToken)
+    {
+        await ThrowOnOwnedVariantIdentitiesAsync(
+            tenantId,
+            productId,
+            CollectTrimmedCandidates(authoredVariants.Select(variant => variant.Sku)),
+            CollectTrimmedCandidates(authoredVariants.Select(variant => variant.Barcode)),
+            new HashSet<Guid>(),
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Wave 2: server-side SKU/barcode ownership for matrix writes. Batched so
+    /// large matrices cost a constant number of queries. Equality is evaluated
+    /// by the database (same collation the unique indexes enforce); the indexes
+    /// remain the final authority for the residual race window.
+    /// </summary>
+    private async Task ThrowOnOwnedVariantIdentitiesAsync(
+        Guid tenantId,
+        Guid productId,
+        IReadOnlyList<string> skuCandidates,
+        IReadOnlyList<string> barcodeCandidates,
+        ISet<Guid> excludedVariantIds,
+        CancellationToken cancellationToken)
+    {
+        if (skuCandidates.Count > 0)
+        {
+            var conflictingVariantSku = await _context!.ProductVariants
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .WhereCurrentSemanticOwner()
+                .Where(variant =>
+                    variant.TenantId == tenantId &&
+                    !variant.IsDeleted &&
+                    skuCandidates.Contains(variant.SKU) &&
+                    !excludedVariantIds.Contains(variant.Id))
+                .Select(variant => variant.SKU)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (conflictingVariantSku is not null)
+            {
+                throw new ProductAuthoringVariantIdentityConflictException(
+                    "PRODUCT_SKU_CONFLICT",
+                    "variants.sku",
+                    "SKU is already assigned to another product variant.");
+            }
+
+            var conflictingProductSku = await _context.Products
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(existingProduct =>
+                    existingProduct.TenantId == tenantId &&
+                    !existingProduct.IsDeleted &&
+                    existingProduct.Id != productId &&
+                    skuCandidates.Contains(existingProduct.SKU))
+                .Select(existingProduct => existingProduct.SKU)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (conflictingProductSku is not null)
+            {
+                throw new ProductAuthoringVariantIdentityConflictException(
+                    "PRODUCT_SKU_CONFLICT",
+                    "variants.sku",
+                    "SKU is already assigned to another product variant.");
+            }
+        }
+
+        if (barcodeCandidates.Count > 0)
+        {
+            var conflictingVariantBarcode = await _context!.ProductVariants
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .WhereCurrentSemanticOwner()
+                .Where(variant =>
+                    variant.TenantId == tenantId &&
+                    !variant.IsDeleted &&
+                    barcodeCandidates.Contains(variant.Barcode) &&
+                    !excludedVariantIds.Contains(variant.Id))
+                .Select(variant => variant.Barcode)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (conflictingVariantBarcode is not null)
+            {
+                throw new ProductAuthoringVariantIdentityConflictException(
+                    "PRODUCT_BARCODE_CONFLICT",
+                    "variants.barcode",
+                    "Barcode is already assigned to another product variant.");
+            }
+
+            var conflictingProductBarcode = await _context.Products
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(existingProduct =>
+                    existingProduct.TenantId == tenantId &&
+                    !existingProduct.IsDeleted &&
+                    existingProduct.Id != productId &&
+                    barcodeCandidates.Contains(existingProduct.Barcode))
+                .Select(existingProduct => existingProduct.Barcode)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (conflictingProductBarcode is not null)
+            {
+                throw new ProductAuthoringVariantIdentityConflictException(
+                    "PRODUCT_BARCODE_CONFLICT",
+                    "variants.barcode",
+                    "Barcode is already assigned to another product variant.");
+            }
+
+            var conflictingUnitBarcode = await _context.ProductUnits
+                .IgnoreQueryFilters()
+                .AsNoTracking()
+                .Where(productUnit =>
+                    !productUnit.IsDeleted &&
+                    productUnit.ProductId != productId &&
+                    productUnit.Product.TenantId == tenantId &&
+                    !productUnit.Product.IsDeleted &&
+                    barcodeCandidates.Contains(productUnit.Barcode))
+                .Select(productUnit => productUnit.Barcode)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (conflictingUnitBarcode is not null)
+            {
+                throw new ProductAuthoringVariantIdentityConflictException(
+                    "PRODUCT_BARCODE_CONFLICT",
+                    "variants.barcode",
+                    "Barcode is already assigned to another product variant.");
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> CollectTrimmedCandidates(IEnumerable<string?> values) =>
+        values
+            .Select(value => value?.Trim())
+            .Where(value => !string.IsNullOrEmpty(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToList()!;
 
     private static IReadOnlyList<ProductVariantAttribute> ApplyVariantAttributes(
         ProductVariant variant,

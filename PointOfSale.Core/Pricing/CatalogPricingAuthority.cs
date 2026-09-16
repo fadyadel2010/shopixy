@@ -22,6 +22,33 @@ public static class CatalogPricingAuthority
     public static decimal ResolveVariantPurchasePrice(ProductVariant variant) =>
         variant.CostPrice;
 
+    /// <summary>
+    /// WAVE 3 — simple-product online price normalization.
+    /// The simple online price lives on the simple default variant's
+    /// <see cref="ProductVariant.OnlinePrice"/> (same convention as multi-variant
+    /// products). Null or zero means "use the POS price" (backward compatible).
+    /// Negative values are rejected here as well as by authoring validation.
+    /// </summary>
+    public static decimal? NormalizeSimpleOnlinePrice(decimal? onlinePrice) =>
+        onlinePrice switch
+        {
+            null => null,
+            < 0m => throw new ArgumentOutOfRangeException(
+                nameof(onlinePrice), onlinePrice, "Simple product storefront price cannot be negative."),
+            <= 0m => null,
+            _ => onlinePrice
+        };
+
+    /// <summary>
+    /// WAVE 3 — resolves the effective simple-product online price:
+    /// default-variant effective online price when explicitly configured,
+    /// otherwise the default-unit POS selling price (legacy behavior).
+    /// </summary>
+    public static decimal ResolveSimpleOnlinePrice(ProductVariant? defaultVariant, ProductUnit? defaultUnit) =>
+        defaultVariant?.OnlinePrice is > 0m
+            ? defaultVariant.OnlinePrice.Value
+            : ResolveSimpleSellingPrice(defaultUnit);
+
     public static bool HasPositiveSimpleSellingPrice(ProductUnit? defaultUnit) =>
         ResolveSimpleSellingPrice(defaultUnit) > 0m;
 

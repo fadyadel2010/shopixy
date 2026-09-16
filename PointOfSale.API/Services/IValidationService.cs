@@ -11,6 +11,20 @@ public interface IValidationService
     Task<ValidationResult> CanDeleteProductAsync(
         Guid productId,
         CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ProductVariantDeleteBlocker>> GetProductDeleteBlockersAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default);
+    // WAVE 2A: variant-level deletion safety. A simple product's default
+    // variant and every multi-variant SKU share this authority so product
+    // deletion can never bypass variant history protection.
+    Task<ValidationResult> CanDeleteVariantAsync(
+        Guid productId,
+        Guid variantId,
+        CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ProductVariantDeleteBlocker>> GetVariantDeleteBlockersAsync(
+        Guid productId,
+        Guid variantId,
+        CancellationToken cancellationToken = default);
     Task<ValidationResult> CanModifyProductUnitConversionAsync(Guid productId, Guid unitId, decimal newConversionFactor);
     
     // Customer Validations

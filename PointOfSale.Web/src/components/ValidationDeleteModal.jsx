@@ -64,6 +64,7 @@ export default function ValidationDeleteModal({
     const [checking, setChecking] = useState(true)
     const [canDelete, setCanDelete] = useState(true)
     const [validationMessage, setValidationMessage] = useState('')
+    const [validationReasons, setValidationReasons] = useState([])
     const [errorCode, setErrorCode] = useState('')
     const [requiresRefresh, setRequiresRefresh] = useState(false)
     const mutationInFlightRef = useRef(false)
@@ -77,6 +78,7 @@ export default function ValidationDeleteModal({
         setChecking(true)
         setCanDelete(true)
         setValidationMessage('')
+        setValidationReasons([])
         setErrorCode('')
         setRequiresRefresh(false)
         mutationInFlightRef.current = false
@@ -101,6 +103,16 @@ export default function ValidationDeleteModal({
                         : response.data.messageEn
                     setValidationMessage(safeDomainMessage(message, t('validation.cannotDelete')))
                     setErrorCode(response.data.errorCode || '')
+                    // WAVE 2A: structured business reasons (never DB internals).
+                    const reasons = Array.isArray(response.data.reasons) ? response.data.reasons : []
+                    setValidationReasons(reasons
+                        .map(reason => {
+                            const text = language === 'ar'
+                                ? (reason.messageAr || reason.messageEn)
+                                : (reason.messageEn || reason.messageAr)
+                            return safeDomainMessage(text, '')
+                        })
+                        .filter(Boolean))
                 }
             } catch (error) {
                 if (!isCurrent) return
@@ -286,6 +298,13 @@ export default function ValidationDeleteModal({
                             <p id="validation-delete-description" className="text-gray-600 text-sm mb-4" role="alert">
                                 {validationMessage}
                             </p>
+                            {validationReasons.length > 0 && (
+                                <ul className="text-start text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4 space-y-1 list-disc ps-6">
+                                    {validationReasons.map((reason, index) => (
+                                        <li key={`${errorCode}-${index}`}>{reason}</li>
+                                    ))}
+                                </ul>
+                            )}
                             {showDeactivateOption && (
                                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-start">
                                     <p className="text-sm text-blue-800 mb-2">

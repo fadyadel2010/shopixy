@@ -167,6 +167,20 @@ function toPositiveNumber(value) {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
+// WAVE 3: simple-product storefront price. Empty/zero = null (backend falls
+// back to the POS price); a finite non-negative number is sent as the
+// requested default-variant onlinePrice. Negative input is normalized to null
+// here (the input is min-clamped) while the backend remains the authority
+// that rejects negatives.
+function parseSimpleStorefrontPrice(value) {
+    if (value == null || `${value}`.trim() === '') {
+        return null
+    }
+
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+}
+
 function translateWithFallback(t, key, fallback) {
     const value = t(key)
     return value && value !== key ? value : fallback
@@ -174,6 +188,8 @@ function translateWithFallback(t, key, fallback) {
 
 const SAFE_AUTHORING_ERROR_CODES = new Set([
     'PRODUCT_ACTIVE_PRICED_VARIANT_REQUIRED',
+    'PRODUCT_ATTRIBUTE_CONFLICT',
+    'PRODUCT_BARCODE_CONFLICT',
     'PRODUCT_BARCODE_OWNERSHIP_CONFLICT',
     'PRODUCT_BARCODE_TOO_LONG',
     'PRODUCT_BASE_UNIT_CONVERSION_FACTOR_INVALID',
@@ -187,9 +203,11 @@ const SAFE_AUTHORING_ERROR_CODES = new Set([
     'PRODUCT_NAME_REQUIRED',
     'PRODUCT_NAME_TOO_LONG',
     'PRODUCT_PUBLISH_STATUS_INVALID',
+    'PRODUCT_SKU_CONFLICT',
     'PRODUCT_SKU_TOO_LONG',
     'PRODUCT_TAX_RATE_INVALID',
     'PRODUCT_TEMPLATE_TOO_LONG',
+    'PRODUCT_TYPE_CONVERSION_UNSUPPORTED',
     'PRODUCT_VARIANT_ATTRIBUTE_NAME_TOO_LONG',
     'PRODUCT_VARIANT_ATTRIBUTE_VALUE_TOO_LONG',
     'PRODUCT_VARIANT_BARCODE_TOO_LONG',
@@ -206,6 +224,16 @@ const SAFE_AUTHORING_ERROR_CODES = new Set([
     'PRODUCT_UNIT_NAME_TOO_LONG',
     'PRODUCT_UNITS_REQUIRED',
     'SIMPLE_PRODUCT_VARIANT_STATE_INVALID',
+    'VARIANT_HAS_COMMERCEHUB_LISTING',
+    'VARIANT_HAS_COMMERCEHUB_ORDERS',
+    'VARIANT_HAS_MOVEMENTS',
+    'VARIANT_HAS_RESERVATIONS',
+    'VARIANT_HAS_STOCK',
+    'VARIANT_HAS_STOREFRONT_ORDERS',
+    'VARIANT_USED_IN_PURCHASES',
+    'VARIANT_USED_IN_RETURNS',
+    'VARIANT_USED_IN_SALES',
+    'VARIANT_USED_IN_TRANSFERS',
     'VARIANT_PRODUCT_VARIANT_STATE_REQUIRED'
 ])
 
@@ -224,6 +252,24 @@ function extractApiErrorMessage(error, fallback, t) {
     const nestedData = data?.data
 
     if (status === 409) {
+        // WAVE 4: a 409 is not always a concurrency conflict — the server
+        // returns typed identity conflicts (SKU/barcode/attribute combination)
+        // on the same status. Surface the precise allow-listed server message
+        // when present; only genuine concurrency/idempotency conflicts keep
+        // the generic refresh guidance.
+        const conflictItems = [
+            ...(Array.isArray(data?.errors) ? data.errors : []),
+            ...(Array.isArray(nestedData?.errors) ? nestedData.errors : [])
+        ]
+        const conflictMessages = conflictItems
+            .filter((item) => SAFE_AUTHORING_ERROR_CODES.has(item?.code || item?.Code))
+            .map((item) => item?.message || item?.Message)
+            .filter(isSafeAuthoringMessage)
+
+        if (conflictMessages.length > 0) {
+            return conflictMessages.join(' ')
+        }
+
         return translateWithFallback(
             t,
             'products.concurrencyConflict',
@@ -326,6 +372,9 @@ function buildProductAuthoringPayloadFromDraft({
 
     return {
         ...formData,
+        // WAVE 1: a blank slug is sent as null so the server slug authority
+        // derives a deterministic tenant-unique slug instead of persisting ''.
+        slug: sanitizeSlugValue(formData.slug) || null,
         taxRate: parseFloat(formData.taxRate) || 0,
         categoryId: formData.categoryId,
         hasVariants,
@@ -338,6 +387,9 @@ function buildProductAuthoringPayloadFromDraft({
         lowStockThreshold: formData.lowStockThreshold ? parseInt(formData.lowStockThreshold) : null,
         publishStatus: isVariantCreateMode ? 0 : normalizePublishStatus(formData.publishStatus),
         productTemplate: formData.productTemplate || 'default',
+        // WAVE 3: simple-product storefront price. Sent as the requested
+        // default-variant onlinePrice; null/zero = storefront uses POS price.
+        onlinePrice: hasVariants ? null : parseSimpleStorefrontPrice(simpleProductData.storefrontPrice),
         productUnits: hasVariants ? null : buildProductUnitsPayloadFromDrafts(productUnits),
         variants: hasVariants
             ? (productId && !includeVariants ? null : variantSnapshot)
@@ -549,9 +601,19 @@ const ProductForm = forwardRef(function ProductForm({
     const [acceptedRowVersion, setAcceptedRowVersion] = useState(null)
     const [simpleProductData, setSimpleProductData] = useState({
         sku: '',
-        barcode: ''
+        barcode: '',
+        storefrontPrice: ''
     })
     const [formData, setFormData] = useState(createInitialProductFormData)
+    // WAVE 1: slug auto-suggest tracks whether the user explicitly edited the slug.
+    // Until touched, the slug preview follows the product name; backend remains
+    // the slug authority and derives the stored slug when the field is blank.
+    const isSlugManuallyEditedRef = useRef(false)
+    // WAVE 1 bilingual UX: Arabic translations are optional progressive
+    // disclosure. The storefront falls back to the primary name/description
+    // when a translation is absent, so empty translations stay collapsed.
+    const [showArabicName, setShowArabicName] = useState(false)
+    const [showArabicDescription, setShowArabicDescription] = useState(false)
 
     const isWorkspace = mode === 'workspace'
     const isCreateMode = !productId
@@ -569,12 +631,15 @@ const ProductForm = forwardRef(function ProductForm({
 
         formDataRef.current = initialFormData
         setFormData(initialFormData)
+        isSlugManuallyEditedRef.current = false
+        setShowArabicName(false)
+        setShowArabicDescription(false)
         setHasVariants(false)
         setDefaultVariant(null)
         setProductUnits([])
         setVariantAuthoringSummary([])
         setAcceptedRowVersion(null)
-        setSimpleProductData({ sku: '', barcode: '' })
+        setSimpleProductData({ sku: '', barcode: '', storefrontPrice: '' })
         setError('')
         pendingSaveRef.current = null
         pendingSavePromiseRef.current = null
@@ -584,7 +649,7 @@ const ProductForm = forwardRef(function ProductForm({
                 formData: initialFormData,
                 productId: null,
                 hasVariants: false,
-                simpleProductData: { sku: '', barcode: '' },
+                simpleProductData: { sku: '', barcode: '', storefrontPrice: '' },
                 productUnits: [],
                 variantAuthoringSummary: []
             }))
@@ -733,6 +798,10 @@ const ProductForm = forwardRef(function ProductForm({
                 faqCount: normalizeFaqItems(generatedProduct.faq).length
             }
 
+            if (nextFormData.slug) {
+                isSlugManuallyEditedRef.current = true
+            }
+
             formDataRef.current = nextFormData
             setFormData(nextFormData)
 
@@ -825,13 +894,18 @@ const ProductForm = forwardRef(function ProductForm({
                 aiMetadata: parseStructuredAiMetadata(product.aiMetadataJson ?? product.aiMetadata)
             }
             let loadedHasVariants = derivedHasVariants
-            let loadedSimpleProductData = { sku: '', barcode: '' }
+            let loadedSimpleProductData = { sku: '', barcode: '', storefrontPrice: '' }
             let loadedVariants = product.variants
 
             setAcceptedRowVersion(product.rowVersion || product.RowVersion || null)
             setHasVariants(derivedHasVariants)
             setProductUnits(loadedProductUnits)
             setFormData(loadedFormData)
+            // A stored slug counts as explicitly set: never auto-overwrite it
+            // from the name on edit (slug stability preserves storefront URLs).
+            isSlugManuallyEditedRef.current = Boolean(product.slug)
+            setShowArabicName(Boolean(product.nameAr))
+            setShowArabicDescription(Boolean(product.descriptionAr))
 
             if (!derivedHasVariants) {
                 const defaultVariantLoad = await fetchDefaultVariant(targetProductId, isCurrentProduct)
@@ -875,7 +949,7 @@ const ProductForm = forwardRef(function ProductForm({
                 return {
                     hasVariants: true,
                     variants,
-                    simpleProductData: { sku: '', barcode: '' }
+                    simpleProductData: { sku: '', barcode: '', storefrontPrice: '' }
                 }
             }
 
@@ -884,7 +958,12 @@ const ProductForm = forwardRef(function ProductForm({
             if (defaultVar) {
                 const loadedSimpleProductData = {
                     sku: defaultVar.sku || '',
-                    barcode: defaultVar.barcode || ''
+                    barcode: defaultVar.barcode || '',
+                    // WAVE 3: simple-product storefront price (default-variant onlinePrice).
+                    // Empty = storefront uses the POS (default-unit selling) price.
+                    storefrontPrice: defaultVar.onlinePrice != null && defaultVar.onlinePrice !== ''
+                        ? `${defaultVar.onlinePrice}`
+                        : ''
                 }
 
                 setDefaultVariant(defaultVar)
@@ -901,7 +980,7 @@ const ProductForm = forwardRef(function ProductForm({
                 hasVariants: false,
                 variants,
                 defaultVariant: null,
-                simpleProductData: { sku: '', barcode: '' }
+                simpleProductData: { sku: '', barcode: '', storefrontPrice: '' }
             }
         } catch {
             if (isCurrentProduct()) {
@@ -911,7 +990,7 @@ const ProductForm = forwardRef(function ProductForm({
                 hasVariants: false,
                 variants: [],
                 defaultVariant: null,
-                simpleProductData: { sku: '', barcode: '' }
+                simpleProductData: { sku: '', barcode: '', storefrontPrice: '' }
             }
         }
     }
@@ -1091,6 +1170,11 @@ const ProductForm = forwardRef(function ProductForm({
             return t('products.defaultUnitPriceRequired') || 'Default unit price must be greater than zero before publication.'
         }
 
+        // WAVE 3: storefront price is optional, but never negative.
+        if (simpleProductData.storefrontPrice !== '' && !(Number.parseFloat(simpleProductData.storefrontPrice) >= 0)) {
+            return translateWithFallback(t, 'products.storefrontPriceInvalid', 'Storefront price cannot be negative.')
+        }
+
         if (completeUnits.some((unit) => toPositiveNumber(unit.conversionFactor) <= 0 || (unit.isBaseUnit && Number.parseFloat(unit.conversionFactor) !== 1))) {
             return t('products.productUnitsInvalid') || 'Product units must have valid conversion factors.'
         }
@@ -1257,6 +1341,28 @@ const ProductForm = forwardRef(function ProductForm({
     }
 
     const handleChange = (field, value) => {
+        if (field === 'slug') {
+            isSlugManuallyEditedRef.current = true
+            setFormData(prev => ({ ...prev, slug: sanitizeSlugValue(value) }))
+            return
+        }
+
+        // Suggest only while creating: on edit the stored slug is stable and the
+        // server backfills a missing slug, so typing a name must not dirty it.
+        if (field === 'name' && isCreateMode && !isSlugManuallyEditedRef.current) {
+            const suggestedSlug = sanitizeSlugValue(value)
+            setFormData(prev => ({ ...prev, name: value, slug: suggestedSlug }))
+            return
+        }
+
+        if (field === 'nameAr' && value && !showArabicName) {
+            setShowArabicName(true)
+        }
+
+        if (field === 'descriptionAr' && value && !showArabicDescription) {
+            setShowArabicDescription(true)
+        }
+
         setFormData(prev => ({ ...prev, [field]: value }))
     }
 
@@ -1315,6 +1421,10 @@ const ProductForm = forwardRef(function ProductForm({
     ]
     const selectedUnitIds = new Set(completeProductUnitDrafts.map((unit) => unit.unitId))
 
+    // WAVE 3 (C6): the product model is fixed once created. Flipping
+    // Simple <-> Variant rewires SKU, stock and price ownership, so the choice
+    // is locked on edit; the backend additionally rejects destructive flips.
+    const isProductTypeLocked = Boolean(productId)
     const productTypeSection = (
         <WorkspaceSection
             eyebrow={isWorkspace ? (t('products.basicInfo') || 'Product Setup') : null}
@@ -1322,15 +1432,24 @@ const ProductForm = forwardRef(function ProductForm({
             description={t('products.productTypeDescription') || 'Choose how this product is sold.'}
             className="border-purple-100 bg-gradient-to-r from-white to-purple-50"
         >
+            {isProductTypeLocked && (
+                <div
+                    className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+                    role="note"
+                >
+                    {t('products.productTypeLocked') || 'Product type is fixed after creation to protect pricing, stock and order history.'}
+                </div>
+            )}
             <div className="grid gap-3 md:grid-cols-2" role="radiogroup" aria-label={t('products.productType') || 'Product Type'}>
                 <label className={`flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-4 transition ${
                     !hasVariants ? 'border-primary-300 ring-2 ring-primary-100' : 'border-gray-200 hover:border-gray-300'
-                }`}>
+                } ${isProductTypeLocked ? 'cursor-not-allowed opacity-70' : ''}`}>
                     <input
                         type="radio"
                         name="product-type"
                         checked={!hasVariants}
                         onChange={() => handleModeChange(false)}
+                        disabled={isProductTypeLocked}
                         className="mt-1 border-primary-300 text-primary-600 focus:ring-primary-500"
                     />
                     <div>
@@ -1338,27 +1457,28 @@ const ProductForm = forwardRef(function ProductForm({
                             {t('products.simpleProduct') || 'Simple Product'}
                         </span>
                         <p className="mt-1 text-sm text-gray-500">
-                            {t('products.simpleModeHint') || 'Single product sold through default Product Unit pricing.'}
+                            {t('products.simpleModeHint') || 'One sellable item: purchase price, POS price and an optional separate storefront price.'}
                         </p>
                     </div>
                 </label>
 
                 <label className={`flex cursor-pointer items-start gap-3 rounded-xl border bg-white p-4 transition ${
                     hasVariants ? 'border-purple-300 ring-2 ring-purple-100' : 'border-gray-200 hover:border-gray-300'
-                }`}>
+                } ${isProductTypeLocked ? 'cursor-not-allowed opacity-70' : ''}`}>
                     <input
                         type="radio"
                         name="product-type"
                         checked={hasVariants}
                         onChange={() => handleModeChange(true)}
+                        disabled={isProductTypeLocked}
                         className="mt-1 border-purple-300 text-purple-600 focus:ring-purple-500"
                     />
                     <div>
                         <span className="font-medium text-gray-900">
-                            {t('products.variantProduct') || 'Variant Product'}
+                            {t('products.variantProduct') || 'Product with Variants'}
                         </span>
                         <p className="mt-1 text-sm text-gray-500">
-                            {t('products.variantModeHint') || 'Pricing, inventory, SKU and stock are configured after creating product variants.'}
+                            {t('products.variantModeHint') || 'Multiple option combinations: each variant gets its own SKU, stock, POS price and storefront price.'}
                         </p>
                     </div>
                 </label>
@@ -1400,16 +1520,30 @@ const ProductForm = forwardRef(function ProductForm({
                 </div>
 
                 <div className="md:col-span-2">
-                    <label className="label" htmlFor={`${formId}-name-ar`}>{t('products.productNameAr')}</label>
-                    <input
-                        id={`${formId}-name-ar`}
-                        type="text"
-                        value={formData.nameAr}
-                        onChange={(e) => handleChange('nameAr', e.target.value)}
-                        className="input text-start"
-                        dir="rtl"
-                        maxLength={300}
-                    />
+                    {showArabicName ? (
+                        <>
+                            <label className="label" htmlFor={`${formId}-name-ar`}>{t('products.productNameAr')}</label>
+                            <input
+                                id={`${formId}-name-ar`}
+                                type="text"
+                                value={formData.nameAr}
+                                onChange={(e) => handleChange('nameAr', e.target.value)}
+                                className="input text-start"
+                                dir="rtl"
+                                maxLength={300}
+                                placeholder={t('products.arabicNamePlaceholder')}
+                            />
+                            <p className="mt-1 text-xs text-gray-500">{t('products.arabicFallbackHint')}</p>
+                        </>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setShowArabicName(true)}
+                            className="text-sm font-medium text-primary-600 hover:text-primary-800"
+                        >
+                            + {t('products.addArabicTranslation')}
+                        </button>
+                    )}
                 </div>
 
                 <div className="md:col-span-2">
@@ -1442,15 +1576,29 @@ const ProductForm = forwardRef(function ProductForm({
                 </div>
 
                 <div className="md:col-span-2">
-                    <label className="label" htmlFor={`${formId}-description-ar`}>{t('products.descriptionAr')}</label>
-                    <textarea
-                        id={`${formId}-description-ar`}
-                        value={formData.descriptionAr}
-                        onChange={(e) => handleChange('descriptionAr', e.target.value)}
-                        className="input text-start"
-                        dir="rtl"
-                        rows="4"
-                    />
+                    {showArabicDescription ? (
+                        <>
+                            <label className="label" htmlFor={`${formId}-description-ar`}>{t('products.descriptionAr')}</label>
+                            <textarea
+                                id={`${formId}-description-ar`}
+                                value={formData.descriptionAr}
+                                onChange={(e) => handleChange('descriptionAr', e.target.value)}
+                                className="input text-start"
+                                dir="rtl"
+                                rows="4"
+                                placeholder={t('products.arabicDescriptionPlaceholder')}
+                            />
+                            <p className="mt-1 text-xs text-gray-500">{t('products.arabicFallbackHint')}</p>
+                        </>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setShowArabicDescription(true)}
+                            className="text-sm font-medium text-primary-600 hover:text-primary-800"
+                        >
+                            + {t('products.addArabicDescription')}
+                        </button>
+                    )}
                 </div>
 
                 <div>
@@ -1680,6 +1828,34 @@ const ProductForm = forwardRef(function ProductForm({
                                 {item.ready ? 'Ready' : 'Needs'}: {item.label}
                             </span>
                         ))}
+                    </div>
+                </div>
+
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <div>
+                            <label className="label" htmlFor={`${formId}-storefront-price`}>
+                                {t('products.storefrontPrice') || 'Storefront Price'}
+                            </label>
+                            <input
+                                id={`${formId}-storefront-price`}
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={simpleProductData.storefrontPrice}
+                                onChange={(e) => handleSimpleChange('storefrontPrice', e.target.value)}
+                                className="input"
+                                placeholder={t('products.storefrontPricePlaceholder') || 'Same as POS price'}
+                            />
+                            <p className="mt-1 text-xs text-gray-500">
+                                {t('products.storefrontPriceHint') || 'Optional. When set, the storefront, cart and checkout use this price. POS keeps using the default unit selling price. Leave empty to sell online at the POS price.'}
+                            </p>
+                        </div>
+                        <div className="flex items-end pb-1">
+                            <p className="text-xs text-gray-500">
+                                {t('products.channelPricingNote') || 'Purchase price and POS selling price are managed per unit above.'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1940,11 +2116,14 @@ const ProductForm = forwardRef(function ProductForm({
                     <input
                         type="text"
                         value={formData.slug}
-                        onChange={(e) => handleChange('slug', e.target.value.toLowerCase().replace(/\s+/g, '-'))}
+                        onChange={(e) => handleChange('slug', e.target.value)}
                         className="input font-mono"
                         placeholder="product-url-slug"
                     />
                     <p className="mt-1 text-xs text-gray-500">{t('products.slugHint')}</p>
+                    {productId && formData.slug ? (
+                        <p className="mt-1 text-xs text-amber-600">{t('products.slugEditWarning')}</p>
+                    ) : null}
                 </div>
 
                 <div>
@@ -1994,7 +2173,8 @@ const ProductForm = forwardRef(function ProductForm({
             return toPositiveNumber(representativeVariant?.onlinePrice) || toPositiveNumber(representativeVariant?.price)
         }
 
-        return toPositiveNumber(defaultUnitDraft?.sellingPrice)
+        // WAVE 3: pixel tracks the storefront-facing value.
+        return toPositiveNumber(simpleProductData.storefrontPrice) || toPositiveNumber(defaultUnitDraft?.sellingPrice)
     }
 
     const pixelOverrideSection = productId ? (

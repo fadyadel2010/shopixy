@@ -300,6 +300,186 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
     }
 
     [Fact]
+    public async Task Create_WithDuplicateVariantSku_ReturnsConflictWithoutMutation()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "duplicate-variant-sku",
+            variants:
+            [
+                new ProductAuthoringVariant(null, "DUPLICATE-SKU", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Plain" }),
+                new ProductAuthoringVariant(null, "DUPLICATE-SKU", null, 10m, null, 5m, true, false,
+                    new Dictionary<string, string> { ["Style"] = "Dark" })
+            ]));
+
+        Assert.Equal(ProductAuthoringStatus.Conflict, result.Status);
+        Assert.Contains(result.ValidationErrors, error => error.Code == "PRODUCT_SKU_CONFLICT");
+        Assert.Empty(await harness.Context.Products.IgnoreQueryFilters().ToListAsync());
+        Assert.Empty(await harness.Context.ProductVariants.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Create_WithSkuOwnedByAnotherVariant_ReturnsConflictWithoutSecondMutation()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var first = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "owned-variant-sku-first",
+            name: "First product",
+            variants:
+            [
+                new ProductAuthoringVariant(null, "OWNED-SKU", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Plain" })
+            ]));
+        Assert.Equal(ProductAuthoringStatus.Accepted, first.Status);
+        harness.Context.ChangeTracker.Clear();
+
+        var conflict = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "owned-variant-sku-second",
+            name: "Second product",
+            variants:
+            [
+                new ProductAuthoringVariant(null, "OWNED-SKU", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Medium" })
+            ]));
+
+        Assert.Equal(ProductAuthoringStatus.Conflict, conflict.Status);
+        Assert.Contains(conflict.ValidationErrors, error => error.Code == "PRODUCT_SKU_CONFLICT");
+        Assert.Single(await harness.Context.Products.IgnoreQueryFilters().ToListAsync());
+        Assert.Single(await harness.Context.ProductVariants.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Remove_WithProtectedVariantStock_ReturnsValidationFailureWithoutMutation()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var create = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "protected-remove-create",
+            variants:
+            [
+                new ProductAuthoringVariant(null, "PROTECTED-REMOVE", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Plain" })
+            ]));
+        Assert.Equal(ProductAuthoringStatus.Accepted, create.Status);
+
+        var variantId = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == create.ProductId)
+            .Select(variant => variant.Id)
+            .SingleAsync();
+        var warehouse = new Warehouse
+        {
+            Id = Guid.NewGuid(),
+            TenantId = harness.TenantContext.TenantId!.Value,
+            Name = "Protected remove warehouse"
+        };
+        harness.Context.AddRange(
+            warehouse,
+            new ProductVariantStock
+            {
+                Id = Guid.NewGuid(),
+                TenantId = harness.TenantContext.TenantId.Value,
+                VariantId = variantId,
+                WarehouseId = warehouse.Id,
+                Quantity = 1m
+            });
+        await harness.Context.SaveChangesAsync();
+        harness.Context.ChangeTracker.Clear();
+
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Remove,
+            hasVariants: true,
+            idempotencyKey: "protected-remove-attempt",
+            productId: create.ProductId,
+            variantsSubmitted: false,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Archived,
+            isOnlineVisible: false));
+
+        Assert.Equal(ProductAuthoringStatus.ValidationFailed, result.Status);
+        Assert.Contains(result.ValidationErrors, error => error.Code == "PRODUCT_HAS_STOCK");
+        harness.Context.ChangeTracker.Clear();
+        Assert.False((await harness.Context.Products.IgnoreQueryFilters()
+            .SingleAsync(product => product.Id == create.ProductId)).IsDeleted);
+        Assert.False((await harness.Context.ProductVariants.IgnoreQueryFilters()
+            .SingleAsync(variant => variant.Id == variantId)).IsDeleted);
+    }
+
+    [Fact]
+    public async Task Update_OmittingProtectedVariant_BlocksBeforeCreatingReplacement()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var create = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "protected-omission-create",
+            variants:
+            [
+                new ProductAuthoringVariant(null, "STYLE-PLAIN", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Plain" }),
+                new ProductAuthoringVariant(null, "STYLE-DARK", null, 10m, null, 5m, true, false,
+                    new Dictionary<string, string> { ["Style"] = "Dark" })
+            ]));
+        Assert.Equal(ProductAuthoringStatus.Accepted, create.Status);
+
+        var persisted = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == create.ProductId)
+            .Include(variant => variant.Attributes)
+            .ToListAsync();
+        var plain = persisted.Single(variant => variant.SKU == "STYLE-PLAIN");
+        var dark = persisted.Single(variant => variant.SKU == "STYLE-DARK");
+        var warehouse = new Warehouse
+        {
+            Id = Guid.NewGuid(),
+            TenantId = harness.TenantContext.TenantId!.Value,
+            Name = "Protected omission warehouse"
+        };
+        harness.Context.AddRange(
+            warehouse,
+            new ProductVariantStock
+            {
+                Id = Guid.NewGuid(),
+                TenantId = harness.TenantContext.TenantId.Value,
+                VariantId = dark.Id,
+                WarehouseId = warehouse.Id,
+                Quantity = 1m
+            });
+        await harness.Context.SaveChangesAsync();
+        harness.Context.ChangeTracker.Clear();
+
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: true,
+            idempotencyKey: "protected-omission-attempt",
+            productId: create.ProductId,
+            productUnitsSubmitted: false,
+            variants:
+            [
+                new ProductAuthoringVariant(plain.Id, "STYLE-PLAIN", null, 10m, null, 5m, true, true,
+                    new Dictionary<string, string> { ["Style"] = "Plain" }),
+                new ProductAuthoringVariant(null, "STYLE-MOJAHED", null, 10m, null, 5m, true, false,
+                    new Dictionary<string, string> { ["Style"] = "Mojahed" })
+            ]));
+
+        Assert.Equal(ProductAuthoringStatus.ValidationFailed, result.Status);
+        Assert.Contains(result.ValidationErrors, error => error.Code == "VARIANT_HAS_STOCK");
+        harness.Context.ChangeTracker.Clear();
+        var after = await harness.Context.ProductVariants.IgnoreQueryFilters()
+            .Where(variant => variant.ProductId == create.ProductId)
+            .ToListAsync();
+        Assert.Equal(2, after.Count);
+        Assert.Contains(after, variant => variant.Id == dark.Id && !variant.IsDeleted);
+        Assert.DoesNotContain(after, variant => variant.SKU == "STYLE-MOJAHED");
+    }
+
+    [Fact]
     public async Task UpdateVariantTemplate_ReusesExistingDefaultVariant_AndPersistsNewAttributes()
     {
         await using var harness = await Harness.CreateAsync();
@@ -530,6 +710,91 @@ public sealed class ProductAuthoringTransactionCompletenessIntegrationTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => harness.Orchestrator.AuthorAsync(command));
 
         await AssertNothingPersistedAsync(harness);
+    }
+
+    [Fact]
+    public async Task Update_SimpleToVariantFlip_IsRejectedWithoutMutation()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var create = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            idempotencyKey: "type-flip-simple-create",
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false));
+        var productId = Assert.IsType<Guid>(create.ProductId);
+        harness.Context.ChangeTracker.Clear();
+
+        var before = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == productId)
+            .Select(variant => new { variant.Id, variant.Price, variant.OnlinePrice, variant.CostPrice })
+            .SingleAsync();
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: true,
+            idempotencyKey: "type-flip-simple-update",
+            productId: productId,
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false));
+        harness.Context.ChangeTracker.Clear();
+
+        Assert.Equal(ProductAuthoringStatus.ValidationFailed, result.Status);
+        Assert.Contains(result.ValidationErrors, error => error.Code == "PRODUCT_TYPE_CONVERSION_UNSUPPORTED");
+        Assert.False(await harness.Context.Products.Where(product => product.Id == productId).Select(product => product.HasVariants).SingleAsync());
+        var after = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == productId)
+            .Select(variant => new { variant.Id, variant.Price, variant.OnlinePrice, variant.CostPrice })
+            .SingleAsync();
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
+    public async Task Update_VariantToSimpleFlip_IsRejectedWithoutMutation()
+    {
+        await using var harness = await Harness.CreateAsync();
+        var authoredVariant = new ProductAuthoringVariant(
+            null,
+            "TYPE-FLIP-VARIANT",
+            null,
+            19m,
+            23m,
+            7m,
+            true,
+            true,
+            new Dictionary<string, string> { ["Style"] = "Default" });
+        var create = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Create,
+            hasVariants: true,
+            idempotencyKey: "type-flip-variant-create",
+            variants: [authoredVariant],
+            productUnitsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false));
+        var productId = Assert.IsType<Guid>(create.ProductId);
+        harness.Context.ChangeTracker.Clear();
+
+        var before = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == productId)
+            .Select(variant => new { variant.Id, variant.Price, variant.OnlinePrice, variant.CostPrice })
+            .SingleAsync();
+        var result = await harness.Orchestrator.AuthorAsync(harness.CreateCommand(
+            ProductAuthoringOperation.Update,
+            hasVariants: false,
+            idempotencyKey: "type-flip-variant-update",
+            productId: productId,
+            variantsSubmitted: false,
+            publishStatus: PublishStatus.Draft,
+            isOnlineVisible: false));
+        harness.Context.ChangeTracker.Clear();
+
+        Assert.Equal(ProductAuthoringStatus.ValidationFailed, result.Status);
+        Assert.Contains(result.ValidationErrors, error => error.Code == "PRODUCT_TYPE_CONVERSION_UNSUPPORTED");
+        Assert.True(await harness.Context.Products.Where(product => product.Id == productId).Select(product => product.HasVariants).SingleAsync());
+        var after = await harness.Context.ProductVariants
+            .Where(variant => variant.ProductId == productId)
+            .Select(variant => new { variant.Id, variant.Price, variant.OnlinePrice, variant.CostPrice })
+            .SingleAsync();
+        Assert.Equal(before, after);
     }
 
     [Fact]

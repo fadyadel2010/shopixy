@@ -592,6 +592,24 @@ public class ProductsController : ControllerBase
             cancellationToken);
         if (result.Status != ProductAuthoringStatus.Accepted)
         {
+            // WAVE 2A: the orchestrator re-validates historical protection
+            // inside the authoring transaction. If history landed between the
+            // pre-check above and the commit, surface the standard localized
+            // deletion contract instead of a generic authoring error.
+            if (result.ValidationErrors.Any(IsProductDeleteProtectionError))
+            {
+                var revalidation = await _validationService.CanDeleteProductAsync(id, cancellationToken);
+                if (!revalidation.IsValid)
+                {
+                    return BadRequest(new {
+                        errorCode = revalidation.ErrorCode,
+                        messageEn = revalidation.MessageEn,
+                        messageAr = revalidation.MessageAr,
+                        data = revalidation.Data
+                    });
+                }
+            }
+
             return ToProductAuthoringActionResult(result);
         }
 
@@ -797,11 +815,66 @@ public class ProductsController : ControllerBase
         }
 
         var validationResult = await _validationService.CanDeleteProductAsync(id);
+        var blockers = validationResult.IsValid
+            ? Array.Empty<ProductVariantDeleteBlocker>()
+            : await _validationService.GetProductDeleteBlockersAsync(id);
         return Ok(new {
             canDelete = validationResult.IsValid,
             errorCode = validationResult.ErrorCode,
             messageEn = validationResult.MessageEn,
-            messageAr = validationResult.MessageAr
+            messageAr = validationResult.MessageAr,
+            reasons = blockers.Select(blocker => new {
+                code = blocker.Code,
+                messageEn = blocker.MessageEn,
+                messageAr = blocker.MessageAr
+            }).ToArray()
+        });
+    }
+
+    /// <summary>
+    /// WAVE 2A: check if a single variant can be deleted - used by the variant
+    /// matrix before omitting a persisted variant from a save, and to explain
+    /// WHY a protected variant must be deactivated instead of deleted.
+    /// Simple products are covered identically: their default variant is an
+    /// ordinary variant row.
+    /// </summary>
+    [HttpGet("{id}/variants/{variantId}/can-delete")]
+    [Authorize(Roles = "Owner,Admin,Manager")]
+    public async Task<IActionResult> CanDeleteVariant(Guid id, Guid variantId)
+    {
+        var product = await _context.Products.FindAsync(id);
+        if (product == null)
+        {
+            return NotFound(new {
+                errorCode = "PRODUCT_NOT_FOUND",
+                messageEn = "Product not found.",
+                messageAr = "المنتج غير موجود."
+            });
+        }
+
+        var validationResult = await _validationService.CanDeleteVariantAsync(id, variantId);
+        if (validationResult.ErrorCode == "VARIANT_NOT_FOUND")
+        {
+            return NotFound(new {
+                errorCode = validationResult.ErrorCode,
+                messageEn = validationResult.MessageEn,
+                messageAr = validationResult.MessageAr
+            });
+        }
+
+        var blockers = validationResult.IsValid
+            ? Array.Empty<ProductVariantDeleteBlocker>()
+            : await _validationService.GetVariantDeleteBlockersAsync(id, variantId);
+        return Ok(new {
+            canDelete = validationResult.IsValid,
+            errorCode = validationResult.ErrorCode,
+            messageEn = validationResult.MessageEn,
+            messageAr = validationResult.MessageAr,
+            reasons = blockers.Select(blocker => new {
+                code = blocker.Code,
+                messageEn = blocker.MessageEn,
+                messageAr = blocker.MessageAr
+            }).ToArray()
         });
     }
 
@@ -1267,6 +1340,12 @@ public class ProductsController : ControllerBase
             })
             .FirstOrDefaultAsync(cancellationToken);
     }
+
+    private static bool IsProductDeleteProtectionError(ProductAuthoringValidationError error) =>
+        error.Code is not null &&
+        error.Code.StartsWith("PRODUCT_", StringComparison.Ordinal) &&
+        (error.Code.Contains("HAS_", StringComparison.Ordinal) ||
+         error.Code.Contains("USED_IN_", StringComparison.Ordinal));
 
     private ActionResult ToProductAuthoringActionResult(ProductAuthoringResult result)
     {
@@ -2534,7 +2613,7 @@ public record CreateProductRequest(
     Guid CategoryId,
     decimal PurchasePrice,
     decimal SalePrice,
-    decimal? OnlinePrice,  // Legacy compatibility input; canonical simple price is ProductUnits.SellingPrice.
+    decimal? OnlinePrice,  // WAVE 3: simple-product storefront price (default-variant OnlinePrice). Null/zero = use POS price.
     bool PriceIncludesTax,
     decimal TaxRate,
     string? Unit,  // Optional - defaults to "Piece" if not provided
@@ -2588,7 +2667,7 @@ public record UpdateProductRequest(
     Guid CategoryId,
     decimal PurchasePrice,
     decimal SalePrice,
-    decimal? OnlinePrice,  // Legacy compatibility input; canonical simple price is ProductUnits.SellingPrice.
+    decimal? OnlinePrice,  // WAVE 3: simple-product storefront price (default-variant OnlinePrice). Null/zero = use POS price.
     bool PriceIncludesTax,
     decimal TaxRate,
     string? Unit,  // Optional - defaults to "Piece" if not provided

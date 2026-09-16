@@ -119,8 +119,11 @@ public class ProductVariantLifecycleAuthorityTests
     }
 
     [Fact]
-    public void ResolveVisiblePrice_UsesDefaultUnitForSimpleProductsEvenWhenDefaultVariantHasDifferentPrice()
+    public void ResolveVisiblePrice_PrefersConfiguredDefaultVariantOnlinePriceForSimpleProducts()
     {
+        // WAVE 3: simple products support a dedicated storefront price on the
+        // default variant (same convention as multi-variant products). An
+        // explicitly configured OnlinePrice wins over the default-unit price.
         var product = new ProductDocument
         {
             HasVariants = false,
@@ -141,6 +144,39 @@ public class ProductVariantLifecycleAuthorityTests
                     IsActive = true,
                     Price = 100m,
                     OnlinePrice = 110m
+                }
+            ]
+        };
+
+        Assert.Equal(110m, ProductStorefrontVisibilityAuthority.ResolveVisiblePrice(product));
+    }
+
+    [Fact]
+    public void ResolveVisiblePrice_FallsBackToDefaultUnitForSimpleProductsWithoutOnlinePrice()
+    {
+        // WAVE 3 backward compatibility: products authored before the simple
+        // storefront price (default-variant OnlinePrice = null) resolve exactly
+        // as before, from the default unit.
+        var product = new ProductDocument
+        {
+            HasVariants = false,
+            DefaultUnit = new ProductUnitDocument
+            {
+                UnitId = Guid.NewGuid(),
+                Name = "Piece",
+                SalePrice = 25m,
+                ConversionFactor = 1m,
+                IsBaseUnit = true
+            },
+            Variants =
+            [
+                new ProductVariantDocument
+                {
+                    VariantId = Guid.NewGuid(),
+                    IsDefault = true,
+                    IsActive = true,
+                    Price = 100m,
+                    OnlinePrice = null
                 }
             ]
         };
@@ -171,8 +207,11 @@ public class ProductVariantLifecycleAuthorityTests
     }
 
     [Fact]
-    public void Evaluate_SimpleProductUsesDefaultUnitAndIgnoresProjectedDefaultVariant()
+    public void Evaluate_SimpleProductPrefersConfiguredDefaultVariantOnlinePrice()
     {
+        // WAVE 3: the configured simple storefront price (default-variant
+        // OnlinePrice) is what the storefront sells at; stock/availability
+        // semantics are unchanged.
         var product = new ProductDocument
         {
             IsActive = true,
@@ -206,7 +245,7 @@ public class ProductVariantLifecycleAuthorityTests
 
         Assert.True(result.IsAvailable);
         Assert.True(result.CanPurchase);
-        Assert.Equal(25m, result.Price);
+        Assert.Equal(110m, result.Price);
         Assert.True(result.InStock);
         Assert.Equal(4, result.StockQuantity);
         Assert.Null(result.UnavailableReason);

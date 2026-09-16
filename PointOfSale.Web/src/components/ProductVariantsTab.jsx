@@ -10,13 +10,19 @@ import { toProductAuthoringVariant } from '../utils/productAuthoringVariants'
 const SAFE_COMBINATION_LIMIT = 100
 const INFO_COMBINATION_LIMIT = 300
 const WARNING_COMBINATION_LIMIT = 1000
-const ATTRIBUTE_PRESETS = ['Color', 'Size', 'Material', 'Capacity', 'Flavor']
+const ATTRIBUTE_PRESETS = [
+    { value: 'Color', labelKey: 'variants.attributePreset_Color' },
+    { value: 'Size', labelKey: 'variants.attributePreset_Size' },
+    { value: 'Material', labelKey: 'variants.attributePreset_Material' },
+    { value: 'Capacity', labelKey: 'variants.attributePreset_Capacity' },
+    { value: 'Flavor', labelKey: 'variants.attributePreset_Flavor' }
+]
 const VARIANT_TEMPLATES = [
-    { id: 't-shirt', name: 'T-Shirt', attributes: ['Color', 'Size'] },
-    { id: 'shoes', name: 'Shoes', attributes: ['Color', 'Size'] },
-    { id: 'electronics', name: 'Electronics', attributes: ['Color', 'Storage'] },
-    { id: 'food', name: 'Food', attributes: ['Flavor', 'Weight'] },
-    { id: 'furniture', name: 'Furniture', attributes: ['Color', 'Material'] }
+    { id: 't-shirt', name: 'T-Shirt', labelKey: 'variants.template_TShirt', attributes: ['Color', 'Size'] },
+    { id: 'shoes', name: 'Shoes', labelKey: 'variants.template_Shoes', attributes: ['Color', 'Size'] },
+    { id: 'electronics', name: 'Electronics', labelKey: 'variants.template_Electronics', attributes: ['Color', 'Storage'] },
+    { id: 'food', name: 'Food', labelKey: 'variants.template_Food', attributes: ['Flavor', 'Weight'] },
+    { id: 'furniture', name: 'Furniture', labelKey: 'variants.template_Furniture', attributes: ['Color', 'Material'] }
 ]
 
 function normalizeText(value) {
@@ -121,7 +127,11 @@ function normalizeOptionGroups(optionGroups) {
         }))
 }
 
-function getOptionGroupValidation(optionGroups) {
+function getOptionGroupValidation(optionGroups, localize = null) {
+    // WAVE 4: user-facing messages go through the localizer so the Arabic UI
+    // never shows hardcoded English. Defaults to English for tests/callers
+    // without i18n.
+    const L = (key, fallback) => (typeof localize === 'function' ? localize(key, fallback) : fallback)
     const groups = normalizeOptionGroups(optionGroups)
     const messages = []
     const duplicateValueMap = {}
@@ -130,11 +140,11 @@ function getOptionGroupValidation(optionGroups) {
 
     groups.forEach((group) => {
         if (!group.name && group.values.length > 0) {
-            messages.push('Every option group needs a name before variants can be generated.')
+            messages.push(L('variants.optionGroupNameRequired', 'Every option group needs a name before variants can be generated.'))
         }
 
         if (group.name && group.values.length === 0) {
-            messages.push(`${group.name} needs at least one value before variants can be generated.`)
+            messages.push(L('variants.optionGroupValuesRequired', '{{name}} needs at least one value before variants can be generated.').replace('{{name}}', group.name))
         }
 
         const seenValues = new Set()
@@ -149,12 +159,12 @@ function getOptionGroupValidation(optionGroups) {
 
         if (duplicates.size > 0) {
             duplicateValueMap[group.id] = duplicates
-            messages.push(`${group.name || 'Option'} has duplicate values.`)
+            messages.push(L('variants.duplicateOptionValues', '{{name}} has duplicate values.').replace('{{name}}', group.name || L('variants.optionName', 'Option')))
         }
     })
 
     if (hasDuplicateNames) {
-        messages.push('Duplicate attribute names are not allowed.')
+        messages.push(L('variants.duplicateAttributeNames', 'Duplicate attribute names are not allowed.'))
     }
 
     return {
@@ -227,35 +237,38 @@ function countCombinations(optionGroups, excludedRules = []) {
     return count
 }
 
-function getCombinationRisk(count) {
+function getCombinationRisk(count, localize = null) {
+    // WAVE 4: risk labels/messages are user-facing — localize (see above).
+    const L = (key, fallback) => (typeof localize === 'function' ? localize(key, fallback) : fallback)
+
     if (count > WARNING_COMBINATION_LIMIT) {
         return {
             level: 'confirm',
-            label: 'Confirmation required',
-            message: 'Large variant sets may impact editing performance. Confirm before generating this matrix.'
+            label: L('variants.riskConfirmationRequired', 'Confirmation required'),
+            message: L('variants.riskConfirmationMessage', 'Large variant sets may impact editing performance. Confirm before generating this matrix.')
         }
     }
 
     if (count > INFO_COMBINATION_LIMIT) {
         return {
             level: 'warning',
-            label: 'Large matrix',
-            message: 'This many variants may impact editing performance.'
+            label: L('variants.riskLargeMatrix', 'Large matrix'),
+            message: L('variants.riskLargeMessage', 'This many variants may impact editing performance.')
         }
     }
 
     if (count > SAFE_COMBINATION_LIMIT) {
         return {
             level: 'info',
-            label: 'Moderate matrix',
-            message: 'This variant set is larger than usual. Editing may feel slower on low-powered devices.'
+            label: L('variants.riskModerateMatrix', 'Moderate matrix'),
+            message: L('variants.riskModerateMessage', 'This variant set is larger than usual. Editing may feel slower on low-powered devices.')
         }
     }
 
     return {
         level: 'safe',
-        label: 'Safe',
-        message: 'This variant count is safe for interactive editing.'
+        label: L('variants.riskSafe', 'Safe'),
+        message: L('variants.riskSafeMessage', 'This variant count is safe for interactive editing.')
     }
 }
 
@@ -388,12 +401,25 @@ function getCombinationKeyFromVariant(variant) {
     return attributesToKey(normalizeVariantAttributes(variant))
 }
 
-function getRowName(attributes, fallbackName) {
+function buildVariantDisplayName(attributes, fallbackName) {
+    // WAVE 4: Variant Name is a HUMAN-READABLE DISPLAY identity only — derived
+    // at runtime, never persisted, never used for VariantId / SKU /
+    // AttributeCombinationKey. Single-attribute rows include the attribute
+    // name for clarity (Size: 256, not bare 256); multi-attribute rows keep
+    // the canonical deterministic value join in sortOrder (Blue / S).
     if (!attributes?.length) {
         return fallbackName || 'Default Variant'
     }
 
+    if (attributes.length === 1) {
+        return `${attributes[0].name}: ${attributes[0].value}`
+    }
+
     return attributes.map(attribute => attribute.value).join(' / ')
+}
+
+function getRowName(attributes, fallbackName) {
+    return buildVariantDisplayName(attributes, fallbackName)
 }
 
 function canReuseLegacyDefaultVariant(variant) {
@@ -414,7 +440,7 @@ function generateCombinations(optionGroups, excludedRules = []) {
     return combinations
 }
 
-function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, isLegacy = false }) {
+function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, isLegacy = false, defaultName = 'Default Variant' }) {
     const base = variant
         ? {
             id: variant.id,
@@ -458,7 +484,7 @@ function buildMatrixRow({ key, variant, attributes, draft, isDefault, index, isL
         ...merged,
         key,
         attributes,
-        name: getRowName(attributes, variant ? getRowName(variant.attributes, variant.sku || variant.barcode) : 'Default Variant'),
+        name: getRowName(attributes, variant ? getRowName(variant.attributes, variant.sku || variant.barcode) : defaultName),
         isDefault,
         isLegacy,
         isNew: !variant,
@@ -474,11 +500,15 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     onVariantDraftChange = null,
     onSaveVariantDraft = null
 }, ref) {
-    const { t } = useTranslation()
+    const { t, i18n } = useTranslation()
     const { confirm } = useConfirmDialog()
     const tx = (key, fallback) => {
         const value = t(key)
         return value === key ? fallback : value
+    }
+    const isArabicUi = () => {
+        const language = i18n?.language || (typeof document !== 'undefined' ? document.documentElement?.lang : '') || 'en'
+        return String(language).toLowerCase().startsWith('ar')
     }
     const [loading, setLoading] = useState(true)
     const [savingMatrix, setSavingMatrix] = useState(false)
@@ -489,6 +519,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     const [selectedKeys, setSelectedKeys] = useState(new Set())
     const [defaultKey, setDefaultKey] = useState(null)
     const [error, setError] = useState('')
+    const errorRef = useRef(null)
     const lastErrorRef = useRef('')
     const [showLegacyRows, setShowLegacyRows] = useState(false)
     const [skuBuilder, setSkuBuilder] = useState({
@@ -500,6 +531,10 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     const [excludedRules, setExcludedRules] = useState([])
     const [draftExclusionRule, setDraftExclusionRule] = useState({})
     const [confirmedGenerationSignature, setConfirmedGenerationSignature] = useState('')
+    // WAVE 4: progressive disclosure — advanced tools start collapsed so the
+    // primary workflow (options → generate → matrix) is obvious. Capability
+    // is grouped, never removed.
+    const [advancedOpen, setAdvancedOpen] = useState(false)
     const fetchSequenceRef = useRef(0)
 
     useEffect(() => {
@@ -536,6 +571,12 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             prefix: prev.prefix || normalizeSkuPart(productSkuPrefix)
         }))
     }, [productSkuPrefix])
+
+    useEffect(() => {
+        if (error) {
+            errorRef.current?.focus()
+        }
+    }, [error])
 
     const fetchVariants = async (targetProductId = productId, requestSequence = ++fetchSequenceRef.current) => {
         try {
@@ -577,7 +618,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     }
 
     const originalOptionGroups = useMemo(() => deriveOptionGroupsFromVariants(variants), [variants])
-    const optionGroupValidation = useMemo(() => getOptionGroupValidation(optionGroups), [optionGroups])
+    const defaultVariantLabel = tx('variants.defaultVariant', 'Default Variant')
+    const optionGroupValidation = useMemo(() => getOptionGroupValidation(optionGroups, tx), [optionGroups, t])
     const generationSignature = useMemo(
         () => `${optionGroupsToSignature(optionGroups)}|${exclusionRulesToSignature(excludedRules)}`,
         [excludedRules, optionGroups]
@@ -586,7 +628,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         () => optionGroupValidation.hasBlockingErrors ? 0 : countCombinations(optionGroups, excludedRules),
         [excludedRules, optionGroupValidation.hasBlockingErrors, optionGroups]
     )
-    const combinationRisk = useMemo(() => getCombinationRisk(combinationCount), [combinationCount])
+    const combinationRisk = useMemo(() => getCombinationRisk(combinationCount, tx), [combinationCount, t])
     const generationRequiresConfirmation = combinationCount > WARNING_COMBINATION_LIMIT
     const largeGenerationConfirmed = !generationRequiresConfirmation || confirmedGenerationSignature === generationSignature
     const canGenerateMatrixRows = !optionGroupValidation.hasBlockingErrors && largeGenerationConfirmed
@@ -644,7 +686,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                     attributes,
                     draft: rowDrafts[key],
                     isDefault: defaultKey ? defaultKey === key : existingVariant?.isDefault,
-                    index
+                    index,
+                    defaultName: defaultVariantLabel
                 }))
             })
         }
@@ -664,12 +707,13 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                     draft: rowDrafts[fallbackKey],
                     isDefault: defaultKey ? defaultKey === fallbackKey : variant.isDefault,
                     index: rows.length + index,
-                    isLegacy: generatedCombinations.length > 0
+                    isLegacy: generatedCombinations.length > 0,
+                    defaultName: defaultVariantLabel
                 }))
             })
 
         return rows
-    }, [defaultKey, deletedKeys, generatedCombinations, generationBlocked, rowDrafts, variants])
+    }, [defaultKey, deletedKeys, defaultVariantLabel, generatedCombinations, generationBlocked, rowDrafts, variants])
 
     useEffect(() => {
         if (matrixRows.length === 0) {
@@ -718,12 +762,25 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             || !!(defaultKey && matrixRows.find(row => row.original?.isDefault)?.key !== defaultKey)
     }, [defaultKey, deletedKeys, excludedRules, matrixRows, optionGroups, originalOptionGroups, rowDrafts])
 
+    // WAVE 2 (Finding 4): variants orphaned by option-group/exclusion edits
+    // ("legacy" rows) are cleanup candidates, not survivors. They are hidden by
+    // default so the user cannot review them inline; submitting them would
+    // resurrect every removed option value on save. When the option structure
+    // is untouched, every row is submitted unchanged (pre-existing legacy rows
+    // are preserved and only change via explicit bulk delete).
+    const optionStructureEdited = optionGroupsToSignature(optionGroups) !== optionGroupsToSignature(originalOptionGroups)
+        || exclusionRulesToSignature(excludedRules) !== '[]'
+
+    const submittedMatrixRows = useMemo(() => (
+        optionStructureEdited ? matrixRows.filter(row => !row.isLegacy) : matrixRows
+    ), [matrixRows, optionStructureEdited])
+
     const authoringVariants = useMemo(() => (
-        matrixRows.map((row, index) => toProductAuthoringVariant({
+        submittedMatrixRows.map((row, index) => toProductAuthoringVariant({
             ...row,
-            isDefault: (defaultKey || matrixRows[0]?.key) === row.key
+            isDefault: (defaultKey || submittedMatrixRows[0]?.key) === row.key
         }, index))
-    ), [defaultKey, matrixRows])
+    ), [defaultKey, submittedMatrixRows])
 
     const variantDraftSnapshot = useMemo(() => ({
         authoringVariants,
@@ -928,7 +985,10 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
 
     const buildSkuForRow = (row, index) => {
         const separator = skuBuilder.separator || '-'
-        const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix || 'VARIANT')
+        // WAVE 4: a non-Latin (e.g. Arabic) product name normalizes to '' —
+        // never let the contextual prefix silently disappear into a bare
+        // value-only SKU. The 'VARIANT' fallback is certified behavior.
+        const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix || 'VARIANT') || 'VARIANT'
         const attributes = row.attributes || []
         const tokenValues = attributes.reduce((acc, attribute) => {
             acc[normalizeToken(attribute.name)] = normalizeSkuPart(attribute.value)
@@ -943,6 +1003,19 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             sku = skuBuilder.pattern.replace(/\{([^}]+)\}/g, (_, token) => tokenValues[normalizeToken(token)] || '')
                 .replace(/[-_.]{2,}/g, separator)
                 .replace(/^[-_.]+|[-_.]+$/g, '')
+
+            // WAVE 4: a custom pattern without a prefix token must not emit a
+            // bare value-only SKU (e.g. `256`). Restore the product context.
+            // Explicitly prefixed patterns (TSHIRT-{COLOR}-{SIZE}) are
+            // byte-identical to before.
+            const normalizedSku = normalizeText(sku).toLowerCase()
+            const matchesBareValue = attributes.some((attribute) => {
+                const token = normalizeSkuPart(attribute.value).toLowerCase()
+                return !!token && normalizedSku === token
+            })
+            if (matchesBareValue && !/[-_.]/.test(sku)) {
+                sku = `${prefix}${separator}${sku}`
+            }
         } else {
             const suffixParts = attributes
             .map(attribute => normalizeSkuPart(attribute.value))
@@ -1168,10 +1241,35 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         }
 
         if (type === 'generate-sku') {
+            // WAVE 2 (Finding 2): generated candidates must be unique per variant.
+            // The {INDEX} token uses the stable matrix position (not the selection
+            // position) and colliding candidates receive a deterministic numeric
+            // suffix, checked against every other row case-insensitively.
+            const separator = skuBuilder.separator || '-'
             setRowDrafts(prev => {
                 const next = { ...prev }
-                selectedRows.forEach((row, index) => {
-                    next[row.key] = { ...(next[row.key] || {}), sku: buildSkuForRow(row, index) }
+                const usedSkus = new Set()
+                matrixRows.forEach((row) => {
+                    if (!selectedKeys.has(row.key)) {
+                        const sku = normalizeText(next[row.key]?.sku ?? row.sku).toLowerCase()
+                        if (sku) {
+                            usedSkus.add(sku)
+                        }
+                    }
+                })
+                selectedRows.forEach((row) => {
+                    const matrixIndex = matrixRows.findIndex(matrixRow => matrixRow.key === row.key)
+                    const baseSku = buildSkuForRow(row, matrixIndex < 0 ? 0 : matrixIndex)
+                    let candidate = baseSku
+                    let suffix = 1
+                    while (candidate && usedSkus.has(normalizeText(candidate).toLowerCase())) {
+                        suffix += 1
+                        candidate = `${baseSku}${separator}${suffix}`
+                    }
+                    if (candidate) {
+                        usedSkus.add(normalizeText(candidate).toLowerCase())
+                    }
+                    next[row.key] = { ...(next[row.key] || {}), sku: candidate }
                 })
                 return next
             })
@@ -1227,25 +1325,64 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         setError('')
         lastErrorRef.current = ''
 
-        const validationError = validateMatrixRows(matrixRows)
+        const validationError = validateMatrixRows(submittedMatrixRows)
         if (validationError) {
             lastErrorRef.current = validationError
             setError(validationError)
             return false
         }
 
-        const desiredExistingIds = new Set(matrixRows.filter(row => row.id).map(row => row.id))
+        const desiredExistingIds = new Set(submittedMatrixRows.filter(row => row.id).map(row => row.id))
         const rowsToDelete = variants.filter(variant => !desiredExistingIds.has(variant.id))
 
-        if (rowsToDelete.some(row => row.totalStock > 0)) {
-            const confirmed = await confirm({
-                confirmLabel: tx('common.confirm', 'Confirm'),
-                description: tx('variants.deleteWithStockConfirm', 'Some removed combinations still have stock. Continue and delete them anyway?'),
-                title: tx('common.warning', 'Warning'),
-                variant: 'warning',
-            })
+        // WAVE 2A: a persisted variant omitted from the save must never
+        // silently destroy stock or business history. Preflight the server
+        // authority per variant; blocked rows abort the save with the
+        // server-provided business reasons. Deactivation (keeping the row
+        // with IsActive=false) remains the safe alternative.
+        const persistedRowsToDelete = rowsToDelete.filter(row => row.id)
+        if (persistedRowsToDelete.length > 0 && productId) {
+            const arabic = isArabicUi()
+            const checks = await Promise.all(persistedRowsToDelete.map(async (row) => {
+                try {
+                    const response = await api.get(`/products/${productId}/variants/${row.id}/can-delete`)
+                    return { row, data: response?.data }
+                } catch (preflightError) {
+                    // Fail closed: an unreadable protection state must not
+                    // allow a potentially destructive save to proceed.
+                    return { row, data: null, checkFailed: true }
+                }
+            }))
 
-            if (!confirmed) {
+            // Fail closed: an unreadable protection state must not
+            // allow a potentially destructive save to proceed, and only an
+            // explicit canDelete:true verdict permits omission.
+            const blocked = checks.filter(check => check.checkFailed || check.data?.canDelete !== true)
+            if (blocked.length > 0) {
+                const details = blocked.map(({ row, data, checkFailed }) => {
+                    const name = row.name || buildVariantDisplayName(row.attributes, '')
+                    const label = name && row.sku
+                        ? `${name} (${row.sku})`
+                        : (name || row.sku || row.id)
+                    if (checkFailed || !data) {
+                        return `${label}: ${tx('variants.deleteProtectionCheckFailed', 'deletion safety could not be verified. Refresh and try again.')}`
+                    }
+                    const reasons = Array.isArray(data.reasons) ? data.reasons : []
+                    const reasonText = reasons
+                        .map(reason => arabic
+                            ? (reason.messageAr || reason.messageEn)
+                            : (reason.messageEn || reason.messageAr))
+                        .filter(Boolean)
+                        .join(' ')
+                    const headline = arabic
+                        ? (data.messageAr || data.messageEn)
+                        : (data.messageEn || data.messageAr)
+                    return `${label}: ${reasonText || headline || tx('variants.deleteProtectionUnknown', 'deletion is blocked to protect business history.')}`
+                }).join(' ')
+
+                const message = `${tx('variants.deleteBlockedByHistory', 'Some removed variants cannot be deleted because they have stock or business history. Keep them and deactivate instead.')} ${details}`
+                lastErrorRef.current = message
+                setError(message)
                 return false
             }
         }
@@ -1278,7 +1415,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         } catch (err) {
             console.error('Failed to hand off variant matrix draft')
             const message = err.response?.status === 401
-                ? 'Your session expired or this account is not allowed to manage variants. Please sign in again.'
+                ? tx('variants.sessionExpired', 'Your session expired or this account is not allowed to manage variants. Please sign in again.')
                 : (err.message || extractApiErrorMessage(err, tx('variants.failedToSave', 'Failed to save variant matrix')))
             lastErrorRef.current = message
             setError(message)
@@ -1333,13 +1470,68 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                 </p>
             </div>
 
-            {error && (
-                <div className="p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                    {error}
-                </div>
-            )}
             {(
                 <>
+                    <VariantOptionsBuilder
+                        optionGroups={optionGroups}
+                        onChange={setOptionGroups}
+                        combinationCount={combinationCount}
+                        risk={combinationRisk}
+                        duplicateValueMap={optionGroupValidation.duplicateValueMap}
+                        validationMessages={optionGroupValidation.messages}
+                        safeLimit={SAFE_COMBINATION_LIMIT}
+                        infoLimit={INFO_COMBINATION_LIMIT}
+                        warningLimit={WARNING_COMBINATION_LIMIT}
+                    />
+
+                    <div className="rounded-2xl border border-primary-200 bg-primary-50/40 p-4 shadow-sm">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h4 className="text-sm font-semibold text-gray-900">
+                                    {tx('variants.generateVariants', 'Generate Variants')}
+                                </h4>
+                                <p className="text-sm text-gray-500">
+                                    {tx('variants.generateHint', 'Generate the matrix from the option groups above. No advanced tools needed.')}
+                                </p>
+                                {optionGroupValidation.messages.length > 0 && (
+                                    <p className="mt-1 text-sm font-medium text-amber-700">
+                                        {optionGroupValidation.messages[0]}
+                                    </p>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={handleGenerateVariants}
+                                disabled={combinationCount === 0 || optionGroupValidation.hasBlockingErrors}
+                                className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                {tx('variants.generateVariantCount', 'Generate {{count}} Variants').replace('{{count}}', combinationCount)}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+                        <button
+                            type="button"
+                            onClick={() => setAdvancedOpen(prev => !prev)}
+                            aria-expanded={advancedOpen}
+                            aria-controls="variant-advanced-tools"
+                            className="flex w-full items-center justify-between gap-3 text-start"
+                        >
+                            <span>
+                                <span className="block text-sm font-semibold text-gray-900">
+                                    {tx('variants.advancedVariantTools', 'Advanced Variant Tools')}
+                                </span>
+                                <span className="mt-0.5 block text-sm text-gray-500">
+                                    {tx('variants.advancedVariantToolsHint', 'Templates, SKU builder, combination rules, and statistics. Optional.')}
+                                </span>
+                            </span>
+                            <span aria-hidden="true" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gray-200 text-lg font-semibold text-gray-600">
+                                {advancedOpen ? '−' : '+'}
+                            </span>
+                        </button>
+                        {advancedOpen && (
+                            <div id="variant-advanced-tools" className="mt-4 space-y-4">
                     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
                         <div className="mb-3">
                             <h4 className="text-sm font-semibold text-gray-900">
@@ -1357,7 +1549,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                                     onClick={() => handleApplyTemplate(template)}
                                     className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700"
                                 >
-                                    {template.name}
+                                    {tx(template.labelKey, template.name)}
                                 </button>
                             ))}
                         </div>
@@ -1374,7 +1566,8 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                                 </p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                                {ATTRIBUTE_PRESETS.map((attributeName) => {
+                                {ATTRIBUTE_PRESETS.map((preset) => {
+                                    const attributeName = preset.value
                                     const checked = optionGroups.some(group => normalizeKeyPart(group.name) === normalizeKeyPart(attributeName))
 
                                     return (
@@ -1392,7 +1585,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                                                 onChange={(e) => handleTogglePresetAttribute(attributeName, e.target.checked)}
                                                 className="rounded"
                                             />
-                                            {attributeName}
+                                            {tx(preset.labelKey, attributeName)}
                                         </label>
                                     )
                                 })}
@@ -1459,37 +1652,15 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                         </div>
                     </div>
 
-                    <VariantOptionsBuilder
-                        optionGroups={optionGroups}
-                        onChange={setOptionGroups}
-                        combinationCount={combinationCount}
-                        risk={combinationRisk}
-                        duplicateValueMap={optionGroupValidation.duplicateValueMap}
-                        validationMessages={optionGroupValidation.messages}
-                        safeLimit={SAFE_COMBINATION_LIMIT}
-                        infoLimit={INFO_COMBINATION_LIMIT}
-                        warningLimit={WARNING_COMBINATION_LIMIT}
-                    />
-
                     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
                         <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
-                            <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div>
-                                    <h4 className="text-sm font-semibold text-gray-900">
-                                        {tx('variants.combinationRules', 'Combination Rules')}
-                                    </h4>
-                                    <p className="text-sm text-gray-500">
-                                        {tx('variants.combinationRulesHint', 'Exclude combinations before they appear in the matrix.')}
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={handleGenerateVariants}
-                                    disabled={combinationCount === 0 || optionGroupValidation.hasBlockingErrors}
-                                    className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-                                >
-                                    {tx('variants.generateVariantCount', 'Generate {{count}} Variants').replace('{{count}}', combinationCount)}
-                                </button>
+                            <div className="mb-3">
+                                <h4 className="text-sm font-semibold text-gray-900">
+                                    {tx('variants.combinationRules', 'Combination Rules')}
+                                </h4>
+                                <p className="text-sm text-gray-500">
+                                    {tx('variants.combinationRulesHint', 'Exclude combinations before they appear in the matrix.')}
+                                </p>
                             </div>
 
                             <div className="grid gap-3 md:grid-cols-3">
@@ -1570,6 +1741,9 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                             )}
                         </div>
                     </div>
+                            </div>
+                        )}
+                    </div>
 
                     {matrixRows.length > 0 ? (
                         <>
@@ -1632,6 +1806,21 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
                         generationBlocked={generationBlocked}
                         skuBuilder={skuBuilder}
                     />
+
+                    {error && (
+                        <div
+                            ref={errorRef}
+                            id="variant-matrix-error"
+                            className="rounded-xl border border-red-400 bg-red-100 p-3 text-red-700"
+                            role="alert"
+                            tabIndex={-1}
+                        >
+                            <p className="font-semibold">
+                                {tx('variants.matrixSaveFailed', 'Variant matrix was not saved.')}
+                            </p>
+                            <p className="mt-1">{error}</p>
+                        </div>
+                    )}
 
                     {hasUnsavedChanges && (
                         <div className="sticky bottom-4 z-10">

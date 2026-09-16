@@ -29,7 +29,10 @@ public class ValidationService : IValidationService
 
     /// <summary>
     /// Validates if a product can be deleted
-    /// Products cannot be deleted if they have stock or have been used in any invoice
+    /// Products cannot be deleted if they have stock or have been used in any invoice.
+    /// WAVE 2A: extended with storefront orders, CommerceHub orders, open
+    /// reservations, reserved/damaged stock, and published marketplace listings
+    /// via <see cref="ProductVariantDeletionProtectionAuthority"/>.
     /// </summary>
     public async Task<ValidationResult> CanDeleteProductAsync(
         Guid productId,
@@ -37,116 +40,98 @@ public class ValidationService : IValidationService
     {
         var tenantId = _tenantContext.RequiredTenantId;
 
-        // Check if product has any stock in any warehouse
-        var hasStock = await _context.ProductVariantStocks
-            .AnyAsync(
-                stock =>
-                    stock.TenantId == tenantId &&
-                    !stock.IsDeleted &&
-                    stock.Variant.TenantId == tenantId &&
-                    !stock.Variant.IsDeleted &&
-                    stock.Variant.ProductId == productId &&
-                    stock.Quantity != 0,
-                cancellationToken);
+        var blockers = await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+            _context, tenantId, productId, variantId: null, cancellationToken);
 
-        if (hasStock)
+        var first = blockers.FirstOrDefault();
+        if (first is not null)
         {
             return ValidationResult.Failure(
-                "PRODUCT_HAS_STOCK",
-                "Cannot delete product: stock exists in warehouses. Please set the product as inactive instead.",
-                "لا يمكن حذف الصنف لوجود رصيد بالمخازن. يرجى تعطيل الصنف بدلاً من حذفه.");
-        }
-
-        // Check if product is used in any purchase invoice
-        var usedInPurchase = await _context.PurchaseInvoiceItems
-            .AnyAsync(
-                pii =>
-                    pii.ProductId == productId &&
-                    !pii.IsDeleted &&
-                    pii.PurchaseInvoice.TenantId == tenantId &&
-                    !pii.PurchaseInvoice.IsDeleted,
-                cancellationToken);
-
-        if (usedInPurchase)
-        {
-            return ValidationResult.Failure(
-                "PRODUCT_USED_IN_PURCHASES",
-                "Product is used in purchase transactions and cannot be deleted. Please set the product as inactive instead.",
-                "الصنف مستخدم في فواتير الشراء ولا يمكن حذفه. يرجى تعطيل الصنف بدلاً من حذفه.");
-        }
-
-        // Check if product is used in any sales invoice
-        var usedInSales = await _context.SalesInvoiceItems
-            .AnyAsync(
-                sii =>
-                    sii.ProductId == productId &&
-                    !sii.IsDeleted &&
-                    sii.SalesInvoice.TenantId == tenantId &&
-                    !sii.SalesInvoice.IsDeleted,
-                cancellationToken);
-
-        if (usedInSales)
-        {
-            return ValidationResult.Failure(
-                "PRODUCT_USED_IN_SALES",
-                "Product is used in sales transactions and cannot be deleted. Please set the product as inactive instead.",
-                "الصنف مستخدم في فواتير البيع ولا يمكن حذفه. يرجى تعطيل الصنف بدلاً من حذفه.");
-        }
-
-        // Check if product is used in any returns
-        var usedInReturns = await _context.ReturnItems
-            .AnyAsync(
-                ri =>
-                    ri.ProductId == productId &&
-                    !ri.IsDeleted &&
-                    ri.Return.TenantId == tenantId &&
-                    !ri.Return.IsDeleted,
-                cancellationToken);
-
-        if (usedInReturns)
-        {
-            return ValidationResult.Failure(
-                "PRODUCT_USED_IN_RETURNS",
-                "Product is used in return transactions and cannot be deleted. Please set the product as inactive instead.",
-                "الصنف مستخدم في فواتير المرتجعات ولا يمكن حذفه. يرجى تعطيل الصنف بدلاً من حذفه.");
-        }
-
-        // Check if product is used in stock transfers
-        var usedInTransfers = await _context.StockTransferItems
-            .AnyAsync(
-                sti =>
-                    sti.ProductId == productId &&
-                    !sti.IsDeleted &&
-                    sti.StockTransfer.TenantId == tenantId &&
-                    !sti.StockTransfer.IsDeleted,
-                cancellationToken);
-
-        if (usedInTransfers)
-        {
-            return ValidationResult.Failure(
-                "PRODUCT_USED_IN_TRANSFERS",
-                "Product is used in stock transfers and cannot be deleted. Please set the product as inactive instead.",
-                "الصنف مستخدم في عمليات نقل المخزون ولا يمكن حذفه. يرجى تعطيل الصنف بدلاً من حذفه.");
-        }
-
-        // Check if product has stock movements
-        var hasMovements = await _context.StockMovements
-            .AnyAsync(
-                sm =>
-                    sm.ProductId == productId &&
-                    sm.TenantId == tenantId &&
-                    !sm.IsDeleted,
-                cancellationToken);
-
-        if (hasMovements)
-        {
-            return ValidationResult.Failure(
-                "PRODUCT_HAS_MOVEMENTS",
-                "Product has stock movement history and cannot be deleted. Please set the product as inactive instead.",
-                "الصنف له سجل حركة مخزون ولا يمكن حذفه. يرجى تعطيل الصنف بدلاً من حذفه.");
+                first.Code,
+                first.MessageEn,
+                first.MessageAr,
+                new Dictionary<string, object>
+                {
+                    { "reasons", blockers.Select(blocker => blocker.Code).ToArray() }
+                });
         }
 
         return ValidationResult.Success();
+    }
+
+    /// <summary>
+    /// WAVE 2A: all protected dependencies for a product, in stable order.
+    /// Empty means the product may follow the safe deletion lifecycle.
+    /// </summary>
+    public async Task<IReadOnlyList<ProductVariantDeleteBlocker>> GetProductDeleteBlockersAsync(
+        Guid productId,
+        CancellationToken cancellationToken = default)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        return await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+            _context, tenantId, productId, variantId: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// WAVE 2A: validates if a single variant can be deleted.
+    /// Same protected dependencies as the product, scoped to the variant's
+    /// own history (variant-level stock, lines, movements, orders,
+    /// reservations, listings). Tenant-safe: a variant that does not belong
+    /// to this tenant's product is reported as not found, never as deletable
+    /// or blocked by another tenant's data.
+    /// </summary>
+    public async Task<ValidationResult> CanDeleteVariantAsync(
+        Guid productId,
+        Guid variantId,
+        CancellationToken cancellationToken = default)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+
+        var variantExists = await _context.ProductVariants.AnyAsync(
+            variant =>
+                variant.Id == variantId &&
+                variant.ProductId == productId &&
+                variant.TenantId == tenantId &&
+                !variant.IsDeleted,
+            cancellationToken);
+        if (!variantExists)
+        {
+            return ValidationResult.Failure(
+                "VARIANT_NOT_FOUND",
+                "Variant not found.",
+                "المتغير غير موجود.");
+        }
+
+        var blockers = await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+            _context, tenantId, productId, variantId, cancellationToken);
+
+        var first = blockers.FirstOrDefault();
+        if (first is not null)
+        {
+            return ValidationResult.Failure(
+                first.Code,
+                first.MessageEn,
+                first.MessageAr,
+                new Dictionary<string, object>
+                {
+                    { "reasons", blockers.Select(blocker => blocker.Code).ToArray() }
+                });
+        }
+
+        return ValidationResult.Success();
+    }
+
+    /// <summary>
+    /// WAVE 2A: all protected dependencies for a single variant, in stable order.
+    /// </summary>
+    public async Task<IReadOnlyList<ProductVariantDeleteBlocker>> GetVariantDeleteBlockersAsync(
+        Guid productId,
+        Guid variantId,
+        CancellationToken cancellationToken = default)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        return await ProductVariantDeletionProtectionAuthority.GetBlockersAsync(
+            _context, tenantId, productId, variantId, cancellationToken);
     }
 
     /// <summary>

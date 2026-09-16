@@ -99,7 +99,7 @@ export default function VariantOptionsBuilder({
                     const hasEmptyValues = group.name?.trim() && (group.values || []).filter(value => value?.trim()).length === 0
 
                     return (
-                    <div key={group.id} className={`rounded-2xl border bg-gray-50 p-4 ${hasDuplicateValues || hasEmptyValues ? 'border-red-300' : 'border-gray-200'}`}>
+                    <div key={group.id} data-option-group={group.id} className={`rounded-2xl border bg-gray-50 p-4 ${hasDuplicateValues || hasEmptyValues ? 'border-red-300' : 'border-gray-200'}`}>
                         <div className="mb-3 flex items-center justify-between gap-3">
                             <div className="flex-1">
                                 <label className="label">
@@ -109,6 +109,22 @@ export default function VariantOptionsBuilder({
                                     type="text"
                                     value={group.name}
                                     onChange={(e) => updateGroup(group.id, { name: e.target.value })}
+                                    onKeyDown={(e) => {
+                                        // WAVE 2 (Finding 9): this input lives inside the outer
+                                        // product <form>, so an unhandled Enter triggers implicit
+                                        // form submission (full save/page state loss). Enter here
+                                        // commits the name and advances to the value input instead.
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault()
+                                            const groupElement = e.currentTarget.closest('[data-option-group]')
+                                            const valueInput = groupElement?.querySelector('[data-option-value-input]')
+                                            if (valueInput) {
+                                                valueInput.focus()
+                                            } else {
+                                                e.currentTarget.blur()
+                                            }
+                                        }
+                                    }}
                                     className="input"
                                     placeholder={tx('variants.optionNamePlaceholder', 'e.g. Size, Color, Material')}
                                 />
@@ -152,6 +168,7 @@ export default function VariantOptionsBuilder({
 
                                 <input
                                     type="text"
+                                    data-option-value-input
                                     value={draftValues[group.id] || ''}
                                     onChange={(e) => setDraftValues(prev => ({ ...prev, [group.id]: e.target.value }))}
                                     onKeyDown={(e) => {

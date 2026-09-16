@@ -43,6 +43,7 @@ public sealed class ProductAuthoringIdempotencyIntegrationTests
         Assert.Equal(1, await harness.CountProductCreatedOutboxRowsAsync());
         Assert.Equal(1, await harness.CountProductAuthoringAuditRowsAsync());
         Assert.Equal(1, await harness.CountProductIdempotencyRowsAsync("same-key-same-payload"));
+        Assert.Equal("idempotent-product", (await harness.CountProductsAsync()).Single().Slug);
     }
 
     [Fact]
@@ -143,6 +144,110 @@ public sealed class ProductAuthoringIdempotencyIntegrationTests
         harness.Clear();
         var replay = await harness.CreateOrchestrator().AuthorAsync(command);
         Assert.Equal(ProductAuthoringStatus.Accepted, replay.Status);
+    }
+
+    [Fact]
+    public async Task ConcurrentCreates_WithDifferentKeysAndSameBaseSlug_PersistDistinctSlugs()
+    {
+        await using var harness = await Harness.TryCreateAsync();
+        if (harness is null) return;
+
+        var firstCommand = harness.CreateCreateCommand("concurrent-slug-one");
+        var secondCommand = firstCommand with
+        {
+            Metadata = firstCommand.Metadata with
+            {
+                CorrelationId = Guid.NewGuid().ToString("N"),
+                IdempotencyKey = "concurrent-slug-two"
+            }
+        };
+
+        var results = await Task.WhenAll(
+            Task.Run(async () =>
+            {
+                await using var scopedHarness = harness.CreateSiblingHarness();
+                return await scopedHarness.CreateOrchestrator().AuthorAsync(firstCommand);
+            }),
+            Task.Run(async () =>
+            {
+                await using var scopedHarness = harness.CreateSiblingHarness();
+                return await scopedHarness.CreateOrchestrator().AuthorAsync(secondCommand);
+            }));
+
+        Assert.All(results, result => Assert.Equal(ProductAuthoringStatus.Accepted, result.Status));
+        var slugs = (await harness.CountProductsAsync())
+            .Select(product => product.Slug)
+            .OrderBy(slug => slug, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(["idempotent-product", "idempotent-product-2"], slugs);
+    }
+
+    [Fact]
+    public async Task Create_WhenHistoricalSlugDiffersOnlyByCase_AppendsCollisionSuffix()
+    {
+        await using var harness = await Harness.TryCreateAsync();
+        if (harness is null) return;
+
+        await harness.SeedHistoricalProductAsync("Idempotent-Product");
+
+        var result = await harness.CreateOrchestrator().AuthorAsync(
+            harness.CreateCreateCommand("mixed-case-slug"));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, result.Status);
+        var created = (await harness.CountProductsAsync()).Single(product => product.Id == result.ProductId);
+        Assert.Equal("idempotent-product-2", created.Slug);
+    }
+
+    [Fact]
+    public async Task Create_SameSlugInDifferentTenants_DoesNotCreateCrossTenantCollision()
+    {
+        await using var firstTenant = await Harness.TryCreateAsync();
+        if (firstTenant is null) return;
+        await using var secondTenant = await firstTenant.CreateAdditionalTenantHarnessAsync(Guid.NewGuid());
+
+        var first = await firstTenant.CreateOrchestrator().AuthorAsync(
+            firstTenant.CreateCreateCommand("tenant-one-slug"));
+        var second = await secondTenant.CreateOrchestrator().AuthorAsync(
+            secondTenant.CreateCreateCommand("tenant-two-slug"));
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, first.Status);
+        Assert.Equal(ProductAuthoringStatus.Accepted, second.Status);
+        Assert.Equal("idempotent-product", (await firstTenant.CountProductsAsync()).Single().Slug);
+        Assert.Equal("idempotent-product", (await secondTenant.CountProductsAsync()).Single().Slug);
+    }
+
+    [Fact]
+    public async Task Update_WithBlankSlugAndChangedName_PreservesStoredSlug()
+    {
+        await using var harness = await Harness.TryCreateAsync();
+        if (harness is null) return;
+
+        var createCommand = harness.CreateCreateCommand("stable-slug-create");
+        var createResult = await harness.CreateOrchestrator().AuthorAsync(createCommand);
+        Assert.Equal(ProductAuthoringStatus.Accepted, createResult.Status);
+
+        harness.Clear();
+        var stored = (await harness.CountProductsAsync()).Single();
+        var updateCommand = createCommand with
+        {
+            Operation = ProductAuthoringOperation.Update,
+            Identity = createCommand.Identity with { ProductId = stored.Id },
+            Content = createCommand.Content with { Name = "Renamed product" },
+            Metadata = createCommand.Metadata with
+            {
+                CorrelationId = Guid.NewGuid().ToString("N"),
+                IdempotencyKey = "stable-slug-update",
+                ExpectedVersion = stored.RowVersion
+            }
+        };
+
+        var updateResult = await harness.CreateOrchestrator().AuthorAsync(updateCommand);
+
+        Assert.Equal(ProductAuthoringStatus.Accepted, updateResult.Status);
+        harness.Clear();
+        var updated = (await harness.CountProductsAsync()).Single();
+        Assert.Equal("Renamed product", updated.Name);
+        Assert.Equal("idempotent-product", updated.Slug);
     }
 
     [Fact]
@@ -248,6 +353,38 @@ public sealed class ProductAuthoringIdempotencyIntegrationTests
                 _observer);
         }
 
+        public async Task<Harness> CreateAdditionalTenantHarnessAsync(Guid tenantId)
+        {
+            var tenantContext = new TestTenantContext(tenantId);
+            var context = new ProductAuthoringIdempotencyDbContext(_options, tenantContext);
+            var category = new Category
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = "Additional tenant"
+            };
+            var unit = new PointOfSale.Core.Entities.Unit
+            {
+                Id = Guid.NewGuid(),
+                TenantId = tenantId,
+                Name = "Piece",
+                Symbol = "pc",
+                IsActive = true
+            };
+            context.Categories.Add(category);
+            context.Units.Add(unit);
+            await context.SaveChangesAsync();
+
+            return new Harness(
+                null,
+                _options,
+                context,
+                tenantContext,
+                category.Id,
+                unit.Id,
+                _observer);
+        }
+
         public ProductAuthoringOrchestrator CreateOrchestrator()
         {
             var eventPublisher = new PersistedOutboxEventPublisher(Context);
@@ -319,6 +456,23 @@ public sealed class ProductAuthoringIdempotencyIntegrationTests
                 .CountAsync(record =>
                     record.TenantId == TenantContext.TenantId &&
                     record.Key == $"authoring:{key}");
+
+        public async Task SeedHistoricalProductAsync(string slug)
+        {
+            Context.Products.Add(new Product
+            {
+                Id = Guid.NewGuid(),
+                TenantId = TenantContext.TenantId!.Value,
+                Name = "Historical product",
+                CategoryId = CategoryId,
+                Unit = "Piece",
+                Slug = slug,
+                PublishStatus = PublishStatus.Draft,
+                CreatedAt = DateTime.UtcNow
+            });
+            await Context.SaveChangesAsync();
+            Context.ChangeTracker.Clear();
+        }
 
         public async ValueTask DisposeAsync()
         {

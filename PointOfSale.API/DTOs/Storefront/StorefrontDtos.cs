@@ -415,6 +415,11 @@ public class ProductReadDto
     public string? Description { get; set; }
 
     /// <summary>
+    /// Arabic product description (optional)
+    /// </summary>
+    public string? DescriptionAr { get; set; }
+
+    /// <summary>
     /// Stock Keeping Unit
     /// </summary>
     public string? SKU { get; set; }
@@ -439,10 +444,11 @@ public class ProductReadDto
     public ProductUnitDto? DefaultUnit { get; set; }
 
     /// <summary>
-    /// Computed effective price: DefaultUnit.SalePrice if available, otherwise Price.
-    /// Frontend should use this for display and cart.
+    /// Effective storefront price resolved by the server.
+    /// Price already contains the channel-authoritative value; DefaultUnit remains
+    /// POS/unit metadata and must not override a simple product's online price.
     /// </summary>
-    public decimal EffectivePrice => DefaultUnit?.SalePrice ?? Price;
+    public decimal EffectivePrice => Price;
 
     /// <summary>
     /// Backend-composed storefront pricing presentation for the current/default product price.
@@ -612,9 +618,10 @@ public class ProductListItemDto
     public ProductUnitDto? DefaultUnit { get; set; }
     
     /// <summary>
-    /// Computed effective price: DefaultUnit.SalePrice if available, otherwise Price.
+    /// Effective storefront price resolved by the server. Price already contains
+    /// the channel-authoritative value for both simple and variant products.
     /// </summary>
-    public decimal EffectivePrice => DefaultUnit?.SalePrice ?? Price;
+    public decimal EffectivePrice => Price;
 
     /// <summary>
     /// Backend-composed storefront pricing presentation.

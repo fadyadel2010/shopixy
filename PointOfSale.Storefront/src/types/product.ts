@@ -129,13 +129,14 @@ export interface ProductReadDto {
     name: string;
     nameAr?: string;
     description?: string;
+    descriptionAr?: string;
     sku?: string;
     barcode?: string;
-    /** LEGACY: Use effectivePrice or defaultUnit.salePrice instead */
+    /** Server-resolved storefront price */
     price: number;
-    /** Default selling unit - SOURCE OF TRUTH for pricing */
+    /** Default POS selling unit metadata */
     defaultUnit?: ProductUnitDto;
-    /** Computed effective price: defaultUnit.salePrice if available, otherwise price */
+    /** Server-resolved effective storefront price; equal to price before promotions */
     effectivePrice: number;
     /** Backend-composed pricing presentation for the default/current product price */
     pricing: ProductPricingPresentationDto;
@@ -180,11 +181,11 @@ export interface ProductListItemDto {
     id: string;
     name: string;
     nameAr?: string;
-    /** LEGACY: Use effectivePrice or defaultUnit.salePrice instead */
+    /** Server-resolved storefront price */
     price: number;
     /** Default selling unit - SOURCE OF TRUTH for pricing */
     defaultUnit?: ProductUnitDto;
-    /** Computed effective price: defaultUnit.salePrice if available, otherwise price */
+    /** Server-resolved effective storefront price; equal to price before promotions */
     effectivePrice: number;
     /** Backend-composed pricing presentation for product cards */
     pricing: ProductPricingPresentationDto;
@@ -240,4 +241,3 @@ export interface PagedResult<T> {
     hasNextPage: boolean;
     hasPreviousPage: boolean;
 }
-

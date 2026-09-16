@@ -28,6 +28,12 @@ public static class ProductPricingCompatibilityMirror
         return changedFields;
     }
 
+    /// <summary>
+    /// WAVE 3: mirrors POS/cost truth (Price/CostPrice) from the default unit.
+    /// The simple online price (<see cref="ProductVariant.OnlinePrice"/>) is
+    /// intentionally NOT mirrored: it is independently authored and preserved here.
+    /// Null/zero means "use the POS price" downstream.
+    /// </summary>
     public static IReadOnlyList<string> MirrorSimpleDefaultVariantFromDefaultUnit(
         Product product,
         ProductVariant variant,
@@ -41,8 +47,6 @@ public static class ProductPricingCompatibilityMirror
         var changedFields = new List<string>();
         SetIfChanged(variant, variant => variant.Price, (variant, value) => variant.Price = value,
             CatalogPricingAuthority.ResolveSimpleSellingPrice(defaultUnit), nameof(ProductVariant.Price), changedFields);
-        SetIfChanged(variant, variant => variant.OnlinePrice, (variant, value) => variant.OnlinePrice = value,
-            (decimal?)null, nameof(ProductVariant.OnlinePrice), changedFields);
         SetIfChanged(variant, variant => variant.CostPrice, (variant, value) => variant.CostPrice = value,
             CatalogPricingAuthority.ResolveSimplePurchasePrice(defaultUnit), nameof(ProductVariant.CostPrice), changedFields);
 

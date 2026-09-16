@@ -65,6 +65,9 @@ function mockReads() {
         if (url === '/products/product-1') return Promise.resolve({ data: product })
         if (url === '/warehouses') return Promise.resolve({ data: [{ id: 'warehouse-1', name: 'Main', isDefault: true }] })
         if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+        if (url.includes('/variants/') && url.endsWith('/can-delete')) {
+            return Promise.resolve({ data: { canDelete: true, reasons: [] } })
+        }
         return Promise.resolve({ data: [] })
     })
 }
@@ -81,7 +84,16 @@ function renderVariantTab(props = {}) {
     )
 }
 
+async function openAdvanced() {
+    const toggle = await screen.findByRole('button', { name: /Advanced Variant Tools/ })
+    if (toggle.getAttribute('aria-expanded') === 'false') {
+        fireEvent.click(toggle)
+    }
+    await screen.findByText('Variant Templates')
+}
+
 async function createTwoGeneratedRows(container: HTMLElement) {
+    await openAdvanced()
     fireEvent.click(await screen.findByLabelText('Color'))
     fireEvent.click(screen.getByLabelText('Size'))
 
@@ -208,6 +220,7 @@ describe('variant authoring workspace', () => {
     it('updates the live variant counter while editing attributes', async () => {
         const { container } = renderVariantTab()
 
+        await openAdvanced()
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
         await addOptionValue(container, 0, 'Red')
@@ -224,6 +237,7 @@ describe('variant authoring workspace', () => {
     it('shows a large variant warning above the safe threshold', async () => {
         const { container } = renderVariantTab()
 
+        await openAdvanced()
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
         for (let index = 1; index <= 101; index += 1) {
@@ -238,6 +252,7 @@ describe('variant authoring workspace', () => {
     it('loads frontend-only variant templates', async () => {
         const { container } = renderVariantTab()
 
+        await openAdvanced()
         fireEvent.click(await screen.findByRole('button', { name: 'Electronics' }))
 
         const optionNameInputs = Array.from(container.querySelectorAll('input[placeholder="e.g. Size, Color, Material"]')) as HTMLInputElement[]
@@ -247,6 +262,7 @@ describe('variant authoring workspace', () => {
     it('detects duplicate attribute values and prevents generation', async () => {
         const { container } = renderVariantTab()
 
+        await openAdvanced()
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
         await addOptionValue(container, 0, 'Red')
@@ -261,6 +277,7 @@ describe('variant authoring workspace', () => {
         const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
+        await openAdvanced()
         fireEvent.change(screen.getByPlaceholderText('Pattern, e.g. TSHIRT-{COLOR}-{SIZE}'), {
             target: { value: 'TSHIRT-{COLOR}-{SIZE}' },
         })
@@ -280,6 +297,7 @@ describe('variant authoring workspace', () => {
     it('excludes combinations before they appear in the matrix', async () => {
         const { container } = renderVariantTab()
 
+        await openAdvanced()
         fireEvent.click(await screen.findByLabelText('Color'))
         fireEvent.click(screen.getByLabelText('Size'))
         await addOptionValue(container, 0, 'Red')
@@ -300,6 +318,7 @@ describe('variant authoring workspace', () => {
         const { container } = renderVariantTab()
 
         await createTwoGeneratedRows(container)
+        await openAdvanced()
 
         expect(screen.getByText('Workspace Statistics')).toBeInTheDocument()
         expect(screen.getByText('Missing SKU')).toBeInTheDocument()
@@ -347,14 +366,14 @@ describe('variant authoring workspace', () => {
 
         renderVariantTab()
 
-        const status = await screen.findByLabelText('Red: Status — Inactive')
+        const status = await screen.findByLabelText('Color: Red: Status — Inactive')
         expect(status).not.toBeChecked()
         expect(screen.getByText('Status: Inactive')).toBeInTheDocument()
-        expect(screen.getByLabelText('Red: POS Price')).toHaveValue(400)
-        expect(screen.getByLabelText('Red: Online Price')).toHaveValue(null)
-        expect(screen.getByLabelText('Red: Cost Price')).toHaveValue(125.5)
+        expect(screen.getByLabelText('Color: Red: POS Price')).toHaveValue(400)
+        expect(screen.getByLabelText('Color: Red: Online Price')).toHaveValue(null)
+        expect(screen.getByLabelText('Color: Red: Cost Price')).toHaveValue(125.5)
 
-        fireEvent.change(screen.getByLabelText('Red: POS Price'), { target: { value: '500.25' } })
+        fireEvent.change(screen.getByLabelText('Color: Red: POS Price'), { target: { value: '500.25' } })
         fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
 
         await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalledWith(
@@ -395,11 +414,11 @@ describe('variant authoring workspace', () => {
 
         renderVariantTab()
 
-        expect(await screen.findByLabelText('Online: POS Price')).toHaveValue(0)
-        expect(screen.getByLabelText('Online: Online Price')).toHaveValue(12.75)
-        expect(screen.getByLabelText('Online: Cost Price')).toHaveValue(0)
+        expect(await screen.findByLabelText('Plan: Online: POS Price')).toHaveValue(0)
+        expect(screen.getByLabelText('Plan: Online: Online Price')).toHaveValue(12.75)
+        expect(screen.getByLabelText('Plan: Online: Cost Price')).toHaveValue(0)
 
-        fireEvent.change(screen.getByLabelText('Online: Online Price'), { target: { value: '0' } })
+        fireEvent.change(screen.getByLabelText('Plan: Online: Online Price'), { target: { value: '0' } })
         fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
 
         await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalledWith(
@@ -455,7 +474,7 @@ describe('variant authoring workspace', () => {
             />
         )
 
-        expect(await screen.findByLabelText('B: POS Price')).toHaveValue(20)
+        expect(await screen.findByLabelText('Product: B: POS Price')).toHaveValue(20)
 
         resolveProductA?.({
             data: [{
@@ -471,8 +490,8 @@ describe('variant authoring workspace', () => {
             }],
         })
 
-        await waitFor(() => expect(screen.queryByLabelText('A: POS Price')).not.toBeInTheDocument())
-        expect(screen.getByLabelText('B: POS Price')).toHaveValue(20)
+        await waitFor(() => expect(screen.queryByLabelText('Product: A: POS Price')).not.toBeInTheDocument())
+        expect(screen.getByLabelText('Product: B: POS Price')).toHaveValue(20)
     })
 
     it('blocks negative weight before save', async () => {
@@ -495,5 +514,218 @@ describe('variant authoring workspace', () => {
 
         const beforeUnload = new Event('beforeunload', { cancelable: true })
         expect(window.dispatchEvent(beforeUnload)).toBe(false)
+    })
+
+    it('generates unique SKU candidates when the pattern collides across selected variants', async () => {
+        const { container } = renderVariantTab()
+
+        await createTwoGeneratedRows(container)
+        await openAdvanced()
+        fillRequiredPrices(container)
+        fireEvent.change(screen.getByPlaceholderText('Pattern, e.g. TSHIRT-{COLOR}-{SIZE}'), {
+            target: { value: 'TSHIRT' },
+        })
+        fireEvent.click(container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 2 Selected' }))
+
+        await waitFor(() => {
+            const textInputs = Array.from(container.querySelectorAll('table input[type="text"]')) as HTMLInputElement[]
+            const skus = [textInputs[0].value, textInputs[2].value]
+            expect(skus[0]).toBeTruthy()
+            expect(skus[1]).toBeTruthy()
+            expect(new Set(skus.map(sku => sku.toLowerCase())).size).toBe(2)
+        })
+    })
+
+    it('drops option-orphaned variants from the save payload instead of resurrecting them', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({
+                    data: ['Plain', 'Medium', 'Dark'].map((value, index) => ({
+                        id: `variant-${value.toLowerCase()}`,
+                        productId: 'product-1',
+                        sku: `STYLE-${value.toUpperCase()}`,
+                        barcode: `300${index}`,
+                        price: 10,
+                        onlinePrice: null,
+                        costPrice: 5,
+                        weight: null,
+                        isDefault: value === 'Plain',
+                        isActive: true,
+                        totalStock: 0,
+                        attributes: [{ name: 'Style', value, sortOrder: 0 }],
+                    })),
+                })
+            }
+            if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+            if (url.includes('/variants/') && url.endsWith('/can-delete')) {
+                return Promise.resolve({ data: { canDelete: true, reasons: [] } })
+            }
+            return Promise.resolve({ data: [] })
+        })
+
+        const { container } = renderVariantTab()
+
+        expect((await screen.findAllByText('Dark')).length).toBeGreaterThan(0)
+
+        const darkChip = Array.from(container.querySelectorAll('span')).find(
+            (element) => element.textContent?.startsWith('Dark') && element.querySelector('button')
+        ) as HTMLElement
+        fireEvent.click(darkChip.querySelector('button') as HTMLButtonElement)
+
+        const valueInput = container.querySelector(
+            'input[placeholder="Type a value and press Enter"]'
+        ) as HTMLInputElement
+        fireEvent.change(valueInput, { target: { value: 'Mojahed' } })
+        fireEvent.keyDown(valueInput, { key: 'Enter' })
+
+        expect((await screen.findAllByText('Mojahed')).length).toBeGreaterThan(0)
+
+        const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
+        fireEvent.change(numericInputs[8], { target: { value: '5' } })
+        fireEvent.change(numericInputs[9], { target: { value: '10' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalled())
+        const payload = saveVariantDraftMock.mock.calls[0][0]
+        expect(payload.authoringVariants).toHaveLength(3)
+
+        const byStyle = Object.fromEntries(
+            payload.authoringVariants.map((variant: { attributes: { Style: string } }) => [variant.attributes.Style, variant])
+        )
+        expect(Object.keys(byStyle).sort()).toEqual(['Medium', 'Mojahed', 'Plain'])
+        expect(byStyle.Plain.variantId).toBe('variant-plain')
+        expect(byStyle.Medium.variantId).toBe('variant-medium')
+        expect(byStyle.Mojahed.variantId).toBeNull()
+    })
+
+    it('blocks save when the server reports an omitted variant has protected history', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({
+                    data: ['Plain', 'Medium', 'Dark'].map((value, index) => ({
+                        id: `variant-${value.toLowerCase()}`,
+                        productId: 'product-1',
+                        sku: `STYLE-${value.toUpperCase()}`,
+                        barcode: `300${index}`,
+                        price: 10,
+                        onlinePrice: null,
+                        costPrice: 5,
+                        weight: null,
+                        isDefault: value === 'Plain',
+                        isActive: true,
+                        totalStock: 0,
+                        attributes: [{ name: 'Style', value, sortOrder: 0 }],
+                    })),
+                })
+            }
+            if (url === '/products/product-1/variants/variant-dark/can-delete') {
+                return Promise.resolve({
+                    data: {
+                        canDelete: false,
+                        errorCode: 'VARIANT_USED_IN_PURCHASES',
+                        messageEn: 'Cannot delete this variant: it has purchase history.',
+                        messageAr: 'لا يمكن حذف هذا المتغير: لديه سجل مشتريات.',
+                        reasons: [{
+                            code: 'VARIANT_USED_IN_PURCHASES',
+                            messageEn: 'Cannot delete this variant: it has purchase history.',
+                            messageAr: 'لا يمكن حذف هذا المتغير: لديه سجل مشتريات.',
+                        }],
+                    },
+                })
+            }
+            if (url.includes('/variants/') && url.endsWith('/can-delete')) {
+                return Promise.resolve({ data: { canDelete: true, reasons: [] } })
+            }
+            if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        const { container } = renderVariantTab()
+
+        expect((await screen.findAllByText('Dark')).length).toBeGreaterThan(0)
+
+        const darkChip = Array.from(container.querySelectorAll('span')).find(
+            (element) => element.textContent?.startsWith('Dark') && element.querySelector('button')
+        ) as HTMLElement
+        fireEvent.click(darkChip.querySelector('button') as HTMLButtonElement)
+
+        const valueInput = container.querySelector(
+            'input[placeholder="Type a value and press Enter"]'
+        ) as HTMLInputElement
+        fireEvent.change(valueInput, { target: { value: 'Mojahed' } })
+        fireEvent.keyDown(valueInput, { key: 'Enter' })
+
+        expect((await screen.findAllByText('Mojahed')).length).toBeGreaterThan(0)
+
+        const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
+        fireEvent.change(numericInputs[8], { target: { value: '5' } })
+        fireEvent.change(numericInputs[9], { target: { value: '10' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith(
+            '/products/product-1/variants/variant-dark/can-delete'
+        ))
+        expect(saveVariantDraftMock).not.toHaveBeenCalled()
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('Variant matrix was not saved.')
+        expect(alert).toHaveTextContent(
+            'Style: Dark (STYLE-DARK): Cannot delete this variant: it has purchase history.'
+        )
+        expect(alert).toHaveFocus()
+    })
+
+    it('allows save when the server reports omitted variants are deletable', async () => {
+        apiGetMock.mockImplementation((url: string) => {
+            if (url === '/products/product-1/variants') {
+                return Promise.resolve({
+                    data: ['Plain', 'Medium', 'Dark'].map((value, index) => ({
+                        id: `variant-${value.toLowerCase()}`,
+                        productId: 'product-1',
+                        sku: `STYLE-${value.toUpperCase()}`,
+                        barcode: `300${index}`,
+                        price: 10,
+                        onlinePrice: null,
+                        costPrice: 5,
+                        weight: null,
+                        isDefault: value === 'Plain',
+                        isActive: true,
+                        totalStock: 0,
+                        attributes: [{ name: 'Style', value, sortOrder: 0 }],
+                    })),
+                })
+            }
+            if (url.includes('/variants/') && url.endsWith('/can-delete')) {
+                return Promise.resolve({ data: { canDelete: true, reasons: [] } })
+            }
+            if (url === '/admin/products/product-1/media') return Promise.resolve({ data: [] })
+            return Promise.resolve({ data: [] })
+        })
+
+        const { container } = renderVariantTab()
+
+        expect((await screen.findAllByText('Dark')).length).toBeGreaterThan(0)
+
+        const darkChip = Array.from(container.querySelectorAll('span')).find(
+            (element) => element.textContent?.startsWith('Dark') && element.querySelector('button')
+        ) as HTMLElement
+        fireEvent.click(darkChip.querySelector('button') as HTMLButtonElement)
+
+        const valueInput = container.querySelector(
+            'input[placeholder="Type a value and press Enter"]'
+        ) as HTMLInputElement
+        fireEvent.change(valueInput, { target: { value: 'Mojahed' } })
+        fireEvent.keyDown(valueInput, { key: 'Enter' })
+
+        expect((await screen.findAllByText('Mojahed')).length).toBeGreaterThan(0)
+
+        const numericInputs = Array.from(container.querySelectorAll('table input[type="number"]')) as HTMLInputElement[]
+        fireEvent.change(numericInputs[8], { target: { value: '5' } })
+        fireEvent.change(numericInputs[9], { target: { value: '10' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Matrix' }))
+
+        await waitFor(() => expect(saveVariantDraftMock).toHaveBeenCalled())
+        const payload = saveVariantDraftMock.mock.calls[0][0]
+        expect(payload.authoringVariants).toHaveLength(3)
     })
 })

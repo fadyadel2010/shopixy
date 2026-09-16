@@ -290,7 +290,9 @@ describe('product affiliate entry presentation', () => {
         const payload = apiPostMock.mock.calls[0][1]
         expect(payload).not.toHaveProperty('purchasePrice')
         expect(payload).not.toHaveProperty('salePrice')
-        expect(payload).not.toHaveProperty('onlinePrice')
+        // WAVE 3: simple products carry an explicit null storefront price
+        // (null = storefront uses the POS price).
+        expect(payload.onlinePrice).toBeNull()
     })
 
     it('separates variant create from product unit pricing and creates the parent as draft', async () => {
@@ -413,7 +415,7 @@ describe('product affiliate entry presentation', () => {
         const payload = apiPostMock.mock.calls[1][1]
         expect(payload).not.toHaveProperty('purchasePrice')
         expect(payload).not.toHaveProperty('salePrice')
-        expect(payload).not.toHaveProperty('onlinePrice')
+        expect(payload.onlinePrice).toBeNull()
     })
 
     it('updates an existing product with exactly one canonical product mutation request', async () => {
@@ -443,7 +445,8 @@ describe('product affiliate entry presentation', () => {
         const payload = apiPutMock.mock.calls[0][1]
         expect(payload).not.toHaveProperty('purchasePrice')
         expect(payload).not.toHaveProperty('salePrice')
-        expect(payload).not.toHaveProperty('onlinePrice')
+        // WAVE 3: the loaded default-variant onlinePrice (12) round-trips.
+        expect(payload.onlinePrice).toBe(12)
     })
 
     it('skips product authoring PUT when an existing product is submitted without changes', async () => {
@@ -478,6 +481,43 @@ describe('product affiliate entry presentation', () => {
                 })],
             }), expect.anything())
         })
+    })
+
+    it('keeps Arabic identity optional and reveals it on demand', async () => {
+        render(<ProductForm mode="modal" onSave={vi.fn()} />)
+
+        await screen.findByText('products.basicInfo')
+        expect(screen.queryByLabelText('products.productNameAr')).not.toBeInTheDocument()
+        expect(screen.getByRole('button', { name: '+ products.addArabicTranslation' })).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: '+ products.addArabicTranslation' }))
+
+        expect(screen.getByLabelText('products.productNameAr')).toBeInTheDocument()
+        expect(screen.getByText('products.arabicFallbackHint')).toBeInTheDocument()
+    })
+
+    it('suggests and sanitizes a create slug but submits null after the user clears it', async () => {
+        const { container } = render(<ProductForm mode="modal" onSave={vi.fn()} />)
+
+        await screen.findByText('products.basicInfo')
+        fireEvent.change(screen.getByLabelText('products.productName *'), {
+            target: { value: 'Blue Widget XL!' },
+        })
+        const slugInput = screen.getByPlaceholderText('product-url-slug')
+        expect(slugInput).toHaveValue('blue-widget-xl')
+
+        fireEvent.change(slugInput, { target: { value: '' } })
+        fireEvent.change(container.querySelector('select')!, { target: { value: 'category-1' } })
+        const publishStatusSelect = Array.from(container.querySelectorAll('select'))
+            .find((select) => Array.from(select.options).some((option) => option.textContent === 'products.statusDraft'))!
+        fireEvent.change(publishStatusSelect, { target: { value: '0' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.create' }))
+
+        await waitFor(() => expect(apiPostMock).toHaveBeenCalledWith(
+            '/products',
+            expect.objectContaining({ name: 'Blue Widget XL!', slug: null }),
+            expect.anything(),
+        ))
     })
 
     it('skips product authoring PUT for whitespace-only differences', async () => {
@@ -648,6 +688,35 @@ describe('product affiliate entry presentation', () => {
         fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
 
         expect(await screen.findByText('This product changed while you were editing it. Refresh the product before retrying.')).toBeInTheDocument()
+    })
+
+    it.each([
+        ['PRODUCT_SKU_CONFLICT', 'variants.sku', 'SKU is already assigned to another product variant.'],
+        ['PRODUCT_BARCODE_CONFLICT', 'variants.barcode', 'Barcode is already assigned to another product variant.'],
+        ['PRODUCT_ATTRIBUTE_CONFLICT', 'variants.attributes', 'A product variant with the same attribute combination already exists.'],
+    ])('surfaces the precise server message for %s (Wave 4)', async (code, field, serverMessage) => {
+        apiPutMock.mockRejectedValueOnce({
+            response: {
+                status: 409,
+                data: {
+                    message: 'Product authoring identity conflict.',
+                    status: 'Conflict',
+                    errors: [{ code, field, message: serverMessage }],
+                },
+            },
+        })
+        const { container } = render(<ProductForm productId="product-1" mode="modal" onSave={vi.fn()} />)
+
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1'))
+        await waitFor(() => expect(apiGetMock).toHaveBeenCalledWith('/products/product-1/variants'))
+        fireEvent.change(container.querySelector('input[type="text"]')!, {
+            target: { value: 'Updated Product' },
+        })
+
+        fireEvent.click(screen.getByRole('button', { name: 'products.update' }))
+
+        expect(await screen.findByText(serverMessage)).toBeInTheDocument()
+        expect(screen.queryByText('This product changed while you were editing it. Refresh the product before retrying.')).toBeNull()
     })
 
     it('surfaces post-matrix variant validation at the parent form and prevents the parent update', async () => {

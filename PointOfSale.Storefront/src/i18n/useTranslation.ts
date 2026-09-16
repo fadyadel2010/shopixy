@@ -98,9 +98,13 @@ export function getLocalizedField<T extends Record<string, any>>(
         }
     }
 
-    // Fall back to English/default field
     const value = obj[field];
-    return typeof value === 'string' ? value : '';
+    if (typeof value === 'string' && value.trim()) {
+        return value;
+    }
+
+    const arabicValue = obj[`${field}Ar`];
+    return typeof arabicValue === 'string' && arabicValue.trim() ? arabicValue : '';
 }
 
 /**
