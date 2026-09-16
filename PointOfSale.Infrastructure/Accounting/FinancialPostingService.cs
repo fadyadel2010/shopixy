@@ -673,6 +673,7 @@ public class FinancialPostingService : IFinancialPostingService
                     payment.Amount > 0m)
                 .Select(payment => (decimal?)payment.Amount)
                 .FirstOrDefaultAsync(ct),
+            "PurchaseReturn" => await ResolvePurchaseReturnCashAuthorityAsync(request, ct),
             "GatewaySettlement" => await _db.PaymentSettlementBatches
                 .IgnoreQueryFilters()
                 .AsNoTracking()
@@ -746,6 +747,60 @@ public class FinancialPostingService : IFinancialPostingService
                 $"Treasury inflow exceeds authoritative source amount for '{request.SourceType}' and source '{request.SourceId}'.");
         }
     }
+
+    private async Task<decimal?> ResolvePurchaseReturnCashAuthorityAsync(
+        PostingRequest request,
+        CancellationToken ct)
+    {
+        var returnRecord = await _db.Returns
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Include(item => item.OriginalPurchaseInvoice)
+                .ThenInclude(invoice => invoice!.Payments)
+            .SingleOrDefaultAsync(item =>
+                item.Id == request.SourceId &&
+                item.TenantId == request.TenantId &&
+                !item.IsDeleted &&
+                item.ReturnType == ReturnType.PurchaseReturn &&
+                item.OriginalPurchaseInvoiceId.HasValue &&
+                item.RefundMethod == RefundMethod.Cash &&
+                item.CashRefundAmount > 0m &&
+                item.CashRefundAmount == item.TotalAmount &&
+                item.CardRefundAmount == 0m &&
+                item.CustomerCreditAmount == 0m,
+                ct);
+        var invoice = returnRecord?.OriginalPurchaseInvoice;
+        if (returnRecord == null || invoice == null || invoice.IsDeleted)
+        {
+            return null;
+        }
+
+        var paidAmount = Math.Max(0m, Math.Min(
+            RoundCurrency(invoice.PaidAmount),
+            RoundCurrency(invoice.TotalAmount)));
+        var cashPayments = RoundCurrency(invoice.Payments
+            .Where(payment => !payment.IsDeleted && payment.PaymentMethod == PointOfSale.Core.Enums.PaymentMethod.Cash)
+            .Sum(payment => payment.Amount));
+        var originalCashPaid = cashPayments > 0m
+            ? Math.Min(cashPayments, paidAmount)
+            : invoice.PaymentMethod == PointOfSale.Core.Enums.PaymentMethod.Cash ? paidAmount : 0m;
+        var cumulativeCashRefunds = await _db.Returns
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .Where(item =>
+                item.TenantId == request.TenantId &&
+                !item.IsDeleted &&
+                item.ReturnType == ReturnType.PurchaseReturn &&
+                item.OriginalPurchaseInvoiceId == invoice.Id)
+            .SumAsync(item => (decimal?)item.CashRefundAmount, ct) ?? 0m;
+
+        return cumulativeCashRefunds <= originalCashPaid
+            ? returnRecord.CashRefundAmount
+            : null;
+    }
+
+    private static decimal RoundCurrency(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private async Task<decimal?> ValidateInitialCapitalizationAuthorityAsync(
         PostingRequest request,

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
+using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Exceptions.Accounting;
@@ -535,7 +536,67 @@ public class FinancialPostingServiceTests : IDisposable
     }
     
     #endregion
-    
+
+    #region Purchase Return Treasury Authority Tests
+
+    [Fact]
+    public async Task PostJournalAsync_PurchaseReturnWithoutOriginalCashPayment_RejectsTreasuryInflow()
+    {
+        var invoice = new PurchaseInvoice
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            InvoiceNumber = "PUR-NON-CASH",
+            InvoiceDate = DateTime.UtcNow.Date,
+            Status = InvoiceStatus.Completed,
+            TotalAmount = 100m,
+            PaidAmount = 100m,
+            PaymentMethod = PaymentMethod.Credit
+        };
+        var purchaseReturn = new Return
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            ReturnNumber = "PR-FORGED-CASH",
+            ReturnDate = DateTime.UtcNow.Date,
+            ReturnType = ReturnType.PurchaseReturn,
+            OriginalPurchaseInvoiceId = invoice.Id,
+            TotalAmount = 100m,
+            RefundMethod = RefundMethod.Cash,
+            CashRefundAmount = 100m
+        };
+        _db.PurchaseInvoices.Add(invoice);
+        _db.Returns.Add(purchaseReturn);
+        _db.TreasuryAccounts.Add(TreasuryAccount.CreateCashbox(
+            _tenantId,
+            _cashAccount.Id,
+            "Cash"));
+        await _db.SaveChangesAsync();
+
+        var request = new PostingRequest
+        {
+            TenantId = _tenantId,
+            JournalDate = purchaseReturn.ReturnDate,
+            SourceType = "PurchaseReturn",
+            SourceId = purchaseReturn.Id,
+            SourceReference = purchaseReturn.ReturnNumber,
+            Description = "Forged purchase return cash inflow",
+            IdempotencyKey = $"PURCHASE_RETURN:{_tenantId}:{purchaseReturn.Id}",
+            Lines = new List<PostingLine>
+            {
+                PostingLine.Debit(_cashAccount.Id, 100m),
+                PostingLine.Credit(_revenueAccount.Id, 100m)
+            }
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidJournalException>(
+            () => _service.PostJournalAsync(request));
+
+        Assert.Contains("not authorized", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    #endregion
+
     #region Journal Number Tests
     
     [Fact]

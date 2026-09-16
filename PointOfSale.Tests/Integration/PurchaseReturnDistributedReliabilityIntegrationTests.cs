@@ -20,6 +20,7 @@ using PointOfSale.API.Services;
 using PointOfSale.API.Services.Audit;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Entities.Affiliate;
 using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -280,6 +281,178 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             progressEntries);
     }
 
+    [Fact]
+    public async Task PR_CASH_01_Cash_Refund_Settles_Supplier_And_Reconciles_Treasury_GL_And_Cash_Flow()
+    {
+        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out _, out _) ||
+            databaseScope is null)
+        {
+            return;
+        }
+
+        using var scope = databaseScope;
+        var tenantContext = new TestTenantContext(TenantId);
+        await using var seedContext = scope.CreateDbContext(tenantContext);
+        await EnsureReliabilityScenarioSchemaAsync(seedContext);
+        var seeded = await SeedScenarioAsync(seedContext, paidInCash: true);
+        var connectionString = seedContext.Database.GetConnectionString()
+            ?? throw new InvalidOperationException("The test database connection string was not available.");
+        var logs = new ConcurrentQueue<string>();
+        var actor = new PurchaseReturnActor(
+            Name: "cash-refund",
+            RequestId: "pr-cash-01",
+            TraceIdentifier: "pr-cash-01",
+            UserId: ActorAUserId);
+
+        var result = await ExecuteReturnActorAsync(
+            connectionString,
+            tenantContext,
+            seeded,
+            actor,
+            logs,
+            logs,
+            reason: "Cash refund certification",
+            notes: "PR-CASH-01",
+            commerceAccountingOverride: null,
+            refundToCash: true);
+
+        Assert.True(
+            result.IsSuccess,
+            result.ResponseBody ?? (result.Exception == null ? "Cash refund request failed." : DescribeException(result.Exception)));
+        Assert.NotNull(result.Response);
+
+        var replay = await ExecuteReturnActorAsync(
+            connectionString,
+            tenantContext,
+            seeded,
+            actor,
+            logs,
+            logs,
+            reason: "Cash refund certification",
+            notes: "PR-CASH-01",
+            commerceAccountingOverride: null,
+            refundToCash: true);
+        Assert.True(
+            replay.IsSuccess,
+            replay.ResponseBody ?? (replay.Exception == null ? "Cash refund replay failed." : DescribeException(replay.Exception)));
+        Assert.Equal(result.Response.ReturnId, replay.Response!.ReturnId);
+
+        await using var verifyContext = scope.CreateDbContext(tenantContext);
+        var purchaseReturn = await verifyContext.Returns
+            .AsNoTracking()
+            .SingleAsync(item => item.Id == result.Response!.ReturnId);
+        Assert.Equal(RefundMethod.Cash, purchaseReturn.RefundMethod);
+        Assert.Equal(RequestedReturnBaseQuantity * UnitCost, purchaseReturn.CashRefundAmount);
+
+        var supplierTransactions = await verifyContext.SupplierTransactions
+            .AsNoTracking()
+            .Where(item => item.ReferenceId == purchaseReturn.Id)
+            .OrderBy(item => item.TransactionDate)
+            .ToListAsync();
+        Assert.Equal(2, supplierTransactions.Count);
+        Assert.Equal(TransactionType.PurchaseReturn, supplierTransactions[0].TransactionType);
+        Assert.Equal(RequestedReturnBaseQuantity * UnitCost, supplierTransactions[0].DebitAmount);
+        Assert.Equal(TransactionType.PaymentReceived, supplierTransactions[1].TransactionType);
+        Assert.Equal(RequestedReturnBaseQuantity * UnitCost, supplierTransactions[1].CreditAmount);
+        Assert.Equal(0m, await verifyContext.Suppliers
+            .Where(item => item.Id == seeded.SupplierId)
+            .Select(item => item.Balance)
+            .SingleAsync());
+
+        var journal = await verifyContext.JournalEntries
+            .AsNoTracking()
+            .Include(item => item.LedgerEntries)
+            .SingleAsync(item =>
+                item.SourceType == "PurchaseReturn" &&
+                item.SourceId == purchaseReturn.Id);
+        var cashAccountId = await verifyContext.TreasuryAccounts
+            .AsNoTracking()
+            .Where(item => item.TenantId == TenantId && item.Type == TreasuryAccountType.Cashbox)
+            .Select(item => item.AccountId)
+            .SingleAsync();
+        Assert.Contains(journal.LedgerEntries, line =>
+            line.AccountId == cashAccountId &&
+            line.DebitAmount == RequestedReturnBaseQuantity * UnitCost);
+        Assert.Equal(
+            journal.LedgerEntries.Sum(line => line.DebitAmount),
+            journal.LedgerEntries.Sum(line => line.CreditAmount));
+        var outboxMessage = await verifyContext.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleAsync(item =>
+                item.EventType == "PurchaseReturn" &&
+                item.BusinessEntityId == purchaseReturn.Id);
+        Assert.NotNull(outboxMessage.ProcessedAtUtc);
+        Assert.Equal(journal.Id, outboxMessage.JournalId);
+        Assert.False(outboxMessage.IsFailed);
+
+        var reportService = new FinancialReportService(
+            verifyContext,
+            NullLogger<FinancialReportService>.Instance);
+        var cashFlow = await reportService.GetCashFlowAsync(
+            TenantId,
+            ReturnRequestUtc.Date,
+            ReturnRequestUtc.Date.AddDays(1).AddTicks(-1));
+        Assert.Equal(RequestedReturnBaseQuantity * UnitCost, cashFlow.NetCashChange);
+        Assert.Equal(RequestedReturnBaseQuantity * UnitCost, cashFlow.ClosingCashBalance);
+        Assert.True(cashFlow.Reconciles);
+    }
+
+    [Fact]
+    public async Task PR_CASH_02_Cash_Refund_Without_Original_Cash_Payment_Fails_Without_Effects()
+    {
+        if (!RealPostgresTestSupport.TryCreateScope(out var databaseScope, out _, out _) ||
+            databaseScope is null)
+        {
+            return;
+        }
+
+        using var scope = databaseScope;
+        var tenantContext = new TestTenantContext(TenantId);
+        await using var seedContext = scope.CreateDbContext(tenantContext);
+        await EnsureReliabilityScenarioSchemaAsync(seedContext);
+        var seeded = await SeedScenarioAsync(seedContext);
+        var connectionString = seedContext.Database.GetConnectionString()
+            ?? throw new InvalidOperationException("The test database connection string was not available.");
+        var logs = new ConcurrentQueue<string>();
+        var actor = new PurchaseReturnActor(
+            Name: "cash-refund-without-cash-authority",
+            RequestId: "pr-cash-02",
+            TraceIdentifier: "pr-cash-02",
+            UserId: ActorAUserId);
+
+        var result = await ExecuteReturnActorAsync(
+            connectionString,
+            tenantContext,
+            seeded,
+            actor,
+            logs,
+            logs,
+            reason: "Unauthorized cash refund certification",
+            notes: "PR-CASH-02",
+            commerceAccountingOverride: null,
+            refundToCash: true);
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
+        Assert.Contains("remaining cash paid", result.ResponseBody, StringComparison.OrdinalIgnoreCase);
+
+        await using var verifyContext = scope.CreateDbContext(tenantContext);
+        Assert.False(await verifyContext.Returns.AnyAsync(item =>
+            item.ReturnType == ReturnType.PurchaseReturn &&
+            item.OriginalPurchaseInvoiceId == seeded.InvoiceId));
+        Assert.False(await verifyContext.AccountingOutboxMessages
+            .IgnoreQueryFilters()
+            .AnyAsync(item => item.EventType == "PurchaseReturn"));
+        Assert.False(await verifyContext.JournalEntries
+            .IgnoreQueryFilters()
+            .AnyAsync(item => item.SourceType == "PurchaseReturn"));
+        Assert.Equal(-(HistoricalReceivedBaseQuantity * UnitCost), await verifyContext.Suppliers
+            .Where(item => item.Id == seeded.SupplierId)
+            .Select(item => item.Balance)
+            .SingleAsync());
+    }
+
     private static Task<PurchaseReturnActorResult> ExecuteReturnActorAsync(
         string connectionString,
         TestTenantContext tenantContext,
@@ -300,6 +473,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             reason,
             notes,
             commerceAccountingOverride: null,
+            refundToCash: false,
             interceptors: interceptors);
 
     private static async Task<PurchaseReturnActorResult> ExecuteReturnActorAsync(
@@ -312,6 +486,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
         string reason,
         string notes,
         ICommerceAccountingService? commerceAccountingOverride = null,
+        bool refundToCash = false,
         params IInterceptor[] interceptors)
     {
         await using var context = CreateDbContext(connectionString, tenantContext, interceptors);
@@ -326,6 +501,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             WarehouseId = seeded.WarehouseId,
             ReturnDate = ReturnRequestUtc,
             OriginalInvoiceId = seeded.InvoiceId,
+            RefundToCash = refundToCash,
             RefundAmount = RequestedReturnBaseQuantity * UnitCost,
             Reason = reason,
             Notes = notes,
@@ -1493,9 +1669,11 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
         progressEntries.Enqueue("verification:pr-con-03-stock-sync-overlap-converged");
     }
 
-    private static async Task<SeededScenario> SeedScenarioAsync(ApplicationDbContext context)
+    private static async Task<SeededScenario> SeedScenarioAsync(ApplicationDbContext context, bool paidInCash = false)
     {
-        var supplierBalanceAfterPurchase = -(HistoricalReceivedBaseQuantity * UnitCost);
+        var purchaseAmount = HistoricalReceivedBaseQuantity * UnitCost;
+        var purchaseBalance = -purchaseAmount;
+        var supplierBalanceAfterPurchase = paidInCash ? 0m : purchaseBalance;
         var purchaseInvoice = new PurchaseInvoice
         {
             Id = InvoiceId,
@@ -1511,8 +1689,10 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             DiscountPercentage = 0m,
             TaxAmount = 0m,
             TotalAmount = HistoricalReceivedBaseQuantity * UnitCost,
-            PaidAmount = 0m,
-            PaymentMethod = PointOfSale.Core.Enums.PaymentMethod.Credit,
+            PaidAmount = paidInCash ? purchaseAmount : 0m,
+            PaymentMethod = paidInCash
+                ? PointOfSale.Core.Enums.PaymentMethod.Cash
+                : PointOfSale.Core.Enums.PaymentMethod.Credit,
             Notes = "PR-CON-01 authoritative purchase invoice",
             CreatedAt = SeededUtc
         };
@@ -1534,6 +1714,19 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             TotalAmount = HistoricalReceivedBaseQuantity * UnitCost,
             CreatedAt = SeededUtc
         });
+        if (paidInCash)
+        {
+            purchaseInvoice.Payments.Add(new PurchaseInvoicePayment
+            {
+                Id = Guid.Parse("7f0e2e17-90cc-4184-b676-d6aa20f14018"),
+                PurchaseInvoiceId = InvoiceId,
+                PaymentDate = SeededUtc.AddTicks(1),
+                Amount = purchaseAmount,
+                PaymentMethod = PointOfSale.Core.Enums.PaymentMethod.Cash,
+                ReferenceNumber = purchaseInvoice.InvoiceNumber,
+                CreatedAt = SeededUtc.AddTicks(1)
+            });
+        }
 
         context.Tenants.Add(new Tenant
         {
@@ -1598,6 +1791,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             Unit = "Piece",
             IsActive = true,
             IsOnlineVisible = true,
+            PublishStatus = PublishStatus.Published,
             TrackStock = true,
             CreatedAt = SeededUtc
         });
@@ -1687,7 +1881,7 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             TransactionType = TransactionType.Purchase,
             DebitAmount = 0m,
             CreditAmount = HistoricalReceivedBaseQuantity * UnitCost,
-            BalanceAfter = supplierBalanceAfterPurchase,
+            BalanceAfter = purchaseBalance,
             ReferenceId = InvoiceId,
             ReferenceNumber = purchaseInvoice.InvoiceNumber,
             Notes = "Authoritative purchase payable",
@@ -1705,11 +1899,55 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
             DocumentNumber = purchaseInvoice.InvoiceNumber,
             DebitAmount = 0m,
             CreditAmount = HistoricalReceivedBaseQuantity * UnitCost,
-            RunningBalance = supplierBalanceAfterPurchase,
+            RunningBalance = purchaseBalance,
             ReferenceId = InvoiceId,
             Notes = "Authoritative purchase payable ledger",
             CreatedAt = SeededUtc
         });
+
+        var affiliateCategory = AffiliateCategory.CreateMainCategory(
+            "Reliability Tests",
+            $"purchase-return-reliability-{Guid.NewGuid():N}");
+        context.AffiliateCategories.Add(affiliateCategory);
+        context.AffiliateProductPolicies.Add(AffiliateProductPolicy.Create(
+            TenantId,
+            ProductId,
+            commissionRate: 0.10m,
+            maxPerItem: 25m,
+            categoryId: affiliateCategory.Id));
+
+        if (paidInCash)
+        {
+            context.SupplierTransactions.Add(new SupplierTransaction
+            {
+                Id = Guid.Parse("7f0e2e17-90cc-4184-b676-d6aa20f14019"),
+                TenantId = TenantId,
+                SupplierId = SupplierId,
+                TransactionDate = SeededUtc.AddTicks(1),
+                TransactionType = TransactionType.PaymentMade,
+                DebitAmount = purchaseAmount,
+                CreditAmount = 0m,
+                BalanceAfter = 0m,
+                ReferenceId = InvoiceId,
+                ReferenceNumber = purchaseInvoice.InvoiceNumber,
+                CreatedAt = SeededUtc.AddTicks(1)
+            });
+            context.AccountLedgers.Add(new AccountLedger
+            {
+                Id = Guid.Parse("7f0e2e17-90cc-4184-b676-d6aa20f14020"),
+                TenantId = TenantId,
+                PartyType = PartyType.Supplier,
+                PartyId = SupplierId,
+                TransactionDate = SeededUtc.AddTicks(1),
+                TransactionType = TransactionType.PaymentMade,
+                DocumentNumber = purchaseInvoice.InvoiceNumber,
+                DebitAmount = purchaseAmount,
+                CreditAmount = 0m,
+                RunningBalance = 0m,
+                ReferenceId = InvoiceId,
+                CreatedAt = SeededUtc.AddTicks(1)
+            });
+        }
 
         context.PurchaseInvoices.Add(purchaseInvoice);
 
@@ -1728,10 +1966,22 @@ public sealed class PurchaseReturnDistributedReliabilityIntegrationTests
 
     private static void SeedRequiredLedgerAccounts(ApplicationDbContext context)
     {
+        var cashAccount = Account.Create(
+            TenantId,
+            AccountCodes.CashboxMain,
+            "Main Cashbox",
+            AccountType.Asset,
+            isSystem: true);
         context.LedgerAccounts.AddRange(
+            cashAccount,
             Account.Create(TenantId, AccountCodes.Inventory, "Inventory", AccountType.Asset, isSystem: true),
             Account.Create(TenantId, AccountCodes.InputTaxReceivable, "Input Tax Receivable", AccountType.Asset, isSystem: true),
             Account.Create(TenantId, AccountCodes.SupplierPayables, "Supplier Payables", AccountType.Liability, isSystem: true));
+        context.TreasuryAccounts.Add(TreasuryAccount.CreateCashbox(
+            TenantId,
+            cashAccount.Id,
+            "Main Cashbox",
+            isDefault: true));
     }
 
     private static ApplicationDbContext CreateDbContext(

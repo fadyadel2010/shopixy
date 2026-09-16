@@ -493,6 +493,67 @@ public class CommerceAccountingServiceTests : IDisposable
         Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inventoryId && line.CreditAmount == 100m);
         Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inputTaxReceivableId && line.CreditAmount == 5m);
     }
+
+    [Fact]
+    public async Task PostPurchaseReturnAsync_CashRefund_ReceivesCashAndSettlesSupplierCredit()
+    {
+        var returnObj = new Return
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            WarehouseId = Guid.NewGuid(),
+            ReturnNumber = "PR-CASH",
+            ReturnDate = DateTime.UtcNow,
+            ReturnType = ReturnType.PurchaseReturn,
+            Subtotal = 100m,
+            TaxAmount = 5m,
+            TotalAmount = 105m,
+            RefundMethod = RefundMethod.Cash,
+            CashRefundAmount = 105m
+        };
+        PostingRequest? capturedRequest = null;
+        _mockPostingService
+            .Setup(x => x.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<PostingRequest, CancellationToken>((request, _) => capturedRequest = request)
+            .ReturnsAsync(CreateJournal());
+
+        var result = await _service.PostPurchaseReturnAsync(returnObj);
+
+        Assert.True(result.Success);
+        Assert.Contains(capturedRequest!.Lines, line => line.AccountId == _supplierPayablesId && line.DebitAmount == 105m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inventoryId && line.CreditAmount == 100m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _inputTaxReceivableId && line.CreditAmount == 5m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _cashboxId && line.DebitAmount == 105m);
+        Assert.Contains(capturedRequest.Lines, line => line.AccountId == _supplierPayablesId && line.CreditAmount == 105m);
+        Assert.Equal(capturedRequest.Lines.Sum(line => line.DebitAmount), capturedRequest.Lines.Sum(line => line.CreditAmount));
+    }
+
+    [Theory]
+    [InlineData(RefundMethod.Card)]
+    [InlineData(RefundMethod.Mixed)]
+    public async Task PostPurchaseReturnAsync_UnsupportedSettlement_FailsClosed(RefundMethod refundMethod)
+    {
+        var returnObj = new Return
+        {
+            Id = Guid.NewGuid(),
+            TenantId = _tenantId,
+            WarehouseId = Guid.NewGuid(),
+            ReturnNumber = "PR-UNSUPPORTED",
+            ReturnDate = DateTime.UtcNow,
+            ReturnType = ReturnType.PurchaseReturn,
+            TotalAmount = 100m,
+            RefundMethod = refundMethod,
+            CardRefundAmount = 100m
+        };
+
+        var result = await _service.PostPurchaseReturnAsync(returnObj);
+
+        Assert.False(result.Success);
+        Assert.Contains("unsupported or inconsistent settlement snapshot", result.ErrorMessage);
+        _mockPostingService.Verify(
+            service => service.PostJournalAsync(It.IsAny<PostingRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
     
     // ═══════════════════════════════════════════════════════════════════════════
     // E-COMMERCE PAYMENT TESTS

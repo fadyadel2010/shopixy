@@ -21,9 +21,8 @@ public sealed class ReturnFinancialAuthorityCertificationTests
 
         Assert.DoesNotContain("unitPrice: i.unitPrice", purchaseReturns, StringComparison.Ordinal);
         Assert.DoesNotContain("taxRate: i.taxRate", purchaseReturns, StringComparison.Ordinal);
-        Assert.DoesNotContain("refundToCash:", purchaseReturns, StringComparison.Ordinal);
-        Assert.DoesNotContain("refundAmount:", purchaseReturns, StringComparison.Ordinal);
-        Assert.DoesNotContain("setRefundAmount", purchaseReturns, StringComparison.Ordinal);
+        Assert.Contains("refundToCash,", purchaseReturns, StringComparison.Ordinal);
+        Assert.Contains("refundAmount: refundToCash ? calculateTotal() : 0", purchaseReturns, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -50,17 +49,17 @@ public sealed class ReturnFinancialAuthorityCertificationTests
     }
 
     [Fact]
-    public void ReturnReplayFingerprints_MustExcludeIgnoredClientMoney()
+    public void ReturnReplayFingerprints_MustTrackSettlementChoicesButExcludeIgnoredPrices()
     {
         var salesReturnsController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/SalesReturnsController.cs");
         var purchaseReturnsController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/PurchaseReturnsController.cs");
 
         var salesFingerprint = ExtractMethod(
             salesReturnsController,
-            "BuildSalesReturnRequestFingerprint");
+            "private static string BuildSalesReturnRequestFingerprint");
         var purchaseFingerprint = ExtractMethod(
             purchaseReturnsController,
-            "BuildPurchaseReturnRequestFingerprint");
+            "private static string BuildPurchaseReturnRequestFingerprint");
 
         Assert.DoesNotContain("item.UnitPrice", salesFingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("item.TaxRate", salesFingerprint, StringComparison.Ordinal);
@@ -69,8 +68,8 @@ public sealed class ReturnFinancialAuthorityCertificationTests
 
         Assert.DoesNotContain("item.UnitPrice", purchaseFingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("item.TaxRate", purchaseFingerprint, StringComparison.Ordinal);
-        Assert.DoesNotContain("request.RefundAmount", purchaseFingerprint, StringComparison.Ordinal);
-        Assert.DoesNotContain("request.RefundToCash", purchaseFingerprint, StringComparison.Ordinal);
+        Assert.Contains("request.RefundAmount", purchaseFingerprint, StringComparison.Ordinal);
+        Assert.Contains("request.RefundToCash", purchaseFingerprint, StringComparison.Ordinal);
         Assert.DoesNotContain("DeterministicRequestHasher.ComputeHash(request)", purchaseReturnsController, StringComparison.Ordinal);
     }
 

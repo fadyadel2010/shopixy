@@ -934,9 +934,27 @@ public class CommerceAccountingService : ICommerceAccountingService
 
         try
         {
+            ValidatePurchaseReturnSettlement(returnObj);
+
+            var requiredAccountCodes = new List<string>
+            {
+                AccountCodes.SupplierPayables,
+                AccountCodes.Inventory,
+                AccountCodes.InputTaxReceivable
+            };
+            string? cashAccountCode = null;
+            if (returnObj.CashRefundAmount > 0m)
+            {
+                cashAccountCode = await ResolveWarehouseCashboxAccountCodeAsync(
+                    returnObj.TenantId,
+                    returnObj.WarehouseId,
+                    ct);
+                requiredAccountCodes.Add(cashAccountCode);
+            }
+
             var accounts = await _accountResolver.GetByCodesAsync(
                 returnObj.TenantId,
-                new[] { AccountCodes.SupplierPayables, AccountCodes.Inventory, AccountCodes.InputTaxReceivable },
+                requiredAccountCodes,
                 ct);
 
             var request = new PostingRequest
@@ -948,7 +966,7 @@ public class CommerceAccountingService : ICommerceAccountingService
                 SourceReference = returnObj.ReturnNumber,
                 Description = $"Purchase return {returnObj.ReturnNumber}",
                 IdempotencyKey = $"PURCHASE_RETURN:{returnObj.TenantId}:{returnObj.Id}",
-                Lines = BuildPurchaseReturnLines(returnObj, accounts)
+                Lines = BuildPurchaseReturnLines(returnObj, accounts, cashAccountCode)
             };
 
             var journal = await _postingService.PostJournalAsync(request, ct);
@@ -2000,7 +2018,8 @@ public class CommerceAccountingService : ICommerceAccountingService
 
     private static List<PostingLine> BuildPurchaseReturnLines(
         Return returnObj,
-        IReadOnlyDictionary<string, Account> accounts)
+        IReadOnlyDictionary<string, Account> accounts,
+        string? cashAccountCode)
     {
         var lines = new List<PostingLine>
         {
@@ -2024,7 +2043,55 @@ public class CommerceAccountingService : ICommerceAccountingService
                 returnObj.TaxAmount,
                 $"Input tax reversal {returnObj.ReturnNumber}"));
         }
+
+        if (returnObj.CashRefundAmount > 0m)
+        {
+            lines.Add(PostingLine.Debit(
+                accounts[cashAccountCode!].Id,
+                returnObj.CashRefundAmount,
+                $"Cash refund received for {returnObj.ReturnNumber}"));
+            lines.Add(PostingLine.Credit(
+                accounts[AccountCodes.SupplierPayables].Id,
+                returnObj.CashRefundAmount,
+                $"Settle supplier refund for {returnObj.ReturnNumber}"));
+        }
+
         return lines;
+    }
+
+    private static void ValidatePurchaseReturnSettlement(Return returnObj)
+    {
+        if (returnObj.RefundMethod is null)
+        {
+            if (returnObj.CashRefundAmount != 0m ||
+                returnObj.CardRefundAmount != 0m ||
+                returnObj.CustomerCreditAmount != 0m)
+            {
+                throw new InvalidOperationException(
+                    $"Legacy purchase return {returnObj.ReturnNumber} cannot contain settlement amounts without a method.");
+            }
+
+            return;
+        }
+
+        if (returnObj.RefundMethod == RefundMethod.AccountCredit &&
+            returnObj.CashRefundAmount == 0m &&
+            returnObj.CardRefundAmount == 0m &&
+            returnObj.CustomerCreditAmount == 0m)
+        {
+            return;
+        }
+
+        if (returnObj.RefundMethod == RefundMethod.Cash &&
+            returnObj.CashRefundAmount == returnObj.TotalAmount &&
+            returnObj.CardRefundAmount == 0m &&
+            returnObj.CustomerCreditAmount == 0m)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            $"Purchase return {returnObj.ReturnNumber} has an unsupported or inconsistent settlement snapshot.");
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

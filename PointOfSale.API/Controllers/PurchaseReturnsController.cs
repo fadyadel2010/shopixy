@@ -352,11 +352,12 @@ public class PurchaseReturnsController : ControllerBase
         }
 
         var fingerprint = BuildPurchaseReturnRequestFingerprint(request);
+        var legacyFingerprint = BuildLegacyPurchaseReturnRequestFingerprint(request);
         var scopedIdempotencyKey = BuildSupplierMutationIdempotencyKey(resolution.IdempotencyKey!);
         var existingRecord = await FindPurchaseReturnIdempotencyAsync(scopedIdempotencyKey);
         if (existingRecord != null)
         {
-            if (!string.Equals(existingRecord.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+            if (!PurchaseReturnFingerprintMatches(existingRecord.RequestFingerprint, fingerprint, legacyFingerprint, request.RefundToCash))
             {
                 return Conflict(new
                 {
@@ -380,7 +381,9 @@ public class PurchaseReturnsController : ControllerBase
         var claim = await TryClaimPurchaseReturnIdempotencyAsync(
             scopedIdempotencyKey,
             resolution.PurchaseAttemptId,
-            fingerprint);
+            fingerprint,
+            legacyFingerprint,
+            request.RefundToCash);
 
         if (claim.ShortCircuitResult != null)
         {
@@ -582,6 +585,36 @@ public class PurchaseReturnsController : ControllerBase
                     itemRequest.Reason));
             }
 
+            var authoritativeReturnTotal = RoundCurrency(
+                pendingLines.Sum(line => line.SubtotalAmount + line.TaxAmount));
+            if (request.RefundToCash && RoundCurrency(request.RefundAmount) != authoritativeReturnTotal)
+            {
+                await transaction.RollbackAsync();
+                return BadRequest(new
+                {
+                    message = $"Cash refund amount must equal the authoritative return total of {authoritativeReturnTotal:F2}."
+                });
+            }
+            if (request.RefundToCash)
+            {
+                var originalCashPaid = ResolveOriginalPurchaseCashAmount(originalInvoice);
+                var priorCashRefunds = await _context.Returns
+                    .AsNoTracking()
+                    .Where(previousReturn =>
+                        previousReturn.ReturnType == ReturnType.PurchaseReturn &&
+                        previousReturn.OriginalPurchaseInvoiceId == originalInvoice.Id)
+                    .SumAsync(previousReturn => (decimal?)previousReturn.CashRefundAmount) ?? 0m;
+                var remainingCashCapacity = Math.Max(0m, RoundCurrency(originalCashPaid - priorCashRefunds));
+                if (authoritativeReturnTotal > remainingCashCapacity)
+                {
+                    await transaction.RollbackAsync();
+                    return BadRequest(new
+                    {
+                        message = $"Cash refund exceeds the remaining cash paid on the original purchase invoice ({remainingCashCapacity:F2})."
+                    });
+                }
+            }
+
             var lockTargets = pendingLines
                 .Select(line => new StockLockTarget(
                     request.WarehouseId,
@@ -736,6 +769,12 @@ public class PurchaseReturnsController : ControllerBase
             purchaseReturn.Subtotal = RoundCurrency(subtotal);
             purchaseReturn.TaxAmount = RoundCurrency(totalTax);
             purchaseReturn.TotalAmount = RoundCurrency(purchaseReturn.Subtotal + purchaseReturn.TaxAmount);
+            purchaseReturn.RefundMethod = request.RefundToCash
+                ? RefundMethod.Cash
+                : RefundMethod.AccountCredit;
+            purchaseReturn.CashRefundAmount = request.RefundToCash
+                ? purchaseReturn.TotalAmount
+                : 0m;
 
             originalInvoice.AccountingMutationVersion++;
             var purchaseReturnMutationVersion = originalInvoice.AccountingMutationVersion;
@@ -778,6 +817,36 @@ public class PurchaseReturnsController : ControllerBase
                 CreatedAt = returnTimestamp
             };
             _context.SupplierTransactions.Add(supplierTransaction);
+
+            if (purchaseReturn.CashRefundAmount > 0m)
+            {
+                var settlementTimestamp = returnTimestamp.AddMilliseconds(1);
+                var settlementBalanceAfter = await _ledgerService.ApplySupplierTransaction(
+                    supplier.Id,
+                    settlementTimestamp,
+                    TransactionType.PaymentReceived,
+                    returnNumber,
+                    0m,
+                    purchaseReturn.CashRefundAmount,
+                    purchaseReturn.Id,
+                    $"Cash refund received for purchase return {returnNumber}");
+
+                _context.SupplierTransactions.Add(new SupplierTransaction
+                {
+                    Id = Guid.NewGuid(),
+                    TenantId = _tenantContext.RequiredTenantId,
+                    SupplierId = supplier.Id,
+                    TransactionDate = settlementTimestamp,
+                    TransactionType = TransactionType.PaymentReceived,
+                    DebitAmount = 0m,
+                    CreditAmount = purchaseReturn.CashRefundAmount,
+                    BalanceAfter = settlementBalanceAfter,
+                    ReferenceId = purchaseReturn.Id,
+                    ReferenceNumber = returnNumber,
+                    Notes = $"Cash refund received for purchase return {returnNumber}",
+                    CreatedAt = settlementTimestamp
+                });
+            }
 
             // ════════════════════════════════════════════════════════════════════════════
             // PHASE LCR: Enqueue to accounting outbox for ledger posting
@@ -881,7 +950,9 @@ public class PurchaseReturnsController : ControllerBase
     private async Task<(PurchaseReturnRequestIdempotency? Record, ActionResult<PurchaseReturnResponse>? ShortCircuitResult)> TryClaimPurchaseReturnIdempotencyAsync(
         string idempotencyKey,
         string? purchaseAttemptId,
-        string fingerprint)
+        string fingerprint,
+        string legacyFingerprint,
+        bool refundToCash)
     {
         var tenantId = _tenantContext.RequiredTenantId;
         for (var attempt = 0; attempt < 2; attempt++)
@@ -913,7 +984,7 @@ public class PurchaseReturnsController : ControllerBase
                 continue;
             }
 
-            if (!string.Equals(existingRecord.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+            if (!PurchaseReturnFingerprintMatches(existingRecord.RequestFingerprint, fingerprint, legacyFingerprint, refundToCash))
             {
                 return (null, Conflict(new
                 {
@@ -1005,6 +1076,8 @@ public class PurchaseReturnsController : ControllerBase
             request.WarehouseId,
             request.ReturnDate,
             request.OriginalInvoiceId,
+            request.RefundToCash,
+            request.RefundAmount,
             Items = request.Items
                 .OrderBy(item => item.ProductId)
                 .ThenBy(item => item.ProductVariantId)
@@ -1022,6 +1095,40 @@ public class PurchaseReturnsController : ControllerBase
             Notes = request.Notes?.Trim()
         });
     }
+
+    private static string BuildLegacyPurchaseReturnRequestFingerprint(CreatePurchaseReturnRequest request)
+    {
+        return DeterministicRequestHasher.ComputeHash(new
+        {
+            request.SupplierId,
+            request.WarehouseId,
+            request.ReturnDate,
+            request.OriginalInvoiceId,
+            Items = request.Items
+                .OrderBy(item => item.ProductId)
+                .ThenBy(item => item.ProductVariantId)
+                .ThenBy(item => item.UnitId)
+                .Select(item => new
+                {
+                    item.ProductId,
+                    item.ProductVariantId,
+                    item.UnitId,
+                    item.Quantity,
+                    Reason = item.Reason?.Trim()
+                })
+                .ToArray(),
+            Reason = request.Reason?.Trim(),
+            Notes = request.Notes?.Trim()
+        });
+    }
+
+    private static bool PurchaseReturnFingerprintMatches(
+        string storedFingerprint,
+        string fingerprint,
+        string legacyFingerprint,
+        bool refundToCash) =>
+        string.Equals(storedFingerprint, fingerprint, StringComparison.Ordinal) ||
+        (!refundToCash && string.Equals(storedFingerprint, legacyFingerprint, StringComparison.Ordinal));
 
     private static ActionResult<PurchaseReturnResponse> BuildStoredPurchaseReturnResponse(PurchaseReturnRequestIdempotency record)
     {
@@ -1142,7 +1249,26 @@ public class PurchaseReturnsController : ControllerBase
             .Include(item => item.ProductVariant)
             .LoadAsync();
 
+        await _context.Entry(originalInvoice)
+            .Collection(invoice => invoice.Payments)
+            .LoadAsync();
+
         return originalInvoice;
+    }
+
+    private static decimal ResolveOriginalPurchaseCashAmount(PurchaseInvoice invoice)
+    {
+        var paidAmount = Math.Max(0m, Math.Min(RoundCurrency(invoice.PaidAmount), RoundCurrency(invoice.TotalAmount)));
+        var cashPayments = RoundCurrency(invoice.Payments
+            .Where(payment => !payment.IsDeleted && payment.PaymentMethod == PaymentMethod.Cash)
+            .Sum(payment => payment.Amount));
+
+        if (cashPayments > 0m)
+        {
+            return Math.Min(cashPayments, paidAmount);
+        }
+
+        return invoice.PaymentMethod == PaymentMethod.Cash ? paidAmount : 0m;
     }
 
     private static decimal ResolveOriginalInvoiceBaseQuantity(PurchaseInvoiceItem originalItem)

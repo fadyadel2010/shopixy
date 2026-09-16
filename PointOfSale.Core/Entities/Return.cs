@@ -42,7 +42,8 @@ public class Return : BaseEntity, ITenantOwned
     public decimal TotalAmount { get; set; }
 
     /// <summary>
-    /// Immutable settlement snapshot for sales returns. Legacy and purchase returns may be null.
+    /// Immutable settlement snapshot. Legacy returns may be null. Purchase returns support
+    /// supplier account credit or a full cash refund; card settlement is not authoritative.
     /// </summary>
     public RefundMethod? RefundMethod { get; set; }
     public decimal CashRefundAmount { get; set; }

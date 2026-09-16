@@ -48,6 +48,7 @@ export default function PurchaseReturns() {
     const [items, setItems] = useState([])
     const [reason, setReason] = useState('')
     const [notes, setNotes] = useState('')
+    const [refundToCash, setRefundToCash] = useState(false)
     const [isSubmitting, setIsSubmitting] = useState(false)
     const supplierId = selectedSupplier?.id || ''
     const submissionLockRef = useRef(false)
@@ -252,6 +253,8 @@ export default function PurchaseReturns() {
                 })),
                 reason,
                 notes,
+                refundToCash,
+                refundAmount: refundToCash ? calculateTotal() : 0,
             }
 
             const fingerprint = stableStringify(payload)
@@ -291,6 +294,7 @@ export default function PurchaseReturns() {
         setItems([])
         setReason('')
         setNotes('')
+        setRefundToCash(false)
         setPurchaseInvoices([])
         submissionLockRef.current = false
         lastSubmissionRef.current = null
@@ -597,9 +601,33 @@ export default function PurchaseReturns() {
                         <div className="space-y-4 border-t border-gray-200 pt-6">
                             <div className="space-y-2">
                                 <label className={`label ${isRTL ? 'text-right' : 'text-left'}`}>{t('purchases.refundMethod')}</label>
-                                <div className={`rounded-lg border border-blue-100 bg-blue-50 p-3 ${isRTL ? 'text-right' : 'text-left'}`}>
-                                    <div className="text-sm font-medium text-blue-900">{t('purchases.creditSupplierAccount')}</div>
-                                    <div className="mt-1 text-xs text-blue-700">{t('purchases.supplierCreditOnly')}</div>
+                                <div className="grid grid-cols-1 gap-2">
+                                    <label className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${refundToCash ? 'border-gray-200' : 'border-blue-500 bg-blue-50'} ${isRTL ? 'flex-row-reverse text-right' : ''}`}>
+                                        <input
+                                            type="radio"
+                                            name="purchaseReturnSettlement"
+                                            checked={!refundToCash}
+                                            onChange={() => setRefundToCash(false)}
+                                            disabled={isBusy}
+                                        />
+                                        <span>
+                                            <span className="block text-sm font-medium text-gray-900">{t('purchases.creditSupplierAccount')}</span>
+                                            <span className="mt-1 block text-xs text-gray-600">{t('purchases.supplierCreditOnly')}</span>
+                                        </span>
+                                    </label>
+                                    <label className={`flex cursor-pointer gap-3 rounded-lg border p-3 ${refundToCash ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200'} ${isRTL ? 'flex-row-reverse text-right' : ''}`}>
+                                        <input
+                                            type="radio"
+                                            name="purchaseReturnSettlement"
+                                            checked={refundToCash}
+                                            onChange={() => setRefundToCash(true)}
+                                            disabled={isBusy}
+                                        />
+                                        <span>
+                                            <span className="block text-sm font-medium text-gray-900">{t('purchases.refundToCash')}</span>
+                                            <span className="mt-1 block text-xs text-gray-600">{t('purchases.addToCashbox')}</span>
+                                        </span>
+                                    </label>
                                 </div>
                             </div>
 
