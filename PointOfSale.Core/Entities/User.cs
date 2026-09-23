@@ -65,5 +65,47 @@ public class User : BaseEntity, ITenantOwned
     /// Null if never verified.
     /// </summary>
     public DateTime? EmailVerifiedAtUtc { get; set; }
+
+    // =========================================================================
+    // Users Management (Wave 1): normalized identity, concurrency, lifecycle
+    // =========================================================================
+
+    /// <summary>
+    /// Server-authoritative canonical login key produced by
+    /// PosIdentityNormalizer. Globally unique. Never accept from clients.
+    /// </summary>
+    public string NormalizedUsername { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Server-authoritative canonical email key produced by
+    /// PosIdentityNormalizer. Globally unique. Never accept from clients.
+    /// </summary>
+    public string NormalizedEmail { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optimistic concurrency token mapped to PostgreSQL xmin.
+    /// Administrative mutations require If-Match against this version.
+    /// </summary>
+    public uint RowVersion { get; set; }
+
+    /// <summary>
+    /// When the invited user accepted the invitation and set a password.
+    /// Null for pending invitations. Distinguishes pending/expired from
+    /// disabled accepted users together with IsActive.
+    /// </summary>
+    public DateTime? InvitationAcceptedAtUtc { get; set; }
+
+    public DateTime? InvitedAtUtc { get; set; }
+
+    public Guid? InvitedByUserId { get; set; }
+
+    public DateTime? DisabledAtUtc { get; set; }
+
+    public Guid? DisabledByUserId { get; set; }
+
+    /// <summary>
+    /// Required reason for disabled users. Bounded length.
+    /// </summary>
+    public string? DisableReason { get; set; }
 }
 

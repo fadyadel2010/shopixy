@@ -12,6 +12,8 @@ namespace PointOfSale.API.Security;
 public static class PosSecurityConstants
 {
     public const string SessionBindingClaim = "pos_session";
+    public const string SqlAuthorityClaim = "pos_sql_authority";
+    public const string SqlAuthorityValue = "current";
 }
 
 public sealed record PosSessionAuthorityResult(bool Authorized, string Reason, Guid? UserId = null, Guid? TenantId = null)

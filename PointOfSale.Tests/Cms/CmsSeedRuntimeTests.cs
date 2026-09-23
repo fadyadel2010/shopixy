@@ -494,6 +494,7 @@ public sealed class CmsSeedControllerErrorMappingTests
             seedService,
             new CommerceReliabilityTelemetry(),
             new TestTenantContext(tenantId),
+            null!,
             NullLogger<AdminCmsPagesController>.Instance)
         {
             ControllerContext = new ControllerContext

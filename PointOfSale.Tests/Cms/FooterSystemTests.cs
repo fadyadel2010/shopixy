@@ -229,7 +229,20 @@ public sealed class FooterSystemTests
             NullLogger<MarketplaceCmsPageSeeder>.Instance);
 
         await seeder.StartAsync(CancellationToken.None);
+        for (var attempt = 0; attempt < 50; attempt++)
+        {
+            await using var seedScope = serviceProvider.CreateAsyncScope();
+            var seedContext = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            if (await seedContext.MarketplaceCmsPages.IgnoreQueryFilters().CountAsync() == 4)
+            {
+                break;
+            }
+
+            await Task.Delay(20);
+        }
+
         await seeder.StartAsync(CancellationToken.None);
+        await Task.Delay(50);
 
         await using var scope = serviceProvider.CreateAsyncScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

@@ -8,6 +8,7 @@ using PointOfSale.API.SuperAdmin.Models;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Interfaces.Accounting;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
@@ -105,11 +106,18 @@ public class TenantsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<TenantDto>> CreateTenant([FromBody] CreateTenantRequest request)
     {
+        string? normalizedSlug = null;
+
         // Validate slug uniqueness if provided
-        if (!string.IsNullOrEmpty(request.Slug))
+        if (!string.IsNullOrWhiteSpace(request.Slug))
         {
+            if (!StoreSlug.TryNormalize(request.Slug, out normalizedSlug, out var slugError))
+            {
+                return BadRequest(new { error = slugError, code = "INVALID_SLUG" });
+            }
+
             var existingSlug = await _context.Tenants
-                .AnyAsync(t => t.Slug == request.Slug);
+                .AnyAsync(t => t.Slug != null && t.Slug.ToLower() == normalizedSlug);
                 
             if (existingSlug)
             {
@@ -121,7 +129,7 @@ public class TenantsController : ControllerBase
         {
             Id = Guid.NewGuid(),
             Name = request.Name,
-            Slug = request.Slug,
+            Slug = normalizedSlug,
             ContactEmail = request.ContactEmail,
             IsActive = true,
             Status = TenantStatus.Active,
@@ -190,11 +198,16 @@ public class TenantsController : ControllerBase
             return NotFound(new { error = "Tenant not found", code = "TENANT_NOT_FOUND" });
         }
 
-        // Validate slug uniqueness if changed
-        if (!string.IsNullOrEmpty(request.Slug) && request.Slug != tenant.Slug)
+        string? normalizedSlug = null;
+        if (request.Slug != null)
         {
+            if (!StoreSlug.TryNormalize(request.Slug, out normalizedSlug, out var slugError))
+            {
+                return BadRequest(new { error = slugError, code = "INVALID_SLUG" });
+            }
+
             var existingSlug = await _context.Tenants
-                .AnyAsync(t => t.Slug == request.Slug && t.Id != id);
+                .AnyAsync(t => t.Slug != null && t.Slug.ToLower() == normalizedSlug && t.Id != id);
                 
             if (existingSlug)
             {
@@ -203,7 +216,7 @@ public class TenantsController : ControllerBase
         }
 
         tenant.Name = request.Name ?? tenant.Name;
-        tenant.Slug = request.Slug ?? tenant.Slug;
+        tenant.Slug = normalizedSlug ?? tenant.Slug;
         tenant.ContactEmail = request.ContactEmail ?? tenant.ContactEmail;
 
         await _context.SaveChangesAsync();

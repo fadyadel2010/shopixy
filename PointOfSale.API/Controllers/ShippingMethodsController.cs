@@ -261,7 +261,6 @@ public class ShippingMethodsController : ControllerBase
     /// Delete a shipping method
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> DeleteShippingMethod(Guid id)
     {
         var tenantId = TenantId;
@@ -342,7 +341,6 @@ public class ShippingMethodsController : ControllerBase
     /// This is an admin-only operation for initial data sync or recovery.
     /// </summary>
     [HttpPost("sync")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> SyncShippingMethods()
     {
         var tenantId = _tenantContext.RequiredTenantId;

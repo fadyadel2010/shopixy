@@ -57,19 +57,19 @@ export function resolveCartFetchFailure(
 
     if (isNetworkFailure(error)) {
         return {
-            nextCart: emptyCart,
+            nextCart: previousCart ?? emptyCart,
             message: hasPreviousCart
-                ? 'Network error while syncing your cart. We could not confirm the latest backend cart.'
+                ? 'Network error while syncing your cart. Showing your last saved cart until the backend can confirm it.'
                 : 'Network error while loading your cart. Please try again.',
-            preserveLastValidCart: false,
+            preserveLastValidCart: hasPreviousCart,
         };
     }
 
     return {
-        nextCart: emptyCart,
+        nextCart: previousCart ?? emptyCart,
         message: hasPreviousCart
-            ? message || 'We could not refresh your cart right now. Please retry before continuing.'
+            ? message || 'We could not refresh your cart right now. Showing your last saved cart; retry before continuing.'
             : message || 'We could not load your cart right now. Please try again.',
-        preserveLastValidCart: false,
+        preserveLastValidCart: hasPreviousCart,
     };
 }

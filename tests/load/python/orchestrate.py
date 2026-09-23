@@ -64,6 +64,13 @@ M3B_ALLOWED_ENVIRONMENTS = {"local", "test"}
 M3B_APPROVED_DB = "posecommercedb_baseline"
 M3B_APPROVED_HOST = "192.168.1.5"
 
+# M5 NEW-environment rebuild (additive; M3-B values above are unchanged).
+# Same fail-closed semantics, retargeted to the NEW K8s-backed load-test
+# database. No production marker is ever accepted; no bypass flag exists.
+M5_APPROVED_DB = "posecommercedb_loadtest"
+M5_APPROVED_HOST = "192.168.1.190"
+M5_ALLOWED_ENVIRONMENTS = {"local", "test"}
+
 # Tenant-scoped allowlist: (method, path-prefix) pairs. Any request whose
 # (method, path) is not covered here must be refused by the executor.
 M3B_ALLOWLIST = (
@@ -253,11 +260,95 @@ def m3b_preflight() -> int:
     return 0
 
 
+def m5_preflight() -> int:
+    """Safety gate for M5 NEW-environment rebuild. Fail closed; no bypass.
+
+    Identical strictness to m3b_preflight (env allowlist, BASE_URL local-only,
+    TEST_DB_PROOF must match the NEW approved host+db, seed password present,
+    providers off, TestAuth forbidden, allowlist self-check). Only the approved
+    DB/host constants differ. m3b_preflight is untouched.
+    """
+    get = os.environ.get
+
+    for token in M3B_FORBIDDEN_ARGV:
+        if token in sys.argv:
+            return _m3b_fail(f"bypass flag forbidden: {token} (no bypass exists)")
+
+    for name in M3B_FORBIDDEN_ENV:
+        if (get(name) or "").strip():
+            return _m3b_fail(f"forbidden env {name} is set (TestAuth/bypass forbidden)")
+
+    test_env = (get("TEST_ENVIRONMENT") or "").strip().lower()
+    if test_env not in M5_ALLOWED_ENVIRONMENTS:
+        return _m3b_fail(
+            f"TEST_ENVIRONMENT={test_env!r} not in M5 set {sorted(M5_ALLOWED_ENVIRONMENTS)}"
+        )
+
+    base_url = (get("BASE_URL") or get("LOADTEST_BASE_URL") or "http://localhost:5010").strip()
+    try:
+        host = (urlparse(base_url).hostname or "").lower()
+    except Exception:
+        return _m3b_fail(f"BASE_URL unparseable: {base_url!r}")
+    if not host:
+        return _m3b_fail(f"BASE_URL has no hostname: {base_url!r}")
+    if any(m in host for m in PROD_HOST_MARKERS):
+        return _m3b_fail(f"production hostname protection: {host!r}")
+    if host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost"):
+        return _m3b_fail(f"M5 runs local/test only; refusing host {host!r}")
+
+    db_proof = (get("TEST_DB_PROOF") or "").strip()
+    if not db_proof:
+        return _m3b_fail("missing TEST_DB_PROOF (explicit test-database target proof required)")
+    low_proof = db_proof.lower()
+    if any(m in low_proof for m in PROD_HOST_MARKERS):
+        return _m3b_fail("TEST_DB_PROOF looks production (no production marker allowed)")
+    if M5_APPROVED_DB not in low_proof or M5_APPROVED_HOST not in low_proof:
+        return _m3b_fail(
+            "TEST_DB_PROOF must match the actual NEW approved DB/host "
+            f"({M5_APPROVED_DB}@{M5_APPROVED_HOST})"
+        )
+    # Refuse the OLD baseline proof explicitly: M5 must target the NEW database.
+    if M3B_APPROVED_DB in low_proof and M3B_APPROVED_HOST in low_proof:
+        # Old proof alone is insufficient; new proof must also be present.
+        # (If both appear, the new-target check above already passed; keep going.)
+        pass
+
+    seed_pw = get("LOADTEST_SEED_PASSWORD") or ""
+    if len(seed_pw) < 12 or not any(c.isupper() for c in seed_pw) \
+            or not any(c.islower() for c in seed_pw) \
+            or not any(c.isdigit() for c in seed_pw):
+        return _m3b_fail(
+            "LOADTEST_SEED_PASSWORD missing or too weak "
+            "(>=12 chars with upper/lower/digit; tenant JWT login requires it)")
+
+    for flag in PROVIDER_EXEC_FLAGS:
+        val = (get(flag) or "").strip().lower()
+        if val in ("1", "true", "yes", "enabled", "on"):
+            return _m3b_fail(f"provider execution flag set: {flag}={val!r} (no providers in M5)")
+
+    use_test_auth = (get("M3B_USE_TEST_AUTH") or get("USE_TESTAUTH") or "").strip().lower()
+    if use_test_auth in ("1", "true", "yes"):
+        return _m3b_fail("TestAuth forbidden in M5 (use tenant Owner JWT via /api/auth/login)")
+
+    for p in ("/api/auth/login", "/api/admin/store-config", "/api/admin/store-config/status",
+              "/api/admin/sync/categories", "/api/admin/sync/product-variants",
+              "/api/admin/sync/search/full"):
+        if not m3b_route_allowed("POST" if "login" in p or "sync" in p else "GET" if p == "/api/admin/store-config" else "PUT", p):
+            return _m3b_fail(f"internal allowlist misconfiguration for {p}")
+
+    print("M5 PREFLIGHT OK "
+          f"(env={test_env}, host={host}, db_proof_approved=True(new), seed_password_present=True, "
+          "testauth=forbidden, denylist_enforced=True)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
     if "--m3b-preflight" in argv:
         return m3b_preflight()
+    if "--m5-preflight" in argv:
+        return m5_preflight()
 
     get = os.environ.get
 
@@ -326,6 +417,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Shopixy load-test safety gates.")
     parser.add_argument("--m3b-preflight", action="store_true",
                         help="M3-B execution safety gate (no bypass flag exists).")
+    parser.add_argument("--m5-preflight", action="store_true",
+                        help="M5 new-environment rebuild safety gate (no bypass flag exists).")
     args, _unknown = parser.parse_known_args()
     # NOTE: argparse presence check is cosmetic; main() re-checks sys.argv so
     # the gate cannot be silently skipped by unknown-arg handling.

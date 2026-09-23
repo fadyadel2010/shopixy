@@ -3,6 +3,8 @@ using System.Data;
 using System.Data.Common;
 using System.Diagnostics;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using MassTransit;
 using Microsoft.AspNetCore.Http;
@@ -21,6 +23,7 @@ using PointOfSale.API.DTOs.CommerceHub;
 using PointOfSale.API.Services;
 using PointOfSale.API.Services.Audit;
 using PointOfSale.API.Services.CommerceHub;
+using PointOfSale.API.Services.Pos;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Entities.Accounting;
 using PointOfSale.Core.Entities.Affiliate;
@@ -2377,6 +2380,7 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         var controllerLogger = new RecordingLogger<SalesController>();
 
         var controller = CreateController(context, tenantContext, actor, controllerLogger);
+        var posCartId = BuildPosCartId(actor);
 
         progressEntries.Enqueue($"{actor.Name}:request-ready");
         var stopwatch = Stopwatch.StartNew();
@@ -2384,7 +2388,10 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         try
         {
             progressEntries.Enqueue($"{actor.Name}:invoking-controller");
-            var result = await controller.CreateSale(request, paymentAttemptId: actor.RequestId);
+            var result = await controller.CreateSale(
+                request,
+                paymentAttemptId: actor.RequestId,
+                posCartId: posCartId.ToString("D"));
             if (controllerLogger.LastException is Exception loggedException)
             {
                 progressEntries.Enqueue(
@@ -3074,6 +3081,23 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             context,
             new FixedCorrelationIdAccessor(actor.TraceIdentifier),
             NullLogger<AccountingOutboxService>.Instance);
+        var posCartId = BuildPosCartId(actor);
+        var posCartRuntime = new Mock<IPosCartRuntimeService>();
+        posCartRuntime
+            .Setup(service => service.PrepareCheckoutAsync(
+                posCartId,
+                It.IsAny<CreateSaleRequest>(),
+                actor.UserId,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid _, CreateSaleRequest request, Guid _, CancellationToken _) =>
+                PosCartCheckoutPreparation.Success(request));
+        posCartRuntime
+            .Setup(service => service.CompleteFromSaleAsync(
+                posCartId,
+                It.IsAny<Guid>(),
+                actor.UserId,
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
 
         var controller = new SalesController(
             context,
@@ -3087,7 +3111,8 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             new NoOpEventPublisher(),
             accountingOutbox,
             commerceAccounting,
-            postingService)
+            postingService,
+            posCartRuntime.Object)
         {
             ControllerContext = new ControllerContext
             {
@@ -3096,6 +3121,7 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         };
 
         controller.Request.Headers["X-Payment-Attempt-Id"] = actor.RequestId;
+        controller.Request.Headers["X-Pos-Cart-Id"] = posCartId.ToString("D");
         controller.Request.Headers["User-Agent"] = "SI-CON-01";
 
         return controller;
@@ -3946,10 +3972,12 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
                 journalEntries.Count,
                 journalEntries.Select(journal => journal.IdempotencyKey).Distinct(StringComparer.Ordinal).Count());
 
-            Assert.Equal(winner.Actor.RequestId, winnerRecord.Key);
+            Assert.Equal(BuildPosCartId(winner.Actor).ToString("D"), winnerRecord.Key);
             Assert.NotNull(winnerRecord.CompletedAtUtc);
             Assert.Equal(StatusCodes.Status200OK, winnerRecord.ResponseStatusCode);
-            Assert.DoesNotContain(idempotencyRecords, record => record.Key == loser.Actor.RequestId);
+            Assert.DoesNotContain(
+                idempotencyRecords,
+                record => record.Key == BuildPosCartId(loser.Actor).ToString("D"));
 
             await AssertReplaySafetyAsync(
                 scope,
@@ -4014,7 +4042,10 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             NullLogger<SalesController>.Instance);
         var replayRequest = BuildCreateSaleRequest(seeded);
 
-        var replayResult = await replayController.CreateSale(replayRequest, paymentAttemptId: actor.RequestId);
+        var replayResult = await replayController.CreateSale(
+            replayRequest,
+            paymentAttemptId: actor.RequestId,
+            posCartId: BuildPosCartId(actor).ToString("D"));
 
         if (expectedSuccess)
         {
@@ -4322,8 +4353,8 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         Assert.NotEmpty(journalEntries);
         Assert.Equal(0m, customer.Balance);
 
-        Assert.Equal(originalActor.RequestId, idempotencyRecord.Key);
-        Assert.Equal(replayActor.RequestId, idempotencyRecord.Key);
+        Assert.Equal(BuildPosCartId(originalActor).ToString("D"), idempotencyRecord.Key);
+        Assert.Equal(BuildPosCartId(replayActor).ToString("D"), idempotencyRecord.Key);
         Assert.NotNull(idempotencyRecord.CompletedAtUtc);
         Assert.Equal(StatusCodes.Status200OK, idempotencyRecord.ResponseStatusCode);
         Assert.Contains(invoice.Id.ToString("D"), idempotencyRecord.ResponseJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -5445,7 +5476,10 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
             actor,
             NullLogger<SalesController>.Instance);
 
-        var replayResult = await replayController.CreateSale(request, paymentAttemptId: actor.RequestId);
+        var replayResult = await replayController.CreateSale(
+            request,
+            paymentAttemptId: actor.RequestId,
+            posCartId: BuildPosCartId(actor).ToString("D"));
 
         if (expectedSuccess)
         {
@@ -5586,8 +5620,8 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         Assert.NotNull(outboxMessage.ProcessedAtUtc);
         Assert.NotNull(outboxMessage.JournalId);
 
-        Assert.Equal(originalActor.RequestId, idempotencyRecord.Key);
-        Assert.Equal(replayActor.RequestId, idempotencyRecord.Key);
+        Assert.Equal(BuildPosCartId(originalActor).ToString("D"), idempotencyRecord.Key);
+        Assert.Equal(BuildPosCartId(replayActor).ToString("D"), idempotencyRecord.Key);
         Assert.NotNull(idempotencyRecord.CompletedAtUtc);
         Assert.Equal(StatusCodes.Status200OK, idempotencyRecord.ResponseStatusCode);
         Assert.Contains(invoice.Id.ToString("D"), idempotencyRecord.ResponseJson ?? string.Empty, StringComparison.OrdinalIgnoreCase);
@@ -7334,6 +7368,12 @@ public sealed class SalesInvoiceConcurrencyIntegrationTests
         Guid ProductId,
         Guid VariantId,
         Guid UnitId);
+
+    private static Guid BuildPosCartId(SaleActor actor)
+    {
+        var input = Encoding.UTF8.GetBytes($"{TenantId:D}:{actor.RequestId}");
+        return new Guid(SHA256.HashData(input).AsSpan(0, 16));
+    }
 
     private sealed record SaleActor(
         string Name,

@@ -136,6 +136,20 @@ public sealed class CheckoutStorefrontUnavailableException : CheckoutException
 }
 
 /// <summary>
+/// Thrown when an ordinary anonymous checkout is disabled by SQL StoreConfig authority.
+/// </summary>
+public sealed class CheckoutGuestDisabledException : CheckoutException
+{
+    public CheckoutGuestDisabledException()
+        : base(
+            "GUEST_CHECKOUT_DISABLED",
+            "Guest checkout is not enabled for this storefront.",
+            "StorefrontAvailability")
+    {
+    }
+}
+
+/// <summary>
 /// Thrown when checkout lock cannot be acquired.
 /// HTTP 409 Conflict - CHECKOUT_IN_PROGRESS
 /// </summary>

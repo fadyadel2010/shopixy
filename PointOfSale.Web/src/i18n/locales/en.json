@@ -1336,10 +1336,11 @@
   "login": {
     "title": "Login",
     "username": "Username",
+    "usernameOrEmail": "Username or email",
     "password": "Password",
     "signIn": "Sign In",
     "welcomeBack": "Welcome Back",
-    "enterCredentials": "Enter your username and password."
+    "enterCredentials": "Enter your username or email and password."
   },
   "storefront": {
     "ia": {
@@ -3502,6 +3503,7 @@
     "subtitle": "Track all system activities",
     "timestamp": "Timestamp",
     "user": "User",
+    "userId": "User ID",
     "action": "Action",
     "entity": "Entity",
     "entityId": "Entity ID",
@@ -3529,7 +3531,19 @@
       "post": "Post",
       "unpost": "Unpost",
       "inactivate": "Inactivate",
-      "error": "Error"
+      "error": "Error",
+      "pos_user_invited": "User invited",
+      "pos_user_invitation_resent": "Invitation resent",
+      "pos_user_invitation_revoked": "Invitation revoked",
+      "pos_user_invitation_accepted": "Invitation accepted",
+      "pos_user_profile_changed": "Profile changed",
+      "pos_user_role_changed": "Role changed",
+      "pos_user_disabled": "User disabled",
+      "pos_user_enabled": "User enabled",
+      "pos_user_password_reset_issued": "Password reset issued",
+      "pos_user_password_reset_completed": "Password reset completed",
+      "pos_user_session_revoked": "Session revoked",
+      "pos_user_ownership_transferred": "Ownership transferred"
     },
     "invoiceId": "Invoice ID",
     "invoiceNumber": "Invoice #",
@@ -7550,6 +7564,212 @@
       "duplicateRequest": "This operation identity is already bound to different values. Reload before retrying.",
       "staleMutation": "Another capitalization action completed first. Reload before retrying.",
       "serviceUnavailable": "The capitalization service is temporarily unavailable. No retry was performed automatically."
+    }
+  },
+  "userManagement": {
+    "title": "Users Management",
+    "subtitle": "Invite and administer staff for this store only. Changes take effect immediately and are recorded in the audit log.",
+    "summary": {
+      "active": "Active",
+      "pending": "Pending",
+      "disabled": "Disabled",
+      "ownerAdmin": "Owners/Admins"
+    },
+    "search": "Search",
+    "searchPlaceholder": "Username, email, or name",
+    "filters": {
+      "role": "Role",
+      "status": "Status",
+      "allRoles": "All roles",
+      "allStatuses": "All statuses",
+      "invitedFrom": "Invited from",
+      "invitedTo": "Invited to",
+      "lastLoginFrom": "Last login from",
+      "lastLoginTo": "Last login to",
+      "sortBy": "Sort by",
+      "sortDir": "Direction",
+      "asc": "Ascending",
+      "desc": "Descending",
+      "clear": "Clear filters"
+    },
+    "sort": {
+      "username": "Username",
+      "email": "Email",
+      "role": "Role",
+      "status": "Status",
+      "lastLogin": "Last login",
+      "invitedAt": "Invited date"
+    },
+    "table": {
+      "user": "User",
+      "role": "Role",
+      "status": "Status",
+      "lastLogin": "Last login",
+      "invited": "Invited",
+      "actions": "Actions",
+      "never": "Never",
+      "unknown": "Unknown"
+    },
+    "roles": {
+      "Owner": "Owner",
+      "Admin": "Admin",
+      "Manager": "Manager",
+      "Cashier": "Cashier",
+      "Warehouse": "Warehouse"
+    },
+    "status": {
+      "Active": "Active",
+      "Pending": "Pending invitation",
+      "InvitationExpired": "Invitation expired",
+      "Disabled": "Disabled",
+      "Removed": "Removed"
+    },
+    "actions": {
+      "invite": "Invite user",
+      "menu": "User actions",
+      "editProfile": "Edit profile",
+      "changeRole": "Change role",
+      "disable": "Disable",
+      "enable": "Enable",
+      "resetPassword": "Send password reset",
+      "revokeSession": "Sign out current session",
+      "resendInvitation": "Resend invitation",
+      "revokeInvitation": "Revoke invitation",
+      "transferOwnership": "Transfer ownership",
+      "viewAudit": "View user audit"
+    },
+    "pagination": {
+      "showing": "Showing {{from}}–{{to}} of {{total}}",
+      "prev": "Previous",
+      "next": "Next",
+      "pageSize": "Per page"
+    },
+    "empty": {
+      "noUsers": "No users match the current filters."
+    },
+    "audit": {
+      "unknownAction": "User management action"
+    },
+    "conflict": {
+      "currentServerValues": "Current server values"
+    },
+    "inviteDialog": {
+      "title": "Invite user",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "username": "Username",
+      "email": "Email",
+      "phone": "Phone (optional)",
+      "role": "Role",
+      "hint": "The user will receive an invitation and create their password. No password is set by the administrator.",
+      "submit": "Send invitation",
+      "submitting": "Sending..."
+    },
+    "profileDialog": {
+      "title": "Edit profile",
+      "firstName": "First name",
+      "lastName": "Last name",
+      "email": "Email",
+      "phone": "Phone (optional)",
+      "emailChangeNotice": "Changing the email requires the user to be re-verified.",
+      "submit": "Save changes",
+      "submitting": "Saving..."
+    },
+    "roleDialog": {
+      "title": "Change role",
+      "currentRole": "Current role",
+      "newRole": "New role",
+      "accessSummary": "Access summary",
+      "permissionCount_zero": "No permissions granted",
+      "permissionCount_one": "One permission granted",
+      "permissionCount_two": "Two permissions granted",
+      "permissionCount_few": "{{count}} permissions granted",
+      "permissionCount_many": "{{count}} permissions granted",
+      "permissionCount_other": "{{count}} permissions granted",
+      "sessionWarning": "The user's current session will be revoked and they must log in again.",
+      "ownerHidden": "Owner assignment is only possible through ownership transfer.",
+      "submit": "Change role",
+      "submitting": "Changing..."
+    },
+    "statusDialog": {
+      "disableTitle": "Disable user",
+      "enableTitle": "Enable user",
+      "reason": "Reason (required)",
+      "reasonPlaceholder": "Why is this user being disabled?",
+      "disableMessage": "The user will be signed out immediately and cannot log in until re-enabled.",
+      "enableMessage": "The user can log in again. No session is created automatically.",
+      "adminTargetWarning": "This will disable an Admin. Type the confirmation word below.",
+      "confirmationWord": "DISABLE",
+      "confirmDisable": "Disable user",
+      "confirmEnable": "Enable user",
+      "submitting": "Saving..."
+    },
+    "resetDialog": {
+      "title": "Send password reset",
+      "message": "The user will receive a one-time link and create a new password. You never see or set their password. Their current session will be signed out.",
+      "submit": "Send reset link",
+      "submitting": "Sending...",
+      "success": "If the account is eligible, a password-reset link has been sent."
+    },
+    "revokeDialog": {
+      "title": "Sign out current session",
+      "message": "This signs the user out of their current session. They must log in again. There is one current session per user.",
+      "submit": "Sign out session",
+      "submitting": "Signing out..."
+    },
+    "ownershipDialog": {
+      "title": "Transfer ownership",
+      "intro": "Ownership transfer is permanent and immediate. It cannot be done with ordinary role changes.",
+      "currentOwner": "Current Owner",
+      "newOwner": "New Owner",
+      "selectUser": "Select the new Owner",
+      "targetMustBeActive": "The new Owner must be an active user who accepted their invitation.",
+      "demoteNotice": "You will become an Admin.",
+      "sessionWarning": "Both your session and the new Owner's session will be revoked. Both parties must log in again.",
+      "confirmLabel": "Type the confirmation word to continue",
+      "confirmationWord": "TRANSFER",
+      "submit": "Transfer ownership",
+      "submitting": "Transferring..."
+    },
+    "acceptPage": {
+      "title": "Accept invitation",
+      "password": "Create password",
+      "passwordHint": "At least 8 characters.",
+      "submit": "Accept and activate",
+      "submitting": "Activating...",
+      "success": "Your account is active. Sign in with your new password.",
+      "goToLogin": "Go to login",
+      "existingSession": "Another POS account is currently signed in. Continue to sign it out and switch to this account.",
+      "switchingAccount": "Switching account...",
+      "missingToken": "This invitation link is incomplete.",
+      "failed": "This link is invalid or has already been used."
+    },
+    "resetPage": {
+      "title": "Create a new password",
+      "password": "New password",
+      "passwordHint": "At least 8 characters.",
+      "submit": "Update password",
+      "submitting": "Updating...",
+      "success": "Your password was updated. Sign in with your new password.",
+      "goToLogin": "Go to login",
+      "existingSession": "Another POS account is currently signed in. Continue to sign it out and switch to this account.",
+      "switchingAccount": "Switching account...",
+      "missingToken": "This reset link is incomplete.",
+      "failed": "This link is invalid, expired, or has already been used."
+    },
+    "errors": {
+      "loadFailed": "Unable to load users.",
+      "staleData": "This user changed since you loaded it. The latest data was reloaded; review it and retry. Your input was kept.",
+      "accessDenied": "You do not have permission for this action.",
+      "conflict": "This username or email is already in use.",
+      "rateLimited": "Too many requests. Please try again later.",
+      "validation": "Please review the highlighted fields.",
+      "notFound": "User not found.",
+      "ownerViolation": "This operation would violate the single-Owner rule.",
+      "targetForbidden": "Your role cannot manage this user.",
+      "tokenExpired": "This link has expired. Ask your administrator for a new one.",
+      "invalidToken": "This link is invalid or has already been used.",
+      "generic": "The operation could not be completed."
     }
   }
 }

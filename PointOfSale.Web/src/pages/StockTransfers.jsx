@@ -8,12 +8,14 @@ import { formatDate } from '../utils/dateFormat'
 import { toSafeNumber } from '../utils/financialMath'
 import AsyncEntitySelect from '../components/AsyncEntitySelect'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
+import { useHasPermission } from '../components/PermissionGuard'
 
 const StockTransfers = () => {
     const { t } = useTranslation()
     const { dir, isRTL, locale } = useRTL()
     const { confirm, prompt } = useConfirmDialog()
     const { showSuccess, showError } = useToast()
+    const canApproveTransfers = useHasPermission('inventory.approve')
     const [activeTab, setActiveTab] = useState('list')
     const [transfers, setTransfers] = useState([])
     const [warehouses, setWarehouses] = useState([])
@@ -381,7 +383,7 @@ const StockTransfers = () => {
                                             </td>
                                             <td className={`whitespace-nowrap px-6 py-4 text-sm ${actionAlignClass}`}>
                                                 <div className={`flex items-center gap-2 ${isRTL ? 'justify-start' : 'justify-end'} ${rowActionsDisabled ? 'pointer-events-none opacity-50' : ''}`}>
-                                                    {transfer.status === 'Pending' && (
+                                                    {canApproveTransfers && transfer.status === 'Pending' && (
                                                         <>
                                                             <button
                                                                 type="button"

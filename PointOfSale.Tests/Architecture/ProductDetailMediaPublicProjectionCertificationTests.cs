@@ -12,7 +12,7 @@ public sealed class ProductDetailMediaPublicProjectionCertificationTests
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", service, StringComparison.Ordinal);
         Assert.Contains("IsPubliclyVisibleProduct(sqlProjection)", service, StringComparison.Ordinal);
         Assert.Contains("RecomposeCurrentSqlProductListAuthorityAsync", service, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", controller, StringComparison.Ordinal);
         Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true }", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("MongoDB is the read-model source for storefront reads", service, StringComparison.Ordinal);
     }
@@ -24,10 +24,10 @@ public sealed class ProductDetailMediaPublicProjectionCertificationTests
         var discovery = ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/ProductDiscoveryService.cs");
         var overlay = ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/ProductSearchSqlAuthorityOverlay.cs");
 
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", search, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", search, StringComparison.Ordinal);
         Assert.Contains("sqlProjection is { IsActive: true, IsOnlineVisible: true }", search, StringComparison.Ordinal);
         Assert.Contains("RecomposeDiscoveryItemsFromSqlAuthorityAsync", discovery, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discovery, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discovery, StringComparison.Ordinal);
         Assert.Contains("product is not { IsActive: true, IsOnlineVisible: true }", discovery, StringComparison.Ordinal);
         Assert.Contains("TenantLineageAuthority.IsActiveTenantAsync", overlay, StringComparison.Ordinal);
     }

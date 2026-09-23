@@ -48,6 +48,26 @@ public interface IEventPublisher
         where T : IntegrationEvent;
 
     /// <summary>
+    /// Publish a batch containing different integration or legacy event types.
+    /// </summary>
+    Task PublishBatchAsync(
+        IEnumerable<object> events,
+        CancellationToken cancellationToken = default)
+    {
+        return PublishBatchFallbackAsync(events, cancellationToken);
+
+        async Task PublishBatchFallbackAsync(
+            IEnumerable<object> pendingEvents,
+            CancellationToken ct)
+        {
+            foreach (var pendingEvent in pendingEvents)
+            {
+                await PublishAsync(pendingEvent, ct);
+            }
+        }
+    }
+
+    /// <summary>
     /// Publish a sensitive event directly to the message bus, bypassing the outbox.
     /// Use this for events containing sensitive data (e.g., payment proof, PII) that should not be persisted.
     /// WARNING: This bypasses transactional guarantees - only use for non-critical, sensitive data.

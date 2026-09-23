@@ -9,6 +9,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Events.Affiliate;
 using PointOfSale.Core.Helpers;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Consumers;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -961,14 +962,37 @@ public class AffiliateProductIntelligenceProjectionConsumer :
         }
 
         var tenantId = evt.TenantId.Value;
-        var urlTemplate = _configuration["Storefront:UrlTemplate"];
-        if (string.IsNullOrWhiteSpace(urlTemplate))
+        var tenantAuthority = await _dbContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(tenant =>
+                tenant.Id == tenantId &&
+                tenant.IsActive &&
+                tenant.Status == TenantStatus.Active &&
+                tenant.DeletedAtUtc == null)
+            .Select(tenant => new { tenant.Slug, tenant.StorefrontBaseUrl })
+            .FirstOrDefaultAsync(ct);
+
+        if (tenantAuthority == null || string.IsNullOrWhiteSpace(tenantAuthority.Slug))
         {
-            _logger.LogError("[AF-22:StoreProfileUpdated] Missing Storefront:UrlTemplate configuration");
+            _logger.LogError("[AF-22:StoreProfileUpdated] Missing tenant storefront authority | TenantId: {TenantId}", tenantId);
             return;
         }
 
-        var storefrontBaseUrl = urlTemplate.Replace("{slug}", evt.StoreSlug);
+        string storefrontBaseUrl;
+        try
+        {
+            storefrontBaseUrl = StorefrontUrlAuthority.ResolveOrigin(
+                tenantAuthority.StorefrontBaseUrl,
+                tenantAuthority.Slug,
+                _configuration["Storefront:UrlTemplate"]);
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex, "[AF-22:StoreProfileUpdated] Invalid storefront authority | TenantId: {TenantId}", tenantId);
+            return;
+        }
+
         var totalUpdated = 0;
 
         using var cursor = await _mongoDbContext.AffiliateProductIntelligence
@@ -985,10 +1009,10 @@ public class AffiliateProductIntelligenceProjectionConsumer :
                     Builders<AffiliateProductIntelligenceDocument>.Filter.Eq(d => d.Id, product.Id),
                     BuildFreshStoreProfileEventFilter(tenantId, eventId, evt.EventVersion, evt.OccurredAtUtc));
                 var update = Builders<AffiliateProductIntelligenceDocument>.Update
-                    .Set(d => d.StoreSlug, evt.StoreSlug)
+                    .Set(d => d.StoreSlug, tenantAuthority.Slug)
                     .Set(d => d.StoreName, evt.StoreName)
                     .Set(d => d.StoreLogo, evt.LogoUrl ?? "")
-                    .Set(d => d.StorefrontUrl, $"{storefrontBaseUrl}/products/{product.ProductSlug}")
+                    .Set(d => d.StorefrontUrl, StorefrontUrlAuthority.BuildUrl(storefrontBaseUrl, "products", product.ProductSlug))
                     .Set(d => d.LastStoreProfileEventVersion, evt.EventVersion)
                     .Set(d => d.LastStoreProfileEventOccurredAtUtc, evt.OccurredAtUtc)
                     .Set(d => d.LastUpdatedUtc, DateTime.UtcNow)
@@ -1543,11 +1567,19 @@ public class AffiliateProductIntelligenceProjectionConsumer :
 
     private async Task<StoreContext> GetStoreContextAsync(Guid tenantId, string productSlug, CancellationToken ct)
     {
-        // AF-22 FIX: Use subdomain pattern like storefront with product slug
-        var urlTemplate = _configuration["Storefront:UrlTemplate"];
-        if (string.IsNullOrWhiteSpace(urlTemplate))
+        var tenant = await _dbContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(candidate =>
+                candidate.Id == tenantId &&
+                candidate.IsActive &&
+                candidate.Status == TenantStatus.Active &&
+                candidate.DeletedAtUtc == null,
+                ct);
+
+        if (tenant == null || string.IsNullOrWhiteSpace(tenant.Slug))
         {
-            _logger.LogError("[AF-22] Missing Storefront:UrlTemplate configuration");
+            _logger.LogWarning("[AF-22] Missing tenant storefront authority | TenantId: {TenantId}", tenantId);
             return new StoreContext
             {
                 StoreSlug = "",
@@ -1557,43 +1589,30 @@ public class AffiliateProductIntelligenceProjectionConsumer :
             };
         }
 
-        // Get store info from public_affiliate_stores MongoDB collection
         var storeDoc = await _mongoDbContext.PublicAffiliateStores
             .Find(s => s.TenantId == tenantId)
             .FirstOrDefaultAsync(ct);
 
-        if (storeDoc != null)
+        try
         {
-            // Build subdomain URL: http://{slug}.localhost:5174/products/{productSlug}
-            var storefrontUrl = urlTemplate.Replace("{slug}", storeDoc.StoreSlug) + $"/products/{productSlug}";
+            var storefrontBaseUrl = StorefrontUrlAuthority.ResolveOrigin(
+                tenant.StorefrontBaseUrl,
+                tenant.Slug,
+                _configuration["Storefront:UrlTemplate"]);
 
             return new StoreContext
             {
-                StoreSlug = storeDoc.StoreSlug,
-                StoreName = storeDoc.StoreName,
-                StoreLogo = storeDoc.LogoUrl ?? "",
-                StorefrontUrl = storefrontUrl
+                StoreSlug = tenant.Slug,
+                StoreName = storeDoc?.StoreName ?? tenant.Name,
+                StoreLogo = storeDoc?.LogoUrl ?? "",
+                StorefrontUrl = StorefrontUrlAuthority.BuildUrl(storefrontBaseUrl, "products", productSlug)
             };
         }
-
-        // Fallback: get from tenant settings
-        var tenant = await _dbContext.Tenants.FindAsync(new object[] { tenantId }, ct);
-        if (tenant != null)
+        catch (InvalidOperationException ex)
         {
-            var storeSlug = tenant.Name.ToLowerInvariant().Replace(" ", "-");
-            var storefrontUrl = urlTemplate.Replace("{slug}", storeSlug) + $"/products/{productSlug}";
-
-            return new StoreContext
-            {
-                StoreSlug = storeSlug,
-                StoreName = tenant.Name,
-                StoreLogo = "",
-                StorefrontUrl = storefrontUrl
-            };
+            _logger.LogError(ex, "[AF-22] Invalid storefront authority | TenantId: {TenantId}", tenantId);
         }
 
-        // AF-22 HARDENING: Return empty context (will trigger fail-fast guard)
-        _logger.LogWarning("[AF-22] No store context found for TenantId: {TenantId}", tenantId);
         return new StoreContext
         {
             StoreSlug = "",

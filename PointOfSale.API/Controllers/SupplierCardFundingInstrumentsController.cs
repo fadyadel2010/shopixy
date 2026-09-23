@@ -78,7 +78,6 @@ public sealed class SupplierCardFundingInstrumentsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<ActionResult<SupplierCardInstrumentResponse>> Create(
         CreateSupplierCardInstrumentRequest request,
         CancellationToken cancellationToken)
@@ -145,7 +144,6 @@ public sealed class SupplierCardFundingInstrumentsController : ControllerBase
     }
 
     [HttpPut("{id:guid}")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<ActionResult<SupplierCardInstrumentResponse>> Update(
         Guid id,
         UpdateSupplierCardInstrumentRequest request,

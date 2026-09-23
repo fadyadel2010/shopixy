@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import ProductForm from '../components/ProductForm'
 import ProductWorkspaceLayout from '../components/ProductWorkspaceLayout'
 import AiProductGeneratorModal from '../components/AiProductGeneratorModal'
+import { useSettings } from '../contexts/SettingsContext'
 
-const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
 const PRODUCT_WORKSPACE_FORM_ID = 'product-workspace-form'
 
 function getWorkspaceStatus(meta, t) {
@@ -34,6 +34,7 @@ export default function ProductWorkspacePage() {
     const navigate = useNavigate()
     const location = useLocation()
     const { t } = useTranslation()
+    const { settings } = useSettings()
     const productFormRef = useRef(null)
     const isCreateMode = productId === 'new'
     const resolvedProductId = isCreateMode ? null : productId
@@ -89,8 +90,8 @@ export default function ProductWorkspacePage() {
     const title = workspaceMeta.name?.trim()
         || (isCreateMode ? (t('products.addProduct') || 'Add Product') : (t('products.editProduct') || 'Edit Product'))
 
-    const previewHref = workspaceMeta.isOnlineVisible && workspaceMeta.slug
-        ? `http://${STOREFRONT_DOMAIN}/products/${encodeURIComponent(workspaceMeta.slug)}`
+    const previewHref = workspaceMeta.isOnlineVisible && workspaceMeta.slug && settings.storefrontUrl
+        ? `${settings.storefrontUrl}/products/${encodeURIComponent(workspaceMeta.slug)}`
         : null
 
     const topBar = (

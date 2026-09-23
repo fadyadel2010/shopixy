@@ -170,7 +170,8 @@ public class HangfireInitializationHostedService : IHostedService, IDisposable
             var connectionStringBuilder = new NpgsqlConnectionStringBuilder(_connectionString)
             {
                 Timeout = 5,
-                CommandTimeout = 5
+                CommandTimeout = 5,
+                Pooling = false
             };
 
             using var connection = new NpgsqlConnection(connectionStringBuilder.ConnectionString);

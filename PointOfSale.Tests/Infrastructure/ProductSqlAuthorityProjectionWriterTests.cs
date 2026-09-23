@@ -141,7 +141,7 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
     }
 
     [Fact]
-    public void ProductSearchDocumentMapper_UsesDefaultUnitPriceForSimpleProducts()
+    public void ProductSearchDocumentMapper_UsesDefaultVariantOnlinePriceForSimpleProducts()
     {
         var product = new ProductDocument
         {
@@ -174,7 +174,7 @@ public sealed class ProductSqlAuthorityProjectionWriterTests
 
         var searchDocument = ProductSearchDocumentMapper.MapFromProductDocument(product);
 
-        Assert.Equal(25d, searchDocument.Price);
+        Assert.Equal(110d, searchDocument.Price);
     }
 
     [Fact]

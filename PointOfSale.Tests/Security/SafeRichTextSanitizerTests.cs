@@ -229,7 +229,7 @@ public sealed class SafeRichTextSanitizerTests
         var input = "<a href=\"tel:+1234567890\">Call</a>";
         var result = SafeRichTextSanitizer.Sanitize(input);
 
-        Assert.Contains("href=\"tel:+1234567890\"", result);
+        Assert.Contains("href=\"tel:+1234567890\"", System.Net.WebUtility.HtmlDecode(result));
         Assert.Contains(">Call</a>", result);
     }
 

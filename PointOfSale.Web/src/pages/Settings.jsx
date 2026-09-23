@@ -4,12 +4,12 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import api from '../services/api'
 import { useToast } from '../components/Toast'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
-import ResetDatabase from './ResetDatabase'
 import StorefrontSettings from './StorefrontSettings'
 import { useRTL } from '../hooks/useRTL'
 import { formatCurrency } from '../utils/dateFormat'
 import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { useAuthStore } from '../store/authStore'
+import { hasPosPermission } from '../auth/posPermissions'
 import { StorefrontBreadcrumbs } from '../modules/storefront/informationArchitecture'
 
 export default function Settings() {
@@ -37,6 +37,7 @@ export default function Settings() {
     const previewTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const fileSpacingClass = isRTL ? 'file:ml-4' : 'file:mr-4'
     const canManageStorefront = canManageStorefrontSettings(user)
+    const canManageSettings = hasPosPermission(user, 'settings.manage')
 
     const countryOptions = [
         { code: '', label: t('settings.selectCountry') },
@@ -56,54 +57,7 @@ export default function Settings() {
     ]
 
     const currencyOptions = [
-        // Major World Currencies
-        { code: 'USD', symbol: '$', label: 'USD - US Dollar' },
-        { code: 'EUR', symbol: '€', label: 'EUR - Euro' },
-        { code: 'GBP', symbol: '£', label: 'GBP - British Pound' },
-        { code: 'JPY', symbol: '¥', label: 'JPY - Japanese Yen' },
-        { code: 'CHF', symbol: 'CHF', label: 'CHF - Swiss Franc' },
-        { code: 'CAD', symbol: 'C$', label: 'CAD - Canadian Dollar' },
-        { code: 'AUD', symbol: 'A$', label: 'AUD - Australian Dollar' },
-        { code: 'NZD', symbol: 'NZ$', label: 'NZD - New Zealand Dollar' },
-        
-        // Middle East & North Africa
         { code: 'EGP', symbol: 'E£', label: 'EGP - Egyptian Pound' },
-        { code: 'SAR', symbol: 'SR', label: 'SAR - Saudi Riyal' },
-        { code: 'AED', symbol: 'د.إ', label: 'AED - UAE Dirham' },
-        { code: 'KWD', symbol: 'KD', label: 'KWD - Kuwaiti Dinar' },
-        { code: 'QAR', symbol: 'QR', label: 'QAR - Qatari Riyal' },
-        { code: 'OMR', symbol: 'OMR', label: 'OMR - Omani Rial' },
-        { code: 'BHD', symbol: 'BD', label: 'BHD - Bahraini Dinar' },
-        { code: 'JOD', symbol: 'JD', label: 'JOD - Jordanian Dinar' },
-        { code: 'LBP', symbol: 'LL', label: 'LBP - Lebanese Pound' },
-        { code: 'MAD', symbol: 'MAD', label: 'MAD - Moroccan Dirham' },
-        { code: 'TND', symbol: 'TND', label: 'TND - Tunisian Dinar' },
-        
-        // Asia Pacific
-        { code: 'CNY', symbol: '¥', label: 'CNY - Chinese Yuan' },
-        { code: 'INR', symbol: '₹', label: 'INR - Indian Rupee' },
-        { code: 'SGD', symbol: 'S$', label: 'SGD - Singapore Dollar' },
-        { code: 'HKD', symbol: 'HK$', label: 'HKD - Hong Kong Dollar' },
-        { code: 'THB', symbol: '฿', label: 'THB - Thai Baht' },
-        { code: 'MYR', symbol: 'RM', label: 'MYR - Malaysian Ringgit' },
-        { code: 'IDR', symbol: 'Rp', label: 'IDR - Indonesian Rupiah' },
-        { code: 'PHP', symbol: '₱', label: 'PHP - Philippine Peso' },
-        
-        // Europe
-        { code: 'SEK', symbol: 'kr', label: 'SEK - Swedish Krona' },
-        { code: 'NOK', symbol: 'kr', label: 'NOK - Norwegian Krone' },
-        { code: 'DKK', symbol: 'kr', label: 'DKK - Danish Krone' },
-        { code: 'PLN', symbol: 'zł', label: 'PLN - Polish Zloty' },
-        { code: 'TRY', symbol: '₺', label: 'TRY - Turkish Lira' },
-        
-        // Americas
-        { code: 'MXN', symbol: 'Mex$', label: 'MXN - Mexican Peso' },
-        { code: 'BRL', symbol: 'R$', label: 'BRL - Brazilian Real' },
-        { code: 'ARS', symbol: 'AR$', label: 'ARS - Argentine Peso' },
-        
-        // Africa
-        { code: 'ZAR', symbol: 'R', label: 'ZAR - South African Rand' },
-        { code: 'NGN', symbol: '₦', label: 'NGN - Nigerian Naira' },
     ]
 
     // Legacy symbol to ISO code mapping for backward compatibility
@@ -290,7 +244,10 @@ export default function Settings() {
             showSuccess(t('settings.settingsSaved'))
         } catch (error) {
             console.error('Error saving settings:', error)
-            showError(t('settings.failedToSaveSettings'))
+            const validationMessage = Object.values(error.response?.data?.data || {})
+                .flat()
+                .find(Boolean)
+            showError(validationMessage || error.response?.data?.message || t('settings.failedToSaveSettings'))
         } finally {
             setLoading(false)
         }
@@ -684,9 +641,11 @@ export default function Settings() {
             ) : null}
             <div className="flex items-center justify-between">
                 <h1 className="text-2xl font-bold text-gray-900">{t('settings.settings')}</h1>
-                <button onClick={handleSubmit} disabled={loading} className="btn-primary">
-                    {loading ? t('common.saving') : t('settings.saveSettings')}
-                </button>
+                {canManageSettings && activeTab !== 'storefront' && (
+                    <button onClick={handleSubmit} disabled={loading} className="btn-primary">
+                        {loading ? t('common.saving') : t('settings.saveSettings')}
+                    </button>
+                )}
             </div>
 
             <div className="flex min-h-[500px] flex-col rounded-lg bg-white shadow">
@@ -746,32 +705,21 @@ export default function Settings() {
                                 <span>{t('storefront.onlineStore')}</span>
                             </button>
                         )}
-                        <button
-                            onClick={() => setActiveTab('danger')}
-                            className={`whitespace-nowrap border-b-2 px-6 py-4 text-sm font-medium transition-colors ${
-                                activeTab === 'danger'
-                                    ? 'border-red-500 text-red-600'
-                                    : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                            }`}
-                        >
-                            {t('databaseReset.title')}
-                        </button>
                     </nav>
                 </div>
 
                 <div className="flex-1 p-6">
-                    {activeTab === 'company' && renderCompanyTab()}
-                    {activeTab === 'tax' && renderTaxTab()}
-                    {activeTab === 'receipt' && renderReceiptTab()}
-                    {activeTab === 'messaging' && renderMessagingTab()}
+                    {activeTab !== 'storefront' && (
+                        <fieldset disabled={!canManageSettings} className={!canManageSettings ? 'opacity-75' : ''}>
+                            {activeTab === 'company' && renderCompanyTab()}
+                            {activeTab === 'tax' && renderTaxTab()}
+                            {activeTab === 'receipt' && renderReceiptTab()}
+                            {activeTab === 'messaging' && renderMessagingTab()}
+                        </fieldset>
+                    )}
                     {activeTab === 'storefront' && canManageStorefront && (
                         <div className="max-w-4xl">
                             <StorefrontSettings onDirtyChange={setStorefrontStatusDirty} />
-                        </div>
-                    )}
-                    {activeTab === 'danger' && (
-                        <div className="max-w-4xl">
-                            <ResetDatabase />
                         </div>
                     )}
                 </div>

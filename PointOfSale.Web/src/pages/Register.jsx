@@ -2,7 +2,17 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../store/authStore'
+import { requirePosVendorSessionUserAuthority } from '../auth/posVendorSessionAuthority'
 import api from '../services/api'
+
+export const normalizeStoreSlug = (value) => value.trim().toLowerCase()
+
+export const isStoreSlugFormatValid = (value) => (
+    value.length >= 3
+    && value.length <= 63
+    && /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value)
+    && !value.includes('--')
+)
 
 /**
  * Tenant Registration Page
@@ -44,7 +54,8 @@ export default function Register() {
         checking: false,
         available: null,
         suggestions: [],
-        message: ''
+        message: '',
+        storefrontUrl: ''
     })
 
     // Email check state
@@ -78,9 +89,6 @@ export default function Register() {
         currentEmailRef.current = formData.email
     }, [formData.email])
 
-    // Platform domain for preview
-    const platformDomain = 'myplatform.com'
-
     // ==========================================================================
     // Validation
     // ==========================================================================
@@ -105,13 +113,17 @@ export default function Register() {
 
             case 'subdomain':
                 if (!value.trim()) return t('tenantRegistration.validation.storeAddressRequired')
-                if (value.length < 3) return t('tenantRegistration.validation.storeAddressTooShort')
-                if (value.length > 63) return t('tenantRegistration.validation.storeAddressTooLong')
-                if (!/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(value)) {
-                    if (value.includes('--')) return t('tenantRegistration.validation.storeAddressExtraHyphens')
-                    if (!/^[a-z0-9]/.test(value)) return t('tenantRegistration.validation.storeAddressStartsInvalid')
-                    if (!/[a-z0-9]$/.test(value)) return t('tenantRegistration.validation.storeAddressEndsInvalid')
-                    return t('tenantRegistration.validation.storeAddressInvalidCharacters')
+                if (/\p{Cc}/u.test(value)) return t('tenantRegistration.validation.storeAddressInvalidCharacters')
+                {
+                    const normalized = normalizeStoreSlug(value)
+                    if (normalized.length < 3) return t('tenantRegistration.validation.storeAddressTooShort')
+                    if (normalized.length > 63) return t('tenantRegistration.validation.storeAddressTooLong')
+                    if (!isStoreSlugFormatValid(normalized)) {
+                        if (normalized.includes('--')) return t('tenantRegistration.validation.storeAddressExtraHyphens')
+                        if (!/^[a-z0-9]/.test(normalized)) return t('tenantRegistration.validation.storeAddressStartsInvalid')
+                        if (!/[a-z0-9]$/.test(normalized)) return t('tenantRegistration.validation.storeAddressEndsInvalid')
+                        return t('tenantRegistration.validation.storeAddressInvalidCharacters')
+                    }
                 }
                 return ''
 
@@ -154,7 +166,7 @@ export default function Register() {
                 return
             }
 
-            setSubdomainStatus({ checking: false, available: null, suggestions: [], message: '' })
+            setSubdomainStatus({ checking: false, available: null, suggestions: [], message: '', storefrontUrl: '' })
             return
         }
 
@@ -165,7 +177,7 @@ export default function Register() {
                 return
             }
 
-            setSubdomainStatus({ checking: false, available: false, suggestions: [], message: error })
+            setSubdomainStatus({ checking: false, available: false, suggestions: [], message: error, storefrontUrl: '' })
             return
         }
 
@@ -177,7 +189,7 @@ export default function Register() {
 
         try {
             const response = await api.get(`/platform/subdomain/check?slug=${encodeURIComponent(requestedSlug)}`)
-            const { available, suggestions, reason } = response.data
+            const { available, suggestions, reason, storefrontUrl } = response.data
 
             if (!isCurrentSubdomainRequest()) {
                 return
@@ -187,6 +199,7 @@ export default function Register() {
                 checking: false,
                 available,
                 suggestions: suggestions || [],
+                storefrontUrl: storefrontUrl || '',
                 message: available
                     ? t('tenantRegistration.status.addressAvailable')
                     : (reason || t('tenantRegistration.status.addressTaken'))
@@ -201,6 +214,7 @@ export default function Register() {
                 checking: false,
                 available: null,
                 suggestions: [],
+                storefrontUrl: '',
                 message: t('tenantRegistration.status.addressCheckUnavailable')
             })
         }
@@ -298,7 +312,7 @@ export default function Register() {
 
         // Lowercase subdomain in real-time
         if (name === 'subdomain') {
-            processedValue = value.toLowerCase().replace(/[^a-z0-9-]/g, '')
+            processedValue = value.toLowerCase()
             latestSubdomainRef.current = processedValue
         }
 
@@ -311,7 +325,7 @@ export default function Register() {
 
         // Reset subdomain status when typing
         if (name === 'subdomain') {
-            setSubdomainStatus(prev => ({ ...prev, available: null, message: '' }))
+            setSubdomainStatus(prev => ({ ...prev, available: null, message: '', storefrontUrl: '' }))
         }
 
         // Reset email status when typing
@@ -328,6 +342,12 @@ export default function Register() {
 
         const error = validateField(name, value)
         setErrors(prev => ({ ...prev, [name]: error }))
+
+        if (name === 'subdomain' && !error) {
+            const normalizedSubdomain = normalizeStoreSlug(value)
+            latestSubdomainRef.current = normalizedSubdomain
+            setFormData(prev => ({ ...prev, subdomain: normalizedSubdomain }))
+        }
 
         // Auto-generate subdomain from business name
         if (name === 'businessName' && value.trim() && !formData.subdomain) {
@@ -397,31 +417,27 @@ export default function Register() {
         const requestId = `reg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
         try {
-            const response = await api.post('/platform/register', {
+            await api.post('/platform/register', {
                 businessName: formData.businessName.trim(),
                 email: formData.email.trim().toLowerCase(),
                 password: formData.password,
-                subdomain: formData.subdomain
+                subdomain: normalizeStoreSlug(formData.subdomain)
             }, {
                 headers: {
                     'X-Request-Id': requestId
                 }
             })
 
-            const { user } = response.data
-
-            // Auto-login with tenantId for immediate multi-tenant API access
-            login(
-                {
-                    id: user.id,
-                    email: user.email,
-                    firstName: user.firstName,
-                    lastName: user.lastName,
-                    role: user.role,
-                    username: user.email,
-                    tenantId: user.tenantId  // CRITICAL: Include tenantId for multi-tenant
-                }
-            )
+            // Rehydrate from the authoritative POS session DTO so server-derived
+            // role, permissions, and CommerceHub capabilities are validated,
+            // never inferred in the browser. AuthBootstrap revalidates on mount
+            // if this fetch cannot complete.
+            try {
+                const sessionResponse = await api.get('/auth/session')
+                login(requirePosVendorSessionUserAuthority(sessionResponse.data?.user ?? null))
+            } catch {
+                // Navigation still proceeds; AuthBootstrap hydrates the session.
+            }
 
             // Redirect to dashboard
             navigate('/', { replace: true })
@@ -646,7 +662,7 @@ export default function Register() {
                                     onChange={handleChange}
                                     onBlur={handleBlur}
                                     disabled={isSubmitting}
-                                    className={`flex-1 px-4 py-3 border rounded-l-lg focus:outline-none focus:ring-2 focus:z-10 transition-colors ${(errors.subdomain && touched.subdomain) || subdomainStatus.available === false
+                                    className={`w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:z-10 transition-colors ${(errors.subdomain && touched.subdomain) || subdomainStatus.available === false
                                         ? 'border-red-300 focus:ring-red-200 focus:border-red-500'
                                         : subdomainStatus.available === true
                                             ? 'border-green-300 focus:ring-green-200 focus:border-green-500'
@@ -656,11 +672,10 @@ export default function Register() {
                                     aria-invalid={(errors.subdomain && touched.subdomain) || subdomainStatus.available === false ? 'true' : 'false'}
                                     autoComplete="off"
                                     inputMode="url"
+                                    pattern="[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                                    spellCheck="false"
                                     maxLength={63}
                                 />
-                                <span className="inline-flex items-center px-4 py-3 bg-gray-100 border border-l-0 border-gray-300 rounded-r-lg text-gray-500 text-sm">
-                                    .{platformDomain}
-                                </span>
                             </div>
 
                             {/* Subdomain status */}
@@ -685,7 +700,7 @@ export default function Register() {
                                         </p>
                                         <p className="text-sm text-gray-500 mt-1">
                                             {t('tenantRegistration.status.yourStore')}:{' '}
-                                            <span className="font-medium">{formData.subdomain}.{platformDomain}</span>
+                                            <span className="font-medium">{subdomainStatus.storefrontUrl}</span>
                                         </p>
                                     </div>
                                 )}

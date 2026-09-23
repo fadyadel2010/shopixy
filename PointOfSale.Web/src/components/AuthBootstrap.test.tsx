@@ -35,6 +35,14 @@ const authenticatedUser = {
     firstName: 'POS',
     lastName: 'User',
     role: 'Cashier',
+    effectivePermissions: [
+        'dashboard.view',
+        'catalog.view',
+        'customers.view',
+        'customers.manage',
+        'sales.view',
+        'sales.operate',
+    ],
     navigationCapabilities: [],
     vendorLifecycleAuthority: {
         vendorId: '22222222-2222-4222-8222-222222222222',

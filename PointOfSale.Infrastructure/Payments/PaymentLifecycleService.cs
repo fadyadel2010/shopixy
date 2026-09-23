@@ -1196,16 +1196,23 @@ public class PaymentLifecycleService : IPaymentLifecycleService
         return PaymentTransitionResult.Succeeded(newStatus);
     }
 
-    public Task<PaymentTransitionResult> MarkPaymentFailedAsync(
+    public async Task<PaymentTransitionResult> MarkPaymentFailedAsync(
         Guid orderId,
         string reason,
         CancellationToken ct = default)
     {
-        return HandlePaymentResultAsync(new HandlePaymentResultRequest
+        var gateway = await _db.Orders
+            .AsNoTracking()
+            .Where(order => order.Id == orderId)
+            .Select(order => order.PaymentMethodCode)
+            .FirstOrDefaultAsync(ct);
+
+        return await HandlePaymentResultAsync(new HandlePaymentResultRequest
         {
             OrderId = orderId,
             Outcome = PaymentLifecycleOutcome.Failed,
             Source = PaymentLifecycleSource.GatewayWebhook,
+            Gateway = gateway,
             Reason = reason
         }, ct);
     }

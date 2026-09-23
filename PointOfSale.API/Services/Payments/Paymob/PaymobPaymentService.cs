@@ -502,6 +502,12 @@ public class PaymobPaymentService : IPaymobPaymentService
             _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("paymob", "concurrent_claim");
             _dbContext.ChangeTracker.Clear();
 
+            // PostgreSQL rejects every command after a statement failure until the
+            // aborted transaction is rolled back. Recovery must use a fresh boundary.
+            await transaction.RollbackAsync(cancellationToken);
+            await transaction.DisposeAsync();
+            await using var recoveryTransaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+
             var claimedIntent = await _dbContext.PaymentIntents
                 .AsNoTracking()
                 .Where(pi => pi.OrderId == orderId &&
@@ -524,8 +530,7 @@ public class PaymobPaymentService : IPaymobPaymentService
                 claimedIntent.ExpiresAtUtc.Value > DateTime.UtcNow &&
                 !PaymentIntentRoutingMetadataSerializer.HasPendingPaymobCheckpoint(claimedIntent.ProviderMetadata))
             {
-                // PRODUCTION HARDENING: Commit transaction before returning claimed intent
-                await transaction.CommitAsync(cancellationToken);
+                await recoveryTransaction.CommitAsync(cancellationToken);
                 
                 return new PaymobPaymentIntentResponseDto
                 {
@@ -541,12 +546,15 @@ public class PaymobPaymentService : IPaymobPaymentService
                 };
             }
 
+            await recoveryTransaction.RollbackAsync(cancellationToken);
             throw new PaymentException(
                 "PAYMENT_INTENT_IN_PROGRESS",
                 "Payment intent creation is already in progress. Please retry shortly.");
         }
 
         await transaction.CommitAsync(cancellationToken);
+        await transaction.DisposeAsync();
+        _dbContext.ChangeTracker.Clear();
 
         string paymobOrderId;
         string paymentKey;
@@ -844,6 +852,7 @@ public class PaymobPaymentService : IPaymobPaymentService
             catch (DbUpdateException ex) when (attempt < maxRetries)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                await transaction.DisposeAsync();
 
                 _logger.LogWarning(
                     ex,

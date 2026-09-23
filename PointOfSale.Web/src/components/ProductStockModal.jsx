@@ -3,7 +3,7 @@ import api from '../services/api'
 import { useTranslation } from 'react-i18next'
 import { invalidatePosRuntimeCache } from '../services/posRuntimeCache'
 
-export default function ProductStockModal({ productId, productName, onClose }) {
+export default function ProductStockModal({ productId, productName, canAdjust = false, onClose }) {
     const { t } = useTranslation()
     const [loading, setLoading] = useState(true)
     const [stockLevels, setStockLevels] = useState([])
@@ -150,7 +150,7 @@ export default function ProductStockModal({ productId, productName, onClose }) {
                             </div>
 
                             {/* Adjust Stock Section */}
-                            {!showAdjustForm ? (
+                            {canAdjust && (!showAdjustForm ? (
                                 <button
                                     onClick={() => setShowAdjustForm(true)}
                                     className="btn-primary w-full"
@@ -225,7 +225,7 @@ export default function ProductStockModal({ productId, productName, onClose }) {
                                         </div>
                                     </form>
                                 </div>
-                            )}
+                            ))}
                         </>
                     )}
                 </div>

@@ -20,6 +20,7 @@ export {
     resolveTenant,
     getTenantId,
     isTenantResolved,
+    setCanonicalTenant,
     setResolvedTenant,
     clearResolvedTenant,
     type TenantResolutionResult,

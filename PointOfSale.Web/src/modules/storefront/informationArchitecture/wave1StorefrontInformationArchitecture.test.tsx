@@ -42,6 +42,22 @@ const ownerUser = {
     id: '11111111-1111-4111-8111-111111111111',
     tenantId: '22222222-2222-4222-8222-222222222222',
     role: 'Owner',
+    effectivePermissions: [
+        'dashboard.view',
+        'catalog.view',
+        'catalog.manage',
+        'catalog.publish',
+        'storefront.orders.view',
+        'storefront.orders.manage',
+        'storefront.payments.view',
+        'storefront.payments.manage',
+        'storefront.promotions.manage',
+        'storefront.analytics.view',
+        'storefront.analytics.configure',
+        'storefront.design.manage',
+        'storefront.domains.manage',
+        'storefront.auth.manage',
+    ],
     navigationCapabilities: [
         'commercehub.orders.view',
         'commercehub.payments.view',
@@ -173,7 +189,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
             expect(overview.screenIds).toContain('operations-overview')
         })
 
-        it('registers every canonical E-Commerce / Storefront module through component, route, navigation, screen, and Owner/Admin permission', () => {
+        it('registers every canonical E-Commerce / Storefront module through component, route, navigation, screen, and POS permission', () => {
             const app = readFileSync(resolve(process.cwd(), 'src/App.jsx'), 'utf8')
 
             for (const [label, componentFile, routePath, screenId] of canonicalStorefrontModules) {
@@ -192,7 +208,7 @@ describe('Wave 1 — Storefront Information Architecture Migration', () => {
                 expect(navigationNode.capability, `${label} is not CommerceHub capability-filtered`).toBeUndefined()
             }
 
-            expect(app).toContain("roles={['Owner', 'Admin']}")
+            expect(app).toContain('<Route element={<PosPermissionRouteGuard permission="storefront.orders.view" />}>')
         })
     })
 

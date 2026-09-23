@@ -513,6 +513,11 @@ public sealed class MarketplaceAttachmentSecurityTests
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)
     {
+        connection.CreateFunction<string?, string?>("btrim", input => input?.Trim());
+        connection.CreateFunction<string?, string?, string?>(
+            "btrim",
+            (input, characters) => input?.Trim((characters ?? " \t\n\r").ToCharArray()));
+        connection.CreateFunction<string?, int>("char_length", input => input?.Length ?? 0);
         connection.CreateFunction<string?, string?, string?, string?, string?>(
             "REGEXP_REPLACE",
             (input, pattern, replacement, options) =>
@@ -546,6 +551,19 @@ public sealed class MarketplaceAttachmentSecurityTests
 
     private sealed class SqliteForUpdateStripInterceptor : DbCommandInterceptor
     {
+        public override ValueTask<InterceptionResult<int>> NonQueryExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            command.CommandText = command.CommandText.Replace(
+                "\"Last4\" ~ '^[0-9]{4}$'",
+                "\"Last4\" GLOB '[0-9][0-9][0-9][0-9]'",
+                StringComparison.Ordinal);
+            return base.NonQueryExecutingAsync(command, eventData, result, cancellationToken);
+        }
+
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command,
             CommandEventData eventData,

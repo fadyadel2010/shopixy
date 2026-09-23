@@ -13,7 +13,6 @@ namespace PointOfSale.API.Controllers.Admin;
 /// </summary>
 [ApiController]
 [Route("api/admin/af16e-reindex")]
-[Authorize(Roles = "Owner,Admin")]
 public class AF16E_ReindexController : ControllerBase
 {
     private readonly AF16E_ReindexAffiliateProductsWithStorefrontUrl _reindexService;

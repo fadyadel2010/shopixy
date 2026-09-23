@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Data.Common;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -18,9 +20,11 @@ using PointOfSale.API.Security;
 using PointOfSale.API.Services.Cart;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Discounts;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MultiTenancy;
 using StorefrontCouponValidationResult = PointOfSale.API.DTOs.Storefront.CouponValidationResult;
@@ -29,6 +33,155 @@ namespace PointOfSale.Tests;
 
 public sealed class StorefrontCartCouponAtomicityTests
 {
+    [Theory]
+    [InlineData("active")]
+    [InlineData("expired")]
+    [InlineData("inactive")]
+    [InlineData("missing")]
+    public async Task GetCart_RealCouponAuthority_SeparatesPersistedStateFromCurrentCouponReads(string state)
+    {
+        var tenantId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var cart = CreateCart(tenantId, customerId);
+        var couponId = Guid.NewGuid();
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        RegisterSqliteFunctions(connection);
+        await using (var bootstrap = CreateDbContext(connection, tenantId))
+        {
+            await bootstrap.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrap, tenantId, customerId);
+            var couponState = StorefrontCartCouponState.Create(
+                tenantId, cart.CartId, cart.OwnerType, cart.OwnerId);
+            couponState.ApplyCoupon(couponId, "SAVE10", "fixed", 10m, 10m, cart.Subtotal, customerId);
+            bootstrap.StorefrontCartCouponStates.Add(couponState);
+            if (state != "missing")
+            {
+                var coupon = new Coupon
+                {
+                    Id = couponId,
+                    TenantId = tenantId,
+                    DiscountType = DiscountType.FixedAmount,
+                    DiscountValue = 10m,
+                    IsActive = state != "inactive",
+                    EndDate = state == "expired" ? DateTime.UtcNow.AddDays(-1) : DateTime.UtcNow.AddDays(1)
+                };
+                coupon.SetCode("SAVE10");
+                bootstrap.Coupons.Add(coupon);
+            }
+            await bootstrap.SaveChangesAsync();
+        }
+
+        var counter = new CouponReadCounter();
+        await using var db = CreateDbContext(connection, tenantId, counter);
+        var couponService = new StorefrontCouponService(
+            new CouponValidationService(db, new OutboxBackedTestPublisher(db),
+                NullLogger<CouponValidationService>.Instance), db);
+        var controller = CreateController(db, CreateCartServiceMock(cart).Object,
+            couponService, new OutboxBackedTestPublisher(db), tenantId, customerId);
+
+        var response = await controller.GetCart(CancellationToken.None);
+        var result = Assert.IsType<CartDto>(Assert.IsType<OkObjectResult>(response).Value);
+        Assert.Equal(state == "active" ? "SAVE10" : null, result.AppliedCouponCode);
+        Assert.Equal(state == "active" ? 10m : 0m, result.DiscountTotal);
+        Assert.Equal(1, counter.CountFrom("OnlineCustomers"));
+        Assert.Equal(1, counter.CountFrom("Products"));
+        Assert.Equal(1, counter.CountFrom("Coupons"));
+        Assert.Equal(state == "active" ? 1 : 2, counter.CountFrom("StorefrontCartCouponStates"));
+        Assert.Equal(state == "active" ? 1 : 0, counter.CountFrom("CouponUsages"));
+        Assert.Equal(state == "active" ? 1 : 0, counter.CountFrom("CouponReservations"));
+        if (state == "active")
+        {
+            var repeated = await controller.GetCart(CancellationToken.None);
+            Assert.Equal("SAVE10", Assert.IsType<CartDto>(Assert.IsType<OkObjectResult>(repeated).Value).AppliedCouponCode);
+            Assert.Equal(2, counter.CountFrom("OnlineCustomers"));
+            Assert.Equal(2, counter.CountFrom("StorefrontCartCouponStates"));
+            Assert.Equal(2, counter.CountFrom("Coupons"));
+            Assert.Equal(2, counter.CountFrom("CouponUsages"));
+            Assert.Equal(2, counter.CountFrom("CouponReservations"));
+            await using var verification = CreateDbContext(connection, tenantId);
+            Assert.Empty(await verification.OutboxMessages.ToListAsync());
+        }
+        else
+        {
+            await using var verification = CreateDbContext(connection, tenantId);
+            var persisted = await verification.StorefrontCartCouponStates.IgnoreQueryFilters()
+                .SingleAsync(item => item.TenantId == tenantId && item.CartId == cart.CartId);
+            Assert.False(persisted.HasAppliedCoupon);
+            Assert.Single(await verification.OutboxMessages.ToListAsync());
+        }
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task GetCart_ReadsPersistedCouponAuthorityExactlyOnce(
+        bool hasPersistedCoupon, bool foreignTenantState)
+    {
+        var tenantId = Guid.NewGuid();
+        var customerId = Guid.NewGuid();
+        var cart = CreateCart(tenantId, customerId);
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        RegisterSqliteFunctions(connection);
+        await using (var bootstrap = CreateDbContext(connection, tenantId))
+        {
+            await bootstrap.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrap, tenantId, customerId);
+            if (hasPersistedCoupon)
+            {
+                var stateTenantId = foreignTenantState ? Guid.NewGuid() : tenantId;
+                if (foreignTenantState)
+                {
+                    bootstrap.Tenants.Add(new Tenant
+                    {
+                        Id = stateTenantId, Name = "Other coupon tenant", Currency = "USD",
+                        Status = PointOfSale.Core.Enums.TenantStatus.Active, IsActive = true
+                    });
+                }
+
+                var state = StorefrontCartCouponState.Create(
+                    stateTenantId, cart.CartId, cart.OwnerType, cart.OwnerId);
+                state.ApplyCoupon(Guid.NewGuid(), "SAVE10", "fixed", 10m, 10m, cart.Subtotal, customerId);
+                bootstrap.StorefrontCartCouponStates.Add(state);
+                await bootstrap.SaveChangesAsync();
+            }
+        }
+
+        var counter = new CouponReadCounter();
+        await using var db = CreateDbContext(connection, tenantId, counter);
+        var controller = CreateController(db, CreateCartServiceMock(cart).Object,
+            CreateCouponServiceMock().Object, new OutboxBackedTestPublisher(db), tenantId, customerId);
+
+        var response = await controller.GetCart(CancellationToken.None);
+
+        var result = Assert.IsType<CartDto>(Assert.IsType<OkObjectResult>(response).Value);
+        Assert.Equal(hasPersistedCoupon && !foreignTenantState ? "SAVE10" : null, result.AppliedCouponCode);
+        Assert.Equal(hasPersistedCoupon && !foreignTenantState ? 10m : 0m, result.DiscountTotal);
+        // Customer/tenant authentication authority + persisted cart coupon
+        // state: one SQL command each, even when Redis has no coupon.
+        Assert.Equal(2, counter.CommandCount);
+    }
+
+    private sealed class CouponReadCounter : DbCommandInterceptor
+    {
+        public int CommandCount { get; private set; }
+        private readonly List<string> _commands = new();
+
+        public int CountFrom(string table) => _commands.Count(command =>
+            command.Contains($"FROM \"{table}\"", StringComparison.OrdinalIgnoreCase));
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData,
+            InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            CommandCount++;
+            _commands.Add(command.CommandText);
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
+
     [Fact]
     public async Task ApplyCoupon_WhenOutboxPersistenceSucceeds_CommitsCouponStateAndOutboxMessage()
     {
@@ -42,6 +195,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         await using (var bootstrapContext = CreateDbContext(connection, tenantId))
         {
             await bootstrapContext.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrapContext, tenantId, customerId);
         }
 
         await using var controllerContext = CreateDbContext(connection, tenantId);
@@ -96,6 +250,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         await using (var bootstrapContext = CreateDbContext(connection, tenantId))
         {
             await bootstrapContext.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrapContext, tenantId, customerId);
         }
 
         await using var controllerContext = CreateDbContext(connection, tenantId);
@@ -135,6 +290,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         await using (var bootstrapContext = CreateDbContext(connection, tenantId))
         {
             await bootstrapContext.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrapContext, tenantId, customerId);
         }
 
         await using var controllerContext = CreateDbContext(connection, tenantId);
@@ -182,6 +338,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         await using (var bootstrapContext = CreateDbContext(connection, tenantId))
         {
             await bootstrapContext.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrapContext, tenantId, customerId);
         }
 
         // Setup: Apply a coupon first
@@ -261,6 +418,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         await using (var bootstrapContext = CreateDbContext(connection, tenantId))
         {
             await bootstrapContext.Database.EnsureCreatedAsync();
+            SeedCartCustomerAuthority(bootstrapContext, tenantId, customerId);
         }
 
         // Setup: Apply a coupon first
@@ -458,6 +616,7 @@ public sealed class StorefrontCartCouponAtomicityTests
         ILogger<StorefrontCartController>? logger = null)
     {
         var services = new ServiceCollection()
+            .AddSingleton<ITenantContext>(new TenantContextForTest(tenantId))
             .AddSingleton(CreateAuthenticationService(customerId, tenantId))
             .BuildServiceProvider();
 
@@ -491,15 +650,38 @@ public sealed class StorefrontCartCouponAtomicityTests
         };
     }
 
-    private static ApplicationDbContext CreateDbContext(SqliteConnection connection, Guid tenantId)
+    private sealed class TenantContextForTest : ITenantContext
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
+        public TenantContextForTest(Guid tenantId) => TenantId = tenantId;
+        public Guid? TenantId { get; }
+        public bool HasTenant => true;
+    }
+
+    private static ApplicationDbContext CreateDbContext(
+        SqliteConnection connection, Guid tenantId, DbCommandInterceptor? interceptor = null)
+    {
+        var builder = new DbContextOptionsBuilder<ApplicationDbContext>().UseSqlite(connection);
+        if (interceptor != null)
+        {
+            builder.AddInterceptors(interceptor);
+        }
+
+        var options = builder.Options;
 
         var tenantContext = new TenantContext();
         tenantContext.SetTenantId(tenantId);
         return new CouponAtomicityApplicationDbContext(options, tenantContext);
+    }
+
+    private static void SeedCartCustomerAuthority(ApplicationDbContext db, Guid tenantId, Guid customerId)
+    {
+        db.Database.ExecuteSqlInterpolated(
+            $"INSERT INTO \"Currencies\" (\"Code\", \"Name\", \"Symbol\", \"DecimalPlaces\") VALUES ({"USD"}, {"US Dollar"}, {"$"}, {2})");
+        db.Database.ExecuteSqlInterpolated(
+            $"INSERT INTO \"Tenants\" (\"Id\", \"Name\", \"Currency\", \"IsActive\", \"Status\", \"CreatedAtUtc\", \"BootstrapVersion\", \"UseBaileys\") VALUES ({tenantId}, {"Coupon atomicity tenant"}, {"USD"}, {true}, {1}, {DateTime.UtcNow}, {1}, {false})");
+        var email = $"atomicity-{customerId:N}@example.com";
+        db.Database.ExecuteSqlInterpolated(
+            $"INSERT INTO \"OnlineCustomers\" (\"Id\", \"TenantId\", \"Email\", \"NormalizedEmail\", \"Provider\", \"IsActive\", \"EmailVerified\", \"CreatedAtUtc\", \"PhoneVerified\") VALUES ({customerId}, {tenantId}, {email}, {email}, {"Local"}, {true}, {true}, {DateTime.UtcNow}, {false})");
     }
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)
@@ -656,6 +838,26 @@ public sealed class StorefrontCartCouponAtomicityTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+
+            // The production model has PostgreSQL-only CHECK expressions
+            // (btrim/regex); this fixture tests relational transactions and
+            // outbox rollback, not PostgreSQL expression translation.
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var constraint in entityType.GetCheckConstraints().ToArray())
+                {
+                    entityType.RemoveCheckConstraint(constraint.Name);
+                }
+
+                foreach (var property in entityType.GetProperties().Where(property =>
+                             string.Equals(property.GetColumnName(), "xmin", StringComparison.OrdinalIgnoreCase)))
+                {
+                    property.SetColumnType("INTEGER");
+                    property.ValueGenerated = ValueGenerated.Never;
+                    property.IsConcurrencyToken = false;
+                    property.SetDefaultValue(0u);
+                }
+            }
 
             modelBuilder.Entity<OutboxMessage>()
                 .Property<uint>("xmin")

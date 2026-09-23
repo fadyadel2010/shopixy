@@ -550,58 +550,33 @@ public class StorefrontHomeService : IStorefrontHomeService
         bool affiliateModeOnly,
         CancellationToken cancellationToken)
     {
-        if (!await TenantLineageAuthority.IsActiveTenantAsync(_dbContext, tenantId, cancellationToken))
-        {
-            _logger.LogWarning(
-                "Homepage product cards suppressed because tenant SQL lineage is inactive or missing | Section: {SectionName} | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
-                sectionName,
-                tenantId,
-                correlationId);
-            return [];
-        }
-
-        var requestedIds = projectedCards
-            .Select(card => card.Id)
-            .Where(id => id != Guid.Empty)
-            .Distinct()
+        var sourceCards = projectedCards
+            .Where(card => card.Id != Guid.Empty)
             .ToList();
 
-        if (requestedIds.Count == 0)
+        if (sourceCards.Count == 0)
         {
             return [];
         }
 
-        var affiliateEnabledProductIds = await _dbContext.AffiliateProductPolicies
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(policy => policy.TenantId == tenantId)
-            .Where(policy => requestedIds.Contains(EF.Property<Guid>(policy, "ProductId")))
-            .Where(policy => !policy.IsDeleted && policy.IsEnabled)
-            .Select(policy => EF.Property<Guid>(policy, "ProductId"))
-            .ToListAsync(cancellationToken);
-        var affiliateEnabled = affiliateEnabledProductIds.ToHashSet();
-        var recomposed = new List<ProductListItemDto>(projectedCards.Count);
-
-        foreach (var projectedCard in projectedCards)
-        {
-            var isAffiliateEnabled = affiliateEnabled.Contains(projectedCard.Id);
-            if (affiliateModeOnly && !isAffiliateEnabled)
+        var candidates = sourceCards
+            .Select(card => new ProductDocument
             {
-                continue;
-            }
+                TenantId = tenantId,
+                ProductId = card.Id
+            })
+            .ToList();
+        var products = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+            _dbContext,
+            candidates,
+            tenantId,
+            cancellationToken);
+        var recomposed = new List<ProductListItemDto>(sourceCards.Count);
 
-            var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                _dbContext,
-                new ProductDocument
-                {
-                    TenantId = tenantId,
-                    ProductId = projectedCard.Id,
-                    IsAffiliateEnabled = isAffiliateEnabled
-                },
-                tenantId,
-                cancellationToken);
-
-            if (product is not { IsActive: true, IsOnlineVisible: true })
+        foreach (var product in products)
+        {
+            if (product is not { IsActive: true, IsOnlineVisible: true } ||
+                (affiliateModeOnly && !product.IsAffiliateEnabled))
             {
                 continue;
             }
@@ -630,6 +605,13 @@ public class StorefrontHomeService : IStorefrontHomeService
         string correlationId,
         CancellationToken cancellationToken)
     {
+        // No candidate can be returned, so there is no category authority to
+        // revalidate and no tenant/category SQL connection to acquire.
+        if (projectedCategories.Count == 0)
+        {
+            return [];
+        }
+
         if (!await TenantLineageAuthority.IsActiveTenantAsync(_dbContext, tenantId, cancellationToken))
         {
             _logger.LogWarning(
@@ -656,15 +638,10 @@ public class StorefrontHomeService : IStorefrontHomeService
             tenantId,
             cancellationToken);
 
-        var categories = await _dbContext.Categories
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .Where(category => category.TenantId == tenantId)
-            .Where(category => requestedIds.Contains(category.Id))
-            .Select(category => category.Id)
-            .ToListAsync(cancellationToken);
-
-        var liveSqlIds = categories
+        // The tenant-scoped SQL snapshot already contains every category ID and
+        // its parent/deletion authority. Querying those same IDs again only
+        // reacquires a connection without adding a new authority boundary.
+        var liveSqlIds = requestedIds
             .Where(lineage.IsLiveInLineage)
             .ToHashSet();
         var recomposed = new List<CategoryReadDto>(projectedCategories.Count);

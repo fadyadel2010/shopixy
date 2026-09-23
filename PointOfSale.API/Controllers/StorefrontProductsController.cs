@@ -431,17 +431,20 @@ public class StorefrontProductsController : ControllerBase
             cancellationToken);
 
         var visibleItems = new List<ProductDocument>(items.Count);
-        foreach (var item in items)
+        if (items.Count > 0)
         {
-            var sqlProjection = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+            var recomposed = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
                 _dbContext,
-                item,
+                items,
                 tenantId,
                 cancellationToken);
 
-            if (sqlProjection is { IsActive: true, IsOnlineVisible: true })
+            foreach (var sqlProjection in recomposed)
             {
-                visibleItems.Add(sqlProjection);
+                if (sqlProjection is { IsActive: true, IsOnlineVisible: true })
+                {
+                    visibleItems.Add(sqlProjection);
+                }
             }
         }
 

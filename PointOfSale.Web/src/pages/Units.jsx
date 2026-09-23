@@ -4,12 +4,15 @@ import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useToast } from '../components/Toast'
 import { useTranslation } from 'react-i18next'
 import { useRTL } from '../hooks/useRTL'
+import { useHasPermission } from '../components/PermissionGuard'
 
 export default function Units() {
     const { t } = useTranslation()
     const { isRTL, dir } = useRTL()
     const { confirm } = useConfirmDialog()
     const { showSuccess, showError } = useToast()
+    const canManageCatalog = useHasPermission('catalog.manage')
+    const canDeleteCatalog = useHasPermission('catalog.delete')
     const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const actionAlignClass = isRTL ? 'text-left' : 'text-right'
     const actionSpacingClass = isRTL ? 'ml-4' : 'mr-4'
@@ -132,6 +135,7 @@ export default function Units() {
                     <h1 className="text-2xl font-bold text-gray-800">{t('units.title')}</h1>
                     <p className="text-sm text-gray-600 mt-1">{t('units.subtitle')}</p>
                 </div>
+                {canManageCatalog && (
                 <div className="flex gap-3">
                     <button
                         onClick={handleSeedDefaults}
@@ -146,6 +150,7 @@ export default function Units() {
                         + {t('units.addUnit')}
                     </button>
                 </div>
+                )}
             </div>
 
             {/* Units Table */}
@@ -158,9 +163,11 @@ export default function Units() {
                     <div className="flex-1 flex items-center justify-center">
                         <div className="text-center">
                             <p className="text-gray-500 mb-4">{t('units.noUnits')}</p>
-                            <button onClick={handleAdd} className="btn-primary">
-                                + {t('units.addFirstUnit')}
-                            </button>
+                            {canManageCatalog && (
+                                <button onClick={handleAdd} className="btn-primary">
+                                    + {t('units.addFirstUnit')}
+                                </button>
+                            )}
                         </div>
                     </div>
                 ) : (
@@ -212,18 +219,22 @@ export default function Units() {
                                             </span>
                                         </td>
                                         <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
-                                            <button
-                                                onClick={() => handleEdit(unit)}
-                                                className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
-                                            >
-                                                {t('common.edit')}
-                                            </button>
-                                            <button
-                                                onClick={() => handleDelete(unit.id)}
-                                                className="text-red-600 hover:text-red-900"
-                                            >
-                                                {t('common.delete')}
-                                            </button>
+                                            {canManageCatalog && (
+                                                <button
+                                                    onClick={() => handleEdit(unit)}
+                                                    className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
+                                                >
+                                                    {t('common.edit')}
+                                                </button>
+                                            )}
+                                            {canDeleteCatalog && (
+                                                <button
+                                                    onClick={() => handleDelete(unit.id)}
+                                                    className="text-red-600 hover:text-red-900"
+                                                >
+                                                    {t('common.delete')}
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}
@@ -234,7 +245,7 @@ export default function Units() {
             </div>
 
             {/* Add/Edit Modal */}
-            {showModal && (
+            {canManageCatalog && showModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
                         <div className="p-6">

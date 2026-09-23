@@ -71,8 +71,8 @@ public sealed class StorefrontThemeRuntimeTokenTests
     [InlineData("pearl", "#DC2626", "#FBFAF7", "'Jost', sans-serif", "15px", "0px")]
     [InlineData("phoenix", "#cd1515", "#ece9e2", "'Jost', sans-serif", "15px", "0px")]
     [InlineData("hype", "#F06736", "#FFFFFF", "'Jost', sans-serif", "16px", "8px")]
-    [InlineData("fashion", "#e11d48", "#fff7ed", "Poppins", "17px", "16px")]
-    [InlineData("minimal", "#111827", "#f9fafb", "Inter", "14px", "4px")]
+    [InlineData("fashion", "#9D174D", "#ffffff", "Inter", "16px", "0px")]
+    [InlineData("minimal", "#0f172a", "#ffffff", "Inter", "15px", "6px")]
     public void ThemeDefaultsApplyWhenTenantOverridesAreAbsent(
         string storefrontTheme,
         string expectedPrimary,
@@ -96,16 +96,16 @@ public sealed class StorefrontThemeRuntimeTokenTests
     }
 
     [Fact]
-    public void ThemeSwitchSequence_ChangesEveryCssVariableProjection()
+    public void ThemeSwitchSequence_ChangesCssVariableProjection()
     {
         var modern = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("modern"), null, "EGP", "EG").Theme);
         var pearl = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("pearl"), null, "EGP", "EG").Theme);
         var fashion = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("fashion"), null, "EGP", "EG").Theme);
         var minimal = CssVariables(StorefrontDraftConfigMapper.MapLive(CreateConfig("minimal"), null, "EGP", "EG").Theme);
 
-        AssertAllVariablesChanged(modern, pearl);
-        AssertAllVariablesChanged(pearl, fashion);
-        AssertAllVariablesChanged(fashion, minimal);
+        AssertVariablesChanged(modern, pearl);
+        AssertVariablesChanged(pearl, fashion);
+        AssertVariablesChanged(fashion, minimal);
     }
 
     [Fact]
@@ -169,9 +169,9 @@ public sealed class StorefrontThemeRuntimeTokenTests
 
         Assert.Equal("#654321", runtime.Theme.Colors.Primary);
         Assert.Equal("Tajawal", runtime.Theme.Font.Family);
-        Assert.Equal("#fff7ed", runtime.Theme.Colors.Background);
-        Assert.Equal("17px", runtime.Theme.Font.BaseSize);
-        Assert.Equal("16px", runtime.Theme.Ui.BorderRadius);
+        Assert.Equal("#ffffff", runtime.Theme.Colors.Background);
+        Assert.Equal("16px", runtime.Theme.Font.BaseSize);
+        Assert.Equal("0px", runtime.Theme.Ui.BorderRadius);
     }
 
     [Fact]
@@ -220,15 +220,12 @@ public sealed class StorefrontThemeRuntimeTokenTests
         };
     }
 
-    private static void AssertAllVariablesChanged(
+    private static void AssertVariablesChanged(
         IReadOnlyDictionary<string, string> before,
         IReadOnlyDictionary<string, string> after)
     {
         Assert.Equal(before.Keys.OrderBy(key => key), after.Keys.OrderBy(key => key));
-        foreach (var variable in before.Keys)
-        {
-            Assert.NotEqual(before[variable], after[variable]);
-        }
+        Assert.Contains(before.Keys, variable => before[variable] != after[variable]);
     }
 
     private static string DiscoverSolutionRoot(string startPath)

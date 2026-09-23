@@ -77,20 +77,9 @@ public class SlugResolverController : ControllerBase
         }
         var tenantId = tenantValidation.TenantId!.Value;
 
-        // Step 2: Validate tenant exists and is active
-        var isTenantActive = await _tenantService.IsTenantActiveAsync(tenantId, cancellationToken);
-        if (!isTenantActive)
-        {
-            _logger.LogWarning(
-                "Tenant not found or inactive | Endpoint: SlugResolver | TenantId: {TenantId} | TraceId: {TraceId}",
-                tenantId, traceId);
-            return BadRequest(new ApiErrorResponse(
-                "TENANT_NOT_ACTIVE",
-                "Tenant not found or is not active",
-                traceId));
-        }
-
-        // Step 3: Validate slug
+        // TenantResolutionMiddleware has already established active SQL/domain
+        // authority for this request. Discovery itself checks current tenant
+        // authority in each SQL product/category/CMS branch.
         if (string.IsNullOrWhiteSpace(slug))
         {
             _logger.LogWarning(

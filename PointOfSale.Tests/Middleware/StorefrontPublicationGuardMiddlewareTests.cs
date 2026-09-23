@@ -13,6 +13,48 @@ namespace PointOfSale.Tests.Middleware;
 
 public sealed class StorefrontPublicationGuardMiddlewareTests
 {
+    [Theory]
+    [InlineData("/api/storefront/store-config")]
+    [InlineData("/api/storefront/store-config/")]
+    public async Task InvokeAsync_StoreConfigEndpoint_DefersPublicationCheckToController(string path)
+    {
+        var tenantId = Guid.NewGuid();
+        var tenantContext = new TenantContext();
+        tenantContext.SetTenantId(tenantId);
+
+        var publicationStatusService = new Mock<IStorefrontPublicationStatusService>();
+        var nextCalled = false;
+        var middleware = new StorefrontPublicationGuardMiddleware(
+            _ =>
+            {
+                nextCalled = true;
+                return Task.CompletedTask;
+            },
+            NullLogger<StorefrontPublicationGuardMiddleware>.Instance);
+
+        var services = new ServiceCollection()
+            .AddSingleton<ITenantContext>(tenantContext)
+            .AddSingleton(publicationStatusService.Object)
+            .BuildServiceProvider();
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = services
+        };
+        httpContext.Request.Method = HttpMethods.Get;
+        httpContext.Request.Path = path;
+        httpContext.SetEndpoint(new Endpoint(
+            _ => Task.CompletedTask,
+            new EndpointMetadataCollection(new AllowAnonymousAttribute()),
+            "store-config"));
+
+        await middleware.InvokeAsync(httpContext);
+
+        Assert.True(nextCalled);
+        publicationStatusService.Verify(
+            service => service.IsPublishedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     [Fact]
     public async Task InvokeAsync_UnpublishedAnonymousStorefrontRequest_Returns404()
     {

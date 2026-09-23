@@ -19,6 +19,84 @@ namespace PointOfSale.Tests.Storefront;
 public sealed class StorefrontSearchReliabilityTests
 {
     [Fact]
+    public async Task ProductById_UsesResolvedTenantForHistoricalProductWithoutSlug()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var productService = new Mock<IStorefrontProductService>();
+        productService
+            .Setup(service => service.GetProductByIdAsync(
+                tenantId,
+                productId,
+                false,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProductReadDto
+            {
+                Id = productId,
+                Name = "Historical product",
+                Slug = null
+            });
+
+        using var telemetry = new CommerceReliabilityTelemetry();
+        var controller = new StorefrontProductsController(
+            productService.Object,
+            Mock.Of<IProductSearchService>(),
+            Mock.Of<IProductDiscoveryService>(),
+            Mock.Of<IStorefrontCategoryService>(),
+            CreateDbContext(),
+            telemetry,
+            NullLogger<StorefrontProductsController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = CreateTenantHttpContext(tenantId)
+            }
+        };
+
+        var result = await controller.GetProductById(productId, CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result);
+        Assert.Equal(productId, Assert.IsType<ProductReadDto>(ok.Value).Id);
+        productService.VerifyAll();
+    }
+
+    [Fact]
+    public async Task ProductById_DoesNotSubstituteAnotherTenantWhenLookupMisses()
+    {
+        var tenantId = Guid.NewGuid();
+        var productId = Guid.NewGuid();
+        var productService = new Mock<IStorefrontProductService>();
+        productService
+            .Setup(service => service.GetProductByIdAsync(
+                tenantId,
+                productId,
+                false,
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProductReadDto?)null);
+
+        using var telemetry = new CommerceReliabilityTelemetry();
+        var controller = new StorefrontProductsController(
+            productService.Object,
+            Mock.Of<IProductSearchService>(),
+            Mock.Of<IProductDiscoveryService>(),
+            Mock.Of<IStorefrontCategoryService>(),
+            CreateDbContext(),
+            telemetry,
+            NullLogger<StorefrontProductsController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = CreateTenantHttpContext(tenantId)
+            }
+        };
+
+        var result = await controller.GetProductById(productId, CancellationToken.None);
+
+        Assert.IsType<NotFoundObjectResult>(result);
+        productService.VerifyAll();
+    }
+
+    [Fact]
     public async Task UnifiedSearch_WhenSearchFails_Returns503_And_IncrementsMetric()
     {
         var tenantId = Guid.NewGuid();

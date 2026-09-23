@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -9,6 +10,7 @@ using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Audit;
+using PointOfSale.API.Services;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Tests.Infrastructure;
 
@@ -270,7 +272,8 @@ public sealed class AdminStoreConfigControllerHardeningTests
             Mock.Of<IAdminThemeActivationService>(),
             Mock.Of<IStoreConfigAuditService>(),
             new TestTenantContext(tenantId),
-            NullLogger<AdminStoreConfigController>.Instance)
+            NullLogger<AdminStoreConfigController>.Instance,
+            CreateStorefrontUrlResolver())
         {
             ControllerContext = new ControllerContext
             {
@@ -283,6 +286,16 @@ public sealed class AdminStoreConfigControllerHardeningTests
             }
         };
     }
+
+    private static StorefrontUrlResolver CreateStorefrontUrlResolver() => new(
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Storefront:UrlTemplate"] = "https://{slug}.example.test"
+            })
+            .Build(),
+        NullLogger<StorefrontUrlResolver>.Instance,
+        new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
 
     private static AdminStoreConfigRequest CreateValidRequest() =>
         new()

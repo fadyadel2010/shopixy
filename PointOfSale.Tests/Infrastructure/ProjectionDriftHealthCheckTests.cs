@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using Moq;
 using PointOfSale.Core.Entities;
+using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.HealthChecks;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -22,13 +23,24 @@ public sealed class ProjectionDriftHealthCheckTests
         var tenantContext = new TenantContext();
 
         await using var db = new ApplicationDbContext(options, tenantContext);
+        var liveTenantId = Guid.NewGuid();
+        db.Tenants.Add(new Tenant
+        {
+            Id = liveTenantId,
+            Name = "Live tenant",
+            IsActive = true,
+            Status = TenantStatus.Active
+        });
         db.Products.AddRange(
             new Product
             {
                 Id = Guid.NewGuid(),
-                TenantId = Guid.NewGuid(),
+                TenantId = liveTenantId,
                 Name = "Live product",
-                CategoryId = Guid.NewGuid(),
+                CategoryId = Guid.Empty,
+                IsActive = true,
+                IsOnlineVisible = true,
+                PublishStatus = PublishStatus.Published,
                 IsDeleted = false
             },
             new Product
@@ -43,10 +55,12 @@ public sealed class ProjectionDriftHealthCheckTests
 
         var collection = new Mock<IMongoCollection<ProductDocument>>();
         collection
-            .Setup(value => value.CountDocumentsAsync(
+            .SetupSequence(value => value.CountDocumentsAsync(
                 It.IsAny<FilterDefinition<ProductDocument>>(),
                 It.IsAny<CountOptions>(),
                 It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1)
+            .ReturnsAsync(1)
             .ReturnsAsync(1);
 
         var mongo = new Mock<IMongoDatabase>();
@@ -78,12 +92,23 @@ public sealed class ProjectionDriftHealthCheckTests
         var tenantContext = new TenantContext();
 
         await using var db = new ApplicationDbContext(options, tenantContext);
+        var tenantId = Guid.NewGuid();
+        db.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Name = "Current tenant",
+            IsActive = true,
+            Status = TenantStatus.Active
+        });
         db.Products.Add(new Product
         {
             Id = Guid.NewGuid(),
-            TenantId = Guid.NewGuid(),
+            TenantId = tenantId,
             Name = "Current product",
-            CategoryId = Guid.NewGuid(),
+            CategoryId = Guid.Empty,
+            IsActive = true,
+            IsOnlineVisible = true,
+            PublishStatus = PublishStatus.Published,
             IsDeleted = false
         });
         await db.SaveChangesAsync();
@@ -95,6 +120,7 @@ public sealed class ProjectionDriftHealthCheckTests
                 It.IsAny<CountOptions>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(2)
+            .ReturnsAsync(1)
             .ReturnsAsync(1);
 
         var mongo = new Mock<IMongoDatabase>();

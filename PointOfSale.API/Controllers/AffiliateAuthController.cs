@@ -191,6 +191,7 @@ public class AffiliateAuthController : ControllerBase
             rawVerificationToken = await ReplaceVerificationTokenAsync(affiliateUser, ct)
                 ?? throw new InvalidOperationException("New affiliate identity was not eligible for verification token issuance.");
             await registrationTransaction.CommitAsync(ct);
+            await registrationTransaction.DisposeAsync();
         }
         catch (DbUpdateException ex) when (IsAffiliateRegistrationUniquenessViolation(ex))
         {
@@ -551,6 +552,7 @@ public class AffiliateAuthController : ControllerBase
             else
             {
                 await transaction.CommitAsync(ct);
+                await transaction.DisposeAsync();
                 await SendVerificationEmailAsync(affiliateUser, rawToken);
             }
         }

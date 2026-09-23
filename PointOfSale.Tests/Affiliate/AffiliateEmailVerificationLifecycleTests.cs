@@ -310,6 +310,7 @@ public sealed class AffiliateEmailVerificationLifecycleTests
             null!,
             null!,
             null!,
+            null!,
             NullLogger<AffiliatePortalController>.Instance)
         {
             ControllerContext = new ControllerContext

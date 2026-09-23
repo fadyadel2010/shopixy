@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics.CodeAnalysis;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Services;
@@ -57,14 +59,13 @@ public class StorefrontUrlResolver
         // Priority 1: Tenant-specific custom domain
         if (!string.IsNullOrWhiteSpace(tenant.StorefrontBaseUrl))
         {
-            return ValidateAndNormalizeBaseUrl(tenant.StorefrontBaseUrl);
+            return StorefrontUrlAuthority.NormalizeOrigin(tenant.StorefrontBaseUrl);
         }
 
         // Priority 2: Config template with slug substitution
         if (!string.IsNullOrWhiteSpace(_urlTemplate) && !string.IsNullOrWhiteSpace(tenant.Slug))
         {
-            var url = _urlTemplate.Replace("{slug}", tenant.Slug);
-            return ValidateAndNormalizeBaseUrl(url);
+            return StorefrontUrlAuthority.ResolveOrigin(null, tenant.Slug, _urlTemplate);
         }
 
         _logger.LogError(
@@ -77,11 +78,30 @@ public class StorefrontUrlResolver
             "Either set Tenant.StorefrontBaseUrl or configure Storefront:UrlTemplate with a valid {slug} template.");
     }
 
+    public bool TryResolve(Tenant tenant, [NotNullWhen(true)] out string? storefrontUrl)
+    {
+        try
+        {
+            storefrontUrl = Resolve(tenant);
+            return true;
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "Storefront URL authority is unavailable | TenantId: {TenantId} | Slug: {Slug}",
+                tenant.Id,
+                tenant.Slug);
+            storefrontUrl = null;
+            return false;
+        }
+    }
+
     /// <summary>
     /// Resolve the storefront base URL by tenant ID.
     /// Reads the current tenant authority.
     /// </summary>
-    public async Task<string> ResolveByTenantIdAsync(Guid tenantId)
+    public async Task<string> ResolveByTenantIdAsync(Guid tenantId, CancellationToken cancellationToken = default)
     {
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -92,12 +112,46 @@ public class StorefrontUrlResolver
                 t.Id == tenantId &&
                 t.IsActive &&
                 t.Status == TenantStatus.Active &&
-                t.DeletedAtUtc == null);
+                t.DeletedAtUtc == null,
+                cancellationToken);
 
         if (tenant == null)
             throw new InvalidOperationException($"Tenant {tenantId} not found.");
 
         return Resolve(tenant);
+    }
+
+    public async Task<string> BuildThemePreviewUrlAsync(
+        Guid tenantId,
+        string previewToken,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(previewToken);
+        var baseUrl = await ResolveByTenantIdAsync(tenantId, cancellationToken);
+        return $"{baseUrl}?themePreviewToken={Uri.EscapeDataString(previewToken)}";
+    }
+
+    public async Task<string> BuildCmsPagePreviewUrlAsync(
+        Guid tenantId,
+        string pageSlug,
+        string previewToken,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(pageSlug);
+        ArgumentException.ThrowIfNullOrWhiteSpace(previewToken);
+        var baseUrl = await ResolveByTenantIdAsync(tenantId, cancellationToken);
+        return $"{baseUrl}/{Uri.EscapeDataString(pageSlug.Trim())}" +
+               $"?tenant={tenantId:D}&preview=true&previewToken={Uri.EscapeDataString(previewToken)}";
+    }
+
+    public async Task<string> BuildEmailVerificationUrlAsync(
+        Guid tenantId,
+        string verificationToken,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(verificationToken);
+        var baseUrl = await ResolveByTenantIdAsync(tenantId, cancellationToken);
+        return $"{baseUrl}/verify-email?token={Uri.EscapeDataString(verificationToken)}&tenant={tenantId:D}";
     }
 
     // =========================================================================
@@ -111,7 +165,7 @@ public class StorefrontUrlResolver
     public string BuildRecoveryUrl(Tenant tenant, string recoveryToken)
     {
         var baseUrl = Resolve(tenant);
-        return CombineUrl(baseUrl, "recover-checkout", recoveryToken);
+        return StorefrontUrlAuthority.BuildUrl(baseUrl, "recover-checkout", recoveryToken);
     }
 
     /// <summary>
@@ -120,7 +174,7 @@ public class StorefrontUrlResolver
     public async Task<string> BuildRecoveryUrlAsync(Guid tenantId, string recoveryToken)
     {
         var baseUrl = await ResolveByTenantIdAsync(tenantId);
-        return CombineUrl(baseUrl, "recover-checkout", recoveryToken);
+        return StorefrontUrlAuthority.BuildUrl(baseUrl, "recover-checkout", recoveryToken);
     }
 
     /// <summary>
@@ -130,7 +184,7 @@ public class StorefrontUrlResolver
     public string BuildProductUrl(Tenant tenant, string productSlug)
     {
         var baseUrl = Resolve(tenant);
-        return CombineUrl(baseUrl, "products", productSlug);
+        return StorefrontUrlAuthority.BuildUrl(baseUrl, "products", productSlug);
     }
 
     /// <summary>
@@ -140,7 +194,7 @@ public class StorefrontUrlResolver
     public string BuildCartUrl(Tenant tenant)
     {
         var baseUrl = Resolve(tenant);
-        return CombineUrl(baseUrl, "cart");
+        return StorefrontUrlAuthority.BuildUrl(baseUrl, "cart");
     }
 
     /// <summary>
@@ -150,47 +204,6 @@ public class StorefrontUrlResolver
     public string BuildPromotionLink(Tenant tenant, string productSlug, string referralCode)
     {
         var baseUrl = Resolve(tenant);
-        return $"{CombineUrl(baseUrl, "products", productSlug)}?ref={Uri.EscapeDataString(referralCode)}";
-    }
-
-    // =========================================================================
-    // URL Normalization — never produce double slashes
-    // =========================================================================
-
-    /// <summary>
-    /// Normalize a base URL: trim trailing slashes, validate format.
-    /// </summary>
-    private static string ValidateAndNormalizeBaseUrl(string url)
-    {
-        var normalized = url.Trim().TrimEnd('/');
-        if (!Uri.TryCreate(normalized, UriKind.Absolute, out var uri) ||
-            (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp) ||
-            string.IsNullOrWhiteSpace(uri.Host) ||
-            !string.IsNullOrWhiteSpace(uri.UserInfo) ||
-            uri.AbsolutePath != "/" ||
-            !string.IsNullOrEmpty(uri.Query) ||
-            !string.IsNullOrEmpty(uri.Fragment))
-        {
-            throw new InvalidOperationException("Storefront base URL authority must be an absolute HTTP(S) origin.");
-        }
-
-        return uri.GetLeftPart(UriPartial.Authority);
-    }
-
-    /// <summary>
-    /// Safely combine base URL with path segments.
-    /// Prevents double-slash issues regardless of input format.
-    /// Example: CombineUrl("http://foo.com/", "/recover-checkout", "abc") → "http://foo.com/recover-checkout/abc"
-    /// </summary>
-    private static string CombineUrl(string baseUrl, params string[] segments)
-    {
-        var normalized = ValidateAndNormalizeBaseUrl(baseUrl);
-        foreach (var segment in segments)
-        {
-            var clean = segment.Trim('/');
-            if (!string.IsNullOrEmpty(clean))
-                normalized = $"{normalized}/{clean}";
-        }
-        return normalized;
+        return $"{StorefrontUrlAuthority.BuildUrl(baseUrl, "products", productSlug)}?ref={Uri.EscapeDataString(referralCode)}";
     }
 }

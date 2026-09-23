@@ -139,7 +139,24 @@ export const storeConfigService = {
 
     async createThemePreviewLink(themeId) {
         const response = await api.post(`/admin/store-config/theme/preview-link/${encodeURIComponent(themeId)}`)
-        return response.data
+        const previewUrl = typeof response.data?.previewUrl === 'string' ? response.data.previewUrl.trim() : ''
+        const previewToken = typeof response.data?.previewToken === 'string' ? response.data.previewToken.trim() : ''
+        const expiresAtUtc = typeof response.data?.expiresAtUtc === 'string' ? response.data.expiresAtUtc : ''
+        const expiresAtMs = expiresAtUtc ? Date.parse(expiresAtUtc) : Number.NaN
+
+        let parsedPreviewUrl
+        try {
+            parsedPreviewUrl = new URL(previewUrl)
+        } catch {
+            throw new Error('Theme preview access was rejected by backend URL authority admission.')
+        }
+
+        if (!previewToken || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()
+            || !['http:', 'https:'].includes(parsedPreviewUrl.protocol)) {
+            throw new Error('Theme preview access was rejected by backend URL authority admission.')
+        }
+
+        return { previewUrl: parsedPreviewUrl.toString(), previewToken, expiresAtUtc }
     },
 
     /**

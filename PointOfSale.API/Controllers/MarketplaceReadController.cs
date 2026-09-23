@@ -12,6 +12,7 @@ using PointOfSale.API.DTOs;
 using PointOfSale.API.DTOs.Marketplace;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.API.Services.MarketplaceTranslations;
+using PointOfSale.API.Security;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.MongoDB.Documents.Marketplace;
 using PointOfSale.Infrastructure.MongoDB.Services.Marketplace;
@@ -261,7 +262,9 @@ public sealed class MarketplaceReadController : ControllerBase
     }
 
     [HttpGet("orders")]
-    [Authorize]
+    [Authorize(
+        AuthenticationSchemes = CustomerSecurityConstants.AuthenticationScheme,
+        Roles = CustomerSecurityConstants.Role)]
     [ProducesResponseType(typeof(PagedResult<MarketplaceOrderReadDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<MarketplaceOrderReadDto>>> GetOrders(
         [FromQuery] string? search = null,

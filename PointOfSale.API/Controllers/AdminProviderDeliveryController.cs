@@ -12,7 +12,6 @@ namespace PointOfSale.API.Controllers;
 
 [ApiController]
 [Route("api/admin/provider-delivery")]
-[Authorize(Roles = "Owner,Admin,Manager")]
 public sealed class AdminProviderDeliveryController : ControllerBase
 {
     private readonly IProviderDeliveryOutboxService _providerDeliveryOutbox;

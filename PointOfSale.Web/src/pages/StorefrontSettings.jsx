@@ -5,6 +5,7 @@ import { useAuthStore } from '../store/authStore'
 import { deriveCurrentStoreIdentityPresentation } from '../auth/commerceHubVendorIdentityAuthority'
 import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
 import { storeConfigService } from '../modules/storefront/services'
+import { useSettings } from '../contexts/SettingsContext'
 import {
     AuthoringActionBar,
     AuthoringConfirmDialog,
@@ -29,13 +30,11 @@ import {
  * - Health indicators
  */
 
-// Storefront domain configuration
-const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
-
 export default function StorefrontSettings({ onDirtyChange }) {
     const { t, i18n } = useTranslation()
     const { showSuccess, showError, showInfo } = useToast()
     const { user } = useAuthStore()
+    const { settings } = useSettings()
     const isRTL = i18n.language === 'ar'
 
     // Get tenant ID from logged-in user
@@ -176,8 +175,10 @@ export default function StorefrontSettings({ onDirtyChange }) {
 
     // Open storefront preview
     const openStorefront = () => {
-        const url = `http://${STOREFRONT_DOMAIN}`
-        window.open(url, '_blank', 'noopener,noreferrer')
+        if (!settings.storefrontUrl) {
+            return
+        }
+        window.open(settings.storefrontUrl, '_blank', 'noopener,noreferrer')
         showInfo(t('storefront.openingPreview') || 'Opening storefront preview...')
     }
 
@@ -287,7 +288,8 @@ export default function StorefrontSettings({ onDirtyChange }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                     onClick={openStorefront}
-                    className="flex items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border border-blue-200 hover:border-blue-300 transition-all group"
+                    disabled={!settings.storefrontUrl}
+                    className="flex items-center gap-3 p-4 bg-gradient-to-r from-blue-50 to-blue-100 rounded-xl border border-blue-200 hover:border-blue-300 transition-all group disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center text-white group-hover:scale-110 transition-transform">
                         🛍️

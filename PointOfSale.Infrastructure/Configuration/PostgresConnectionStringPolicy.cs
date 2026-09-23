@@ -52,7 +52,8 @@ public static class PostgresConnectionStringPolicy
         var builder = new NpgsqlConnectionStringBuilder(normalized)
         {
             Timeout = timeoutSeconds,
-            CommandTimeout = timeoutSeconds
+            CommandTimeout = timeoutSeconds,
+            Pooling = false
         };
 
         return builder.ConnectionString;

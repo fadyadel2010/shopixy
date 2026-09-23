@@ -206,13 +206,17 @@ public sealed class PosCartRuntimeServiceTests
     [Fact]
     public async Task GetOpenEndpoint_ReturnsOkNullWhenCurrentCashierHasNoOpenCart()
     {
-        var cashierId = Guid.NewGuid();
+        var fixture = await CreateFixtureAsync();
+        var cashierId = fixture.CashierId;
         var runtime = new Mock<IPosCartRuntimeService>();
         runtime
             .Setup(service => service.GetOpenAsync(cashierId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(PosCartServiceResult<PosCartResponse>.NotFound("Open POS cart not found."));
 
-        var controller = new PosCartsController(runtime.Object)
+        var controller = new PosCartsController(
+            runtime.Object,
+            fixture.Db,
+            new TestTenantContext(fixture.TenantId))
         {
             ControllerContext = new ControllerContext
             {
@@ -233,6 +237,43 @@ public sealed class PosCartRuntimeServiceTests
         runtime.Verify(
             service => service.GetOpenAsync(cashierId, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task WarehouseOptions_ReturnOnlyActiveWarehousesFromCurrentTenant()
+    {
+        var fixture = await CreateFixtureAsync();
+        fixture.Db.Warehouses.AddRange(
+            new Warehouse
+            {
+                Id = Guid.NewGuid(),
+                TenantId = fixture.TenantId,
+                Name = "Inactive",
+                IsActive = false,
+                CreatedAt = DateTime.UtcNow,
+            },
+            new Warehouse
+            {
+                Id = Guid.NewGuid(),
+                TenantId = Guid.NewGuid(),
+                Name = "Foreign",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+            });
+        await fixture.Db.SaveChangesAsync();
+
+        var controller = new PosCartsController(
+            Mock.Of<IPosCartRuntimeService>(),
+            fixture.Db,
+            new TestTenantContext(fixture.TenantId));
+
+        var result = await controller.GetWarehouseOptions(CancellationToken.None);
+
+        var ok = Assert.IsType<OkObjectResult>(result.Result);
+        var warehouses = Assert.IsAssignableFrom<IReadOnlyList<PosWarehouseOptionResponse>>(ok.Value);
+        var warehouse = Assert.Single(warehouses);
+        Assert.Equal(fixture.WarehouseId, warehouse.Id);
+        Assert.Equal("Main", warehouse.Name);
     }
 
     [Fact]

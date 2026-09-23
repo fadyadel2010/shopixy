@@ -102,6 +102,7 @@ public class TenantResolutionMiddleware
         var requestTenant = await ResolveRequestTenantAsync(
             context,
             dbContext,
+            authenticatedTenant,
             context.RequestAborted);
 
         var effectiveTenant = authenticatedTenant ?? requestTenant;
@@ -248,6 +249,7 @@ public class TenantResolutionMiddleware
     private async Task<Tenant?> ResolveRequestTenantAsync(
         HttpContext context,
         ApplicationDbContext dbContext,
+        Tenant? authenticatedTenant,
         CancellationToken cancellationToken)
     {
         // DOMAIN-2D: Consume the DomainResolutionResult produced by
@@ -262,7 +264,22 @@ public class TenantResolutionMiddleware
             domainResolutionResult.Status == DomainResolutionStatus.Found &&
             domainResolutionResult.TenantId.HasValue)
         {
-            return await ResolveTenantByIdAsync(domainResolutionResult.TenantId.Value, dbContext, cancellationToken);
+            // Host resolution already joined the current active tenant authority and
+            // generation-fenced it against Domain/Tenant mutations. Reuse that result;
+            // querying Tenants again here recreates the request fan-out this contract
+            // exists to remove.
+            if (authenticatedTenant?.Id == domainResolutionResult.TenantId.Value)
+            {
+                return authenticatedTenant;
+            }
+
+            return new Tenant
+            {
+                Id = domainResolutionResult.TenantId.Value,
+                Name = domainResolutionResult.NormalizedHost ?? "resolved-storefront",
+                IsActive = true,
+                Status = TenantStatus.Active
+            };
         }
 
         foreach (var candidateUri in GetTenantCandidateUris(context))
@@ -275,26 +292,6 @@ public class TenantResolutionMiddleware
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Resolves a Tenant entity by its primary key with the same
-    /// active/tenant-safety guards used by all other resolution paths.
-    /// Used when the Domain resolution has already carried the TenantId.
-    /// </summary>
-    private static async Task<Tenant?> ResolveTenantByIdAsync(
-        Guid tenantId,
-        ApplicationDbContext dbContext,
-        CancellationToken cancellationToken)
-    {
-        return await dbContext.Tenants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                tenant => tenant.Id == tenantId &&
-                          tenant.IsActive &&
-                          tenant.Status == TenantStatus.Active &&
-                          tenant.DeletedAtUtc == null,
-                cancellationToken);
     }
 
     private IEnumerable<Uri> GetTenantCandidateUris(HttpContext context)
@@ -312,25 +309,22 @@ public class TenantResolutionMiddleware
         ApplicationDbContext dbContext,
         CancellationToken cancellationToken)
     {
-        var customDomainTenant = await ResolveTenantFromStorefrontBaseUrlAsync(candidateUri, dbContext, cancellationToken);
-        if (customDomainTenant != null)
+        // A host matching the configured platform template has a canonical slug.
+        // Resolve it directly instead of first issuing a StorefrontBaseUrl query
+        // that is expected to miss on every normal storefront request.
+        if (TryExtractTenantSlug(candidateUri, out var slug))
         {
-            return customDomainTenant;
+            return await dbContext.Tenants
+                .AsNoTracking()
+                .FirstOrDefaultAsync(
+                    tenant => tenant.Slug == slug &&
+                              tenant.IsActive &&
+                              tenant.Status == TenantStatus.Active &&
+                              tenant.DeletedAtUtc == null,
+                    cancellationToken);
         }
 
-        if (!TryExtractTenantSlug(candidateUri, out var slug))
-        {
-            return null;
-        }
-
-        return await dbContext.Tenants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                tenant => tenant.Slug == slug &&
-                          tenant.IsActive &&
-                          tenant.Status == TenantStatus.Active &&
-                          tenant.DeletedAtUtc == null,
-                cancellationToken);
+        return await ResolveTenantFromStorefrontBaseUrlAsync(candidateUri, dbContext, cancellationToken);
     }
 
     private static async Task<Tenant?> ResolveTenantFromStorefrontBaseUrlAsync(

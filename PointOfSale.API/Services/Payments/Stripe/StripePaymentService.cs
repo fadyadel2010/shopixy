@@ -246,168 +246,31 @@ public class StripePaymentService : IStripePaymentService
         if (existingIntent != null && existingIntent.Status == PaymentIntentStatus.Pending)
         {
             if (string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) ||
-                string.IsNullOrWhiteSpace(existingIntent.ClientSecretEncrypted))
+                string.IsNullOrWhiteSpace(GetClientSecret(existingIntent)))
             {
-                // RECOVERY PATH: If ProviderIntentId exists but ClientSecretEncrypted is missing, attempt to recover from Stripe
-                if (!string.IsNullOrWhiteSpace(existingIntent.ProviderIntentId) && 
-                    string.IsNullOrWhiteSpace(existingIntent.ClientSecretEncrypted))
+                // The claim is durable. Release the order lock before provider I/O;
+                // finalization locks and re-reads order and intent independently.
+                var expectedProviderId = existingIntent.ProviderIntentId;
+                var recoveryUrl = _storefrontUrlResolver.Resolve(tenant);
+                await transaction.CommitAsync(cancellationToken);
+                await transaction.DisposeAsync();
+                _dbContext.ChangeTracker.Clear();
+
+                var recovered = await RehydrateStripeProviderIntentAsync(
+                    tenantId, order, existingIntent, recoveryUrl, customerId,
+                    correlationId, cancellationToken);
+                if (!string.IsNullOrWhiteSpace(expectedProviderId) &&
+                    !string.Equals(expectedProviderId, recovered.StripePaymentIntentId, StringComparison.Ordinal))
                 {
-                    _logger.LogWarning(
-                        "Payment intent has ProviderIntentId but missing ClientSecretEncrypted, attempting recovery from Stripe | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                        orderId, existingIntent.ProviderIntentId, correlationId);
-
-                    try
-                    {
-                        var recoveredStripeIntent = await RehydrateStripeProviderIntentAsync(
-                            tenantId,
-                            order,
-                            existingIntent,
-                            storefrontBaseUrl: _storefrontUrlResolver.Resolve(tenant),
-                            customerId,
-                            correlationId,
-                            cancellationToken);
-
-                        if (!string.Equals(recoveredStripeIntent.StripePaymentIntentId, existingIntent.ProviderIntentId, StringComparison.Ordinal))
-                        {
-                            _logger.LogError(
-                                "Stripe recovery returned a different provider intent than the persisted authority | OrderId: {OrderId} | ExistingStripeIntentId: {ExistingStripeIntentId} | RecoveredStripeIntentId: {RecoveredStripeIntentId} | CorrelationId: {CorrelationId}",
-                                orderId,
-                                existingIntent.ProviderIntentId,
-                                recoveredStripeIntent.StripePaymentIntentId,
-                                correlationId);
-
-                            _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "recovery_mismatch");
-                            throw new PaymentException(
-                                "PAYMENT_INTENT_RECOVERY_FAILED",
-                                "Payment intent recovery returned inconsistent provider authority.");
-                        }
-
-                        SetClientSecret(existingIntent, recoveredStripeIntent.ClientSecret);
-                        await _dbContext.SaveChangesAsync(cancellationToken);
-
-                        _logger.LogInformation(
-                            "Successfully recovered client secret through canonical Stripe runtime application path | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                            orderId, existingIntent.ProviderIntentId, correlationId);
-                    }
-                    catch (StripeApiException ex)
-                    {
-                        _logger.LogError(ex,
-                            "Stripe runtime application error during client secret recovery | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                            orderId, existingIntent.ProviderIntentId, correlationId);
-
-                        _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "recovery_stripe_error");
-                        throw new PaymentException(
-                            "PAYMENT_INTENT_RECOVERY_FAILED",
-                            "Payment intent recovery failed due to Stripe API error. Please retry.");
-                    }
-                    catch (Exception ex) when (ex is not PaymentException)
-                    {
-                        _logger.LogError(ex,
-                            "Unexpected error during client secret recovery | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                            orderId, existingIntent.ProviderIntentId, correlationId);
-
-                        _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "recovery_error");
-                        throw new PaymentException(
-                            "PAYMENT_INTENT_RECOVERY_FAILED",
-                            "Payment intent recovery failed. Please retry.");
-                    }
+                    _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "recovery_mismatch");
+                    throw new PaymentException("PAYMENT_INTENT_RECOVERY_FAILED",
+                        "Payment intent recovery returned inconsistent provider authority.");
                 }
-                else
-                {
-                    _logger.LogWarning(
-                        "Payment intent has no ProviderIntentId after local claim; rehydrating Stripe intent with the original idempotency key | PaymentIntentId: {PaymentIntentId} | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
-                        existingIntent.Id, orderId, correlationId);
 
-                    var storefrontBaseUrlForRecovery = _storefrontUrlResolver.Resolve(tenant);
-                    existingIntent.ProviderMetadata = BuildRoutingMetadata(tenantId, orderId, storefrontBaseUrlForRecovery);
-                    if (string.IsNullOrWhiteSpace(order.PaymentReference))
-                    {
-                        order.PaymentReference = existingIntent.PaymentReference;
-                    }
-                    order.PaymentGateway = "stripe";
-
-                    StripeRuntimeApplicationResult recoveredStripeIntent;
-                    try
-                    {
-                        recoveredStripeIntent = await RehydrateStripeProviderIntentAsync(
-                            tenantId,
-                            order,
-                            existingIntent,
-                            storefrontBaseUrlForRecovery,
-                            customerId,
-                            correlationId,
-                            cancellationToken);
-                    }
-                    catch (StripeApiException ex)
-                    {
-                        _logger.LogError(ex,
-                            "Stripe runtime application error during missing-provider-intent recovery | OrderId: {OrderId} | CorrelationId: {CorrelationId}",
-                            orderId, correlationId);
-
-                        _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "missing_provider_recovery_failed");
-                        throw;
-                    }
-
-                    existingIntent.ProviderIntentId = recoveredStripeIntent.StripePaymentIntentId;
-                    SetClientSecret(existingIntent, recoveredStripeIntent.ClientSecret);
-
-                    await _eventPublisher.PublishAsync(new PaymentIntentCreatedEvent
-                    {
-                        TenantId = tenantId,
-                        OrderId = orderId,
-                        PaymentIntentId = existingIntent.Id,
-                        OrderNumber = order.OrderNumber,
-                        PaymentReference = existingIntent.PaymentReference,
-                        Provider = "stripe",
-                        PaymentMethod = "STRIPE",
-                        Amount = order.Total,
-                        Currency = order.Currency,
-                        IsOfflineCollection = false,
-                        PromotionCalculationFailed = promotionCalculationFailed,
-                        CorrelationId = correlationId,
-                        OccurredAtUtc = DateTime.UtcNow
-                    }, cancellationToken);
-
-                    const int recoveryMaxRetries = 3;
-                    for (int attempt = 1; attempt <= recoveryMaxRetries; attempt++)
-                    {
-                        try
-                        {
-                            await _dbContext.SaveChangesAsync(cancellationToken);
-                            break;
-                        }
-                        catch (DbUpdateException ex) when (attempt < recoveryMaxRetries)
-                        {
-                            _logger.LogWarning(ex,
-                                "Failed to persist recovered Stripe provider fields (attempt {Attempt}/{MaxRetries}) | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                                attempt, recoveryMaxRetries, orderId, recoveredStripeIntent.StripePaymentIntentId, correlationId);
-
-                            await Task.Delay(100 * (int)Math.Pow(2, attempt - 1), cancellationToken);
-                            await _dbContext.Entry(existingIntent).ReloadAsync(cancellationToken);
-                            existingIntent.ProviderIntentId = recoveredStripeIntent.StripePaymentIntentId;
-                            SetClientSecret(existingIntent, recoveredStripeIntent.ClientSecret);
-                            existingIntent.ProviderMetadata = BuildRoutingMetadata(tenantId, orderId, storefrontBaseUrlForRecovery);
-                        }
-                    }
-
-                    _logger.LogInformation(
-                        "Recovered Stripe PaymentIntent from local pending claim | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                        orderId, recoveredStripeIntent.StripePaymentIntentId, correlationId);
-
-                    await transaction.CommitAsync(cancellationToken);
-
-                    return new StripePaymentIntentResponseDto
-                    {
-                        ClientSecret = recoveredStripeIntent.ClientSecret,
-                        PublishableKey = stripeConfig.PublishableKey,
-                        PaymentIntentId = existingIntent.Id,
-                        OrderId = orderId,
-                        OrderNumber = order.OrderNumber,
-                        Amount = order.Total,
-                        Currency = order.Currency,
-                        StripePaymentIntentId = recoveredStripeIntent.StripePaymentIntentId
-                    };
-                }
+                return await PersistStripeProviderIntentAsync(
+                    tenantId, orderId, existingIntent.Id, existingIntent.PaymentReference,
+                    promotionCalculationFailed, correlationId, stripeConfig, recovered,
+                    cancellationToken);
             }
 
             // Best-effort metadata repair - only resolve URL if repair is needed
@@ -539,6 +402,9 @@ public class StripePaymentService : IStripePaymentService
                 !string.IsNullOrWhiteSpace(claimedIntent.ProviderIntentId) &&
                 GetClientSecret(claimedIntent) == null)
             {
+                await recoveryTransaction.CommitAsync(cancellationToken);
+                await recoveryTransaction.DisposeAsync();
+                _dbContext.ChangeTracker.Clear();
                 _logger.LogWarning(
                     "Concurrent claim: Payment intent has ProviderIntentId but missing client secret, attempting recovery from Stripe | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
                     orderId, claimedIntent.ProviderIntentId, correlationId);
@@ -564,32 +430,15 @@ public class StripePaymentService : IStripePaymentService
                             correlationId);
 
                         _reliabilityTelemetry?.RecordPaymentIntentDuplicateAttempt("stripe", "concurrent_recovery_mismatch");
-                        await recoveryTransaction.RollbackAsync(cancellationToken);
                         throw new PaymentException(
                             "PAYMENT_INTENT_RECOVERY_FAILED",
                             "Concurrent payment intent recovery returned inconsistent provider authority.");
                     }
 
-                    _dbContext.PaymentIntents.Attach(claimedIntent);
-                    SetClientSecret(claimedIntent, recoveredStripeIntent.ClientSecret);
-                    await _dbContext.SaveChangesAsync(cancellationToken);
-                    await recoveryTransaction.CommitAsync(cancellationToken);
-
-                    _logger.LogInformation(
-                        "Concurrent claim: Successfully recovered client secret through canonical Stripe runtime application path | OrderId: {OrderId} | StripeIntentId: {StripeIntentId} | CorrelationId: {CorrelationId}",
-                        orderId, claimedIntent.ProviderIntentId, correlationId);
-
-                    return new StripePaymentIntentResponseDto
-                    {
-                        ClientSecret = recoveredStripeIntent.ClientSecret,
-                        PublishableKey = stripeConfig.PublishableKey,
-                        PaymentIntentId = claimedIntent.Id,
-                        OrderId = orderId,
-                        OrderNumber = order.OrderNumber,
-                        Amount = order.Total,
-                        Currency = order.Currency,
-                        StripePaymentIntentId = claimedIntent.ProviderIntentId
-                    };
+                    return await PersistStripeProviderIntentAsync(
+                        tenantId, orderId, claimedIntent.Id, claimedIntent.PaymentReference,
+                        promotionCalculationFailed, correlationId, stripeConfig,
+                        recoveredStripeIntent, cancellationToken);
                 }
                 catch (StripeApiException stripeEx)
                 {
@@ -606,7 +455,8 @@ public class StripePaymentService : IStripePaymentService
             }
 
             // Recovery failed, rollback recovery transaction before throwing
-            await recoveryTransaction.RollbackAsync(cancellationToken);
+            if (_dbContext.Database.CurrentTransaction != null)
+                await recoveryTransaction.RollbackAsync(cancellationToken);
 
             throw new PaymentException(
                 "PAYMENT_INTENT_IN_PROGRESS",
@@ -614,6 +464,8 @@ public class StripePaymentService : IStripePaymentService
         }
 
         await transaction.CommitAsync(cancellationToken);
+        await transaction.DisposeAsync();
+        _dbContext.ChangeTracker.Clear();
 
         StripeRuntimeApplicationResult stripePaymentIntent;
         var providerStopwatch = Stopwatch.StartNew();
@@ -644,11 +496,10 @@ public class StripePaymentService : IStripePaymentService
             _stripeTelemetry?.RecordProviderAvailability(tenantId, "create_payment_intent", false, ex.StripeError?.Code ?? "STRIPE_EXCEPTION");
             _stripeTelemetry?.RecordPaymentDuration(tenantId, "create_payment_intent", stopwatch.Elapsed, "failed");
 
-            await MarkPersistedStripeIntentFailedAsync(
-                paymentIntent.Id,
-                ex.StripeError?.Code,
-                ex.Message,
-                cancellationToken);
+            // A provider exception can represent an ambiguous timeout after
+            // Stripe accepted the intent. Retain the durable pending claim so
+            // retry uses its original idempotency key and reconciles the same
+            // provider intent instead of creating a second payment.
 
             _logger.LogError(ex,
                 "Stripe API error | OrderId: {OrderId} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
@@ -666,11 +517,8 @@ public class StripePaymentService : IStripePaymentService
             _stripeTelemetry?.RecordProviderAvailability(tenantId, "create_payment_intent", false, ex.StripeErrorCode ?? "PROVIDER_ERROR");
             _stripeTelemetry?.RecordPaymentDuration(tenantId, "create_payment_intent", stopwatch.Elapsed, "failed");
 
-            await MarkPersistedStripeIntentFailedAsync(
-                paymentIntent.Id,
-                ex.StripeErrorCode,
-                ex.Message,
-                cancellationToken);
+            // Do not terminally fail an ambiguous provider outcome. Recovery
+            // reuses the persisted claim and provider idempotency key.
 
             _logger.LogError(ex,
                 "Stripe runtime application error | OrderId: {OrderId} | ErrorCode: {ErrorCode} | CorrelationId: {CorrelationId}",
@@ -816,13 +664,26 @@ public class StripePaymentService : IStripePaymentService
                         $"Persisted Stripe payment intent {paymentIntentId} was not found for order {orderId}.");
                 }
 
+                if (paymentIntent.Status != PaymentIntentStatus.Pending ||
+                    order.Status != OrderStatus.Pending || order.PaymentStatus != PaymentStatus.Pending)
+                    throw new PaymentException("PAYMENT_INTENT_INVALID_STATE",
+                        "Order or payment claim changed during Stripe recovery.");
+
+                if (!string.IsNullOrWhiteSpace(paymentIntent.ProviderIntentId) &&
+                    !string.Equals(paymentIntent.ProviderIntentId,
+                        stripePaymentIntent.StripePaymentIntentId, StringComparison.Ordinal))
+                    throw new PaymentException("PAYMENT_INTENT_RECOVERY_FAILED",
+                        "Payment intent recovery returned inconsistent provider authority.");
+
                 if (string.IsNullOrWhiteSpace(paymentIntent.ProviderIntentId) ||
                     string.IsNullOrWhiteSpace(GetClientSecret(paymentIntent)))
                 {
+                    var needsCreatedEvent = string.IsNullOrWhiteSpace(paymentIntent.ProviderIntentId);
                     paymentIntent.ProviderIntentId = stripePaymentIntent.StripePaymentIntentId;
                     SetClientSecret(paymentIntent, stripePaymentIntent.ClientSecret);
 
-                    await _eventPublisher.PublishAsync(new PaymentIntentCreatedEvent
+                    if (needsCreatedEvent)
+                        await _eventPublisher.PublishAsync(new PaymentIntentCreatedEvent
                     {
                         TenantId = tenantId,
                         OrderId = orderId,
@@ -837,7 +698,7 @@ public class StripePaymentService : IStripePaymentService
                         PromotionCalculationFailed = promotionCalculationFailed,
                         CorrelationId = correlationId,
                         OccurredAtUtc = DateTime.UtcNow
-                    }, cancellationToken);
+                        }, cancellationToken);
 
                     await _dbContext.SaveChangesAsync(cancellationToken);
                 }
@@ -846,7 +707,7 @@ public class StripePaymentService : IStripePaymentService
 
                 return new StripePaymentIntentResponseDto
                 {
-                    ClientSecret = stripePaymentIntent.ClientSecret,
+                    ClientSecret = GetClientSecret(paymentIntent) ?? stripePaymentIntent.ClientSecret,
                     PublishableKey = stripeConfig.PublishableKey,
                     PaymentIntentId = paymentIntent.Id,
                     OrderId = orderId,
@@ -859,6 +720,7 @@ public class StripePaymentService : IStripePaymentService
             catch (DbUpdateException ex) when (attempt < maxRetries)
             {
                 await transaction.RollbackAsync(cancellationToken);
+                await transaction.DisposeAsync();
 
                 _logger.LogWarning(
                     ex,
@@ -881,38 +743,6 @@ public class StripePaymentService : IStripePaymentService
         throw new PaymentException(
             "PAYMENT_INTENT_PERSISTENCE_FAILED",
             $"Stripe provider state for order {orderId} could not be durably persisted after retries.");
-    }
-
-    private async Task MarkPersistedStripeIntentFailedAsync(
-        Guid paymentIntentId,
-        string? failureCode,
-        string failureReason,
-        CancellationToken cancellationToken)
-    {
-        _dbContext.ChangeTracker.Clear();
-        await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
-
-        try
-        {
-            var paymentIntent = await _dbContext.PaymentIntents
-                .FirstOrDefaultAsync(pi => pi.Id == paymentIntentId, cancellationToken);
-
-            if (paymentIntent != null && paymentIntent.Status == PaymentIntentStatus.Pending)
-            {
-                paymentIntent.Status = PaymentIntentStatus.Failed;
-                paymentIntent.FailedAt = DateTime.UtcNow;
-                paymentIntent.FailureCode = failureCode;
-                paymentIntent.FailureReason = failureReason;
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-
-            await transaction.CommitAsync(cancellationToken);
-        }
-        catch
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
-        }
     }
 
     #endregion

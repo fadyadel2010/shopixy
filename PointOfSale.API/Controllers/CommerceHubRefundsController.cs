@@ -8,7 +8,7 @@ using PointOfSale.Core.Interfaces;
 
 namespace PointOfSale.API.Controllers;
 
-[Authorize(Roles = "Owner,Admin")]
+[Authorize]
 [ApiController]
 [Route("api/commercehub/refunds")]
 public class CommerceHubRefundsController : ControllerBase

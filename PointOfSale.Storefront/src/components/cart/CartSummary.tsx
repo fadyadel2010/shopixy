@@ -21,8 +21,10 @@ import { Button } from '@/components/common';
 import { formatMoney } from '@/utils';
 import { useTranslation } from '@/i18n';
 import { useAuthStore, selectIsAuthenticated, selectAuthStatus } from '@/auth/store/authStore';
+import { selectBehavior, useStoreConfigStore } from '@/store';
 import { CouponInput } from './CouponInput';
 import { useIsAffiliateMode } from '@/contexts/AffiliateContext';
+import { canEnterCheckout } from '@/features/checkout/cartCheckoutAdmission';
 
 interface CartSummaryProps {
     /** Cart subtotal (before discount) */
@@ -86,16 +88,18 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
     const isAuthChecking = authStatus === 'unknown';
     const isAuthDegraded = authStatus === 'degraded';
     const isAuthUncertain = isAuthChecking || isAuthDegraded;
+    const enableGuestCheckout = useStoreConfigStore(selectBehavior).enableGuestCheckout;
 
     // AF-13B: Affiliate Mode acts as a passport for guest checkout
     const isAffiliateMode = useIsAffiliateMode();
+    const canCheckoutAsGuest = enableGuestCheckout || isAffiliateMode;
+    const canProceedToCheckout = canEnterCheckout(isAuthenticated, enableGuestCheckout, isAffiliateMode);
 
     /**
      * Handle checkout click
      */
     const handleCheckoutClick = () => {
-        // AF-13B: Allow guest checkout if affiliate mode is active
-        if (isAuthenticated || isAffiliateMode) {
+        if (canProceedToCheckout) {
             window.location.href = '/checkout';
         } else {
             // Redirect to login with return URL
@@ -228,14 +232,14 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
                 variant="primary"
                 size="lg"
                 fullWidth
-                disabled={isEmpty || (isAuthUncertain && !isAffiliateMode)}
+                disabled={isEmpty || (isAuthUncertain && !canCheckoutAsGuest)}
                 onClick={handleCheckoutClick}
             >
-                {isAuthUncertain && !isAffiliateMode ? (
+                {isAuthUncertain && !canCheckoutAsGuest ? (
                     isAuthDegraded
                         ? t('cart.degradedAuth.verifying')
                         : t('common.loading')
-                ) : (isAuthenticated || isAffiliateMode) ? (
+                ) : canProceedToCheckout ? (
                     <>
                         {t('cart.checkout')}
                         <svg className="w-5 h-5 ltr:ml-2 rtl:mr-2 rtl-flip" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -253,7 +257,7 @@ export const CartSummary: React.FC<CartSummaryProps> = ({
             </Button>
 
             {/* Guest user message */}
-            {!isAuthenticated && !isAuthUncertain && !isAffiliateMode && !isEmpty && (
+            {!isAuthenticated && !isAuthUncertain && !canCheckoutAsGuest && !isEmpty && (
                 <p className="text-xs text-muted text-center mt-3">
                     {t('cart.guestCheckoutHint')}
                 </p>

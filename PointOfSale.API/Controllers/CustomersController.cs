@@ -385,7 +385,6 @@ public class CustomersController : ControllerBase
     /// Update an existing customer
     /// </summary>
     [HttpPut("{id}")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> UpdateCustomer(Guid id, UpdateCustomerRequest request)
     {
         var customer = await _context.Customers.FirstOrDefaultAsync(entity => entity.Id == id);
@@ -647,7 +646,6 @@ public class CustomersController : ControllerBase
     /// Customers cannot be deleted if they have a balance or transaction history.
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> DeleteCustomer(Guid id)
     {
         var customer = await _context.Customers.FirstOrDefaultAsync(entity => entity.Id == id);
@@ -686,7 +684,6 @@ public class CustomersController : ControllerBase
     /// Check if a customer can be deleted - use this before showing delete button
     /// </summary>
     [HttpGet("{id}/can-delete")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> CanDeleteCustomer(Guid id)
     {
         var customer = await _context.Customers.FirstOrDefaultAsync(entity => entity.Id == id);

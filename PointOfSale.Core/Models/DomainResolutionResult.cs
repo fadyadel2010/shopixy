@@ -106,7 +106,7 @@ public sealed class DomainResolutionResult
     /// <returns>A result with <see cref="DomainResolutionStatus.Found"/>.</returns>
     public static DomainResolutionResult Found(
         string? normalizedHost,
-        Guid domainId,
+        Guid? domainId,
         Guid tenantId,
         RedirectType? redirectType = null,
         string? redirectTargetNormalizedHost = null,
@@ -119,5 +119,20 @@ public sealed class DomainResolutionResult
         TenantId = tenantId,
         RedirectType = redirectType,
         RedirectTargetNormalizedHost = redirectTargetNormalizedHost
+    };
+
+    /// <summary>
+    /// Creates a found result for the canonical slug/base-url authority where
+    /// no custom Domain row exists.
+    /// </summary>
+    public static DomainResolutionResult FoundTenantAuthority(
+        string normalizedHost,
+        Guid tenantId,
+        bool cacheAttempted = false) => new()
+    {
+        NormalizedHost = normalizedHost,
+        Status = DomainResolutionStatus.Found,
+        CacheAttempted = cacheAttempted,
+        TenantId = tenantId
     };
 }

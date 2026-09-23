@@ -86,6 +86,12 @@ vi.mock('../store/authStore', () => ({
     }),
 }))
 
+vi.mock('../contexts/SettingsContext', () => ({
+    useSettings: () => ({
+        settings: { storefrontUrl: 'https://store.example.test' },
+    }),
+}))
+
 vi.mock('react-i18next', () => ({
     useTranslation: () => ({
         i18n: { language: 'en' },

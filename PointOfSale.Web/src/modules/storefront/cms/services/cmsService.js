@@ -30,16 +30,26 @@ export function extractCmsConflict(error) {
 function admitCmsPreviewAccess(response) {
     const slug = typeof response?.slug === 'string' ? response.slug.trim() : ''
     const previewToken = typeof response?.previewToken === 'string' ? response.previewToken.trim() : ''
+    const previewUrl = typeof response?.previewUrl === 'string' ? response.previewUrl.trim() : ''
     const expiresAtUtc = typeof response?.expiresAtUtc === 'string' ? response.expiresAtUtc : ''
     const expiresAtMs = expiresAtUtc ? Date.parse(expiresAtUtc) : Number.NaN
 
-    if (!slug || !previewToken || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+    let parsedPreviewUrl
+    try {
+        parsedPreviewUrl = new URL(previewUrl)
+    } catch {
+        throw new Error('CMS preview access was rejected by backend preview admission.')
+    }
+
+    if (!slug || !previewToken || !Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()
+        || !['http:', 'https:'].includes(parsedPreviewUrl.protocol)) {
         throw new Error('CMS preview access was rejected by backend preview admission.')
     }
 
     return {
         slug,
         previewToken,
+        previewUrl: parsedPreviewUrl.toString(),
         expiresAtUtc,
     }
 }

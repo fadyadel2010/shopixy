@@ -70,6 +70,7 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductBySlug starting | TenantId: {TenantId} | Slug: {Slug} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, slug, affiliateModeOnly, cacheKey);
 
+        var cacheFactoryExecuted = false;
         var product = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product",
@@ -77,6 +78,7 @@ public class StorefrontProductService : IStorefrontProductService
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
+                cacheFactoryExecuted = true;
                 ProductDocument? document;
                 try
                 {
@@ -91,12 +93,18 @@ public class StorefrontProductService : IStorefrontProductService
                     throw;
                 }
 
+                if (document == null || document.TenantId != tenantId)
+                {
+                    return new CachePopulationResult<ProductReadDto>();
+                }
+
                 document = await ApplyCurrentSqlProductDetailAuthorityAsync(
                     tenantId,
                     document,
                     ct);
 
-                if (document == null)
+                if (document == null ||
+                    !string.Equals(document.Slug, slug, StringComparison.OrdinalIgnoreCase))
                 {
                     return new CachePopulationResult<ProductReadDto>();
                 }
@@ -117,6 +125,15 @@ public class StorefrontProductService : IStorefrontProductService
 
         if (product != null)
         {
+            // The factory has just loaded current SQL authority and checked the
+            // requested slug and affiliate mode. Repeating the overlay here on
+            // the cold path doubles the same request's relational acquisitions.
+            // A Redis hit still requires fresh SQL recomposition.
+            if (cacheFactoryExecuted)
+            {
+                return product;
+            }
+
             return await RecomposeCachedProductDetailFromSqlAuthorityAsync(
                 tenantId,
                 product,
@@ -149,6 +166,7 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductById starting | TenantId: {TenantId} | ProductId: {ProductId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, productId, affiliateModeOnly, cacheKey);
 
+        var cacheFactoryExecuted = false;
         var product = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product",
@@ -156,6 +174,7 @@ public class StorefrontProductService : IStorefrontProductService
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
+                cacheFactoryExecuted = true;
                 ProductDocument? document;
                 try
                 {
@@ -170,12 +189,19 @@ public class StorefrontProductService : IStorefrontProductService
                     throw;
                 }
 
+                if (document == null || document.TenantId != tenantId || document.ProductId != productId)
+                {
+                    // A malformed read-model candidate cannot authorize a
+                    // different ID (or tenant) under this request's cache key.
+                    return new CachePopulationResult<ProductReadDto>();
+                }
+
                 document = await ApplyCurrentSqlProductDetailAuthorityAsync(
                     tenantId,
                     document,
                     ct);
 
-                if (document == null)
+                if (document == null || document.ProductId != productId)
                 {
                     return new CachePopulationResult<ProductReadDto>();
                 }
@@ -188,20 +214,41 @@ public class StorefrontProductService : IStorefrontProductService
                 return CachePopulationResult<ProductReadDto>.FromValue(
                     MapToDto(document),
                     document.SyncedAtUtc,
-                    document.LastEventOccurredAtUtc,
-                    skipCache: !document.LastEventOccurredAtUtc.HasValue);
+                    // By-ID cache entries are only lookup candidates. The
+                    // read model's event lag does not authorize any returned
+                    // field; a Redis hit always rebuilds from current SQL.
+                    sourceEventOccurredAtUtc: null,
+                    // This by-ID entry is only a tenant-scoped candidate ID.
+                    // Every hit recomposes all returned fields from SQL, so a
+                    // missing Mongo event timestamp cannot make it authoritative.
+                    // Keeping the candidate avoids repeating Mongo + SQL inside
+                    // the distributed refresh lock for every identical by-ID read.
+                    skipCache: false);
             },
             maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken);
 
         if (product != null)
         {
-            return await RecomposeCachedProductDetailFromSqlAuthorityAsync(
+            if (cacheFactoryExecuted)
+            {
+                return product;
+            }
+
+            // A malformed candidate under this key must not redirect a by-ID
+            // request to another SQL-authorized product in the same tenant.
+            if (product.Id != productId)
+            {
+                return null;
+            }
+
+            var current = await RecomposeCachedProductDetailFromSqlAuthorityAsync(
                 tenantId,
                 product,
                 expectedSlug: null,
                 affiliateModeOnly,
                 cancellationToken);
+            return current?.Id == productId ? current : null;
         }
 
         _logger.LogInformation(
@@ -583,6 +630,7 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductList starting | TenantId: {TenantId} | Page: {Page} | PageSize: {PageSize} | CategoryId: {CategoryId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, query.Page, query.PageSize, query.CategoryId, affiliateModeOnly, cacheKey);
 
+        var cacheFactoryExecuted = false;
         var result = await _cacheService.GetOrCreateOwnedAsync(
             cacheKey,
             "storefront-product-list",
@@ -590,6 +638,7 @@ public class StorefrontProductService : IStorefrontProductService
             TimeSpan.FromMinutes(_redisSettings.ProductListCacheTtlMinutes),
             async ct =>
             {
+                cacheFactoryExecuted = true;
                 try
                 {
                     var (items, totalCount) = await _repository.GetProductListAsync(
@@ -644,6 +693,13 @@ public class StorefrontProductService : IStorefrontProductService
             maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken)
             ?? new PagedResult<ProductListItemDto>([], query.Page, query.PageSize, 0);
+
+        // A factory result was composed from SQL authority in this request. Running
+        // the same full overlay again only reacquires the same authority domains.
+        if (cacheFactoryExecuted)
+        {
+            return result;
+        }
 
         return await RecomposeCachedProductListFromSqlAuthorityAsync(
             tenantId,
@@ -713,7 +769,8 @@ public class StorefrontProductService : IStorefrontProductService
             return cached;
         }
 
-        var recomposed = new List<ProductListItemDto>(cached.Items.Count);
+        var placeholders = new List<ProductDocument>(cached.Items.Count);
+        var sourceItems = new List<ProductListItemDto>(cached.Items.Count);
         foreach (var item in cached.Items)
         {
             if (item.Id == Guid.Empty)
@@ -721,26 +778,35 @@ public class StorefrontProductService : IStorefrontProductService
                 continue;
             }
 
-            var current = await ApplyCurrentSqlProductDetailAuthorityAsync(
-                tenantId,
-                new ProductDocument
-                {
-                    TenantId = tenantId,
-                    ProductId = item.Id
-                },
-                cancellationToken);
+            placeholders.Add(new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = item.Id
+            });
+            sourceItems.Add(item);
+        }
 
-            if (current == null)
+        var recomposedDocs = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+            _dbContext,
+            placeholders,
+            tenantId,
+            cancellationToken);
+
+        var recomposed = new List<ProductListItemDto>(sourceItems.Count);
+        for (var i = 0; i < sourceItems.Count; i++)
+        {
+            var current = recomposedDocs[i];
+            if (!IsPubliclyVisibleProduct(current))
             {
                 continue;
             }
 
-            if (affiliateModeOnly && !current.IsAffiliateEnabled)
+            if (affiliateModeOnly && !current!.IsAffiliateEnabled)
             {
                 continue;
             }
 
-            recomposed.Add(MapToListItemDto(current));
+            recomposed.Add(MapToListItemDto(current!));
         }
 
         if (recomposed.Count != cached.Items.Count)
@@ -785,16 +851,21 @@ public class StorefrontProductService : IStorefrontProductService
         IReadOnlyCollection<ProductDocument> candidates,
         CancellationToken cancellationToken)
     {
-        var visible = new List<ProductDocument>(candidates.Count);
-
-        foreach (var candidate in candidates)
+        if (candidates.Count == 0)
         {
-            var sqlProjection = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                _dbContext,
-                candidate,
-                tenantId,
-                cancellationToken);
+            return new List<ProductDocument>();
+        }
 
+        var candidateList = candidates.ToList();
+        var recomposed = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+            _dbContext,
+            candidateList,
+            tenantId,
+            cancellationToken);
+
+        var visible = new List<ProductDocument>(candidateList.Count);
+        foreach (var sqlProjection in recomposed)
+        {
             if (sqlProjection is { IsActive: true, IsOnlineVisible: true })
             {
                 visible.Add(sqlProjection);

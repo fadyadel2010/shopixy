@@ -375,7 +375,6 @@ public class CouponsController : ControllerBase
     /// CQRS: Publishes CouponDeletedEvent for MongoDB projection
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> DeleteCoupon(Guid id, CancellationToken cancellationToken)
     {
         var tenantId = TenantId;
@@ -476,7 +475,6 @@ public class CouponsController : ControllerBase
     /// Rebuild coupon MongoDB read models directly from SQL authority.
     /// </summary>
     [HttpPost("sync-to-mongo")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> SyncCouponsToMongo(CancellationToken cancellationToken)
     {
         var tenantId = TenantId;

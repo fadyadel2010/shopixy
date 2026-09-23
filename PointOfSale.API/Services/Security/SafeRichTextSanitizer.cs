@@ -90,7 +90,7 @@ internal static class SafeRichTextSanitizer
     };
 
     private static readonly Regex DangerousElementRegex = new(
-        "<\\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|svg|math|base|noscript)\\b[^>]*>(.*?)<\\s*/\\s*\\1\\s*>|<\\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|svg|math|base|noscript)\\b[^>]*/?\\s*>",
+        "<\\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|img|svg|math|base|noscript)\\b[^>]*>(.*?)<\\s*/\\s*\\1\\s*>|<\\s*(script|style|iframe|object|embed|form|input|button|textarea|select|meta|link|img|svg|math|base|noscript)\\b[^>]*/?\\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
     private static readonly Regex HtmlCommentRegex = new(
@@ -126,6 +126,7 @@ internal static class SafeRichTextSanitizer
             var tagName = match.Groups["name"].Value.ToLowerInvariant();
             if (!AllowedTags.Contains(tagName))
             {
+                AppendSafeText(sanitized, match.Value.AsSpan());
                 continue;
             }
 

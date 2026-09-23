@@ -549,8 +549,8 @@ public class StorefrontCartController : ControllerBase
     #region PHASE 11.7 — Variant-Centric Cart Operations
 
     /// <summary>
-    /// PHASE 11.7: Updates the quantity of an item by VariantId.
-    /// VariantId is the ONLY identifier for cart items.
+    /// Updates the quantity of a cart line by its canonical VariantId.
+    /// This applies to simple and selectable-variant products.
     /// If quantity is 0, removes the item.
     /// </summary>
     /// <param name="variantId">Variant ID to update</param>
@@ -675,8 +675,8 @@ public class StorefrontCartController : ControllerBase
     }
 
     /// <summary>
-    /// PHASE 11.7: Removes an item from the cart by VariantId.
-    /// VariantId is the ONLY identifier for cart items.
+    /// Removes a cart line by its canonical VariantId.
+    /// This applies to simple and selectable-variant products.
     /// </summary>
     /// <param name="variantId">Variant ID to remove</param>
     /// <param name="cancellationToken">Cancellation token</param>

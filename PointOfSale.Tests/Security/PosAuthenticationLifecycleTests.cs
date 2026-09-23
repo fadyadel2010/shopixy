@@ -26,6 +26,51 @@ namespace PointOfSale.Tests.Security;
 public sealed class PosAuthenticationLifecycleTests
 {
     [Fact]
+    public async Task Login_AcceptsNormalizedEmailIdentifier()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = Context(tenantId);
+        context.Tenants.Add(Tenant(tenantId));
+        var user = User(tenantId);
+        user.PasswordHash = new PasswordHasher<User>().HashPassword(user, "Password!1");
+        context.Users.Add(user);
+        await context.SaveChangesAsync();
+
+        var login = Controller(context, tenantId);
+        var result = await login.Login(
+            new LoginRequest($"  {user.Email.ToUpperInvariant()}  ", "Password!1"),
+            CancellationToken.None);
+
+        var response = ResponseFrom(result.Result);
+        Assert.Equal(user.Id, response.User.Id);
+    }
+
+    [Fact]
+    public async Task Login_RejectsAmbiguousCrossFieldIdentity()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = Context(tenantId);
+        context.Tenants.Add(Tenant(tenantId));
+        var usernameMatch = User(tenantId);
+        usernameMatch.Username = "shared@example.test";
+        usernameMatch.Email = "first@example.test";
+        usernameMatch.PasswordHash = new PasswordHasher<User>().HashPassword(usernameMatch, "Password!1");
+        var emailMatch = User(tenantId);
+        emailMatch.Username = "second.user";
+        emailMatch.Email = "shared@example.test";
+        emailMatch.PasswordHash = new PasswordHasher<User>().HashPassword(emailMatch, "Password!1");
+        context.Users.AddRange(usernameMatch, emailMatch);
+        await context.SaveChangesAsync();
+
+        var login = Controller(context, tenantId);
+        var result = await login.Login(
+            new LoginRequest("shared@example.test", "Password!1"),
+            CancellationToken.None);
+
+        Assert.IsType<UnauthorizedObjectResult>(result.Result);
+    }
+
+    [Fact]
     public async Task RefreshToken_RotatesCurrentSessionAndRejectsReplayedCredential()
     {
         var tenantId = Guid.NewGuid();
@@ -164,7 +209,7 @@ public sealed class PosAuthenticationLifecycleTests
     }
 
     [Fact]
-    public async Task Register_CreatesIdentityOnlyWithoutPosSessionAuthority()
+    public async Task Register_IsDisabledWithoutCreatingIdentityOrSessionAuthority()
     {
         var tenantId = Guid.NewGuid();
         await using var context = Context(tenantId);
@@ -172,14 +217,12 @@ public sealed class PosAuthenticationLifecycleTests
         await context.SaveChangesAsync();
 
         var register = Controller(context, tenantId);
-        var registerResult = await register.Register(
-            new RegisterRequest("cashier.register", "cashier.register@example.test", "Password!1", "Cashier", "Register", null),
-            CancellationToken.None);
+        var registerResult = register.Register(
+            new RegisterRequest("cashier.register", "cashier.register@example.test", "Password!1", "Cashier", "Register", null));
 
-        Assert.IsType<OkObjectResult>(registerResult.Result);
-        var created = await context.Users.IgnoreQueryFilters().SingleAsync();
-        Assert.Null(created.RefreshToken);
-        Assert.Null(created.RefreshTokenExpiryTime);
+        var gone = Assert.IsType<ObjectResult>(registerResult.Result);
+        Assert.Equal(StatusCodes.Status410Gone, gone.StatusCode);
+        Assert.Empty(await context.Users.IgnoreQueryFilters().ToListAsync());
         Assert.DoesNotContain(
             register.HttpContext.Response.Headers.SetCookie,
             value => value?.StartsWith($"{AuthCookieConfiguration.PosAccessTokenCookieName}=", StringComparison.Ordinal) == true);

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
+using PointOfSale.Core.Financial;
 using PointOfSale.API.Services.CommerceHub;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
@@ -149,11 +150,21 @@ public class CommerceHubSearchSyncHealthCheck : IHealthCheck
                 item => item.listing.TenantId,
                 tenant => tenant.Id,
                 (item, tenant) => new { item.listing, item.product, item.variant, tenant })
+            .GroupJoin(
+                _dbContext.UserGovernanceProfiles.AsNoTracking(),
+                item => item.listing.TenantId,
+                profile => profile.SubjectId,
+                (item, governanceProfiles) => new { item.listing, item.product, item.variant, item.tenant, governanceProfiles })
+            .SelectMany(
+                item => item.governanceProfiles
+                    .Where(profile => profile.Role == PointOfSale.Core.Enums.UserGovernanceRole.Vendor)
+                    .DefaultIfEmpty(),
+                (item, governanceProfile) => new { item.listing, item.product, item.variant, item.tenant, governanceProfile })
             .Join(
                 _dbContext.CommerceHubCategories.AsNoTracking(),
                 item => item.listing.CommerceHubCategoryId,
                 category => category.Id,
-                (item, category) => new { item.listing, item.product, item.variant, item.tenant, category })
+                (item, category) => new { item.listing, item.product, item.variant, item.tenant, item.governanceProfile, category })
             .Where(item =>
                 !item.product.IsDeleted &&
                 item.product.IsActive &&
@@ -161,6 +172,11 @@ public class CommerceHubSearchSyncHealthCheck : IHealthCheck
                 item.product.PublishStatus == PointOfSale.Core.Enums.PublishStatus.Published &&
                 item.tenant.Status == PointOfSale.Core.Enums.TenantStatus.Active &&
                 item.tenant.DeletedAtUtc == null &&
+                item.tenant.Currency == FinancialCurrencyGuard.PlatformBaseCurrencyCode &&
+                item.governanceProfile != null &&
+                item.governanceProfile.Status == PointOfSale.Core.Enums.UserGovernanceStatus.Active &&
+                item.governanceProfile.IsKycVerified &&
+                item.governanceProfile.IsMarketplaceApproved &&
                 item.category.IsActive)
             .Select(item => new
             {

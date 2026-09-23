@@ -143,6 +143,8 @@ public class ApplicationDbContext : DbContext
     
     // Users & Settings
     public DbSet<User> Users => Set<User>();
+    // Users Management (Wave 1): purpose-bound invitation/password-reset tokens.
+    public DbSet<PosUserSecurityToken> PosUserSecurityTokens => Set<PosUserSecurityToken>();
     public DbSet<CanonicalIdentityLink> CanonicalIdentityLinks => Set<CanonicalIdentityLink>();
     public DbSet<SuperAdminUser> SuperAdmins => Set<SuperAdminUser>();
     public DbSet<UserGovernanceProfile> UserGovernanceProfiles => Set<UserGovernanceProfile>();
@@ -504,6 +506,13 @@ public class ApplicationDbContext : DbContext
 
         // Apply all entity configurations from assembly
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(ApplicationDbContext).Assembly);
+        if (Database.IsNpgsql())
+        {
+            modelBuilder.Entity<Tenant>().ToTable("Tenants", table => table.HasCheckConstraint(
+                "CK_Tenants_Slug_Canonical",
+                "\"Slug\" IS NULL OR (\"Slug\" = LOWER(BTRIM(\"Slug\")) AND LENGTH(\"Slug\") BETWEEN 3 AND 63 AND \"Slug\" ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND POSITION('--' IN \"Slug\") = 0)"));
+        }
+        ConfigurePosUserRowVersion(modelBuilder);
         modelBuilder.Entity<ProviderDeliveryOutboxMessage>().HasQueryFilter(e =>
             !e.IsDeleted && e.TenantId == CurrentTenantId);
         modelBuilder.Entity<ProviderDeliveryReplayAudit>().HasQueryFilter(e =>
@@ -602,6 +611,11 @@ public class ApplicationDbContext : DbContext
             
         modelBuilder.Entity<User>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
+
+        // Users Management (Wave 1): strict tenant filter for token authority.
+        // Anonymous ceremonies bypass via IgnoreQueryFilters with hash lookup.
+        modelBuilder.Entity<PosUserSecurityToken>().HasQueryFilter(e =>
+            e.TenantId == CurrentTenantId);
             
         modelBuilder.Entity<FinancialAccount>().HasQueryFilter(e => 
             !e.IsDeleted && e.TenantId == CurrentTenantId);
@@ -1502,12 +1516,10 @@ public class ApplicationDbContext : DbContext
             });
         });
 
-        // User Configuration (Phase 8.0 - TenantId)
-        modelBuilder.Entity<User>(entity =>
-        {
-            entity.HasIndex(e => e.Email);
-            entity.HasIndex(e => e.TenantId);
-        });
+        // User Configuration is owned by UserConfiguration
+        // (normalized identity, xmin concurrency, tenant FK, indexes).
+        // Applied via ApplyConfigurationsFromAssembly above; no inline
+        // mapping here to avoid duplicate index definitions.
 
         // EmailVerificationToken Configuration (Phase 8.4)
         modelBuilder.Entity<EmailVerificationToken>(entity =>
@@ -3618,6 +3630,8 @@ public class ApplicationDbContext : DbContext
     private void ApplyAuditAndCommerceHubImmutabilityGuards()
     {
         NormalizeCouponCodes();
+        NormalizePosUserIdentities();
+        BumpPosUserRowVersion();
         EnsureCanonicalIdentityLinks();
         GuardPosTenantForeignKeyCoOwnership();
         GuardShippingMethodWarehouseAuthority();
@@ -3627,6 +3641,8 @@ public class ApplicationDbContext : DbContext
     private async Task ApplyAuditAndCommerceHubImmutabilityGuardsAsync(CancellationToken cancellationToken)
     {
         NormalizeCouponCodes();
+        NormalizePosUserIdentities();
+        BumpPosUserRowVersion();
         await EnsureCanonicalIdentityLinksAsync(cancellationToken);
         await GuardPosTenantForeignKeyCoOwnershipAsync(cancellationToken);
         await GuardShippingMethodWarehouseAuthorityAsync(cancellationToken);
@@ -5913,6 +5929,86 @@ public class ApplicationDbContext : DbContext
             }
 
             entry.Entity.SetCode(entry.Entity.Code);
+        }
+    }
+
+    /// <summary>
+    /// Provider-conditional optimistic-concurrency mapping for User.RowVersion.
+    /// Production (Npgsql) uses the xmin system column following the
+    /// StoreConfig precedent. Other providers cannot generate xmin, so they
+    /// use a regular client-bumped concurrency column with identical
+    /// check semantics (see BumpPosUserRowVersion). Migrations and the model
+    /// snapshot are Npgsql-only and always record the xmin mapping.
+    /// </summary>
+    private void ConfigurePosUserRowVersion(ModelBuilder modelBuilder)
+    {
+        var rowVersion = modelBuilder.Entity<User>().Property(u => u.RowVersion);
+        if (Database.IsNpgsql())
+        {
+            rowVersion.HasColumnName("xmin").HasColumnType("xid").IsRowVersion();
+        }
+        else
+        {
+            rowVersion.HasColumnName("RowVersion").IsConcurrencyToken().ValueGeneratedNever();
+        }
+    }
+
+    /// <summary>
+    /// Client-side optimistic-concurrency bump for non-PostgreSQL providers.
+    /// On Npgsql the database generates xmin and this is a no-op.
+    /// </summary>
+    private void BumpPosUserRowVersion()
+    {
+        if (Database.IsNpgsql())
+        {
+            return;
+        }
+
+        foreach (var entry in ChangeTracker.Entries<User>())
+        {
+            if (entry.State is not EntityState.Added and not EntityState.Modified)
+            {
+                continue;
+            }
+
+            entry.Entity.RowVersion++;
+        }
+    }
+
+    /// <summary>
+    /// Server-authoritative safety net for POS identity normalization.
+    /// Every User insert or Username/Email change gets deterministic
+    /// normalized keys from the single PosIdentityNormalizer implementation,
+    /// so login lookups and global uniqueness hold on every write path
+    /// (registration, invitation, seeds). Service layers normalize
+    /// explicitly before queries; this guarantees persistence.
+    /// </summary>
+    private void NormalizePosUserIdentities()
+    {
+        foreach (var entry in ChangeTracker.Entries<User>())
+        {
+            if (entry.State is not EntityState.Added and not EntityState.Modified)
+            {
+                continue;
+            }
+
+            var user = entry.Entity;
+            var usernameChanged = entry.State == EntityState.Added ||
+                entry.Property(nameof(User.Username)).IsModified;
+            var emailChanged = entry.State == EntityState.Added ||
+                entry.Property(nameof(User.Email)).IsModified;
+
+            if ((usernameChanged || string.IsNullOrWhiteSpace(user.NormalizedUsername)) &&
+                !string.IsNullOrWhiteSpace(user.Username))
+            {
+                user.NormalizedUsername = PointOfSale.Core.Security.PosIdentityNormalizer.NormalizeUsername(user.Username);
+            }
+
+            if ((emailChanged || string.IsNullOrWhiteSpace(user.NormalizedEmail)) &&
+                !string.IsNullOrWhiteSpace(user.Email))
+            {
+                user.NormalizedEmail = PointOfSale.Core.Security.PosIdentityNormalizer.NormalizeEmail(user.Email);
+            }
         }
     }
 

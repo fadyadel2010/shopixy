@@ -11,8 +11,9 @@ public sealed class SearchSeoPublicIndexCertificationTests
 
         Assert.Contains("FilterSearchItemsBySqlAuthorityAsync", controller, StringComparison.Ordinal);
         Assert.Contains("RecomposeHeaderSuggestionsBySqlAuthorityAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", controller, StringComparison.Ordinal);
-        Assert.Contains("CategoryLineageAuthority.RequireLiveCategoryAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByIdsAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("CategoryLineageAuthority.LoadTenantSnapshotAsync", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductSearchSqlAuthorityOverlay.ApplyAsync", controller, StringComparison.Ordinal);
         Assert.Contains("TotalCount = totalCount", controller, StringComparison.Ordinal);
         Assert.Contains("totalCount = items.Count", productSearch, StringComparison.Ordinal);
         Assert.Contains("RecomposeDiscoveryItemsFromSqlAuthorityAsync", discovery, StringComparison.Ordinal);
@@ -45,6 +46,7 @@ public sealed class SearchSeoPublicIndexCertificationTests
 
         Assert.Contains("RecomposeAffiliateIntelligenceDocumentsBySqlAuthorityAsync", controller, StringComparison.Ordinal);
         Assert.Contains("RecomposeAffiliateIntelligenceDocumentBySqlAuthorityAsync", controller, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync", controller, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", controller, StringComparison.Ordinal);
         Assert.Contains("AffiliateProductPolicies", controller, StringComparison.Ordinal);
         Assert.Contains("product.TryResolveAffiliatePublicPricing(out var pricing)", controller, StringComparison.Ordinal);
@@ -64,6 +66,7 @@ public sealed class SearchSeoPublicIndexCertificationTests
 
         Assert.Contains("LoadCurrentVisibleProductBySlugAsync", seo, StringComparison.Ordinal);
         Assert.Contains("ApplyCurrentSqlProductAuthorityAsync", seo, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", seo, StringComparison.Ordinal);
         Assert.Contains("LoadCurrentCategoryBySlugAsync", seo, StringComparison.Ordinal);
         Assert.Contains("LoadCurrentPublishedCmsPagesAsync", seo, StringComparison.Ordinal);
         Assert.Contains("tenant.IsActive", seo, StringComparison.Ordinal);

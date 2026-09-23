@@ -17,10 +17,10 @@ public class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         
         builder.Property(t => t.Name)
             .IsRequired()
-            .HasMaxLength(200);
+            .HasMaxLength(100);
             
         builder.Property(t => t.Slug)
-            .HasMaxLength(100);
+            .HasMaxLength(63);
             
         builder.Property(t => t.ContactEmail)
             .HasMaxLength(255);

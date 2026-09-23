@@ -22,6 +22,7 @@ import {
     getSessionId,
     getTenantScopedStorageKey,
     resolveTenant,
+    setCanonicalTenant,
     setResolvedTenant,
     setSessionId,
 } from '@/bootstrap';
@@ -485,6 +486,19 @@ describe('commerce authority certification', () => {
         } finally {
             vi.unstubAllGlobals();
         }
+    });
+
+    it('promotes the host candidate to canonical StoreConfig tenant authority', () => {
+        setResolvedTenant('shopixy');
+
+        setCanonicalTenant(TENANT_A);
+        setSessionId(SESSION_A);
+
+        expect(getRequestHeaders()).toMatchObject({
+            'X-Tenant-Id': TENANT_A,
+            'X-Session-Id': SESSION_A,
+        });
+        expect(() => setCanonicalTenant('shopixy')).toThrow(/canonical tenant ID/i);
     });
 
     it('keeps storefront sessions tenant scoped in browser storage', () => {

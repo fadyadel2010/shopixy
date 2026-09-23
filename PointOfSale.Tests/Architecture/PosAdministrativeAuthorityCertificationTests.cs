@@ -10,7 +10,7 @@ namespace PointOfSale.Tests.Architecture;
 public sealed class PosAdministrativeAuthorityCertificationTests
 {
     [Fact]
-    public void OrdinaryRegistration_MustNotAcceptRoleOrTenantAuthority()
+    public void OrdinaryStaffRegistration_MustBeDisabledAndPermissionProtected()
     {
         Assert.Null(typeof(RegisterRequest).GetProperty("Role"));
         Assert.Null(typeof(RegisterRequest).GetProperty("TenantId"));
@@ -18,7 +18,9 @@ public sealed class PosAdministrativeAuthorityCertificationTests
         var authController = CertificationSource.ReadRepoFile(
             "PointOfSale.API/Controllers/AuthController.cs");
 
-        Assert.Contains("Role = UserRole.Cashier", authController, StringComparison.Ordinal);
+        Assert.Contains("[Authorize(Policy = PosPermissions.UsersInvite)]", authController, StringComparison.Ordinal);
+        Assert.Contains("POS_STAFF_REGISTRATION_DISABLED", authController, StringComparison.Ordinal);
+        Assert.DoesNotContain("Role = UserRole.Cashier", authController, StringComparison.Ordinal);
         Assert.Contains("Property 'role' is not allowed.", authController, StringComparison.Ordinal);
         Assert.Contains("Property 'tenantId' is not allowed.", authController, StringComparison.Ordinal);
     }

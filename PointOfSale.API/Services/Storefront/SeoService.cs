@@ -13,6 +13,8 @@ using PointOfSale.Infrastructure.MongoDB.Services;
 using PointOfSale.Infrastructure.Redis;
 using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Services;
+using PointOfSale.Infrastructure.Redis.Models;
+using StackExchange.Redis;
 using PointOfSale.Infrastructure.Reliability;
 
 namespace PointOfSale.API.Services.Storefront;
@@ -52,6 +54,12 @@ public class SeoService : ISeoService
     private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ILogger<SeoService> _logger;
     private readonly JsonSerializerOptions _jsonOptions;
+    private readonly IRedisJsonCacheService? _ownedSlugCache;
+    private readonly SlugDiscoveryFlights? _slugFlights;
+    private sealed class NegativeSlugResult
+    {
+        public bool Missing { get; set; } = true;
+    }
 
     // =============================================================================
     // SEO CACHE TTL CONFIGURATION
@@ -74,7 +82,9 @@ public class SeoService : ISeoService
         RedisConnectionFactory redisFactory,
         IOptions<RedisSettings> redisSettings,
         StorefrontUrlResolver storefrontUrlResolver,
-        ILogger<SeoService> logger)
+        ILogger<SeoService> logger,
+        IRedisJsonCacheService? ownedSlugCache = null,
+        SlugDiscoveryFlights? slugFlights = null)
     {
         _dbContext = dbContext;
         _productRepository = productRepository;
@@ -83,6 +93,8 @@ public class SeoService : ISeoService
         _redisSettings = redisSettings.Value;
         _storefrontUrlResolver = storefrontUrlResolver;
         _logger = logger;
+        _ownedSlugCache = ownedSlugCache;
+        _slugFlights = slugFlights;
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -442,50 +454,126 @@ public class SeoService : ISeoService
         CancellationToken cancellationToken = default)
     {
         const string operationName = "ResolveSlug";
-        var cacheKey = CacheKeyBuilder.SeoSlugResolutionKey(_redisSettings.InstanceName, tenantId, slug);
+        var cacheKey = CacheKeyBuilder.SeoSlugResolutionKey(_redisSettings.InstanceName, tenantId, slug)
+            + (_ownedSlugCache == null ? "" : ":owned:v2");
 
         _logger.LogDebug(
             "{OperationName} starting | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
             operationName, tenantId, slug, correlationId);
 
         // Step 1: Try Redis cache FIRST
-        var cachedData = await TryGetFromCacheAsync<SlugResolutionDto>(
-            tenantId, operationName, cacheKey, correlationId);
+        var cachedData = _ownedSlugCache == null
+            ? await TryGetFromCacheAsync<SlugResolutionDto>(tenantId, operationName, cacheKey, correlationId)
+            : await _ownedSlugCache.GetOwnedAsync<SlugResolutionDto>(
+                cacheKey, "seo-slug-candidate",
+                SeoSlugAuthorityKeys.Generation(_redisSettings.InstanceName),
+                cancellationToken: cancellationToken);
 
         if (cachedData != null)
         {
-            if (string.Equals(cachedData.Type, "cms", StringComparison.OrdinalIgnoreCase) &&
-                !await IsCurrentPublishedCmsPageAsync(tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken))
+            List<CategoryLineageRow>? categorySnapshot = null;
+            var isCurrent = true;
+            if (string.Equals(cachedData.Type, "cms", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogInformation(
-                    "Cached CMS slug resolution rejected by current SQL authority | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
-                    tenantId, slug, correlationId);
-                return null;
+                isCurrent = await IsCurrentPublishedCmsPageAsync(
+                    tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken);
+            }
+            else if (string.Equals(cachedData.Type, "category", StringComparison.OrdinalIgnoreCase))
+            {
+                categorySnapshot = await LoadCurrentCategoriesAsync(tenantId, cancellationToken);
+                isCurrent = await IsCurrentCategorySlugAsync(
+                    tenantId, cachedData.Id, cachedData.CanonicalSlug,
+                    cancellationToken, categorySnapshot);
+            }
+            else if (string.Equals(cachedData.Type, "product", StringComparison.OrdinalIgnoreCase))
+            {
+                isCurrent = await IsCurrentProductSlugAsync(
+                    tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken);
+            }
+            else
+            {
+                isCurrent = false;
             }
 
-            if (string.Equals(cachedData.Type, "category", StringComparison.OrdinalIgnoreCase) &&
-                !await IsCurrentCategorySlugAsync(tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken))
+            if (isCurrent)
             {
                 _logger.LogInformation(
-                    "Cached category slug resolution rejected by current SQL lineage authority | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
-                    tenantId, slug, correlationId);
-                return null;
-            }
-
-            if (string.Equals(cachedData.Type, "product", StringComparison.OrdinalIgnoreCase) &&
-                !await IsCurrentProductSlugAsync(tenantId, cachedData.Id, cachedData.CanonicalSlug, cancellationToken))
-            {
-                _logger.LogInformation(
-                    "Cached product slug resolution rejected by current SQL product authority | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
-                    tenantId, slug, correlationId);
-                return null;
+                    "Cache HIT | Operation: {OperationName} | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
+                    operationName, tenantId, slug, correlationId);
+                return cachedData;
             }
 
             _logger.LogInformation(
-                "Cache HIT | Operation: {OperationName} | TenantId: {TenantId} | Slug: {Slug} | CorrelationId: {CorrelationId}",
-                operationName, tenantId, slug, correlationId);
-            return cachedData;
+                "Cached slug candidate rejected by SQL authority; retrying current discovery | TenantId: {TenantId} | Slug: {Slug} | Type: {Type} | CorrelationId: {CorrelationId}",
+                tenantId, slug, cachedData.Type, correlationId);
+            await TryRemoveSlugCandidateAsync(cacheKey, tenantId, correlationId);
+            return await DiscoverOrShareMissingSlugAsync(tenantId, slug, cacheKey, correlationId, categorySnapshot, cancellationToken);
         }
+
+        return await DiscoverOrShareMissingSlugAsync(tenantId, slug, cacheKey, correlationId, null, cancellationToken);
+    }
+
+    private async Task<SlugResolutionDto?> DiscoverOrShareMissingSlugAsync(
+        Guid tenantId, string slug, string cacheKey, string correlationId,
+        List<CategoryLineageRow>? categorySnapshot, CancellationToken cancellationToken)
+    {
+        async Task<SlugResolutionDto?> Discover(CancellationToken ct) =>
+            await DiscoverSlugAsync(tenantId, slug, cacheKey, correlationId, categorySnapshot, ct);
+
+        if (_ownedSlugCache == null)
+            return _slugFlights == null
+                ? await Discover(cancellationToken)
+                : await _slugFlights.RunAsync(
+                    SeoSlugAuthorityKeys.Negative(_redisSettings.InstanceName, tenantId, slug),
+                    Discover, cancellationToken);
+
+        SlugResolutionDto? discovered = null;
+        try
+        {
+        await _ownedSlugCache.GetOrCreateOwnedAsync(
+            SeoSlugAuthorityKeys.Negative(_redisSettings.InstanceName, tenantId, slug),
+            "seo-slug-negative",
+            SeoSlugAuthorityKeys.Generation(_redisSettings.InstanceName),
+            TimeSpan.FromSeconds(3),
+            async ct =>
+            {
+                discovered = _slugFlights == null
+                    ? await Discover(ct)
+                    : await _slugFlights.RunAsync(
+                        SeoSlugAuthorityKeys.Negative(_redisSettings.InstanceName, tenantId, slug),
+                        Discover, ct);
+                // Only a SQL-confirmed miss may be shared. A positive result still
+                // requires SQL authority on every subsequent request.
+                return new CachePopulationResult<NegativeSlugResult>
+                {
+                    Value = new NegativeSlugResult(),
+                    SkipCache = discovered != null
+                };
+            },
+            cancellationToken: cancellationToken);
+
+        return discovered;
+        }
+        catch (RedisException ex)
+        {
+            _logger.LogWarning(ex, "Slug negative coordination unavailable; using local single-flight");
+            return discovered ?? (_slugFlights == null
+                ? await Discover(cancellationToken)
+                : await _slugFlights.RunAsync(
+                    SeoSlugAuthorityKeys.Negative(_redisSettings.InstanceName, tenantId, slug),
+                    Discover, cancellationToken));
+        }
+    }
+
+    private async Task<SlugResolutionDto?> DiscoverSlugAsync(
+        Guid tenantId,
+        string slug,
+        string cacheKey,
+        string correlationId,
+        List<CategoryLineageRow>? categorySnapshot,
+        CancellationToken cancellationToken)
+    {
+        const string operationName = "ResolveSlug";
 
         // Step 2: Try product first, then category
         _logger.LogDebug(
@@ -513,7 +601,10 @@ public class SeoService : ISeoService
             else
             {
                 // Try category
-                var category = await LoadCurrentCategoryBySlugAsync(tenantId, slug, cancellationToken);
+                var category = categorySnapshot != null
+                    ? categorySnapshot.FirstOrDefault(item =>
+                        string.Equals(GenerateSlug(item.Name), slug, StringComparison.OrdinalIgnoreCase))
+                    : await LoadCurrentCategoryBySlugAsync(tenantId, slug, cancellationToken);
                 if (category != null)
                 {
                     var categorySlug = GenerateSlug(category.Name);
@@ -569,12 +660,53 @@ public class SeoService : ISeoService
             "Slug resolved | Operation: {OperationName} | TenantId: {TenantId} | Slug: {Slug} | Type: {Type} | CorrelationId: {CorrelationId}",
             operationName, tenantId, slug, resolution.Type, correlationId);
 
-        // Step 3: Populate cache (fire-and-forget)
-        _ = PopulateCacheAsync(
-            tenantId, operationName, cacheKey, resolution,
-            TimeSpan.FromMinutes(SlugResolutionCacheTtlMinutes), correlationId);
+        // A stale candidate is still SQL-revalidated on every return; await the
+        // best-effort cache write so failures cannot outlive the request scope.
+        if (_ownedSlugCache == null)
+            await PopulateCacheAsync(
+                tenantId, operationName, cacheKey, resolution,
+                TimeSpan.FromMinutes(SlugResolutionCacheTtlMinutes), correlationId);
+        else
+        {
+            try
+            {
+                await _ownedSlugCache.GetOrCreateOwnedAsync(
+                cacheKey, "seo-slug-candidate",
+                SeoSlugAuthorityKeys.Generation(_redisSettings.InstanceName),
+                TimeSpan.FromMinutes(SlugResolutionCacheTtlMinutes),
+                _ => Task.FromResult(CachePopulationResult<SlugResolutionDto>.FromValue(resolution)),
+                cancellationToken: cancellationToken);
+            }
+            catch (RedisException ex)
+            {
+                _logger.LogWarning(ex, "Slug candidate cache unavailable; SQL resolution remains authoritative");
+            }
+        }
 
         return resolution;
+    }
+
+    private async Task TryRemoveSlugCandidateAsync(string cacheKey, Guid tenantId, string correlationId)
+    {
+        try
+        {
+            if (_ownedSlugCache != null)
+            {
+                await _ownedSlugCache.RemoveAsync(cacheKey);
+                return;
+            }
+            var database = _redisFactory.GetDatabase();
+            if (database != null)
+            {
+                await database.KeyDeleteAsync(cacheKey);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to evict stale slug candidate; SQL discovery continues | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
+                tenantId, correlationId);
+        }
     }
 
     #endregion
@@ -635,13 +767,13 @@ public class SeoService : ISeoService
                     onlineVisibleOnly: true,
                     cancellationToken: cancellationToken);
 
-                foreach (var candidate in products)
+                var recomposedProducts = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+                    _dbContext,
+                    products,
+                    tenantId,
+                    cancellationToken);
+                foreach (var product in recomposedProducts)
                 {
-                    var product = await ApplyCurrentSqlProductAuthorityAsync(
-                        tenantId,
-                        candidate,
-                        cancellationToken);
-
                     if (product is not { IsActive: true, IsOnlineVisible: true })
                     {
                         continue;
@@ -999,15 +1131,13 @@ public class SeoService : ISeoService
         string slug,
         CancellationToken cancellationToken)
     {
-        if (!await IsTenantPubliclyActiveAsync(tenantId, cancellationToken))
-        {
-            return null;
-        }
-
         return await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
             .Where(page => page.TenantId == tenantId)
+            .Where(page => _dbContext.Tenants.IgnoreQueryFilters().Any(tenant =>
+                tenant.Id == page.TenantId && tenant.IsActive &&
+                tenant.Status == TenantStatus.Active && tenant.DeletedAtUtc == null))
             .Where(page => !page.IsDeleted)
             .Where(page => page.IsPublished && !page.IsDraft)
             .Where(page => page.PublishedAt != null)
@@ -1053,16 +1183,14 @@ public class SeoService : ISeoService
         string slug,
         CancellationToken cancellationToken)
     {
-        if (!await IsTenantPubliclyActiveAsync(tenantId, cancellationToken))
-        {
-            return false;
-        }
-
         return await _dbContext.CmsPages
             .AsNoTracking()
             .IgnoreQueryFilters()
             .AnyAsync(
                 page => page.TenantId == tenantId &&
+                        _dbContext.Tenants.IgnoreQueryFilters().Any(tenant =>
+                            tenant.Id == page.TenantId && tenant.IsActive &&
+                            tenant.Status == TenantStatus.Active && tenant.DeletedAtUtc == null) &&
                         page.PageGroupId == pageGroupId &&
                         page.Slug == slug &&
                         !page.IsDeleted &&
@@ -1106,9 +1234,10 @@ public class SeoService : ISeoService
         Guid tenantId,
         Guid categoryId,
         string slug,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        List<CategoryLineageRow>? preloadedCategories = null)
     {
-        var categories = await LoadCurrentCategoriesAsync(tenantId, cancellationToken);
+        var categories = preloadedCategories ?? await LoadCurrentCategoriesAsync(tenantId, cancellationToken);
         return categories.Any(category =>
             category.CategoryId == categoryId &&
             string.Equals(GenerateSlug(category.Name), slug, StringComparison.OrdinalIgnoreCase));
@@ -1120,7 +1249,25 @@ public class SeoService : ISeoService
         CancellationToken cancellationToken)
     {
         var candidate = await _productRepository.FindBySlugAsync(tenantId, slug, true, cancellationToken);
-        return await ApplyCurrentSqlProductAuthorityAsync(tenantId, candidate, cancellationToken);
+        var current = await ApplyCurrentSqlProductAuthorityAsync(tenantId, candidate, cancellationToken);
+        if (current != null && string.Equals(current.Slug, slug, StringComparison.OrdinalIgnoreCase))
+            return current;
+
+        // Mongo is a projection and may not yet contain a freshly committed
+        // slug. Negative caching must never hide a SQL-visible product claim.
+        var currentProductId = await _dbContext.Products.AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(product => product.TenantId == tenantId && product.Slug == slug &&
+                              !product.IsDeleted && product.IsActive && product.IsOnlineVisible)
+            .Select(product => (Guid?)product.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!currentProductId.HasValue)
+            return null;
+
+        return await ApplyCurrentSqlProductAuthorityAsync(
+            tenantId,
+            new ProductDocument { TenantId = tenantId, ProductId = currentProductId.Value },
+            cancellationToken);
     }
 
     private async Task<ProductDocument?> ApplyCurrentSqlProductAuthorityAsync(

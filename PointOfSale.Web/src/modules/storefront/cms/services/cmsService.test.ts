@@ -56,6 +56,7 @@ describe('cmsService', () => {
             data: {
                 slug: 'about-us',
                 previewToken: 'backend-token',
+                previewUrl: 'https://shop.example.test/about-us?preview=true&previewToken=backend-token',
                 expiresAtUtc,
             },
         })
@@ -71,6 +72,7 @@ describe('cmsService', () => {
         expect(access).toEqual({
             slug: 'about-us',
             previewToken: 'backend-token',
+            previewUrl: 'https://shop.example.test/about-us?preview=true&previewToken=backend-token',
             expiresAtUtc,
         })
     })
@@ -80,6 +82,7 @@ describe('cmsService', () => {
             data: {
                 slug: 'about-us',
                 previewToken: '',
+                previewUrl: 'https://shop.example.test/about-us?preview=true',
                 expiresAtUtc: new Date(Date.now() + 60_000).toISOString(),
             },
         })

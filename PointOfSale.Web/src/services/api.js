@@ -201,6 +201,9 @@ const shouldRetryRequest = (error) => {
     return retryCount < API_RETRY_MAX_ATTEMPTS
 }
 
+export const canReplayAfterAuthRefresh = (config) =>
+    IDEMPOTENT_RETRY_METHODS.has(String(config?.method || 'get').toLowerCase())
+
 const BACKEND_DETAIL_LEAK_PATTERNS = [
     /exception/i,
     /stack trace/i,
@@ -314,7 +317,13 @@ api.interceptors.response.use(
 
             try {
                 await refreshAccessToken()
-                return api(originalRequest)
+                if (canReplayAfterAuthRefresh(originalRequest)) {
+                    return api(originalRequest)
+                }
+
+                // The session is refreshed for subsequent operator actions,
+                // but security mutations are never replayed automatically.
+                return Promise.reject(error)
             } catch (refreshError) {
                 if (import.meta.env.DEV) {
                     // Axios errors can retain request headers and transport

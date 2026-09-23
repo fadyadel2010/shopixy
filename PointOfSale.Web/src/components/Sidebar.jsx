@@ -34,6 +34,7 @@ import { useAuthStore } from '../store/authStore'
 import { useRTL } from '../hooks/useRTL'
 import { isServiceMarketplaceWorkflowActor } from '../marketplace/authority'
 import { canAccessCommerceHubVendorNavigationCapability } from '../auth/posVendorSessionAuthority'
+import { hasPosPermission } from '../auth/posPermissions'
 import {
     STOREFRONT_PRODUCT_NAVIGATION,
     STOREFRONT_SIDEBAR_STATE_KEY,
@@ -119,14 +120,13 @@ export default function Sidebar({ isOpen, onClose }) {
             : <span aria-hidden="true">{icon}</span>
     }
 
-    // Wave 2: unified localizer for the merged Storefront product tree.
-    // Handles both Design nodes (which get requiredRoles injected) and
-    // Operations nodes (which already have requiredRoles from IA data).
+    // Translate the merged Storefront tree and project POS permissions onto it.
     const localizeStorefrontProductNode = (node) => ({
         ...node,
         label: t(node.labelKey, node.fallbackLabel),
-        // Design nodes get Owner/Admin requirement; Operations nodes already have it
-        requiredRoles: node.requiredRoles || ['Owner', 'Admin'],
+        permission: node.permission || (node.path?.startsWith('/ecommerce')
+            ? 'storefront.orders.view'
+            : 'storefront.design.manage'),
         children: node.children?.map(localizeStorefrontProductNode),
     })
 
@@ -137,7 +137,8 @@ export default function Sidebar({ isOpen, onClose }) {
             key: 'dashboard',
             label: t('nav.dashboard'),
             icon: '📊',
-            path: '/'
+            path: '/',
+            permission: 'dashboard.view'
         },
         // 2) Database
         {
@@ -145,14 +146,14 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.database'),
             icon: '🗄️',
             children: [
-                { path: '/customers', label: t('nav.customersRegistration'), icon: '👥' },
-                { path: '/suppliers', label: t('nav.suppliersRegistration'), icon: '🏢' },
-                { path: '/sales-representatives', label: t('nav.salesRepRegistration'), icon: '👤' },
-                { path: '/categories', label: t('nav.mainSubCategories'), icon: '📑' },
-                { path: '/units', label: t('units.title'), icon: '📏' },
-                { path: '/warehouses', label: t('nav.warehouses'), icon: '🏭' },
-                { path: '/banks', label: t('banks.title'), icon: '🏦' },
-                { path: '/products', label: t('nav.itemCard'), icon: '🏷️' }
+                { path: '/customers', label: t('nav.customersRegistration'), icon: '👥', permission: 'customers.view' },
+                { path: '/suppliers', label: t('nav.suppliersRegistration'), icon: '🏢', permission: 'suppliers.view' },
+                { path: '/sales-representatives', label: t('nav.salesRepRegistration'), icon: '👤', permission: 'sales.operate' },
+                { path: '/categories', label: t('nav.mainSubCategories'), icon: '📑', permission: 'catalog.view' },
+                { path: '/units', label: t('units.title'), icon: '📏', permission: 'catalog.view' },
+                { path: '/warehouses', label: t('nav.warehouses'), icon: '🏭', permission: 'inventory.view' },
+                { path: '/banks', label: t('banks.title'), icon: '🏦', permission: 'finance.view' },
+                { path: '/products', label: t('nav.itemCard'), icon: '🏷️', permission: 'catalog.view' }
             ]
         },
         // 3) Accounts
@@ -161,8 +162,8 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.accounts'),
             icon: '💼',
             children: [
-                { path: '/financial-accounts?tab=main', label: t('accounts.mainAccounts'), icon: '🏦' },
-                { path: '/financial-accounts?tab=sub', label: t('accounts.subAccounts'), icon: '📂' }
+                { path: '/financial-accounts?tab=main', label: t('accounts.mainAccounts'), icon: '🏦', permission: 'finance.view' },
+                { path: '/financial-accounts?tab=sub', label: t('accounts.subAccounts'), icon: '📂', permission: 'finance.view' }
             ]
         },
         // 4) Opening Balance
@@ -171,10 +172,10 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.openingBalance'),
             icon: '🏁',
             children: [
-                { path: '/treasury/initial-capitalization', label: t('nav.treasuryInitialCapitalization'), icon: '💵', requiredRoles: ['Owner'] },
-                { path: '/opening-balance/customers', label: t('nav.customersOpeningBalance'), icon: '👥' },
-                { path: '/opening-balance/suppliers', label: t('nav.suppliersOpeningBalance'), icon: '🏢' },
-                { path: '/opening-balance/warehouse-stock', label: t('nav.warehouseOpeningBalance'), icon: '📦' }
+                { path: '/treasury/initial-capitalization', label: t('nav.treasuryInitialCapitalization'), icon: '💵', permission: 'finance.initialize' },
+                { path: '/opening-balance/customers', label: t('nav.customersOpeningBalance'), icon: '👥', permission: 'customers.balance.manage' },
+                { path: '/opening-balance/suppliers', label: t('nav.suppliersOpeningBalance'), icon: '🏢', permission: 'suppliers.balance.manage' },
+                { path: '/opening-balance/warehouse-stock', label: t('nav.warehouseOpeningBalance'), icon: '📦', permission: 'inventory.adjust' }
             ]
         },
         // 5) Transactions
@@ -183,10 +184,11 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.transactions'),
             icon: '🔄',
             children: [
-                { path: '/pos', label: t('nav.sales'), icon: '💳' },
-                { path: '/sales-returns', label: t('nav.salesReturn'), icon: '↩️' },
-                { path: '/purchase-invoice', label: t('nav.purchases'), icon: '➕' },
-                { path: '/purchase-returns', label: t('nav.purchaseReturn'), icon: '↩️' }
+                { path: '/pos', label: t('nav.sales'), icon: '💳', permission: 'sales.operate' },
+                { path: '/sales-history', label: t('nav.salesReport'), icon: '📊', permission: 'sales.view' },
+                { path: '/sales-returns', label: t('nav.salesReturn'), icon: '↩️', permission: 'sales.refund' },
+                { path: '/purchase-invoice', label: t('nav.purchases'), icon: '➕', permission: 'purchases.manage' },
+                { path: '/purchase-returns', label: t('nav.purchaseReturn'), icon: '↩️', permission: 'purchases.return' }
             ]
         },
         // 6) Treasury (Phase LTSR: Ledger-only)
@@ -196,15 +198,16 @@ export default function Sidebar({ isOpen, onClose }) {
             icon: '💰',
             children: [
                 // All Ledger-based routes (no fixed account-code identities)
-                { path: '/treasury', label: t('nav.financeDashboard'), icon: '📊' },
-                { path: '/treasury/hub', label: t('nav.treasuryHub'), icon: '🏦' },
-                { path: '/treasury/clearing-aging', label: t('treasury.clearingNav', 'Clearing Aging'), icon: '⏳' },
-                { path: '/treasury/general-ledger', label: t('treasury.generalLedgerNav', 'General Ledger'), icon: '📖' },
-                { path: '/supplier-card-funding', label: t('nav.supplierCardFunding'), icon: '💳', requiredRoles: ['Owner', 'Admin', 'Manager'] },
+                { path: '/treasury', label: t('nav.financeDashboard'), icon: '📊', permission: 'reports.financial.view' },
+                { path: '/treasury/hub', label: t('nav.treasuryHub'), icon: '🏦', permission: 'finance.view' },
+                { path: '/treasury/clearing-aging', label: t('treasury.clearingNav', 'Clearing Aging'), icon: '⏳', permission: 'reports.financial.view' },
+                { path: '/treasury/general-ledger', label: t('treasury.generalLedgerNav', 'General Ledger'), icon: '📖', permission: 'reports.financial.view' },
+                { path: '/supplier-card-funding', label: t('nav.supplierCardFunding'), icon: '💳', permission: 'suppliers.balance.manage' },
                 // Operational screens (not showing balance)
-                { path: '/payments', label: t('nav.customerSupplierPayments'), icon: '💸' },
-                { path: '/adjustments', label: t('nav.customerSupplierSettlement'), icon: '⚙️' },
-                { path: '/outstanding-balances', label: t('accounts.outstandingBalances'), icon: '⚠️' }
+                { path: '/payments', label: t('nav.customerSupplierPayments'), icon: '💸', permission: 'finance.operate' },
+                { path: '/adjustments', label: t('nav.customerSupplierSettlement'), icon: '⚙️', permission: 'finance.operate' },
+                { path: '/treasury/transfers', label: t('treasury.transfers', 'Treasury Transfers'), icon: '💸', permission: 'finance.operate' },
+                { path: '/outstanding-balances', label: t('accounts.outstandingBalances'), icon: '⚠️', permission: 'finance.view' }
             ]
         },
         // 7) Inventory
@@ -213,9 +216,9 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.inventory'),
             icon: '🏭',
             children: [
-                { path: '/inventory', label: t('nav.inventoryBalance'), icon: '📊' },
-                { path: '/stock-transfers', label: t('nav.inventoryTransfers'), icon: '🔄' },
-                { path: '/barcode-printing', label: t('nav.barcodePrinting'), icon: '🏷️' }
+                { path: '/inventory', label: t('nav.inventoryBalance'), icon: '📊', permission: 'inventory.view' },
+                { path: '/stock-transfers', label: t('nav.inventoryTransfers'), icon: '🔄', permission: 'inventory.transfer' },
+                { path: '/barcode-printing', label: t('nav.barcodePrinting'), icon: '🏷️', permission: 'catalog.view' }
             ]
         },
         // 8) Expenses
@@ -224,9 +227,9 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.expenses'),
             icon: '💸',
             children: [
-                { path: '/expense-categories', label: t('nav.expensesRegistration'), icon: '📁' },
-                { path: '/expenses', label: t('nav.expensesMovement'), icon: '💰' },
-                { path: '/reports/expenses', label: t('nav.expensesReport'), icon: '📈' }
+                { path: '/expense-categories', label: t('nav.expensesRegistration'), icon: '📁', permission: 'finance.view' },
+                { path: '/expenses', label: t('nav.expensesMovement'), icon: '💰', permission: 'finance.view' },
+                { path: '/reports/expenses', label: t('nav.expensesReport'), icon: '📈', permission: 'reports.operational.view' }
             ]
         },
         // 9) Account Statement
@@ -235,7 +238,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.accountStatement'),
             icon: '📄',
             children: [
-                { path: '/statement-of-account', label: t('nav.supplierCustomerStatement'), icon: '📋' }
+                { path: '/statement-of-account', label: t('nav.supplierCustomerStatement'), icon: '📋', permission: 'finance.view' }
             ]
         },
         // Wave 2: Unified Storefront product — Design + Operations under one root
@@ -254,11 +257,11 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.commerceHub', 'CommerceHub'),
             icon: '🏪',
             children: [
-                { path: '/commercehub/orders', label: t('nav.commerceHubOrders', 'Orders'), icon: '📦', capability: 'commercehub.orders.view' },
-                { path: '/admin/commercehub', label: t('nav.commerceHubSettings', 'Publishing Settings'), icon: '⚙️', capability: 'commercehub.catalog.manage' },
-                { path: '/commercehub/finance', label: t('nav.commerceHubFinance', 'Finance Dashboard'), icon: '💼', capability: 'commercehub.finance.view' },
-                { path: '/commercehub/earnings', label: t('nav.commerceHubEarnings', 'Vendor Earnings'), icon: '📈', capability: 'commercehub.finance.view' },
-                { path: '/commercehub/payments', label: t('nav.commerceHubDebtRepayment', 'Debt Repayment'), icon: '💸', capability: 'commercehub.payments.view' },
+                { path: '/commercehub/orders', label: t('nav.commerceHubOrders', 'Orders'), icon: '📦', capability: 'commercehub.orders.view', permission: 'storefront.orders.view' },
+                { path: '/admin/commercehub', label: t('nav.commerceHubSettings', 'Publishing Settings'), icon: '⚙️', capability: 'commercehub.catalog.manage', permission: 'catalog.publish' },
+                { path: '/commercehub/finance', label: t('nav.commerceHubFinance', 'Finance Dashboard'), icon: '💼', capability: 'commercehub.finance.view', permission: 'reports.financial.view' },
+                { path: '/commercehub/earnings', label: t('nav.commerceHubEarnings', 'Vendor Earnings'), icon: '📈', capability: 'commercehub.finance.view', permission: 'reports.financial.view' },
+                { path: '/commercehub/payments', label: t('nav.commerceHubDebtRepayment', 'Debt Repayment'), icon: '💸', capability: 'commercehub.payments.view', permission: 'storefront.payments.view' },
             ],
         },
 
@@ -268,7 +271,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.affiliateManagement', 'Affiliate Management'),
             icon: '👥',
             path: '/admin/affiliates',
-            requiredRoles: ['Owner', 'Admin'],
+            permission: 'affiliates.manage',
         },
         // Affiliate Products (product participation management) — Owner/Admin only
         {
@@ -276,7 +279,7 @@ export default function Sidebar({ isOpen, onClose }) {
             label: t('nav.affiliateProducts', 'Affiliate Products'),
             icon: '📦',
             path: '/admin/affiliates/products',
-            requiredRoles: ['Owner', 'Admin'],
+            permission: 'affiliates.manage',
         },
 
         // 10) Reports
@@ -284,6 +287,7 @@ export default function Sidebar({ isOpen, onClose }) {
             key: 'reports',
             label: t('nav.reports'),
             icon: '📈',
+            permission: 'reports.operational.view',
             children: [
                 // ═══════════════════════════════════════════════════════════════
                 // OPERATIONAL ANALYTICS REPORTS
@@ -312,7 +316,7 @@ export default function Sidebar({ isOpen, onClose }) {
             ]
         },
         // Finance Control Center (Phase 5) - Restricted to finance roles
-        ...(user?.role === 'Admin' || user?.role === 'SuperAdmin' || user?.role === 'Owner' || user?.role === 'Accountant' ? [{
+        ...(hasPosPermission(user, 'reports.financial.view') ? [{
             key: 'finance_control',
             label: t('nav.financeControlCenter', 'Finance Control Center'),
             icon: '🏦',
@@ -328,12 +332,13 @@ export default function Sidebar({ isOpen, onClose }) {
             ]
         }] : []),
         // 11) Users
-        ...(user?.role === 'Admin' || user?.role === 'SuperAdmin' ? [{
+        ...(hasPosPermission(user, 'users.view') || hasPosPermission(user, 'audit.view') ? [{
             key: 'users',
             label: t('nav.users'),
             icon: '👤',
             children: [
-                { path: '/settings/audit-log', label: t('nav.trackingUsers'), icon: '📜' }
+                ...(hasPosPermission(user, 'users.view') ? [{ path: '/users', label: t('nav.users'), icon: '👥', permission: 'users.view' }] : []),
+                { path: '/settings/audit-log', label: t('nav.trackingUsers'), icon: '📜', permission: 'audit.view' }
             ]
         }] : []),
         // 12) Settings
@@ -341,7 +346,8 @@ export default function Sidebar({ isOpen, onClose }) {
             key: 'settings',
             label: t('settings.settings'),
             icon: '⚙️',
-            path: '/settings'
+            path: '/settings',
+            permission: 'settings.view'
         },
     ]
 
@@ -351,7 +357,6 @@ export default function Sidebar({ isOpen, onClose }) {
     //   The Storefront product must never disappear. When capability-based
     //   filtering removes all children of a Storefront-product section, a
     //   placeholder is rendered instead of collapsing the section entirely.
-    const userRole = user?.role
     const STOREFRONT_PRODUCT_KEYS = new Set(['storefront', 'storefront-design', 'operations'])
 
     const createStorefrontAccessPlaceholder = (item) => ({
@@ -373,7 +378,7 @@ export default function Sidebar({ isOpen, onClose }) {
             return null
         }
 
-        if (item.requiredRoles?.length && !item.requiredRoles.includes(userRole)) {
+        if (item.permission && !hasPosPermission(user, item.permission)) {
             return STOREFRONT_PRODUCT_KEYS.has(item.key)
                 ? createStorefrontAccessPlaceholder(item)
                 : null
@@ -440,7 +445,7 @@ export default function Sidebar({ isOpen, onClose }) {
 
             return hasChanges ? nextValue : previous
         })
-    }, [location.pathname, location.search, userRole])
+    }, [location.pathname, location.search, user])
 
     const renderNestedNode = (node, depth = 1) => {
         const active = isMenuNodeActive(node)

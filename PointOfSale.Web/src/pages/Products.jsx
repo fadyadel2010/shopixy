@@ -18,6 +18,7 @@ import ProductExportPrintArea from '../components/ProductExportPrintArea'
 import ProductFeedDialog from '../components/ProductFeedDialog'
 import BulkMutationResult from '../components/bulk/BulkMutationResult'
 import { formatDateTime } from '../utils/dateFormat'
+import { useHasPermission } from '../components/PermissionGuard'
 import {
     EXPORT_SCOPE_CURRENT_VIEW,
     EXPORT_SCOPE_SELECTED,
@@ -26,9 +27,6 @@ import {
     getProductsForExport,
 } from '../utils/productExport'
 import { exportProductsToExcel } from '../utils/productExcelExport'
-
-// Storefront domain for deep links - Phase 7.10
-const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
 
 // Sort summary labels reuse the certified column-header keys. Dynamic
 // per-field locale keys (products.sortName, …) do not exist in either locale
@@ -106,6 +104,11 @@ export default function Products() {
     const { showSuccess, showError } = useToast()
     const { confirm, confirmAction } = useConfirmDialog()
     const navigate = useNavigate()
+    const canManageCatalog = useHasPermission('catalog.manage')
+    const canDeleteCatalog = useHasPermission('catalog.delete')
+    const canPublishCatalog = useHasPermission('catalog.publish')
+    const canAdjustInventory = useHasPermission('inventory.adjust')
+    const canBulkMutateCatalog = canManageCatalog || canDeleteCatalog || canPublishCatalog
 
     const [products, setProducts] = useState([])
     const [categories, setCategories] = useState([])
@@ -811,31 +814,37 @@ export default function Products() {
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-2xl font-bold text-gray-900">{t('products.title')}</h2>
                 <div className="flex flex-wrap items-center gap-2">
-                    <button
-                        type="button"
-                        ref={productFeedTriggerRef}
-                        onClick={() => setProductFeedOpen(true)}
-                        className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                    >
-                        {t('productFeed.title')}
-                    </button>
+                    {canPublishCatalog && (
+                        <button
+                            type="button"
+                            ref={productFeedTriggerRef}
+                            onClick={() => setProductFeedOpen(true)}
+                            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        >
+                            {t('productFeed.title')}
+                        </button>
+                    )}
                     <ProductExportMenu
                         onExport={handleExport}
                         selectedCount={selectedProductIds.length}
                         available={exportAvailable}
                         exporting={exporting}
                     />
-                    <button onClick={handleAdd} className="btn-primary">+ {t('products.addProduct')}</button>
+                    {canManageCatalog && (
+                        <button onClick={handleAdd} className="btn-primary">+ {t('products.addProduct')}</button>
+                    )}
                 </div>
             </div>
 
-            <ProductFeedDialog
-                open={productFeedOpen}
-                onOpenChange={setProductFeedOpen}
-                sessionFeedUrls={sessionFeedUrls}
-                onSessionFeedUrlChange={handleSessionFeedUrlChange}
-                restoreFocusRef={productFeedTriggerRef}
-            />
+            {canPublishCatalog && (
+                <ProductFeedDialog
+                    open={productFeedOpen}
+                    onOpenChange={setProductFeedOpen}
+                    sessionFeedUrls={sessionFeedUrls}
+                    onSessionFeedUrlChange={handleSessionFeedUrlChange}
+                    restoreFocusRef={productFeedTriggerRef}
+                />
+            )}
 
             {/* Search section - single prominent search input + search button */}
             <form onSubmit={handleSearch} className="mb-4 flex flex-col gap-2 sm:flex-row">
@@ -1091,6 +1100,7 @@ export default function Products() {
                 confirmation dialog; Delete is live in 6G.5 behind a
                 destructive awaited-action confirmation that can never start
                 the mutation without an explicit confirmation click. */}
+            {canBulkMutateCatalog && (
             <div
                 className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5"
                 aria-busy={isBulkMutating || undefined}
@@ -1105,46 +1115,52 @@ export default function Products() {
                         role="group"
                         aria-label={t('products.bulkActionsLabel')}
                     >
-                        <button
-                            type="button"
-                            disabled={selectedProductIds.length === 0 || isBulkMutating}
-                            onClick={handleBulkActivate}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {t('products.bulkActionActivate')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={selectedProductIds.length === 0 || isBulkMutating}
-                            onClick={handleBulkDeactivate}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {t('products.bulkActionDeactivate')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={selectedProductIds.length === 0 || isBulkMutating}
-                            onClick={handleBulkPublish}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {t('products.bulkActionPublish')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={selectedProductIds.length === 0 || isBulkMutating}
-                            onClick={handleBulkUnpublish}
-                            className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {t('products.bulkActionUnpublish')}
-                        </button>
-                        <button
-                            type="button"
-                            disabled={selectedProductIds.length === 0 || isBulkMutating}
-                            onClick={handleBulkDelete}
-                            className="px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg hover:bg-red-50 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                            {t('products.bulkActionDelete')}
-                        </button>
+                        {canManageCatalog && <>
+                            <button
+                                type="button"
+                                disabled={selectedProductIds.length === 0 || isBulkMutating}
+                                onClick={handleBulkActivate}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {t('products.bulkActionActivate')}
+                            </button>
+                            <button
+                                type="button"
+                                disabled={selectedProductIds.length === 0 || isBulkMutating}
+                                onClick={handleBulkDeactivate}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {t('products.bulkActionDeactivate')}
+                            </button>
+                        </>}
+                        {canPublishCatalog && <>
+                            <button
+                                type="button"
+                                disabled={selectedProductIds.length === 0 || isBulkMutating}
+                                onClick={handleBulkPublish}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {t('products.bulkActionPublish')}
+                            </button>
+                            <button
+                                type="button"
+                                disabled={selectedProductIds.length === 0 || isBulkMutating}
+                                onClick={handleBulkUnpublish}
+                                className="px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {t('products.bulkActionUnpublish')}
+                            </button>
+                        </>}
+                        {canDeleteCatalog && (
+                            <button
+                                type="button"
+                                disabled={selectedProductIds.length === 0 || isBulkMutating}
+                                onClick={handleBulkDelete}
+                                className="px-3 py-1.5 text-sm font-medium text-red-600 bg-white border border-red-300 rounded-lg hover:bg-red-50 focus:outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {t('products.bulkActionDelete')}
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={clearSelection}
@@ -1155,6 +1171,7 @@ export default function Products() {
                         </button>
                     </div>
             </div>
+            )}
 
             {/* Phase 6G.6: one shared, strictly passive result panel owns the
                 processing announcement and terminal presentation for all five
@@ -1163,7 +1180,7 @@ export default function Products() {
                 hook state plus the stable pre-mutation name snapshot and a
                 passive dismiss callback; refresh problems stay a separate
                 notice that never relabels the mutation itself as failed. */}
-            <BulkMutationResult
+            {canBulkMutateCatalog && <BulkMutationResult
                 action={bulkAction}
                 isMutating={isBulkMutating}
                 processingCount={bulkSelectedItems.length}
@@ -1172,7 +1189,7 @@ export default function Products() {
                 refreshError={bulkRefreshError}
                 resolveProductName={resolveBulkProductName}
                 onDismiss={handleDismissBulkResult}
-            />
+            />}
 
             <div className="card" aria-busy={loading || undefined}>
                 {hasStaleProductRows ? (
@@ -1219,7 +1236,7 @@ export default function Products() {
                             <thead className="bg-gray-50">
                                 <tr>
                                     {/* Select-all column (first column) */}
-                                    <th
+                                    {canBulkMutateCatalog && <th
                                         scope="col"
                                         className="px-3 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider"
                                         aria-label={t('products.selectAllVisible')}
@@ -1238,7 +1255,7 @@ export default function Products() {
                                                 className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                             />
                                         </div>
-                                    </th>
+                                    </th>}
                                     <SortableHeader
                                         field="name"
                                         label={t('products.productName')}
@@ -1314,14 +1331,14 @@ export default function Products() {
                                                     ? 'pointer-events-none opacity-60'
                                                     : selectedSet.has(product.id)
                                                         ? 'cursor-pointer hover:bg-gray-50 bg-primary-50'
-                                                        : 'cursor-pointer hover:bg-gray-50'
+                                                        : canManageCatalog ? 'cursor-pointer hover:bg-gray-50' : 'hover:bg-gray-50'
                                             }
-                                            onClick={hasStaleProductRows ? undefined : () => handleEdit(product.id)}
+                                            onClick={hasStaleProductRows || !canManageCatalog ? undefined : () => handleEdit(product.id)}
                                         >
                                             {/* Selection checkbox (first column). The wrapper isolates checkbox
                                                 interaction from the row click: clicking a checkbox or its label
                                                 must select the row, never navigate to the editor. */}
-                                            <td className="px-3 py-4 whitespace-nowrap">
+                                            {canBulkMutateCatalog && <td className="px-3 py-4 whitespace-nowrap">
                                                 <div
                                                     className="flex items-center justify-center"
                                                     onClick={(e) => e.stopPropagation()}
@@ -1338,7 +1355,7 @@ export default function Products() {
                                                         className="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                                                     />
                                                 </div>
-                                            </td>
+                                            </td>}
                                             {/* Product (primary identity column) */}
                                             <td className="max-w-xs px-6 py-4 align-top">
                                                 <div className="flex items-center gap-3">
@@ -1446,7 +1463,7 @@ export default function Products() {
                                             {/* Actions */}
                                             <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
                                                 <div className={`flex items-center gap-2 ${isRTL ? 'justify-start' : 'justify-end'}`}>
-                                                    <button
+                                                    {canManageCatalog && <button
                                                         type="button"
                                                         disabled={hasStaleProductRows}
                                                         onClick={(e) => {
@@ -1458,8 +1475,8 @@ export default function Products() {
                                                         aria-label={`${t('common.edit')}: ${product.name || t('products.product')}`}
                                                     >
                                                         {t('common.edit')}
-                                                    </button>
-                                                    <button
+                                                    </button>}
+                                                    {canDeleteCatalog && <button
                                                         type="button"
                                                         disabled={hasStaleProductRows}
                                                         onClick={(e) => {
@@ -1471,10 +1488,10 @@ export default function Products() {
                                                         aria-label={`${t('common.delete')}: ${product.name || t('products.product')}`}
                                                     >
                                                         {t('common.delete')}
-                                                    </button>
-                                                    {product.isOnlineVisible && product.slug && (
+                                                    </button>}
+                                                    {product.isOnlineVisible && product.slug && settings.storefrontUrl && (
                                                         <a
-                                                            href={`http://${STOREFRONT_DOMAIN}/products/${encodeURIComponent(product.slug)}`}
+                                                            href={`${settings.storefrontUrl}/products/${encodeURIComponent(product.slug)}`}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             aria-disabled={hasStaleProductRows}
@@ -1577,6 +1594,7 @@ export default function Products() {
                 <ProductStockModal
                     productId={stockModal.productId}
                     productName={stockModal.productName}
+                    canAdjust={canAdjustInventory}
                     onClose={() => setStockModal(null)}
                 />
             )}
@@ -1590,7 +1608,7 @@ export default function Products() {
             )}
 
             {/* Validation Delete Modal */}
-            {deleteModal && (
+            {canDeleteCatalog && deleteModal && (
                 <ValidationDeleteModal
                     isOpen={!!deleteModal}
                     onClose={() => setDeleteModal(null)}

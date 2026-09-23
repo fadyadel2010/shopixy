@@ -407,11 +407,10 @@ public class AffiliatePromotionLinksController : ControllerBase
 
         var productPathSegment = string.IsNullOrWhiteSpace(productSlug)
             ? link.ProductId.ToString()
-            : Uri.EscapeDataString(productSlug);
-        var referralCode = Uri.EscapeDataString(link.ReferralCode);
+            : productSlug;
         var promotionUrl = string.IsNullOrWhiteSpace(storefrontBaseUrl)
             ? null
-            : $"{storefrontBaseUrl}/products/{productPathSegment}?ref={referralCode}";
+            : _urlResolver.BuildPromotionLink(tenant!, productPathSegment, link.ReferralCode);
 
         return new PromotionLinkResponse
         {

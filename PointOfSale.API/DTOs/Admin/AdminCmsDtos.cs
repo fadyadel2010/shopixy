@@ -109,6 +109,7 @@ public sealed class AdminCmsPreviewAccessResponse
 {
     public string Slug { get; set; } = string.Empty;
     public string PreviewToken { get; set; } = string.Empty;
+    public string PreviewUrl { get; set; } = string.Empty;
     public DateTime ExpiresAtUtc { get; set; }
 }
 

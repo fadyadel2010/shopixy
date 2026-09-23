@@ -3,10 +3,12 @@ import api from '../services/api'
 import { useToast } from '../components/Toast'
 import { useTranslation } from 'react-i18next'
 import { useRTL } from '../hooks/useRTL'
+import { useHasPermission } from '../components/PermissionGuard'
 
 export default function Warehouses() {
     const { t } = useTranslation()
     const { isRTL, dir } = useRTL()
+    const canManageWarehouses = useHasPermission('inventory.approve')
     const tableTextAlignClass = isRTL ? 'text-right' : 'text-left'
     const actionAlignClass = isRTL ? 'text-left' : 'text-right'
     const badgeSpacingClass = isRTL ? 'mr-2' : 'ml-2'
@@ -105,9 +107,11 @@ export default function Warehouses() {
         <div dir={dir} className="h-full flex flex-col">
             <div className="mb-6 flex justify-between items-center">
                 <h1 className="text-2xl font-bold text-gray-800">{t('warehouses.title')}</h1>
-                <button onClick={handleAdd} className="btn-primary">
-                    + {t('warehouses.addWarehouse')}
-                </button>
+                {canManageWarehouses && (
+                    <button onClick={handleAdd} className="btn-primary">
+                        + {t('warehouses.addWarehouse')}
+                    </button>
+                )}
             </div>
 
             {/* Warehouses Table */}
@@ -160,18 +164,22 @@ export default function Warehouses() {
                                             </span>
                                         </td>
                                         <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${actionAlignClass}`}>
-                                            <button
-                                                onClick={() => handleEdit(warehouse)}
-                                                className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
-                                            >
-                                                {t('common.edit')}
-                                            </button>
-                                            <button
-                                                onClick={() => handleToggleActive(warehouse)}
-                                                className={`${warehouse.isActive ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
-                                            >
-                                                {warehouse.isActive ? t('warehouses.deactivate') : t('warehouses.activate')}
-                                            </button>
+                                            {canManageWarehouses && (
+                                                <>
+                                                    <button
+                                                        onClick={() => handleEdit(warehouse)}
+                                                        className={`text-primary-600 hover:text-primary-900 ${actionSpacingClass}`}
+                                                    >
+                                                        {t('common.edit')}
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleToggleActive(warehouse)}
+                                                        className={`${warehouse.isActive ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
+                                                    >
+                                                        {warehouse.isActive ? t('warehouses.deactivate') : t('warehouses.activate')}
+                                                    </button>
+                                                </>
+                                            )}
                                         </td>
                                     </tr>
                                 ))
@@ -182,7 +190,7 @@ export default function Warehouses() {
             </div>
 
             {/* Create/Edit Modal */}
-            {showModal && (
+            {canManageWarehouses && showModal && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div className="bg-white rounded-lg shadow-xl max-w-md w-full mx-4 p-6">
                         <h2 className="text-xl font-bold mb-4">

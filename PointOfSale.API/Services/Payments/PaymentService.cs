@@ -248,6 +248,8 @@ public class PaymentService : IPaymentService
                 if (IsProviderInitiationIncomplete(existingActiveIntent))
                 {
                     await transaction.RollbackAsync(cancellationToken);
+                    await transaction.DisposeAsync();
+                    _dbContext.ChangeTracker.Clear();
 
                     var resumedResponse = await EnsurePersistedPaymentIntentReadyAsync(
                         tenantId,
@@ -430,6 +432,8 @@ public class PaymentService : IPaymentService
             }
 
             await transaction.CommitAsync(cancellationToken);
+            await transaction.DisposeAsync();
+            _dbContext.ChangeTracker.Clear();
 
             var finalizedResponse = await EnsurePersistedPaymentIntentReadyAsync(
                 tenantId,

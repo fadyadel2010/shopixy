@@ -1129,11 +1129,16 @@ public sealed class InventoryReservationLifecycleIntegrationTests
             .SingleAsync(item => item.TenantId == tenantId && item.VariantId == scenario.VariantId);
         var reservation = await verifyContext.InventoryReservations
             .SingleAsync(item => item.TenantId == tenantId && item.OrderId == scenario.OrderId);
+        await using var metricsContext = await CreateDbContextAsync(connection, Guid.Empty);
+        var snapshot = await CreateMetricsService(metricsContext, monitoringOptions).RefreshSnapshotAsync();
 
         Assert.Equal(9m, stock.Quantity);
         Assert.Equal(2m, stock.ReservedQuantity);
         Assert.Equal(0m, reservation.ReleasedQuantity);
         Assert.Equal(InventoryReservationStatus.Active, reservation.Status);
+        Assert.Equal(2m, snapshot.TotalReservedQuantity);
+        Assert.Equal(0, snapshot.StaleReservationCount);
+        Assert.Equal(0m, snapshot.StaleReservedQuantity);
         
         // Verify coupon reservation was NOT released (payment still active)
         couponValidationMock.Verify(

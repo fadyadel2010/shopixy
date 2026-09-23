@@ -56,6 +56,7 @@ const createDefaultSettings = () => ({
     receiptHeader: '',
     receiptFooter: '',
     showLogoOnReceipt: true,
+    storefrontUrl: '',
     printFormat: getStoredPrintFormat(),
 })
 
@@ -122,7 +123,11 @@ export function SettingsProvider({ children }) {
                 setSettings((prev) => normalizeSettingsPayload(response.data, prev))
             }
         } catch (error) {
-            console.error('Error loading settings:', error)
+            // Permission-gated reads fail closed with 403; keep safe defaults
+            // silently instead of spamming the console for restricted roles.
+            if (error?.response?.status !== 403) {
+                console.error('Error loading settings:', error)
+            }
         } finally {
             setLoading(false)
         }

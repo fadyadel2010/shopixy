@@ -37,6 +37,19 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
         _tenantContext = _fixture.TenantContext;
         _context = _fixture.Context;
         _publishEndpointMock = _fixture.PublishEndpointMock;
+        if (!_context.Tenants.IgnoreQueryFilters().Any(tenant => tenant.Id == _tenantId))
+        {
+            _context.Tenants.Add(new Tenant
+            {
+                Id = _tenantId,
+                Name = "Trust Engine Test Tenant",
+                Slug = $"trust-{_tenantId:N}",
+                IsActive = true,
+                Status = TenantStatus.Active
+            });
+            _context.SaveChanges();
+        }
+
         _publishEndpointMock
             .Setup(publisher => publisher.PublishAsync(It.IsAny<ProviderTrustUpdatedEvent>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -98,18 +111,19 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
     {
         var providerProfile = await SeedMarketplaceProfileAsync();
         var providerProfileId = providerProfile.Id;
+        var authority = await SeedCompletedReviewAsync(providerProfile, 5);
 
         var consumer = new ProviderTrustConsumer(_context, _publishEndpointMock.Object, Mock.Of<Microsoft.Extensions.Logging.ILogger<ProviderTrustConsumer>>());
 
         var @event = new ServiceReviewCreatedEvent
         {
-            ReviewId = Guid.NewGuid(),
+            ReviewId = authority.Review.Id,
             TenantId = _tenantId,
-            ServiceRequestId = Guid.NewGuid(),
-            ServiceId = Guid.NewGuid(),
-            ProviderUserId = Guid.NewGuid(),
+            ServiceRequestId = authority.Request.Id,
+            ServiceId = authority.Request.ServiceId,
+            ProviderUserId = authority.Request.ProviderUserId,
             ProviderProfileId = providerProfileId,
-            ReviewerUserId = Guid.NewGuid(),
+            ReviewerUserId = authority.Request.BuyerUserId,
             Rating = 5,
             CreatedAt = DateTime.UtcNow
         };
@@ -132,6 +146,8 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
     {
         var providerProfile = await SeedMarketplaceProfileAsync();
         var providerProfileId = providerProfile.Id;
+        var firstAuthority = await SeedCompletedReviewAsync(providerProfile, 5);
+        var secondAuthority = await SeedCompletedReviewAsync(providerProfile, 3);
 
         // Create initial aggregate
         var aggregate = ProviderTrustAggregate.Create(_tenantId, providerProfileId);
@@ -143,13 +159,13 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
         // Apply first review
         var event1 = new ServiceReviewCreatedEvent
         {
-            ReviewId = Guid.NewGuid(),
+            ReviewId = firstAuthority.Review.Id,
             TenantId = _tenantId,
-            ServiceRequestId = Guid.NewGuid(),
-            ServiceId = Guid.NewGuid(),
-            ProviderUserId = Guid.NewGuid(),
+            ServiceRequestId = firstAuthority.Request.Id,
+            ServiceId = firstAuthority.Request.ServiceId,
+            ProviderUserId = firstAuthority.Request.ProviderUserId,
             ProviderProfileId = providerProfileId,
-            ReviewerUserId = Guid.NewGuid(),
+            ReviewerUserId = firstAuthority.Request.BuyerUserId,
             Rating = 5,
             CreatedAt = DateTime.UtcNow
         };
@@ -159,13 +175,13 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
         // Apply second review
         var event2 = new ServiceReviewCreatedEvent
         {
-            ReviewId = Guid.NewGuid(),
+            ReviewId = secondAuthority.Review.Id,
             TenantId = _tenantId,
-            ServiceRequestId = Guid.NewGuid(),
-            ServiceId = Guid.NewGuid(),
-            ProviderUserId = Guid.NewGuid(),
+            ServiceRequestId = secondAuthority.Request.Id,
+            ServiceId = secondAuthority.Request.ServiceId,
+            ProviderUserId = secondAuthority.Request.ProviderUserId,
             ProviderProfileId = providerProfileId,
-            ReviewerUserId = Guid.NewGuid(),
+            ReviewerUserId = secondAuthority.Request.BuyerUserId,
             Rating = 3,
             CreatedAt = DateTime.UtcNow
         };
@@ -225,13 +241,9 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
             new CreateMarketplaceProfileDto("Provider", "Bio")
         );
 
-        var aggregate = ProviderTrustAggregate.Create(_tenantId, profile.Id);
-        aggregate.ApplyReview(5);
-        aggregate.ApplyReview(4);
-        aggregate.ApplyReview(5);
-
-        _context.Set<ProviderTrustAggregate>().Add(aggregate);
-        await _context.SaveChangesAsync();
+        await SeedCompletedReviewAsync(profile, 5);
+        await SeedCompletedReviewAsync(profile, 4);
+        await SeedCompletedReviewAsync(profile, 5);
 
         var retrieved = await _trustService.GetTrustAggregateAsync(profile.Id);
 
@@ -248,17 +260,9 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
         var provider2 = await _profileService.CreateProfileAsync(Guid.NewGuid(), new CreateMarketplaceProfileDto("Provider 2", "Bio"));
         var provider3 = await _profileService.CreateProfileAsync(Guid.NewGuid(), new CreateMarketplaceProfileDto("Provider 3", "Bio"));
 
-        var aggregate1 = ProviderTrustAggregate.Create(_tenantId, provider1.Id);
-        for (int i = 0; i < 10; i++) aggregate1.ApplyReview(4);
-
-        var aggregate2 = ProviderTrustAggregate.Create(_tenantId, provider2.Id);
-        for (int i = 0; i < 10; i++) aggregate2.ApplyReview(5);
-
-        var aggregate3 = ProviderTrustAggregate.Create(_tenantId, provider3.Id);
-        for (int i = 0; i < 10; i++) aggregate3.ApplyReview(3);
-
-        _context.Set<ProviderTrustAggregate>().AddRange(aggregate1, aggregate2, aggregate3);
-        await _context.SaveChangesAsync();
+        for (int i = 0; i < 10; i++) await SeedCompletedReviewAsync(provider1, 4);
+        for (int i = 0; i < 10; i++) await SeedCompletedReviewAsync(provider2, 5);
+        for (int i = 0; i < 10; i++) await SeedCompletedReviewAsync(provider3, 3);
 
         var topProviders = await _trustService.GetTopRatedProvidersAsync(10);
         var list = topProviders.ToList();
@@ -274,18 +278,19 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
     {
         var providerProfile = await SeedMarketplaceProfileAsync();
         var providerProfileId = providerProfile.Id;
+        var authority = await SeedCompletedReviewAsync(providerProfile, 5);
 
         var consumer = new ProviderTrustConsumer(_context, _publishEndpointMock.Object, Mock.Of<Microsoft.Extensions.Logging.ILogger<ProviderTrustConsumer>>());
 
         var @event = new ServiceReviewCreatedEvent
         {
-            ReviewId = Guid.NewGuid(),
+            ReviewId = authority.Review.Id,
             TenantId = _tenantId,
-            ServiceRequestId = Guid.NewGuid(),
-            ServiceId = Guid.NewGuid(),
-            ProviderUserId = Guid.NewGuid(),
+            ServiceRequestId = authority.Request.Id,
+            ServiceId = authority.Request.ServiceId,
+            ProviderUserId = authority.Request.ProviderUserId,
             ProviderProfileId = providerProfileId,
-            ReviewerUserId = Guid.NewGuid(),
+            ReviewerUserId = authority.Request.BuyerUserId,
             Rating = 5,
             CreatedAt = DateTime.UtcNow
         };
@@ -321,5 +326,41 @@ public class TrustEngineIntegrationTests : IClassFixture<IntegrationTestFixture>
         _context.Set<MarketplaceProfile>().Add(profile);
         await _context.SaveChangesAsync();
         return profile;
+    }
+
+    private async Task<(ServiceRequest Request, ServiceReview Review)> SeedCompletedReviewAsync(
+        MarketplaceProfile profile,
+        int rating)
+    {
+        var service = Service.Create(_tenantId, profile.Id, "Trust Service", "Trust service description");
+        var request = ServiceRequest.Create(
+            _tenantId,
+            service.Id,
+            Guid.NewGuid(),
+            profile.UserId,
+            profile.Id,
+            service.Title,
+            service.Category,
+            service.StartingPrice,
+            service.PricingType,
+            service.Currency,
+            service.Packages);
+        request.Accept();
+        request.MarkCompletedByProvider();
+        request.ConfirmCompletedByBuyer();
+
+        var review = ServiceReview.Create(
+            _tenantId,
+            request.Id,
+            service.Id,
+            request.BuyerUserId,
+            request.ProviderUserId,
+            rating);
+
+        _context.Set<Service>().Add(service);
+        _context.Set<ServiceRequest>().Add(request);
+        _context.Set<ServiceReview>().Add(review);
+        await _context.SaveChangesAsync();
+        return (request, review);
     }
 }

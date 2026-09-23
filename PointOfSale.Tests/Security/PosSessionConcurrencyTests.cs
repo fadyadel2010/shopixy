@@ -23,6 +23,13 @@ public sealed class PosSessionConcurrencyTests
         await using (var setup = new SessionBindingDbContext(options))
         {
             await setup.Database.EnsureCreatedAsync();
+            setup.Set<Tenant>().Add(new Tenant
+            {
+                Id = tenantId,
+                Name = "Session concurrency tenant",
+                Status = TenantStatus.Active,
+                IsActive = true
+            });
             setup.Users.Add(new User
             {
                 Id = userId,

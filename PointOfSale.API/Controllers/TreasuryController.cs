@@ -748,7 +748,6 @@ public class TreasuryController : ControllerBase
     /// PHASE TOJ: Cash In - receive money into treasury.
     /// </summary>
     [HttpPost("operations/cash-in")]
-    [Authorize(Roles = "Owner,Admin")]
     [EnableRateLimiting("FinancialWrite")]
     public async Task<ActionResult> LedgerCashIn([FromBody] TreasuryCashInRequest request)
     {

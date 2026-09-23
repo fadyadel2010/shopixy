@@ -19,6 +19,8 @@ export const ENDPOINTS = {
     // ELASTICSEARCH-POWERED: Use this for all product listing, filtering, search
     PRODUCTS_DISCOVER: '/api/storefront/products/discover',
     PRODUCT_BY_SLUG: (slug: string) => `/api/storefront/products/${encodeURIComponent(slug)}`,
+    PRODUCT_BY_ID: (productId: string) =>
+        `/api/storefront/products/by-id/${encodeURIComponent(productId)}`,
     PRODUCT_VARIANT_RESOLUTION: (productId: string) =>
         `/api/storefront/products/by-id/${encodeURIComponent(productId)}/variant-resolution`,
 
@@ -30,7 +32,7 @@ export const ENDPOINTS = {
     CART: '/api/storefront/cart',
     CART_ITEMS: '/api/storefront/cart/items',
     CART_ITEM: (productId: string) => `/api/storefront/cart/items/${encodeURIComponent(productId)}`,
-    // PHASE 11.7: Variant-Centric Cart Operations (VariantId is the ONLY identifier)
+    // Canonical SKU-scoped cart mutations for simple and variant products
     CART_ITEM_BY_VARIANT: (variantId: string) => `/api/storefront/cart/items/variant/${encodeURIComponent(variantId)}`,
 
     // Cart Merge (Phase 10.4 - Cart Ownership Migration)

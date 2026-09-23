@@ -809,6 +809,8 @@ public class CheckoutService : ICheckoutService
             await EnsureStorefrontAcceptingOrdersAsync(
                 tenantId,
                 correlationId,
+                customerId,
+                !string.IsNullOrWhiteSpace(request.AffiliateReferralCode),
                 lockAuthorityRow: false,
                 cancellationToken);
 
@@ -5328,21 +5330,41 @@ public class CheckoutService : ICheckoutService
     private async Task EnsureStorefrontAcceptingOrdersAsync(
         Guid tenantId,
         string correlationId,
+        Guid? customerId,
+        bool isAffiliateCheckout,
         bool lockAuthorityRow,
         CancellationToken cancellationToken)
     {
         string? storefrontStatus;
+        bool? enableGuestCheckout;
 
         try
         {
-            storefrontStatus = lockAuthorityRow
-                ? await LoadStorefrontStatusForUpdateAsync(tenantId, cancellationToken)
-                : await _dbContext.StoreConfigs
+            if (lockAuthorityRow)
+            {
+                storefrontStatus = await LoadStorefrontStatusForUpdateAsync(tenantId, cancellationToken);
+                enableGuestCheckout = await _dbContext.StoreConfigs
                     .IgnoreQueryFilters()
                     .AsNoTracking()
                     .Where(config => config.TenantId == tenantId)
-                    .Select(config => config.StorefrontStatus)
+                    .Select(config => (bool?)config.Behavior.EnableGuestCheckout)
                     .FirstOrDefaultAsync(cancellationToken);
+            }
+            else
+            {
+                var authority = await _dbContext.StoreConfigs
+                    .IgnoreQueryFilters()
+                    .AsNoTracking()
+                    .Where(config => config.TenantId == tenantId)
+                    .Select(config => new
+                    {
+                        config.StorefrontStatus,
+                        config.Behavior.EnableGuestCheckout,
+                    })
+                    .FirstOrDefaultAsync(cancellationToken);
+                storefrontStatus = authority?.StorefrontStatus;
+                enableGuestCheckout = authority?.EnableGuestCheckout;
+            }
         }
         catch (CheckoutException)
         {
@@ -5374,6 +5396,16 @@ public class CheckoutService : ICheckoutService
                 correlationId);
 
             throw new CheckoutStorefrontUnavailableException(storefrontStatus);
+        }
+
+        if (!customerId.HasValue && !isAffiliateCheckout && enableGuestCheckout != true)
+        {
+            _logger.LogWarning(
+                "Guest checkout rejected by SQL StoreConfig authority | TenantId: {TenantId} | LockAuthorityRow: {LockAuthorityRow} | CorrelationId: {CorrelationId}",
+                tenantId,
+                lockAuthorityRow,
+                correlationId);
+            throw new CheckoutGuestDisabledException();
         }
     }
 
@@ -6900,6 +6932,8 @@ public class CheckoutService : ICheckoutService
             await EnsureStorefrontAcceptingOrdersAsync(
                 tenantId,
                 correlationId,
+                customerId,
+                !string.IsNullOrWhiteSpace(request.AffiliateReferralCode),
                 lockAuthorityRow: true,
                 cancellationToken);
 

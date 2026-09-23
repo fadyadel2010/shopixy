@@ -553,18 +553,30 @@ public class ProductDiscoveryService : IProductDiscoveryService
         CancellationToken cancellationToken)
     {
         var items = new List<ProductDiscoveryItemDto>(candidates.Count);
-
-        foreach (var candidate in candidates)
+        if (candidates.Count == 0)
         {
-            var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                _dbContext,
-                new ProductDocument
-                {
-                    TenantId = tenantId,
-                    ProductId = candidate.Id
-                },
-                tenantId,
-                cancellationToken);
+            return items;
+        }
+
+        var candidateList = candidates.ToList();
+        var placeholders = candidateList
+            .Select(candidate => new ProductDocument
+            {
+                TenantId = tenantId,
+                ProductId = candidate.Id
+            })
+            .ToList();
+
+        var recomposed = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+            _dbContext,
+            placeholders,
+            tenantId,
+            cancellationToken);
+
+        for (var index = 0; index < candidateList.Count; index++)
+        {
+            var candidate = candidateList[index];
+            var product = recomposed[index];
 
             if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
                 !MatchesSqlAuthoritativeDiscoveryFilters(product, query, affiliateModeOnly))

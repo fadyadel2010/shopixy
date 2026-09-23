@@ -68,6 +68,40 @@ describe('storeConfigService', () => {
         })
     })
 
+    it('admits the backend-resolved theme preview URL', async () => {
+        const expiresAtUtc = new Date(Date.now() + 60_000).toISOString()
+        apiPost.mockResolvedValue({
+            data: {
+                previewToken: 'backend-token',
+                previewUrl: 'https://shop.example.test/?themePreviewToken=backend-token',
+                expiresAtUtc,
+            },
+        })
+
+        const result = await storeConfigService.createThemePreviewLink('editorial')
+
+        expect(apiPost).toHaveBeenCalledWith('/admin/store-config/theme/preview-link/editorial')
+        expect(result).toEqual({
+            previewToken: 'backend-token',
+            previewUrl: 'https://shop.example.test/?themePreviewToken=backend-token',
+            expiresAtUtc,
+        })
+    })
+
+    it('rejects a malformed backend theme preview URL', async () => {
+        apiPost.mockResolvedValue({
+            data: {
+                previewToken: 'backend-token',
+                previewUrl: 'javascript:alert(1)',
+                expiresAtUtc: new Date(Date.now() + 60_000).toISOString(),
+            },
+        })
+
+        await expect(storeConfigService.createThemePreviewLink('editorial')).rejects.toThrow(
+            'Theme preview access was rejected by backend URL authority admission.',
+        )
+    })
+
     it('submits store configuration mutations with If-Match rowVersion evidence', async () => {
         apiPut.mockResolvedValue({ data: { rowVersion: '43' } })
 

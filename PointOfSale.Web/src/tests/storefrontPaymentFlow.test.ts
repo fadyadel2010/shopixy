@@ -84,22 +84,17 @@ describe('storefront payment flow hardening', () => {
         expect(result).toEqual({ kind: 'failed' });
     });
 
-    it('persists checkout token in active checkout context for refresh recovery', () => {
+    it('does not persist backend-issued guest tokens in browser storage', () => {
         persistActiveCheckoutOrderContext({
             orderId: 'order-123',
             orderNumber: 'SO-1001',
             checkoutToken: 'guest-token-123',
         });
 
-        expect(readActiveCheckoutOrderContext()).toEqual({
-            orderId: 'order-123',
-            orderNumber: 'SO-1001',
-            createdAt: expect.any(String),
-            checkoutToken: 'guest-token-123',
-            trackingToken: null,
-        });
-        expect(readCheckoutTokenForOrder('order-123')).toBe('guest-token-123');
+        expect(readActiveCheckoutOrderContext()).toBeNull();
+        expect(readCheckoutTokenForOrder('order-123')).toBeNull();
         expect(readCheckoutTokenForOrder('other-order')).toBeNull();
+        expect(window.sessionStorage.length).toBe(0);
     });
 
     it('sends X-Checkout-Token when recovering canonical payment status', async () => {
@@ -108,6 +103,7 @@ describe('storefront payment flow hardening', () => {
                 ...baseStatus,
                 status: 'PROCESSING',
                 paymentMethod: 'PAYMOB',
+                canRetryPayment: false,
             },
         });
 
@@ -116,7 +112,7 @@ describe('storefront payment flow hardening', () => {
         });
 
         expect(httpGet).toHaveBeenCalledWith(
-            '/api/payments/status/order-123',
+            '/api/storefront/payments/status/order-123',
             {
                 signal: undefined,
                 headers: {
@@ -132,6 +128,7 @@ describe('storefront payment flow hardening', () => {
                 ...baseStatus,
                 status: 'PROCESSING',
                 paymentMethod: 'PAYMOB',
+                canRetryPayment: false,
             },
         });
 
@@ -140,9 +137,10 @@ describe('storefront payment flow hardening', () => {
         });
 
         expect(httpGet).toHaveBeenCalledWith(
-            '/api/payments/status/order-123',
+            '/api/storefront/payments/status/order-123',
             {
                 signal: undefined,
+                headers: undefined,
             },
         );
     });
@@ -153,6 +151,7 @@ describe('storefront payment flow hardening', () => {
                 ...baseStatus,
                 status: 'PROCESSING',
                 paymentMethod: 'PAYMOB',
+                canRetryPayment: false,
             },
         });
 
@@ -161,9 +160,10 @@ describe('storefront payment flow hardening', () => {
         });
 
         expect(httpGet).toHaveBeenCalledWith(
-            '/api/payments/status/order-123',
+            '/api/storefront/payments/status/order-123',
             {
                 signal: undefined,
+                headers: undefined,
             },
         );
     });

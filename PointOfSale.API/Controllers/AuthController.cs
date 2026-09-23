@@ -39,6 +39,7 @@ public class AuthController : ControllerBase
     private readonly IUserGovernanceService _userGovernanceService;
     private readonly ICommerceHubVendorDebtService _vendorDebtService;
     private readonly ILogger<AuthController> _logger;
+    private readonly Services.Users.IPosUserManagementService? _userManagement;
 
     public AuthController(
         ApplicationDbContext context,
@@ -49,7 +50,8 @@ public class AuthController : ControllerBase
         PointOfSale.API.Services.Audit.IAuditService auditService,
         IUserGovernanceService userGovernanceService,
         ICommerceHubVendorDebtService vendorDebtService,
-        ILogger<AuthController> logger)
+        ILogger<AuthController> logger,
+        Services.Users.IPosUserManagementService? userManagement = null)
     {
         _context = context;
         _jwtSettings = jwtSettings.Value;
@@ -60,61 +62,18 @@ public class AuthController : ControllerBase
         _userGovernanceService = userGovernanceService;
         _vendorDebtService = vendorDebtService;
         _logger = logger;
+        _userManagement = userManagement;
     }
 
     [HttpPost("register")]
-    [AllowAnonymous]
-    [EnableRateLimiting("PublicRegisterRateLimit")]
-    public async Task<ActionResult<AuthResponse>> Register(RegisterRequest request, CancellationToken cancellationToken)
+    [Authorize(Policy = PosPermissions.UsersInvite)]
+    public ActionResult<AuthResponse> Register(RegisterRequest request)
     {
-        if (!_tenantContext.TenantId.HasValue || _tenantContext.TenantId.Value == Guid.Empty)
+        _ = request;
+        return StatusCode(StatusCodes.Status410Gone, new
         {
-            return BadRequest(new
-            {
-                message = "A valid tenant context is required for registration.",
-                code = "TENANT_REQUIRED"
-            });
-        }
-
-        var tenantId = _tenantContext.TenantId.Value;
-
-        // SECURITY: IgnoreQueryFilters is intentional because login resolves POS
-        // users globally before tenant context is known. Registration must enforce
-        // the same global uniqueness boundary for usernames.
-        if (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.Username == request.Username && !u.IsDeleted, cancellationToken))
-        {
-            return BadRequest(new { message = "Username already exists" });
-        }
-
-        // SECURITY: IgnoreQueryFilters is intentional because POS user email is
-        // also authenticated on the global identity scope.
-        if (await _context.Users.IgnoreQueryFilters().AnyAsync(u => u.Email == request.Email && !u.IsDeleted, cancellationToken))
-        {
-            return BadRequest(new { message = "Email already exists" });
-        }
-
-        var user = new User
-        {
-            Id = Guid.NewGuid(),
-            Username = request.Username,
-            Email = request.Email,
-            FirstName = request.FirstName,
-            LastName = request.LastName,
-            Phone = request.Phone,
-            Role = UserRole.Cashier,
-            TenantId = tenantId,
-            IsActive = true,
-            CreatedAt = DateTime.UtcNow
-        };
-
-        user.PasswordHash = _passwordHasher.HashPassword(user, request.Password);
-
-        _context.Users.Add(user);
-        await _context.SaveChangesAsync(cancellationToken);
-
-        return Ok(new AuthResponse
-        {
-            User = await BuildPosSessionAuthorityUserDtoAsync(user, cancellationToken)
+            message = "POS staff registration is disabled. Staff accounts require the invitation flow.",
+            code = "POS_STAFF_REGISTRATION_DISABLED"
         });
     }
 
@@ -126,6 +85,9 @@ public class AuthController : ControllerBase
 
         return new UserDto(user)
         {
+            EffectivePermissions = PosRolePermissionCatalog.GetPermissions(user.Role)
+                .OrderBy(permission => permission, StringComparer.Ordinal)
+                .ToArray(),
             NavigationCapabilities = await BuildCommerceHubNavigationCapabilitiesAsync(
                 user,
                 vendorLifecycleAuthority,
@@ -289,14 +251,32 @@ public class AuthController : ControllerBase
         // 1. User is authenticating - we don't know their tenant yet
         // 2. X-Tenant-Id header is not sent during login
         // 3. After successful auth, frontend stores tenantId from response
-        var user = await _context.Users
-            .IgnoreQueryFilters()  // SECURITY: Intentional cross-tenant auth lookup keyed only by username.
-            .FirstOrDefaultAsync(u => u.Username == request.Username && !u.IsDeleted, cancellationToken);
-
-        if (user == null)
+        // Identity lookup uses server-authoritative normalized keys so login
+        // is case-insensitive and accepts either username or email. Multiple
+        // matches fail closed if legacy data has a cross-field collision.
+        var usernameIsValid = PosIdentityNormalizer.TryNormalizeUsername(
+            request.Username, out var normalizedUsername);
+        var emailIsValid = PosIdentityNormalizer.TryNormalizeEmail(
+            request.Username, out var normalizedEmail);
+        if (!usernameIsValid && !emailIsValid)
         {
             return Unauthorized(new { message = "Invalid username or password" });
         }
+
+        var matches = await _context.Users
+            .IgnoreQueryFilters() // Intentional cross-tenant lookup using globally unique normalized identity keys.
+            .Where(u => !u.IsDeleted &&
+                ((usernameIsValid && u.NormalizedUsername == normalizedUsername) ||
+                 (emailIsValid && u.NormalizedEmail == normalizedEmail)))
+            .Take(2)
+            .ToListAsync(cancellationToken);
+
+        if (matches.Count != 1)
+        {
+            return Unauthorized(new { message = "Invalid username or password" });
+        }
+
+        var user = matches[0];
 
         var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
         
@@ -726,10 +706,96 @@ public class AuthController : ControllerBase
         {
             return Unauthorized();
         }
-        
+
         var status = await _emailVerificationService.GetVerificationStatusAsync(userId, cancellationToken);
-        
+
         return Ok(status);
+    }
+
+    // =========================================================================
+    // Users Management (Wave 2): anonymous security ceremonies.
+    // Purpose-bound, hash-lookup, expiring, single-use, revocable tokens.
+    // Both ceremonies create NO session; the user signs in normally after.
+    // =========================================================================
+
+    /// <summary>
+    /// Accepts a staff invitation and sets the initial password.
+    /// Anonymous invitation ceremony approved by the Users blueprint.
+    /// </summary>
+    [HttpPost("user-invitations/accept")]
+    [AllowAnonymous]
+    [AllowAnonymousTenant]
+    [EnableRateLimiting("UsersTokenAcceptanceRateLimit")]
+    public async Task<IActionResult> AcceptUserInvitation(
+        [FromBody] DTOs.Users.AcceptPosUserInvitationRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_userManagement == null)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "An unexpected error occurred",
+                code = "INTERNAL_ERROR",
+            });
+        }
+
+        try
+        {
+            await _userManagement.AcceptInvitationAsync(request.Token, request.Password, cancellationToken);
+            return Ok(new
+            {
+                message = "Invitation accepted. Sign in with your new password.",
+                code = "INVITATION_ACCEPTED",
+            });
+        }
+        catch (Services.Users.PosUserManagementException exception)
+        {
+            return StatusCode(exception.StatusCode, new
+            {
+                message = exception.Message,
+                code = exception.Code,
+            });
+        }
+    }
+
+    /// <summary>
+    /// Completes an administrator-initiated password reset.
+    /// Anonymous reset ceremony approved by the Users blueprint.
+    /// </summary>
+    [HttpPost("password-reset/complete")]
+    [AllowAnonymous]
+    [AllowAnonymousTenant]
+    [EnableRateLimiting("UsersTokenAcceptanceRateLimit")]
+    public async Task<IActionResult> CompletePasswordReset(
+        [FromBody] DTOs.Users.CompletePosPasswordResetRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (_userManagement == null)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "An unexpected error occurred",
+                code = "INTERNAL_ERROR",
+            });
+        }
+
+        try
+        {
+            await _userManagement.CompletePasswordResetAsync(request.Token, request.Password, cancellationToken);
+            return Ok(new
+            {
+                message = "Password updated. Sign in with your new password.",
+                code = "PASSWORD_RESET_COMPLETED",
+            });
+        }
+        catch (Services.Users.PosUserManagementException exception)
+        {
+            return StatusCode(exception.StatusCode, new
+            {
+                message = exception.Message,
+                code = exception.Code,
+            });
+        }
     }
 
     private string? ResolveRefreshToken(RefreshTokenRequest? request)
@@ -904,6 +970,7 @@ public record UserDto
     public string? Phone { get; set; }
     public string Role { get; set; } = string.Empty;
     public bool EmailVerified { get; set; }
+    public IReadOnlyList<string> EffectivePermissions { get; set; } = Array.Empty<string>();
     public IReadOnlyList<string> NavigationCapabilities { get; set; } = Array.Empty<string>();
     public CommerceHubVendorLifecycleAuthorityDto? VendorLifecycleAuthority { get; set; }
 

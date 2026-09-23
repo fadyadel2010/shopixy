@@ -356,9 +356,7 @@ public class DomainResolutionFoundationTests
     }
 
     /// <summary>
-    /// Verifies that the IDomainResolutionCache abstraction is a no-op
-    /// in DOMAIN-2C — the no-op cache returns null on GetAsync and
-    /// does nothing on SetAsync/RemoveAsync.
+    /// Verifies the compatibility no-op executes the authoritative factory.
     /// </summary>
     [Fact]
     public async Task NoOpDomainResolutionCache_NoOpBehavior()
@@ -379,6 +377,13 @@ public class DomainResolutionFoundationTests
         // GetAsync still returns null after SetAsync.
         cached = await cache.GetAsync("mybrand.com");
         Assert.Null(cached);
+
+        var populated = await cache.GetOrCreateAsync(
+            "mybrand.com",
+            _ => ValueTask.FromResult(result));
+        Assert.Same(result, populated);
+
+        await cache.InvalidateAllAsync();
     }
 
     /// <summary>

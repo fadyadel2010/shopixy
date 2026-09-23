@@ -113,6 +113,7 @@ public sealed class CommerceReliabilityTelemetry : IDisposable
     public Counter<long> CartStateMismatchDetectedTotal { get; }
     public Counter<long> CartConcurrencyConflictTotal { get; }
     public Counter<long> CartUpdateLostPreventedTotal { get; }
+    public Histogram<double> CartMutationLockDurationSeconds { get; }
     public Counter<long> CheckoutIdempotencyReuseTotal { get; }
     public Counter<long> CheckoutDuplicateOrderPreventedTotal { get; }
     public Counter<long> CheckoutProcessedTotal { get; }
@@ -315,6 +316,11 @@ public sealed class CommerceReliabilityTelemetry : IDisposable
             "cart_update_lost_prevented_total",
             unit: "count",
             description: "Cart mutations completed under the cart lock, preventing Redis read-modify-write lost updates.");
+
+        CartMutationLockDurationSeconds = _meter.CreateHistogram<double>(
+            "cart_mutation_lock_duration_seconds",
+            unit: "s",
+            description: "Elapsed time from first cart lock acquisition through token-owned release.");
 
         CheckoutIdempotencyReuseTotal = _meter.CreateCounter<long>(
             "checkout_idempotency_reuse_total",
@@ -865,6 +871,11 @@ public sealed class CommerceReliabilityTelemetry : IDisposable
     public void RecordCartUpdateLostPrevented(string operation) =>
         CartUpdateLostPreventedTotal.Add(
             1,
+            new KeyValuePair<string, object?>("operation", NormalizeReasonForTelemetry(operation)));
+
+    public void RecordCartMutationLockDuration(string operation, TimeSpan duration) =>
+        CartMutationLockDurationSeconds.Record(
+            duration.TotalSeconds,
             new KeyValuePair<string, object?>("operation", NormalizeReasonForTelemetry(operation)));
 
     public void RecordCheckoutIdempotencyReuse(string source) =>

@@ -416,6 +416,14 @@ public class CheckoutController : ControllerBase
                 traceId);
             return Conflict(new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
         }
+        catch (CheckoutGuestDisabledException ex)
+        {
+            _logger.LogWarning(
+                "Guest checkout rejected by storefront configuration | TenantId: {TenantId} | TraceId: {TraceId}",
+                validation.TenantId,
+                traceId);
+            return StatusCode(StatusCodes.Status403Forbidden, new ApiErrorResponse(ex.ErrorCode, ex.Message, traceId));
+        }
         catch (CheckoutOrderCreationException ex)
         {
             _logger.LogError(ex,

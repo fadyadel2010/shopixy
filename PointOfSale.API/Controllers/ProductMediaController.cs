@@ -11,7 +11,6 @@ namespace PointOfSale.API.Controllers;
 
 [ApiController]
 [Route("api/admin/products/{productId}/media")]
-[Authorize(Roles = "Owner,Admin,Manager")]
 public class ProductMediaController : ControllerBase
 {
     private const string IdempotencyKeyHeader = "Idempotency-Key";

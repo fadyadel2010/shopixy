@@ -196,13 +196,13 @@ const createHttpClient = (): AxiosInstance => {
     // Request interceptor - add headers and validate context
     client.interceptors.request.use(
         (config: InternalAxiosRequestConfig) => {
+            const isBootstrapRequest =
+                config.url?.includes('/store-config') ||
+                config.url?.includes('/theme-preview/config');
+
             // Check if request context is ready
             if (!isRequestContextReady()) {
                 // Allow store-config fetch during bootstrap (it's needed to complete bootstrap)
-                const isBootstrapRequest =
-                    config.url?.includes('/store-config') ||
-                    config.url?.includes('/theme-preview/config');
-
                 if (!isBootstrapRequest) {
                     const error = new Error(
                         '[HTTP] Request rejected: Tenant not resolved. ' +
@@ -221,7 +221,11 @@ const createHttpClient = (): AxiosInstance => {
             // Attach headers from request context
             try {
                 const headers = getRequestHeaders();
-                config.headers['X-Tenant-Id'] = headers['X-Tenant-Id'];
+                // Bootstrap must derive tenant authority from the trusted request host.
+                // The subdomain candidate is not canonical until StoreConfig is accepted.
+                if (!isBootstrapRequest) {
+                    config.headers['X-Tenant-Id'] = headers['X-Tenant-Id'];
+                }
                 config.headers['X-Session-Id'] = headers['X-Session-Id'];
 
                 // PHASE 10.4: Include customer ID for authenticated requests

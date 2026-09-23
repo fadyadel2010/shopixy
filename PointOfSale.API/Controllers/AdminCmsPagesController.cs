@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
+using PointOfSale.API.Services;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -18,6 +19,7 @@ public sealed class AdminCmsPagesController : ControllerBase
     private readonly ICmsSeedService _cmsSeedService;
     private readonly CommerceReliabilityTelemetry _telemetry;
     private readonly ITenantContext _tenantContext;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ILogger<AdminCmsPagesController> _logger;
 
     public AdminCmsPagesController(
@@ -25,12 +27,14 @@ public sealed class AdminCmsPagesController : ControllerBase
         ICmsSeedService cmsSeedService,
         CommerceReliabilityTelemetry telemetry,
         ITenantContext tenantContext,
+        StorefrontUrlResolver storefrontUrlResolver,
         ILogger<AdminCmsPagesController> logger)
     {
         _cmsService = cmsService;
         _cmsSeedService = cmsSeedService;
         _telemetry = telemetry;
         _tenantContext = tenantContext;
+        _storefrontUrlResolver = storefrontUrlResolver;
         _logger = logger;
     }
 
@@ -470,6 +474,15 @@ public sealed class AdminCmsPagesController : ControllerBase
                 id,
                 traceId,
                 cancellationToken);
+
+            if (result != null)
+            {
+                result.PreviewUrl = await _storefrontUrlResolver.BuildCmsPagePreviewUrlAsync(
+                    validation.TenantId.Value,
+                    result.Slug,
+                    result.PreviewToken,
+                    cancellationToken);
+            }
 
             return result == null
                 ? NotFound(AdminCmsApiErrorResponse.PageNotFound(traceId))

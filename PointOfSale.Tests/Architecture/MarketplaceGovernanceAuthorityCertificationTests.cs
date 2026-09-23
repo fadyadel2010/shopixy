@@ -62,6 +62,11 @@ public sealed class MarketplaceGovernanceAuthorityCertificationTests
         Assert.Contains("PromoteIndexAsync", reindex, StringComparison.Ordinal);
         Assert.Contains("TenantId", autoHealing, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", autoHealing, StringComparison.Ordinal);
+        Assert.Contains("LoadSqlVisibleListingIdentitiesAsync", autoHealing, StringComparison.Ordinal);
+        Assert.Contains("UserGovernanceProfiles", searchHealth, StringComparison.Ordinal);
+        Assert.Contains("FinancialCurrencyGuard.PlatformBaseCurrencyCode", searchHealth, StringComparison.Ordinal);
+        Assert.Contains("governanceProfile.IsKycVerified", searchHealth, StringComparison.Ordinal);
+        Assert.Contains("governanceProfile.IsMarketplaceApproved", searchHealth, StringComparison.Ordinal);
         Assert.Contains("OperationalConvergenceTelemetry", searchHealth, StringComparison.Ordinal);
     }
 

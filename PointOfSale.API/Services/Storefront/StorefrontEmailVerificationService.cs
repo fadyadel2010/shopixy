@@ -5,6 +5,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using PointOfSale.API.Services;
 using PointOfSale.API.Services.Auth;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
@@ -31,13 +32,6 @@ public class StorefrontEmailVerificationSettings
     /// Maximum resend attempts per hour (default: 3).
     /// </summary>
     public int MaxResendsPerHour { get; set; } = 3;
-
-    /// <summary>
-    /// URL template for verification links.
-    /// Use {slug} placeholder for tenant subdomain.
-    /// Example: "http://{slug}.localhost:5174" or "https://{slug}.myplatform.com"
-    /// </summary>
-    public string StorefrontUrlTemplate { get; set; } = "http://{slug}.localhost:5174";
 
     /// <summary>
     /// Sender name for verification emails.
@@ -124,6 +118,7 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
     private readonly IEventPublisher _eventPublisher;
     private readonly IEmailSender _emailSender;
     private readonly StorefrontEmailVerificationSettings _settings;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ILogger<StorefrontEmailVerificationService> _logger;
 
     private const string ResendRateLimitKeyPrefix = "storefront:tenant:{0}:email-verification:resend:{1}";
@@ -135,6 +130,7 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
         IEventPublisher eventPublisher,
         IEmailSender emailSender,
         IOptions<StorefrontEmailVerificationSettings> settings,
+        StorefrontUrlResolver storefrontUrlResolver,
         ILogger<StorefrontEmailVerificationService> logger)
     {
         _dbContext = dbContext;
@@ -142,6 +138,7 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
         _eventPublisher = eventPublisher;
         _emailSender = emailSender;
         _settings = settings.Value;
+        _storefrontUrlResolver = storefrontUrlResolver;
         _logger = logger;
     }
 
@@ -495,25 +492,7 @@ public class StorefrontEmailVerificationService : IStorefrontEmailVerificationSe
 
     private async Task<string> BuildVerificationUrlAsync(string rawToken, Guid tenantId)
     {
-        // Get the tenant's slug from the database
-        var tenant = await _dbContext.Tenants
-            .AsNoTracking()
-            .Where(t => t.Id == tenantId)
-            .Select(t => new { t.Slug, t.Name })
-            .FirstOrDefaultAsync();
-
-        var slug = tenant?.Slug ?? tenantId.ToString();
-        
-        // Build URL from template by replacing {slug} placeholder
-        var baseUrl = _settings.StorefrontUrlTemplate
-            .Replace("{slug}", slug, StringComparison.OrdinalIgnoreCase)
-            .TrimEnd('/');
-            
-        _logger.LogDebug(
-            "[EmailVerification] Built verification URL | TenantId: {TenantId} | Slug: {Slug} | BaseUrl: {BaseUrl}",
-            tenantId, slug, baseUrl);
-            
-        return $"{baseUrl}/verify-email?token={Uri.EscapeDataString(rawToken)}&tenant={tenantId}";
+        return await _storefrontUrlResolver.BuildEmailVerificationUrlAsync(tenantId, rawToken);
     }
 
     private async Task<(bool Allowed, int RetryAfterSeconds)> CheckResendRateLimitAsync(Guid tenantId, Guid customerId)

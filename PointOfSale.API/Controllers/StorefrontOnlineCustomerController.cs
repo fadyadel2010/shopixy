@@ -159,6 +159,7 @@ public class StorefrontOnlineCustomerController : ControllerBase
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Generic recovery message</returns>
     [HttpPost("email-exists")]
+    [AllowAnonymous]
     [EnableRateLimiting("PublicReadRateLimit")]
     [ProducesResponseType(typeof(AccountRecoveryMessageResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]

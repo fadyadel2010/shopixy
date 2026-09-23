@@ -125,50 +125,90 @@ public sealed class ProjectionEventFence : IAsyncDisposable
         }
 
         var lockKey = BuildLockKey(eventId, key.ConsumerName, key.EventType);
-        var acquired = await dbContext.Database
-            .SqlQueryRaw<bool>("SELECT pg_try_advisory_lock({0}) AS \"Value\"", lockKey)
-            .SingleAsync(cancellationToken);
-
-        if (!acquired)
+        var acquired = false;
+        try
         {
-            if (closeConnection)
+            acquired = await dbContext.Database
+                .SqlQueryRaw<bool>("SELECT pg_try_advisory_lock({0}) AS \"Value\"", lockKey)
+                .SingleAsync(cancellationToken);
+
+            if (!acquired)
             {
-                await dbContext.Database.CloseConnectionAsync();
+                if (closeConnection)
+                {
+                    await dbContext.Database.CloseConnectionAsync();
+                }
+
+                OperationalConvergenceTelemetry.RecordReplayDecision(
+                    OperationalConvergencePhase.Replay,
+                    key.ConsumerName,
+                    OperationalConvergenceAuthority.ProjectionEventFence,
+                    OperationalConvergenceDecision.Collapsed,
+                    OperationalConvergenceReason.ActiveDeliveryOverlap,
+                    tenantId);
+                return null;
             }
 
-            OperationalConvergenceTelemetry.RecordReplayDecision(
-                OperationalConvergencePhase.Replay,
-                key.ConsumerName,
-                OperationalConvergenceAuthority.ProjectionEventFence,
-                OperationalConvergenceDecision.Collapsed,
-                OperationalConvergenceReason.ActiveDeliveryOverlap,
-                tenantId);
-            return null;
-        }
-
-        if (await IsAlreadyCompletedAsync(dbContext, eventId, key, cancellationToken))
-        {
-            await dbContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock({0})", lockKey);
-            if (closeConnection)
+            if (await IsAlreadyCompletedAsync(dbContext, eventId, key, cancellationToken))
             {
-                await dbContext.Database.CloseConnectionAsync();
+                await dbContext.Database.ExecuteSqlRawAsync("SELECT pg_advisory_unlock({0})", lockKey);
+                acquired = false;
+                if (closeConnection)
+                {
+                    await dbContext.Database.CloseConnectionAsync();
+                }
+
+                OperationalConvergenceTelemetry.RecordReplayDecision(
+                    OperationalConvergencePhase.Replay,
+                    key.ConsumerName,
+                    OperationalConvergenceAuthority.ProjectionEventFence,
+                    OperationalConvergenceDecision.Collapsed,
+                    OperationalConvergenceReason.DuplicateCompletedAfterLock,
+                    tenantId);
+                return null;
             }
 
-            OperationalConvergenceTelemetry.RecordReplayDecision(
-                OperationalConvergencePhase.Replay,
-                key.ConsumerName,
-                OperationalConvergenceAuthority.ProjectionEventFence,
-                OperationalConvergenceDecision.Collapsed,
-                OperationalConvergenceReason.DuplicateCompletedAfterLock,
-                tenantId);
-            return null;
+            return new ProjectionEventFence(
+                dbContext,
+                logger ?? NullLogger.Instance,
+                lockKey,
+                closeConnection);
         }
+        catch
+        {
+            if (acquired)
+            {
+                try
+                {
+                    await dbContext.Database.ExecuteSqlRawAsync(
+                        "SELECT pg_advisory_unlock({0})",
+                        new object[] { lockKey },
+                        CancellationToken.None);
+                }
+                catch (Exception unlockException)
+                {
+                    (logger ?? NullLogger.Instance).LogWarning(
+                        unlockException,
+                        "Failed to release projection event advisory lock after acquisition failure.");
+                }
+            }
 
-        return new ProjectionEventFence(
-            dbContext,
-            logger ?? NullLogger.Instance,
-            lockKey,
-            closeConnection);
+            if (closeConnection)
+            {
+                try
+                {
+                    await dbContext.Database.CloseConnectionAsync();
+                }
+                catch (Exception closeException)
+                {
+                    (logger ?? NullLogger.Instance).LogWarning(
+                        closeException,
+                        "Failed to close projection event fence connection after acquisition failure.");
+                }
+            }
+
+            throw;
+        }
     }
 
     public async Task CompleteAsync(

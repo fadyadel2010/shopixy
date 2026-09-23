@@ -128,6 +128,7 @@ public class RedisConnectionFactory : IDisposable
             var options = ConfigurationOptions.Parse(_settings.ConnectionString);
             options.ConnectTimeout = _settings.ConnectTimeoutMs;
             options.SyncTimeout = _settings.SyncTimeoutMs;
+            options.AsyncTimeout = _settings.AsyncTimeoutMs;
             options.AbortOnConnectFail = false; // Don't throw on startup if Redis is down
             options.ConnectRetry = 3;
 

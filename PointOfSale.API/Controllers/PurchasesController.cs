@@ -1368,7 +1368,6 @@ public class PurchasesController : ControllerBase
     /// Posted/completed invoices cannot be deleted - use purchase return instead.
     /// </summary>
     [HttpDelete("{id}")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<ActionResult> DeletePurchase(Guid id)
     {
         // Validate if invoice can be deleted

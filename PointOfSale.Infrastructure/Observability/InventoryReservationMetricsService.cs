@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
+using PointOfSale.Core.Enums;
 
 namespace PointOfSale.Infrastructure.Observability;
 
@@ -67,12 +68,16 @@ public sealed class InventoryReservationMetricsService : IInventoryReservationMe
     {
         var now = DateTime.UtcNow;
         var staleCutoff = now.AddMinutes(-_options.Value.StaleReservationThresholdMinutes);
+        var activePaymentCutoff = now.AddMinutes(-_options.Value.ActivePaymentGraceMinutes);
+        var providerReconciliationCutoff = now.AddMinutes(-_options.Value.ProviderReconciliationGraceMinutes);
 
         var totalReservedQuantity = await _dbContext.ProductVariantStocks
+            .IgnoreQueryFilters()
             .Where(stock => !stock.IsDeleted)
             .SumAsync(stock => (decimal?)stock.ReservedQuantity, cancellationToken) ?? 0m;
 
         var staleReservations = await _dbContext.InventoryReservations
+            .IgnoreQueryFilters()
             .Where(reservation =>
                 !reservation.IsDeleted &&
                 reservation.ReservedQuantity > reservation.CommittedQuantity + reservation.ReleasedQuantity &&
@@ -80,15 +85,117 @@ public sealed class InventoryReservationMetricsService : IInventoryReservationMe
             .Select(reservation => new
             {
                 RemainingReservedQuantity = reservation.ReservedQuantity - reservation.CommittedQuantity - reservation.ReleasedQuantity,
-                AgeAnchorUtc = reservation.ExpiresAtUtc ?? reservation.CreatedAt
+                AgeAnchorUtc = reservation.ExpiresAtUtc ?? reservation.CreatedAt,
+                reservation.OrderId,
+                HasExpiredReservation = reservation.ExpiresAtUtc.HasValue && reservation.ExpiresAtUtc.Value <= now
             })
             .ToListAsync(cancellationToken);
 
-        var staleReservationCount = staleReservations.Count;
-        var staleReservedQuantity = staleReservations.Sum(item => item.RemainingReservedQuantity);
-        var oldestStaleReservationAgeMinutes = staleReservations.Count == 0
+        var orderIds = staleReservations
+            .Select(reservation => reservation.OrderId)
+            .Distinct()
+            .ToList();
+        var orderStates = await _dbContext.Orders
+            .IgnoreQueryFilters()
+            .Where(order => orderIds.Contains(order.Id))
+            .Select(order => new
+            {
+                order.Id,
+                order.Status,
+                order.PaymentStatus,
+                LatestPaymentIntentStatus = _dbContext.PaymentIntents
+                    .IgnoreQueryFilters()
+                    .Where(intent => intent.OrderId == order.Id && !intent.IsDeleted)
+                    .OrderByDescending(intent => intent.CreatedAt)
+                    .Select(intent => (PaymentIntentStatus?)intent.Status)
+                    .FirstOrDefault(),
+                LatestPaymentIntentCreatedAtUtc = _dbContext.PaymentIntents
+                    .IgnoreQueryFilters()
+                    .Where(intent => intent.OrderId == order.Id && !intent.IsDeleted)
+                    .OrderByDescending(intent => intent.CreatedAt)
+                    .Select(intent => (DateTime?)intent.CreatedAt)
+                    .FirstOrDefault()
+            })
+            .ToDictionaryAsync(order => order.Id, cancellationToken);
+        var commerceHubOrderStates = await _dbContext.CommerceHubMarketplaceOrders
+            .IgnoreQueryFilters()
+            .Where(order => orderIds.Contains(order.Id))
+            .Select(order => new
+            {
+                order.Id,
+                order.Status,
+                order.PaymentStatus,
+                LatestPaymentStatus = _dbContext.CommerceHubPayments
+                    .IgnoreQueryFilters()
+                    .Where(payment => payment.OrderId == order.Id && !payment.IsDeleted)
+                    .OrderByDescending(payment => payment.CreatedAt)
+                    .Select(payment => (CommerceHubPaymentRecordStatus?)payment.Status)
+                    .FirstOrDefault(),
+                LatestPaymentCreatedAtUtc = _dbContext.CommerceHubPayments
+                    .IgnoreQueryFilters()
+                    .Where(payment => payment.OrderId == order.Id && !payment.IsDeleted)
+                    .OrderByDescending(payment => payment.CreatedAt)
+                    .Select(payment => (DateTime?)payment.CreatedAt)
+                    .FirstOrDefault(),
+                LatestPaymentProviderIntentId = _dbContext.CommerceHubPayments
+                    .IgnoreQueryFilters()
+                    .Where(payment => payment.OrderId == order.Id && !payment.IsDeleted)
+                    .OrderByDescending(payment => payment.CreatedAt)
+                    .Select(payment => payment.ProviderIntentId)
+                    .FirstOrDefault(),
+                LatestPaymentProviderTransactionId = _dbContext.CommerceHubPayments
+                    .IgnoreQueryFilters()
+                    .Where(payment => payment.OrderId == order.Id && !payment.IsDeleted)
+                    .OrderByDescending(payment => payment.CreatedAt)
+                    .Select(payment => payment.ProviderTransactionId)
+                    .FirstOrDefault(),
+                LatestPaymentFailureReason = _dbContext.CommerceHubPayments
+                    .IgnoreQueryFilters()
+                    .Where(payment => payment.OrderId == order.Id && !payment.IsDeleted)
+                    .OrderByDescending(payment => payment.CreatedAt)
+                    .Select(payment => payment.FailureReason)
+                    .FirstOrDefault(),
+                HasBlockingUnresolvedWebhook = _dbContext.CommerceHubUnresolvedPaymentWebhooks
+                    .IgnoreQueryFilters()
+                    .Any(webhook =>
+                        !webhook.IsDeleted &&
+                        webhook.OrderId == order.Id &&
+                        InventoryReservationReleaseAuthority.BlockingUnresolvedPaymentStatuses.Contains(webhook.Status))
+            })
+            .ToDictionaryAsync(order => order.Id, cancellationToken);
+
+        var actionableStaleReservations = staleReservations
+            .Where(reservation =>
+            {
+                orderStates.TryGetValue(reservation.OrderId, out var order);
+                commerceHubOrderStates.TryGetValue(reservation.OrderId, out var commerceHubOrder);
+                return InventoryReservationReleaseAuthority.CanReleaseOrderReservation(
+                           order?.Status,
+                           order?.PaymentStatus,
+                           order?.LatestPaymentIntentStatus,
+                           order?.LatestPaymentIntentCreatedAtUtc,
+                           activePaymentCutoff,
+                           reservation.HasExpiredReservation) &&
+                       InventoryReservationReleaseAuthority.CanReleaseCommerceHubReservation(
+                           commerceHubOrder?.Status,
+                           commerceHubOrder?.PaymentStatus,
+                           commerceHubOrder?.LatestPaymentStatus,
+                           commerceHubOrder?.LatestPaymentCreatedAtUtc,
+                           commerceHubOrder?.LatestPaymentProviderIntentId,
+                           commerceHubOrder?.LatestPaymentProviderTransactionId,
+                           commerceHubOrder?.LatestPaymentFailureReason,
+                           commerceHubOrder?.HasBlockingUnresolvedWebhook ?? false,
+                           activePaymentCutoff,
+                           providerReconciliationCutoff,
+                           reservation.HasExpiredReservation);
+            })
+            .ToList();
+
+        var staleReservationCount = actionableStaleReservations.Count;
+        var staleReservedQuantity = actionableStaleReservations.Sum(item => item.RemainingReservedQuantity);
+        var oldestStaleReservationAgeMinutes = actionableStaleReservations.Count == 0
             ? 0d
-            : (now - staleReservations.Min(item => item.AgeAnchorUtc)).TotalMinutes;
+            : (now - actionableStaleReservations.Min(item => item.AgeAnchorUtc)).TotalMinutes;
         var commitReleaseRatio = _telemetry.UpdateSnapshot(
             totalReservedQuantity,
             staleReservationCount,

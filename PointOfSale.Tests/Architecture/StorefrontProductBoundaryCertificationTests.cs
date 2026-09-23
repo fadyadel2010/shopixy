@@ -23,9 +23,22 @@ public sealed class StorefrontProductBoundaryCertificationTests
         var discoveryService = CertificationSource.ReadRepoFile(
             "PointOfSale.Infrastructure/Elasticsearch/Services/ProductDiscoveryService.cs");
 
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", storefrontProductService, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", storefrontProductsController, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discoveryService, StringComparison.Ordinal);
+        // List paths must recompose through set-based SQL authority (batch);
+        // single-product detail paths retain ApplyAsync. Both route through
+        // ProductSearchSqlAuthorityOverlay so tenant/visibility semantics hold.
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", storefrontProductService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", storefrontProductsController, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discoveryService, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StorefrontProductList_CacheMissMustNotRepeatSqlRecomposition()
+    {
+        var service = CertificationSource.ReadRepoFile(
+            "PointOfSale.API/Services/Storefront/StorefrontProductService.cs");
+
+        Assert.Contains("cacheFactoryExecuted = true", service, StringComparison.Ordinal);
+        Assert.Contains("if (cacheFactoryExecuted)", service, StringComparison.Ordinal);
     }
 
     [Fact]

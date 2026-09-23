@@ -1,14 +1,18 @@
 using System.Globalization;
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.Services.Pricing;
+using PointOfSale.API.Services;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -64,7 +68,16 @@ public sealed class SettingsControllerCurrencyTests : IDisposable
             _dbContext,
             NullLogger<SettingsController>.Instance,
             tenantContext.Object,
-            _eventPublisher.Object)
+            _eventPublisher.Object,
+            new StorefrontUrlResolver(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["Storefront:UrlTemplate"] = "https://{slug}.example.test"
+                    })
+                    .Build(),
+                NullLogger<StorefrontUrlResolver>.Instance,
+                Mock.Of<IServiceScopeFactory>()))
         {
             ControllerContext = new ControllerContext
             {
@@ -108,13 +121,13 @@ public sealed class SettingsControllerCurrencyTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateSettings_WhenLegacySymbolIsSubmitted_NormalizesToIsoCurrencyCode()
+    public async Task UpdateSettings_WhenLegacyEgpSymbolIsSubmittedWithoutCode_AcceptsCompatiblePayload()
     {
         var result = await _controller.UpdateSettings(new SettingsDto
         {
             CompanyName = "Shop",
             CurrencyCode = string.Empty,
-            CurrencySymbol = "$",
+            CurrencySymbol = "E\u00A3",
             EnableTax = true,
             ReceiptHeader = "Welcome",
             ReceiptFooter = "Thanks",
@@ -129,9 +142,77 @@ public sealed class SettingsControllerCurrencyTests : IDisposable
         
         var tenant = await _dbContext.Tenants.SingleAsync(t => t.Id == _tenantId);
 
-        Assert.Equal("USD", tenant.Currency);
-        Assert.Equal("USD", response.CurrencyCode);
-        Assert.Equal("$", response.CurrencySymbol);
+        Assert.Equal("EGP", tenant.Currency);
+        Assert.Equal("EGP", response.CurrencyCode);
+        Assert.Equal("E\u00A3", response.CurrencySymbol);
+    }
+
+    [Fact]
+    public async Task UpdateSettings_WhenUnsupportedCurrencyIsSubmitted_ReturnsBadRequestWithoutMutation()
+    {
+        var result = await _controller.UpdateSettings(new SettingsDto
+        {
+            CompanyName = "Shop",
+            CurrencyCode = "USD",
+            CurrencySymbol = "$"
+        });
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+        _dbContext.ChangeTracker.Clear();
+        Assert.Equal("EGP", await _dbContext.Tenants.Where(t => t.Id == _tenantId).Select(t => t.Currency).SingleAsync());
+        Assert.Null(await SettingValueAsync(_tenantId, "Company.Name"));
+    }
+
+    [Fact]
+    public async Task UpdateSettings_ArabicCompanyNamePersistsWithoutChangingTechnicalIdentity()
+    {
+        var originalSlug = await _dbContext.Tenants
+            .Where(tenant => tenant.Id == _tenantId)
+            .Select(tenant => tenant.Slug)
+            .SingleAsync();
+
+        var result = await _controller.UpdateSettings(new SettingsDto
+        {
+            CompanyName = "شركة شوبكسي للتجارة",
+            CurrencyCode = "EGP",
+            CurrencySymbol = "E\u00A3"
+        });
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        _dbContext.ChangeTracker.Clear();
+        Assert.Equal("شركة شوبكسي للتجارة", await SettingValueAsync(_tenantId, "Company.Name"));
+        Assert.Equal(originalSlug, await _dbContext.Tenants
+            .Where(tenant => tenant.Id == _tenantId)
+            .Select(tenant => tenant.Slug)
+            .SingleAsync());
+    }
+
+    [Fact]
+    public void SettingsDto_MissingCurrencyCodeRemainsValidForLegacySymbolFallback()
+    {
+        var dto = new SettingsDto
+        {
+            CompanyName = "Shopixy Company",
+            CurrencyCode = null,
+            CurrencySymbol = "E\u00A3"
+        };
+        var results = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+
+        Assert.True(Validator.TryValidateObject(dto, new ValidationContext(dto), results, validateAllProperties: true));
+        Assert.Empty(results);
+    }
+
+    [Theory]
+    [InlineData("Shop\u0000ixy")]
+    [InlineData("Shop\r\nixy")]
+    public void SettingsDto_CompanyNameRejectsControlCharacters(string companyName)
+    {
+        var dto = new SettingsDto { CompanyName = companyName, CurrencyCode = "EGP" };
+        var results = new List<System.ComponentModel.DataAnnotations.ValidationResult>();
+
+        Assert.False(Validator.TryValidateObject(dto, new ValidationContext(dto), results, validateAllProperties: true));
+        Assert.Contains(results, result => result.MemberNames.Contains(nameof(SettingsDto.CompanyName)) ||
+                                          result.ErrorMessage?.Contains("CompanyName", StringComparison.Ordinal) == true);
     }
 
     [Fact]
@@ -160,6 +241,7 @@ public sealed class SettingsControllerCurrencyTests : IDisposable
         var response = Assert.IsType<SettingsDto>(ok.Value);
 
         Assert.Equal("Tenant A", response.CompanyName);
+        Assert.Equal($"https://settings-currency-{_tenantId:N}.example.test", response.StorefrontUrl);
     }
 
     [Fact]

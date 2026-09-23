@@ -21,7 +21,6 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/sync")]
-[Authorize(Roles = "Owner,Admin")]
 public class AdminSyncController : ControllerBase
 {
     private readonly ApplicationDbContext _context;

@@ -81,6 +81,15 @@ public sealed class StorefrontPublicationGuardMiddleware
             return false;
         }
 
+        // Store config is the bootstrap authority for live, maintenance, and
+        // disabled storefront screens. Its controller still rejects inactive
+        // tenants, while this guard blocks all other unpublished public reads.
+        if (context.Request.Path.Equals("/api/storefront/store-config", StringComparison.OrdinalIgnoreCase) ||
+            context.Request.Path.Equals("/api/storefront/store-config/", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         var endpoint = context.GetEndpoint();
         if (endpoint?.Metadata.GetMetadata<IAllowAnonymous>() == null)
         {

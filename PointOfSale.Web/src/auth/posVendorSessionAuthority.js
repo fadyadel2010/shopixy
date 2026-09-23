@@ -1,3 +1,5 @@
+import { deriveEffectivePosPermissions } from './posPermissions'
+
 export const POS_VENDOR_SESSION_AUTHORITY_LOST_EVENT = 'pos-vendor-session-authority-lost'
 export const POS_VENDOR_SESSION_LOGOUT_STORAGE_KEY = 'pos_vendor_session_logout_at'
 
@@ -167,6 +169,7 @@ export const derivePosVendorSessionUserAuthority = (value) => {
     const id = normalizeString(value.id ?? value.userId)
     const tenantId = normalizeString(value.tenantId)
     const role = normalizeString(value.role)
+    const effectivePermissions = deriveEffectivePosPermissions(value.effectivePermissions)
     const navigationCapabilities = Array.isArray(value.navigationCapabilities)
         ? value.navigationCapabilities
         : null
@@ -179,6 +182,7 @@ export const derivePosVendorSessionUserAuthority = (value) => {
         !GUID_PATTERN.test(id) ||
         !GUID_PATTERN.test(tenantId) ||
         !POS_ACTOR_ROLES.has(role) ||
+        !effectivePermissions ||
         !navigationCapabilities ||
         navigationCapabilities.some((capability) => !COMMERCEHUB_VENDOR_NAVIGATION_CAPABILITIES.has(capability)) ||
         new Set(navigationCapabilities).size !== navigationCapabilities.length ||
@@ -193,6 +197,7 @@ export const derivePosVendorSessionUserAuthority = (value) => {
         id,
         tenantId,
         role,
+        effectivePermissions,
         navigationCapabilities,
         vendorLifecycleAuthority,
     }

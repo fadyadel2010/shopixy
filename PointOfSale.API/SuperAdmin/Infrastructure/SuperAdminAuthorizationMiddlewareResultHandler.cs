@@ -2,6 +2,8 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
 using Microsoft.Extensions.Logging;
+using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Security;
 
 namespace PointOfSale.API.SuperAdmin.Infrastructure;
 
@@ -24,6 +26,18 @@ public sealed class SuperAdminAuthorizationMiddlewareResultHandler : IAuthorizat
     {
         if (!IsSuperAdminRequest(context))
         {
+            if (authorizeResult.Forbidden && policy.Requirements.OfType<PosPermissionRequirement>().Any())
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                await context.Response.WriteAsJsonAsync(
+                    new ApiErrorResponse(
+                        "POS_PERMISSION_FORBIDDEN",
+                        "You do not have permission to perform this operation.",
+                        context.TraceIdentifier),
+                    context.RequestAborted);
+                return;
+            }
+
             await _fallback.HandleAsync(next, context, policy, authorizeResult);
             return;
         }

@@ -698,7 +698,7 @@ export default function POS() {
 
         const fetchWarehouses = async () => {
             try {
-                const response = await api.get('/warehouses', { signal: controller.signal })
+                const response = await api.get('/pos-carts/warehouse-options', { signal: controller.signal })
                 const warehouseOptions = Array.isArray(response.data) ? response.data : []
                 setWarehouses(warehouseOptions)
                 setSelectedWarehouse(currentWarehouseId => {

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs;
+using PointOfSale.API.Services;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events;
@@ -48,6 +49,7 @@ public class SettingsController : ControllerBase
     private readonly ITenantContext _tenantContext;
     private readonly IEventPublisher _eventPublisher;
     private readonly IConnectionMultiplexer? _redis;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
 
     // Redis cache key prefix for tenant country
     private const string TENANT_COUNTRY_CACHE_PREFIX = "tenant:country:";
@@ -57,12 +59,14 @@ public class SettingsController : ControllerBase
         ILogger<SettingsController> logger,
         ITenantContext tenantContext,
         IEventPublisher eventPublisher,
+        StorefrontUrlResolver storefrontUrlResolver,
         IConnectionMultiplexer? redis = null)
     {
         _context = context;
         _logger = logger;
         _tenantContext = tenantContext;
         _eventPublisher = eventPublisher;
+        _storefrontUrlResolver = storefrontUrlResolver;
         _redis = redis;
     }
 
@@ -82,7 +86,9 @@ public class SettingsController : ControllerBase
                 {
                     t.Name,
                     t.ContactEmail,
-                    t.Currency
+                    t.Currency,
+                    t.Slug,
+                    t.StorefrontBaseUrl
                 })
                 .FirstOrDefaultAsync();
 
@@ -126,6 +132,12 @@ public class SettingsController : ControllerBase
 
                 CurrencyCode = currencyCode,
                 CurrencySymbol = ResolveDisplayCurrencySymbol(GetValue(dict, "Tax.CurrencySymbol", string.Empty), currencyCode),
+                StorefrontUrl = ResolveStorefrontUrl(new Tenant
+                {
+                    Id = tenantId,
+                    Slug = tenant.Slug,
+                    StorefrontBaseUrl = tenant.StorefrontBaseUrl
+                }),
                 EnableTax = ParseStoredBoolean(GetValue(dict, "Tax.Enable", "true"), defaultValue: true),
                 TaxRate = ParseStoredDecimal(GetValue(dict, "Tax.Rate", "0"), defaultValue: 0m),
                 
@@ -162,6 +174,13 @@ public class SettingsController : ControllerBase
                 !string.IsNullOrWhiteSpace(dto.CurrencyCode) ? dto.CurrencyCode : dto.CurrencySymbol,
                 tenant.Currency);
             var displayCurrencySymbol = ResolveDisplayCurrencySymbol(dto.CurrencySymbol, normalizedCurrencyCode);
+
+            dto.CompanyName = dto.CompanyName.Trim();
+            dto.CompanyAddress = dto.CompanyAddress?.Trim() ?? string.Empty;
+            dto.CompanyPhone = dto.CompanyPhone?.Trim() ?? string.Empty;
+            dto.CompanyEmail = dto.CompanyEmail?.Trim() ?? string.Empty;
+            dto.ReceiptHeader ??= string.Empty;
+            dto.ReceiptFooter ??= string.Empty;
             
             await UpdateSettingAsync(tenant.Id, "Company.Name", dto.CompanyName, "Company Profile");
             await UpdateSettingAsync(tenant.Id, "Company.Address", dto.CompanyAddress, "Company Profile");
@@ -256,7 +275,18 @@ public class SettingsController : ControllerBase
 
             dto.CurrencyCode = normalizedCurrencyCode;
             dto.CurrencySymbol = displayCurrencySymbol;
+            dto.StorefrontUrl = ResolveStorefrontUrl(tenant);
             return Ok(dto);
+        }
+        catch (Exception ex) when (ex is FinancialCurrencyMissingException or FinancialCurrencyInvalidException or FinancialCurrencyMismatchException)
+        {
+            _logger.LogWarning(ex, "Rejected invalid settings currency");
+            return BadRequest(new
+            {
+                code = "INVALID_CURRENCY",
+                message = "The selected currency is not supported for this store.",
+                traceId = HttpContext.TraceIdentifier
+            });
         }
         catch (Exception ex)
         {
@@ -406,7 +436,7 @@ public class SettingsController : ControllerBase
             candidate = mappedCurrency;
         }
 
-        return FinancialCurrencyGuard.RequireCurrency(
+        return FinancialCurrencyGuard.RequireEgpCurrency(
             candidate,
             "settings.currencyCode",
             "settings.update");
@@ -494,6 +524,11 @@ public class SettingsController : ControllerBase
             setting.UpdatedAt = DateTime.UtcNow;
         }
     }
+
+    private string? ResolveStorefrontUrl(Tenant tenant) =>
+        _storefrontUrlResolver.TryResolve(tenant, out var storefrontUrl)
+            ? storefrontUrl
+            : null;
 
     private async Task<Dictionary<string, string?>> LoadActiveTenantSettingsDictionaryAsync(Guid tenantId)
     {

@@ -7,7 +7,6 @@ using PointOfSale.Core.Interfaces;
 
 namespace PointOfSale.API.Controllers;
 
-[Authorize(Roles = "Owner,Admin")]
 [ApiController]
 [Route("api/admin/commercehub/payments")]
 public sealed class AdminCommerceHubPaymentsController : ControllerBase

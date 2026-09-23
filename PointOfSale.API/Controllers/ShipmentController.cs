@@ -24,7 +24,7 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/shipments")]
-[Authorize(Roles = "Owner,Admin,Manager")]
+[Authorize]
 public class ShipmentController : ControllerBase
 {
     private readonly IShipmentService _shipmentService;

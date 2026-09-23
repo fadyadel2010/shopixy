@@ -63,16 +63,16 @@ public sealed class GeographicPersistenceAuthorityTests
     public void PersistenceValidation_MustFailClosedAndAuditSnapshots()
     {
         var db = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Data/ApplicationDbContext.cs");
-        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260705183000_Geo8OrderShipmentGeographicPersistence.cs");
+        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         Assert.Contains("GuardGeographicBusinessSnapshotPersistence", db, StringComparison.Ordinal);
         Assert.Contains("geographic snapshot is broken and cannot be persisted", db, StringComparison.Ordinal);
         Assert.Contains("geographic snapshot is immutable and cannot be updated after persistence", db, StringComparison.Ordinal);
         Assert.Contains("OrderGeographicSnapshotCreated", db, StringComparison.Ordinal);
         Assert.Contains("ShipmentGeographicSnapshotCreated", db, StringComparison.Ordinal);
-        Assert.Contains("CK_Orders_ShippingGeoSnapshot", migration, StringComparison.Ordinal);
-        Assert.Contains("CK_Shipments_DestinationGeoSnapshot", migration, StringComparison.Ordinal);
-        Assert.Contains("CK_CustomerAddressVersions_Snapshot", migration, StringComparison.Ordinal);
+        Assert.Contains("ShippingAddressAdmissionEvidenceId = table.Column<Guid>", migration, StringComparison.Ordinal);
+        Assert.Contains("DestinationAddressAdmissionEvidenceId = table.Column<Guid>", migration, StringComparison.Ordinal);
+        Assert.Contains("SnapshotVersion = table.Column<int>", migration, StringComparison.Ordinal);
     }
 
     [Fact]

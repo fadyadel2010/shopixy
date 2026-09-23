@@ -30,7 +30,7 @@ export interface CartVariantAttribute {
 export interface CartItemDto {
     /** Product ID for grouping and display */
     productId: string;
-    /** Variant ID for pricing and stock (PHASE 11.3) */
+    /** Canonical sellable SKU ID for simple and variant products */
     variantId?: string;
     productName: string;
     productNameAr?: string;

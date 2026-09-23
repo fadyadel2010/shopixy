@@ -46,6 +46,7 @@ describe('payment flow resolution', () => {
             orderStatus: 'Completed',
             paymentStatus: 'Failed',
             paymentIntentStatus: 'Failed',
+            canRetryPayment: false,
             totalAmount: 10,
             currency: 'EGP',
         })).toThrow(/contradicted current payment lifecycle/i);

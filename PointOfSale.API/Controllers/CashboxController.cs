@@ -345,7 +345,6 @@ public class CashboxController : ControllerBase
     /// Open cashbox and record the opening float in the ledger when provided.
     /// </summary>
     [HttpPost("{id}/open")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<ActionResult<CashboxResponse>> OpenCashbox(
         Guid id,
         OpenCashboxRequest request,
@@ -726,7 +725,6 @@ public class CashboxController : ControllerBase
     /// Record manual cash in.
     /// </summary>
     [HttpPost("{id}/cash-in")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<ActionResult<CashboxTransactionResponse>> CashIn(
         Guid id,
         CashTransactionRequest request,

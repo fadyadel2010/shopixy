@@ -141,7 +141,8 @@ export interface CartState {
  * 
  * PHASE 11.4 — VARIANT-CENTRIC CART
  * All cart operations now use variantId as the primary identifier.
- * - addItem requires variantId (falls back to default variant on backend if null)
+ * - addItem requires variantId only for products with selectable variants
+ * - the backend resolves and returns the canonical variantId for simple products
  * - updateQuantity uses variantId for item lookup
  * - removeItem uses variantId for item lookup
  */
@@ -153,9 +154,9 @@ export interface CartActions {
      * PHASE 11.4: variantId is REQUIRED for variant products
      */
     addItem: (productId: string, quantity: number, variantId?: string) => Promise<boolean>;
-    /** Update item quantity by variantId (or productId for legacy) */
+    /** Update by canonical variantId; productId fallback is legacy-only */
     updateQuantity: (productId: string, quantity: number, variantId?: string) => Promise<boolean>;
-    /** Remove item from cart by variantId (or productId for legacy) */
+    /** Remove by canonical variantId; productId fallback is legacy-only */
     removeItem: (productId: string, variantId?: string) => Promise<boolean>;
     /** Clear entire cart */
     clearCart: () => Promise<boolean>;
@@ -481,7 +482,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
 
     /**
      * Update item quantity
-     * PHASE 11.7: Uses variantId as the ONLY identifier (variant-centric)
+     * Uses the server-returned canonical variantId when available.
      */
     updateQuantity: async (productId: string, quantity: number, variantId?: string) => {
         const currentCart = get().cart;
@@ -489,7 +490,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
             return false;
         }
 
-        // PHASE 11.7: Find item by variantId if provided, otherwise by productId
+        // ProductId fallback only supports legacy cart responses without VariantId.
         const item = variantId
             ? currentCart?.items.find((i) => i.variantId === variantId)
             : currentCart?.items.find((i) => i.productId === productId && !i.variantId);
@@ -507,7 +508,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
         });
 
         try {
-            // PHASE 11.7: Use variant-based API when variantId is provided
+            // Canonical responses always use the variant-scoped API.
             const cart = variantId
                 ? await updateCartItemByVariant(variantId, { quantity })
                 : await updateCartItem(productId, { quantity });
@@ -574,7 +575,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
 
     /**
      * Remove item from cart
-     * PHASE 11.7: Uses variantId as the ONLY identifier (variant-centric)
+     * Uses the server-returned canonical variantId when available.
      */
     removeItem: async (productId: string, variantId?: string) => {
         if (get().isLoading || get().isApplyingCoupon || get().updatingItemId) {
@@ -588,7 +589,7 @@ export const useCartStore = create<CartState & CartActions>((set, get) => {
         });
 
         try {
-            // PHASE 11.7: Use variant-based API when variantId is provided
+            // Canonical responses always use the variant-scoped API.
             const cart = variantId
                 ? await removeCartItemByVariant(variantId)
                 : await removeCartItem(productId);

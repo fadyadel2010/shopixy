@@ -10,6 +10,12 @@ const baseUser = {
     id: '11111111-1111-4111-8111-111111111111',
     tenantId,
     role: 'Admin',
+    effectivePermissions: [
+        'dashboard.view',
+        'catalog.view',
+        'storefront.orders.view',
+        'storefront.design.manage',
+    ],
     navigationCapabilities: [
         'commercehub.storefront.manage',
         'commercehub.storefront.cms.manage',

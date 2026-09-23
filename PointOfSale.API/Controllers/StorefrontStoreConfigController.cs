@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
 using PointOfSale.API.Services.Storefront;
+using PointOfSale.Core.Enums;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
@@ -52,8 +53,8 @@ public class StorefrontStoreConfigController : ControllerBase
     /// Read Flow (Normal):
     /// 1. Resolve trusted tenant context
     /// 2. Read current tenant-owned SQL StoreConfig and Tenant currency
-    /// 3. Map live configuration only
-    /// 4. Return backend authority or fail closed
+    /// 3. Map the current configuration, including storefront status
+    /// 4. Return backend authority or fail closed for inactive tenants
     /// 
     /// SECURITY: preview content is never served from this public endpoint.
     /// Admin preview is available only via /api/admin/store-config/preview.
@@ -88,6 +89,10 @@ public class StorefrontStoreConfigController : ControllerBase
                     config => config.TenantId,
                     tenant => tenant.Id,
                     (config, tenant) => new { Config = config, Tenant = tenant })
+                .Where(authority =>
+                    authority.Tenant.IsActive &&
+                    authority.Tenant.Status == TenantStatus.Active &&
+                    authority.Tenant.DeletedAtUtc == null)
                 .SingleOrDefaultAsync(cancellationToken);
 
             if (authority == null)

@@ -15451,6 +15451,80 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.ToTable("PosCartRequestIdempotency", (string)null);
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosUserSecurityToken", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("ConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CreatedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("Purpose")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAtUtc")
+                        .HasDatabaseName("IX_PosUserSecurityTokens_ExpiresAtUtc");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("IX_PosUserSecurityTokens_TokenHash");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("TenantId", "UserId", "Purpose", "ExpiresAtUtc")
+                        .HasDatabaseName("IX_PosUserSecurityTokens_TenantUserPurposeExpiry");
+
+                    b.ToTable("PosUserSecurityTokens", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PosUserSecurityTokens_ConsumedNotBeforeCreation", "\"ConsumedAtUtc\" IS NULL OR \"ConsumedAtUtc\" >= \"CreatedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_PosUserSecurityTokens_ExpiryAfterCreation", "\"ExpiresAtUtc\" > \"CreatedAtUtc\"");
+
+                            t.HasCheckConstraint("CK_PosUserSecurityTokens_RevokedNotBeforeCreation", "\"RevokedAtUtc\" IS NULL OR \"RevokedAtUtc\" >= \"CreatedAtUtc\"");
+                        });
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.ProcessedEvent", b =>
                 {
                     b.Property<Guid>("Id")
@@ -21370,7 +21444,10 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasIndex("Status");
 
-                    b.ToTable("Tenants", (string)null);
+                    b.ToTable("Tenants", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Tenants_Slug_Canonical", "\"Slug\" IS NULL OR (\"Slug\" = LOWER(BTRIM(\"Slug\")) AND LENGTH(\"Slug\") BETWEEN 3 AND 63 AND \"Slug\" ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND POSITION('--' IN \"Slug\") = 0)");
+                        });
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.TenantAutomationSettings", b =>
@@ -21716,6 +21793,16 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<Guid?>("CreatedBy")
                         .HasColumnType("uuid");
 
+                    b.Property<string>("DisableReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("DisabledAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("DisabledByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -21732,6 +21819,15 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<DateTime?>("InvitationAcceptedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("InvitedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("InvitedByUserId")
+                        .HasColumnType("uuid");
+
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
@@ -21742,6 +21838,16 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("LastName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("NormalizedEmail")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("NormalizedUsername")
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -21764,6 +21870,12 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Property<int>("Role")
                         .HasColumnType("integer");
 
+                    b.Property<uint>("RowVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
                     b.Property<Guid>("TenantId")
                         .HasColumnType("uuid");
 
@@ -21780,13 +21892,24 @@ namespace PointOfSale.Infrastructure.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Email")
-                        .IsUnique();
+                    b.HasIndex("NormalizedEmail")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Users_NormalizedEmail");
 
-                    b.HasIndex("TenantId");
+                    b.HasIndex("NormalizedUsername")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Users_NormalizedUsername");
 
-                    b.HasIndex("Username")
-                        .IsUnique();
+                    b.HasIndex("TenantId", "IsDeleted", "IsActive", "Role")
+                        .HasDatabaseName("IX_Users_TenantList");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_Users_TenantId")
+                        .HasDatabaseName("IX_Users_TenantId");
+
+                    b.HasIndex(new[] { "TenantId" }, "IX_Users_TenantId_SoleOwner")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Users_TenantId_SoleOwner")
+                        .HasFilter("\"IsDeleted\" = FALSE AND \"Role\" = 0");
 
                     b.ToTable("Users");
                 });
@@ -24541,6 +24664,17 @@ namespace PointOfSale.Infrastructure.Migrations
                     b.Navigation("Unit");
                 });
 
+            modelBuilder.Entity("PointOfSale.Core.Entities.PosUserSecurityToken", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("PointOfSale.Core.Entities.Product", b =>
                 {
                     b.HasOne("PointOfSale.Core.Entities.Category", "Category")
@@ -25475,6 +25609,15 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasForeignKey("CreatedByUserId");
 
                     b.Navigation("CreatedByUser");
+                });
+
+            modelBuilder.Entity("PointOfSale.Core.Entities.User", b =>
+                {
+                    b.HasOne("PointOfSale.Core.Entities.Tenant", null)
+                        .WithMany()
+                        .HasForeignKey("TenantId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("PointOfSale.Core.Entities.VisaTransaction", b =>

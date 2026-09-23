@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Events.AbandonedCart;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Instrumentation;
 using Microsoft.EntityFrameworkCore;
@@ -126,7 +127,7 @@ public class AbandonedCartScannerJob
                     var storefrontBaseUrl = storefrontContext.StorefrontBaseUrl;
 
                     var recoveryToken = _cartService.GenerateRecoveryToken(cart);
-                    var recoveryLink = $"{storefrontBaseUrl.TrimEnd('/')}/recover-cart/{recoveryToken}";
+                    var recoveryLink = $"{storefrontBaseUrl}/recover-cart/{Uri.EscapeDataString(recoveryToken)}";
 
                     // Emit trigger event
                     var triggerEvent = new TriggerRecoveryEvent
@@ -275,22 +276,10 @@ public class AbandonedCartScannerJob
 
     private string ResolveStorefrontBaseUrl(TenantStorefrontIdentity tenant)
     {
-        if (!string.IsNullOrWhiteSpace(tenant.StorefrontBaseUrl))
-        {
-            return tenant.StorefrontBaseUrl.TrimEnd('/');
-        }
-
-        var urlTemplate = _configuration["Storefront:UrlTemplate"]
-            ?? _configuration["AbandonedCart:StorefrontUrlTemplate"];
-
-        if (!string.IsNullOrWhiteSpace(urlTemplate) && !string.IsNullOrWhiteSpace(tenant.Slug))
-        {
-            return urlTemplate.Replace("{slug}", tenant.Slug, StringComparison.Ordinal).TrimEnd('/');
-        }
-
-        throw new InvalidOperationException(
-            $"Cannot resolve recovery storefront URL for tenant {tenant.Id}. " +
-            "Configure Tenant.StorefrontBaseUrl or Storefront:UrlTemplate with a valid slug.");
+        return StorefrontUrlAuthority.ResolveOrigin(
+            tenant.StorefrontBaseUrl,
+            tenant.Slug,
+            _configuration["Storefront:UrlTemplate"]);
     }
 
     private sealed record StorefrontContext(string StoreName, string StorefrontBaseUrl);

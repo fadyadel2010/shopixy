@@ -5,11 +5,8 @@ namespace PointOfSale.Core.Interfaces;
 /// <summary>
 /// Cache abstraction for Domain Resolution lookups (DOMAIN-2C / DOMAIN-1.6).
 ///
-/// This interface defines ONLY the contract required by DOMAIN-1.6 Section 13
-/// (Cache Constitution) for host → domain resolution caching. No implementation
-/// is provided — no Redis, no MemoryCache, no caching logic. The concrete cache
-/// implementation will be introduced by a future DOMAIN-3 wave when the Domain
-/// cache provider is activated.
+/// The production implementation is shared across application instances and
+/// generation-fences cache fills against concurrent authority mutations.
 ///
 /// <para>
 /// The cache key is the <c>NormalizedHostName</c> (DOMAIN-1.5 CPD-8).
@@ -58,4 +55,20 @@ public interface IDomainResolutionCache
     /// <param name="normalizedHost">The normalized host key to remove.</param>
     /// <param name="cancellationToken">Optional cancellation token.</param>
     ValueTask RemoveAsync(string normalizedHost, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Returns a cached result or invokes the persistence factory under a
+    /// per-authority single-flight boundary.
+    /// </summary>
+    ValueTask<DomainResolutionResult> GetOrCreateAsync(
+        string normalizedHost,
+        Func<CancellationToken, ValueTask<DomainResolutionResult>> factory,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Advances the shared authority generation. Existing entries become
+    /// unusable immediately on every process, and in-flight stale fills cannot
+    /// publish into the new generation.
+    /// </summary>
+    ValueTask InvalidateAllAsync(CancellationToken cancellationToken = default);
 }

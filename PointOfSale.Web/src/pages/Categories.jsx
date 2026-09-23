@@ -3,11 +3,15 @@ import { useTranslation } from 'react-i18next'
 import api from '../services/api'
 import { useConfirmDialog } from '../common/confirm/ConfirmDialogProvider'
 import { useRTL } from '../hooks/useRTL'
+import { useHasPermission } from '../components/PermissionGuard'
 
 export default function Categories() {
     const { t } = useTranslation()
     const { isRTL, dir } = useRTL()
     const { confirm } = useConfirmDialog()
+    const canManageCatalog = useHasPermission('catalog.manage')
+    const canDeleteCatalog = useHasPermission('catalog.delete')
+    const canPublishCatalog = useHasPermission('catalog.publish')
     const [categories, setCategories] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -185,8 +189,9 @@ export default function Categories() {
                         </div>
                     </div>
 
+                    {(canManageCatalog || canDeleteCatalog) && (
                     <div className="flex gap-2">
-                        {level === 0 && (
+                        {canManageCatalog && level === 0 && (
                             <button
                                 onClick={() => {
                                     setFormData({ name: '', description: '', parentCategoryId: category.id })
@@ -197,19 +202,24 @@ export default function Categories() {
                                 {t('categories.addSubcategory')}
                             </button>
                         )}
-                        <button
-                            onClick={() => handleEdit(category)}
-                            className="rounded-lg bg-blue-50 px-3 py-1 text-sm text-blue-600 transition-colors hover:bg-blue-100"
-                        >
-                            {t('common.edit')}
-                        </button>
-                        <button
-                            onClick={() => handleDelete(category.id)}
-                            className="rounded-lg bg-red-50 px-3 py-1 text-sm text-red-600 transition-colors hover:bg-red-100"
-                        >
-                            {t('common.delete')}
-                        </button>
+                        {canManageCatalog && (
+                            <button
+                                onClick={() => handleEdit(category)}
+                                className="rounded-lg bg-blue-50 px-3 py-1 text-sm text-blue-600 transition-colors hover:bg-blue-100"
+                            >
+                                {t('common.edit')}
+                            </button>
+                        )}
+                        {canDeleteCatalog && (
+                            <button
+                                onClick={() => handleDelete(category.id)}
+                                className="rounded-lg bg-red-50 px-3 py-1 text-sm text-red-600 transition-colors hover:bg-red-100"
+                            >
+                                {t('common.delete')}
+                            </button>
+                        )}
                     </div>
+                    )}
                 </div>
 
                 {hasChildren && isExpanded && (
@@ -245,24 +255,28 @@ export default function Categories() {
                         </div>
                     )}
 
-                    <button
-                        onClick={syncCategories}
-                        disabled={syncing || categories.length === 0}
-                        className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        title={t('categories.syncTitle')}
-                    >
-                        {syncing ? t('common.syncing') : t('categories.syncToStorefront')}
-                    </button>
+                    {canPublishCatalog && (
+                        <button
+                            onClick={syncCategories}
+                            disabled={syncing || categories.length === 0}
+                            className="flex items-center gap-2 rounded-lg bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-700 transition-colors hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                            title={t('categories.syncTitle')}
+                        >
+                            {syncing ? t('common.syncing') : t('categories.syncToStorefront')}
+                        </button>
+                    )}
 
-                    <button
-                        onClick={() => {
-                            resetForm()
-                            setShowModal(true)
-                        }}
-                        className="btn-primary"
-                    >
-                        + {t('categories.addCategory')}
-                    </button>
+                    {canManageCatalog && (
+                        <button
+                            onClick={() => {
+                                resetForm()
+                                setShowModal(true)
+                            }}
+                            className="btn-primary"
+                        >
+                            + {t('categories.addCategory')}
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -290,7 +304,7 @@ export default function Categories() {
                 )}
             </div>
 
-            {showModal && (
+            {canManageCatalog && showModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
                     <div className="mx-4 w-full max-w-md rounded-lg bg-white shadow-xl">
                         <div className="p-6">

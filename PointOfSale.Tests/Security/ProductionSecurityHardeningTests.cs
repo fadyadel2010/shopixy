@@ -60,7 +60,8 @@ public sealed class ProductionSecurityHardeningTests
         "SuperAdminAuthController.Login", "SuperAdminAuthController.Refresh", "AdminAbandonedCartRecoveryController.LogRecoveryResult",
         "AffiliatePortalController.DiscoverCategories", "AffiliatePortalController.DiscoverPublicProductDetail",
         "AffiliatePortalController.DiscoverPublicProducts",
-        "AuthController.Register", "AuthController.Login", "AuthController.RefreshToken", "AuthController.VerifyEmail",
+        "AuthController.Login", "AuthController.RefreshToken", "AuthController.VerifyEmail",
+        "AuthController.AcceptUserInvitation", "AuthController.CompletePasswordReset",
         "CommerceHubOrdersController.GetOrder", "CustomersAuthController.Register", "CustomersAuthController.Login",
         "CustomersAuthController.Logout", "CustomersAuthController.ForgotPassword", "CustomersAuthController.ResetPassword",
         "CustomersAuthController.VerifyEmail", "MarketplaceController.GetAttachment", "MarketplaceController.GetServiceReviews",
@@ -74,6 +75,7 @@ public sealed class ProductionSecurityHardeningTests
         "StorefrontAuthController.Register", "StorefrontAuthController.Login", "StorefrontAuthController.RefreshToken",
         "StorefrontAuthController.GetAvailableProviders", "StorefrontAuthController.GoogleLogin", "StorefrontAuthController.FacebookLogin",
         "StorefrontAuthController.Logout", "StorefrontAuthController.ForgotPassword", "StorefrontAuthController.ResetPassword",
+        "StorefrontOnlineCustomerController.CheckEmailExists",
         "StorefrontCartController.AddItem", "StorefrontCartController.ApplyCoupon", "StorefrontCartController.ApplyDraft",
         "StorefrontCartController.ClearCart", "StorefrontCartController.GetCart", "StorefrontCartController.RemoveCoupon",
         "StorefrontCartController.RemoveItem", "StorefrontCartController.RemoveItemByVariant",
@@ -186,45 +188,29 @@ public sealed class ProductionSecurityHardeningTests
     }
 
     [Fact]
-    public async Task Register_AssignsCashierRole_AndServerTenant()
+    public async Task AnonymousStaffRegistration_IsDisabledWithoutCreatingAUser()
     {
         var tenantId = Guid.NewGuid();
         await using var context = CreateDbContext(tenantId);
         var controller = CreateAuthController(context, tenantId);
-        var result = await controller.Register(
-            new RegisterRequest("cashier.user", "cashier@example.com", "P@ssw0rd!", "Cash", "User", "01000000000"),
-            CancellationToken.None);
-        var ok = Assert.IsType<OkObjectResult>(result.Result);
-        var response = Assert.IsType<AuthResponse>(ok.Value);
-        var created = await context.Users.SingleAsync();
-        Assert.Equal(UserRole.Cashier.ToString(), response.User.Role);
-        Assert.Equal(tenantId, response.User.TenantId);
-        Assert.Equal(string.Empty, response.AccessToken);
-        Assert.Equal(string.Empty, response.RefreshToken);
-        Assert.Equal(UserRole.Cashier, created.Role);
-        Assert.Equal(tenantId, created.TenantId);
-        Assert.Null(created.RefreshToken);
-        Assert.Null(created.RefreshTokenExpiryTime);
+        var result = controller.Register(
+            new RegisterRequest("cashier.user", "cashier@example.com", "P@ssw0rd!", "Cash", "User", "01000000000"));
 
-        var setCookieHeaders = controller.HttpContext.Response.Headers["Set-Cookie"];
-        Assert.DoesNotContain(
-            setCookieHeaders,
-            value => value?.StartsWith($"{AuthCookieConfiguration.PosAccessTokenCookieName}=", StringComparison.Ordinal) == true);
-        Assert.DoesNotContain(
-            setCookieHeaders,
-            value => value?.StartsWith($"{AuthCookieConfiguration.PosRefreshTokenCookieName}=", StringComparison.Ordinal) == true);
+        var gone = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status410Gone, gone.StatusCode);
+        Assert.Contains("POS_STAFF_REGISTRATION_DISABLED", gone.Value?.ToString(), StringComparison.Ordinal);
+        Assert.Empty(await context.Users.ToListAsync());
     }
 
     [Fact]
-    public async Task Register_RejectsMissingTenantContext()
+    public async Task DisabledStaffRegistration_DoesNotDependOnTenantContext()
     {
         await using var context = CreateDbContext();
         var controller = CreateAuthController(context, null);
-        var result = await controller.Register(
-            new RegisterRequest("tenantless.user", "tenantless@example.com", "P@ssw0rd!", "Tenantless", "User", null),
-            CancellationToken.None);
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
-        Assert.Contains("TENANT_REQUIRED", badRequest.Value?.ToString(), StringComparison.Ordinal);
+        var result = controller.Register(
+            new RegisterRequest("tenantless.user", "tenantless@example.com", "P@ssw0rd!", "Tenantless", "User", null));
+        var gone = Assert.IsType<ObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status410Gone, gone.StatusCode);
         Assert.Empty(context.Users);
     }
 

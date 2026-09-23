@@ -12,6 +12,7 @@ using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
 using PointOfSale.Infrastructure.Accounting;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.Identity;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.MongoDB.Documents;
@@ -75,12 +76,37 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             var currentSqlProducts = _dbContext.Products
                 .IgnoreQueryFilters()
                 .AsNoTracking();
-            var pgProductCount = await currentSqlProducts
-                .CountAsync(product => !product.IsDeleted, timeoutCts.Token);
+            var sqlProducts = await currentSqlProducts
+                .Where(product => !product.IsDeleted)
+                .Select(product => new
+                {
+                    product.Id,
+                    product.TenantId
+                })
+                .ToListAsync(timeoutCts.Token);
             var currentTenantIds = await currentSqlProducts
                 .Select(product => product.TenantId)
                 .Distinct()
                 .ToListAsync(timeoutCts.Token);
+
+            var pgProductCount = 0;
+            foreach (var tenantProducts in sqlProducts.GroupBy(product => product.TenantId))
+            {
+                var candidates = tenantProducts
+                    .Select(product => new ProductDocument
+                    {
+                        TenantId = product.TenantId,
+                        ProductId = product.Id
+                    })
+                    .ToList();
+                var projections = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+                    _dbContext,
+                    candidates,
+                    tenantProducts.Key,
+                    timeoutCts.Token);
+                pgProductCount += projections.Count(product =>
+                    product is { IsActive: true, IsOnlineVisible: true });
+            }
             
             // This Mongo database can be shared with historical/development tenants that
             // are intentionally absent from the current SQL database. Compare only the
@@ -92,10 +118,17 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             var currentTenantFilter = currentTenantIds.Count == 0
                 ? Builders<ProductDocument>.Filter.Where(_ => false)
                 : Builders<ProductDocument>.Filter.In(product => product.TenantId, currentTenantIds);
-            var mongoProductCount = await mongoProducts.CountDocumentsAsync(
+            var mongoCurrentTenantTotalCount = await mongoProducts.CountDocumentsAsync(
                 currentTenantFilter,
                 cancellationToken: timeoutCts.Token);
-            var foreignTenantDocumentCount = Math.Max(0, mongoTotalProductCount - mongoProductCount);
+            var mongoVisibleFilter = Builders<ProductDocument>.Filter.And(
+                currentTenantFilter,
+                Builders<ProductDocument>.Filter.Eq(product => product.IsActive, true),
+                Builders<ProductDocument>.Filter.Eq(product => product.IsOnlineVisible, true));
+            var mongoProductCount = await mongoProducts.CountDocumentsAsync(
+                mongoVisibleFilter,
+                cancellationToken: timeoutCts.Token);
+            var foreignTenantDocumentCount = Math.Max(0, mongoTotalProductCount - mongoCurrentTenantTotalCount);
 
             var drift = Math.Abs(pgProductCount - mongoProductCount);
             var driftDirection = mongoProductCount > pgProductCount
@@ -107,7 +140,9 @@ public class ProjectionDriftHealthCheck : IHealthCheck
             var data = new Dictionary<string, object>
             {
                 ["PostgreSQLCount"] = pgProductCount,
+                ["PostgreSQLSourceCount"] = sqlProducts.Count,
                 ["MongoDBCount"] = mongoProductCount,
+                ["MongoDBCurrentTenantTotalCount"] = mongoCurrentTenantTotalCount,
                 ["MongoDBTotalCount"] = mongoTotalProductCount,
                 ["ForeignTenantDocumentCount"] = foreignTenantDocumentCount,
                 ["Drift"] = drift,
@@ -150,18 +185,18 @@ public class ProjectionDriftHealthCheck : IHealthCheck
                     data: data);
             }
 
+            OperationalConvergenceTelemetry.RecordDriftDiagnostic(
+                "mongo_product_projection",
+                OperationalConvergenceAuthority.StorefrontProduct,
+                OperationalConvergenceDecision.DriftWithinTolerance,
+                OperationalConvergenceReason.DriftWithinTolerance);
+
             if (foreignTenantDocumentCount > 0)
             {
                 return HealthCheckResult.Degraded(
                     $"Current SQL tenant projection scope is aligned within threshold; {foreignTenantDocumentCount} foreign-tenant MongoDB documents are isolated and preserved.",
                     data: data);
             }
-
-            OperationalConvergenceTelemetry.RecordDriftDiagnostic(
-                "mongo_product_projection",
-                OperationalConvergenceAuthority.StorefrontProduct,
-                OperationalConvergenceDecision.DriftWithinTolerance,
-                OperationalConvergenceReason.DriftWithinTolerance);
 
             return HealthCheckResult.Healthy(
                 $"Projections synced within tolerance (drift: {drift})",

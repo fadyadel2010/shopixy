@@ -166,6 +166,7 @@ describe('storefront UX consistency and state stability', () => {
             httpClient,
             normalizeError: vi.fn(() => ({ message: 'Request failed', isNetworkError: false })),
             isRetryableError: vi.fn(() => false),
+            isRequestCanceled: vi.fn(() => false),
             fetchCart: vi.fn(),
             addCartItem: vi.fn(),
             updateCartItem: vi.fn(),
@@ -202,13 +203,40 @@ describe('storefront UX consistency and state stability', () => {
         }))
 
         const { useCheckoutStore } = await import('@/store/checkoutStore')
+        const { useCartStore } = await import('@/store/cartStore')
+
+        useCartStore.setState({
+            cart: {
+                cartId: '11111111-1111-4111-8111-111111111111',
+                tenantId: '22222222-2222-4222-8222-222222222222',
+                ownerType: 'session',
+                ownerId: 'session-1',
+                items: [],
+                itemCount: 0,
+                subtotal: 0,
+                discountTotal: 0,
+                taxTotal: 0,
+                grandTotal: 0,
+                currency: 'USD',
+                lastUpdatedUtc: '2026-09-23T00:00:00Z',
+                expiresAtUtc: '2026-09-24T00:00:00Z',
+                appliedCouponCode: null,
+                appliedCoupon: null,
+            },
+            isInitialized: true,
+            isLoading: false,
+        })
 
         useCheckoutStore.setState({
             step: 'review',
-            shippingMethodId: 'ship-stale',
+            checkoutSessionId: '33333333-3333-4333-8333-333333333333',
+            checkoutSessionCartId: '11111111-1111-4111-8111-111111111111',
+            manualWalletUploadToken: 'test-upload-token',
+            shippingMethodId: '44444444-4444-4444-8444-444444444444',
             shippingMethods: [
                 {
-                    id: 'ship-stale',
+                    tenantId: '22222222-2222-4222-8222-222222222222',
+                    id: '44444444-4444-4444-8444-444444444444',
                     name: 'Legacy Courier',
                     price: 25,
                     currency: 'USD',
@@ -239,17 +267,7 @@ describe('storefront UX consistency and state stability', () => {
             .mockResolvedValueOnce({
                 data: [
                     {
-                        id: 'ship-fresh',
-                        name: 'Express',
-                        price: 35,
-                        currency: 'USD',
-                    },
-                ],
-            })
-            .mockResolvedValueOnce({
-                data: [
-                    {
-                        id: 'payment-paymob',
+                        id: '66666666-6666-4666-8666-666666666666',
                         code: 'PAYMOB',
                         displayName: 'Paymob',
                         supportsOnline: true,
@@ -261,6 +279,21 @@ describe('storefront UX consistency and state stability', () => {
                     },
                 ],
             })
+        httpClient.post.mockResolvedValueOnce({
+            data: {
+                tenantId: '22222222-2222-4222-8222-222222222222',
+                shippingMethodsStatus: 'AVAILABLE',
+                shippingMethods: [
+                    {
+                        tenantId: '22222222-2222-4222-8222-222222222222',
+                        id: '55555555-5555-4555-8555-555555555555',
+                        name: 'Express',
+                        price: 35,
+                        currency: 'USD',
+                    },
+                ],
+            },
+        })
 
         await useCheckoutStore.getState().fetchShippingMethods()
         await useCheckoutStore.getState().fetchPaymentMethods()
@@ -268,10 +301,10 @@ describe('storefront UX consistency and state stability', () => {
         const state = useCheckoutStore.getState()
 
         expect(state.step).toBe('review')
-        expect(state.shippingMethodId).toBe('ship-stale')
+        expect(state.shippingMethodId).toBe('44444444-4444-4444-8444-444444444444')
         expect(state.shippingSelectionStatus).toBe('stale')
         expect(state.staleShippingSelection).toEqual({
-            value: 'ship-stale',
+            value: '44444444-4444-4444-8444-444444444444',
             label: 'Legacy Courier',
             message: STALE_SELECTION_MESSAGE,
         })
@@ -283,7 +316,7 @@ describe('storefront UX consistency and state stability', () => {
             label: 'Cash on Delivery',
             message: STALE_SELECTION_MESSAGE,
         })
-        expect(emitCheckoutSelectionInvalidated).toHaveBeenCalledWith('shipping', 'missing_from_latest_config', 'ship-stale')
+        expect(emitCheckoutSelectionInvalidated).toHaveBeenCalledWith('shipping', 'missing_from_latest_config', '44444444-4444-4444-8444-444444444444')
         expect(emitCheckoutSelectionInvalidated).toHaveBeenCalledWith('payment', 'missing_from_latest_config', 'COD')
     })
 

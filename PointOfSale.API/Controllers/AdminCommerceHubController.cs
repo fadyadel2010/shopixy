@@ -23,7 +23,6 @@ using PointOfSale.Infrastructure.Reliability;
 
 namespace PointOfSale.API.Controllers;
 
-[Authorize(Roles = "Owner,Admin")]
 [ApiController]
 [Route("api/admin/commercehub")]
 public class AdminCommerceHubController : ControllerBase

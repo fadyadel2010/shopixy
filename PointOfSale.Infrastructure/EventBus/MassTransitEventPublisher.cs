@@ -162,7 +162,21 @@ public class MassTransitEventPublisher : IEventPublisher
         _logger.LogInformation("Event Published Successfully | ID: {EventId}", @event.EventId);
     }
 
-    public async Task PublishBatchAsync<T>(IEnumerable<T> events, CancellationToken cancellationToken = default) where T : IntegrationEvent
+    public Task PublishBatchAsync<T>(IEnumerable<T> events, CancellationToken cancellationToken = default) where T : IntegrationEvent
+    {
+        return PublishBatchCoreAsync(events.Cast<object>(), cancellationToken);
+    }
+
+    public Task PublishBatchAsync(
+        IEnumerable<object> events,
+        CancellationToken cancellationToken = default)
+    {
+        return PublishBatchCoreAsync(events, cancellationToken);
+    }
+
+    private async Task PublishBatchCoreAsync(
+        IEnumerable<object> events,
+        CancellationToken cancellationToken)
     {
         var shouldFlushOutbox = CanFlushOutboxImmediately();
 
@@ -177,24 +191,28 @@ public class MassTransitEventPublisher : IEventPublisher
         {
             try
             {
-                EnrichEventWithTenantContext(@event);
-
-                if (string.IsNullOrEmpty(@event.CorrelationId))
-                {
-                    @event.CorrelationId = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString();
-                }
-
-                if (string.IsNullOrEmpty(@event.IdempotencyKey))
-                {
-                    @event.IdempotencyKey = @event.EventId.ToString();
-                }
-
                 var eventType = @event.GetType();
-                await EnrichAuthoritativeOrderingMetadataAsync(@event, eventType, cancellationToken);
-                EnsureTransactionalPublishBoundary(eventType);
-                EnsureAuthoritativeTenantScope(@event, eventType);
+                if (@event is IntegrationEvent integrationEvent)
+                {
+                    EnrichEventWithTenantContext(integrationEvent);
 
-                await _publishEndpoint.Publish(@event, cancellationToken);
+                    if (string.IsNullOrEmpty(integrationEvent.CorrelationId))
+                    {
+                        integrationEvent.CorrelationId = System.Diagnostics.Activity.Current?.Id ?? Guid.NewGuid().ToString();
+                    }
+
+                    if (string.IsNullOrEmpty(integrationEvent.IdempotencyKey))
+                    {
+                        integrationEvent.IdempotencyKey = integrationEvent.EventId.ToString();
+                    }
+
+                    await EnrichAuthoritativeOrderingMetadataAsync(integrationEvent, eventType, cancellationToken);
+                    EnsureAuthoritativeTenantScope(integrationEvent, eventType);
+                }
+
+                EnsureTransactionalPublishBoundary(eventType);
+
+                await _publishEndpoint.Publish(@event, eventType, cancellationToken);
             }
             catch
             {

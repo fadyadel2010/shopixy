@@ -10,7 +10,6 @@ namespace PointOfSale.Api.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/accounting")]
-[Authorize(Roles = "Admin")]
 public class AdminAccountingController : ControllerBase
 {
     private readonly ITenantAccountSeeder _seeder;

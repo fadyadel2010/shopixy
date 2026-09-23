@@ -135,8 +135,12 @@ public sealed class PrivilegedRefreshTokenRevocationInterceptor : SaveChangesInt
     private static bool IsUserAuthorityReduced(EntityEntry<User> entry)
     {
         return entry.Property(nameof(User.Role)).IsModified ||
-               IsBooleanChangedToFalse(entry, nameof(User.IsActive)) ||
-               IsBooleanChangedToTrue(entry, nameof(User.IsDeleted));
+                IsBooleanChangedToFalse(entry, nameof(User.IsActive)) ||
+                IsBooleanChangedToTrue(entry, nameof(User.IsDeleted)) ||
+                // Users Management (Wave 2): a password change (invitation
+                // acceptance, reset completion) invalidates the current
+                // refresh-backed POS session at the same boundary.
+                entry.Property(nameof(User.PasswordHash)).IsModified;
     }
 
     private static IEnumerable<Guid> TenantAuthorityReductionIds(ApplicationDbContext dbContext)
@@ -199,7 +203,13 @@ public sealed class PrivilegedRefreshTokenRevocationInterceptor : SaveChangesInt
 
         if (string.IsNullOrWhiteSpace(user.RefreshToken) && user.RefreshTokenExpiryTime is null)
         {
-            return;
+            var entry = dbContext.Entry(user);
+            var originalRefreshToken = entry.Property(nameof(User.RefreshToken)).OriginalValue as string;
+            var originalExpiry = entry.Property(nameof(User.RefreshTokenExpiryTime)).OriginalValue as DateTime?;
+            if (string.IsNullOrWhiteSpace(originalRefreshToken) && originalExpiry is null)
+            {
+                return;
+            }
         }
 
         user.RefreshToken = null;

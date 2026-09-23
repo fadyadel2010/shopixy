@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const navigate = vi.hoisted(() => vi.fn())
+const windowOpen = vi.hoisted(() => vi.fn())
 const cmsService = vi.hoisted(() => ({
     createPage: vi.fn(),
     createPreviewLink: vi.fn(),
@@ -61,10 +62,21 @@ function page(version: number, title = 'About', published = false) {
 describe('CmsPageEditor authoring UX', () => {
     beforeEach(() => {
         Object.values(cmsService).forEach((mock) => mock.mockReset())
+        windowOpen.mockReset()
         extractCmsConflict.mockClear()
         cmsService.getPage.mockResolvedValue(page(1))
         cmsService.updatePage.mockImplementation(async (_id, request) => page(2, request.title))
         cmsService.publishPage.mockImplementation(async (_id, _version) => page(2, 'Changed title', true))
+        cmsService.createPreviewLink.mockResolvedValue({
+            slug: 'about',
+            previewToken: 'backend-token',
+            previewUrl: 'https://shop.example.test/about?preview=true&previewToken=backend-token',
+            expiresAtUtc: new Date(Date.now() + 60_000).toISOString(),
+        })
+        Object.defineProperty(window, 'open', {
+            configurable: true,
+            value: windowOpen,
+        })
     })
 
     it('tracks unsaved state and keeps preview isolated from saves and versions', async () => {
@@ -95,6 +107,20 @@ describe('CmsPageEditor authoring UX', () => {
         await waitFor(() => expect(cmsService.publishPage).toHaveBeenCalledWith('page-1', 2))
         await screen.findByText('Page published successfully.')
         expect(screen.getByText('Published')).toBeInTheDocument()
+    })
+
+    it('opens only the backend-resolved CMS preview URL', async () => {
+        render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+
+        fireEvent.click(screen.getByRole('button', { name: 'Preview Saved Draft' }))
+
+        await waitFor(() => expect(cmsService.createPreviewLink).toHaveBeenCalledWith('page-1'))
+        expect(windowOpen).toHaveBeenCalledWith(
+            'https://shop.example.test/about?preview=true&previewToken=backend-token',
+            '_blank',
+            'noopener,noreferrer',
+        )
     })
 
     it('keeps publish disabled after a successful publish response removes the draft', async () => {

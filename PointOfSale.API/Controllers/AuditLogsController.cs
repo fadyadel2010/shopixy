@@ -5,6 +5,7 @@ using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.API.DTOs;
+using PointOfSale.Core.Security;
 
 namespace PointOfSale.API.Controllers;
 
@@ -14,7 +15,7 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/audit-logs")]
-[Authorize(Roles = "Owner,Admin")]
+[Authorize(Policy = PosPermissions.AuditView)]
 public class AuditLogsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
@@ -124,6 +125,7 @@ public class AuditLogsController : ControllerBase
     }
 
     [HttpGet("export")]
+    [Authorize(Policy = PosPermissions.AuditExport)]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> ExportAuditLogs(
         [FromQuery] DateTime? fromDate = null,

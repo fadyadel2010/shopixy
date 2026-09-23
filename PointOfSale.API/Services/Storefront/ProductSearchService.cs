@@ -193,17 +193,21 @@ public class ProductSearchService : IProductSearchService
             cancellationToken);
 
         var filteredDocuments = new List<ProductDocument>(documents.Count);
-        foreach (var document in documents.Where(d => d.TenantId == tenantId))
+        var tenantDocuments = documents.Where(d => d.TenantId == tenantId).ToList();
+        if (tenantDocuments.Count > 0)
         {
-            var sqlProjection = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+            var recomposed = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
                 _dbContext,
-                document,
+                tenantDocuments,
                 tenantId,
                 cancellationToken);
 
-            if (sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
+            foreach (var sqlProjection in recomposed)
             {
-                filteredDocuments.Add(sqlProjection);
+                if (sqlProjection is { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
+                {
+                    filteredDocuments.Add(sqlProjection);
+                }
             }
         }
 

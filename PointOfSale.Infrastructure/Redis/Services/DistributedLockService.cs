@@ -77,7 +77,8 @@ public interface IDistributedLockService
 /// </summary>
 public class DistributedLockService : IDistributedLockService
 {
-    private readonly IConnectionMultiplexer _redis;
+    private readonly RedisConnectionFactory? _connectionFactory;
+    private readonly IConnectionMultiplexer? _redis;
     private readonly ILogger<DistributedLockService> _logger;
 
     // Lua script for atomic release - only release if we own the lock
@@ -106,6 +107,14 @@ public class DistributedLockService : IDistributedLockService
         _logger = logger;
     }
 
+    public DistributedLockService(
+        RedisConnectionFactory connectionFactory,
+        ILogger<DistributedLockService> logger)
+    {
+        _connectionFactory = connectionFactory;
+        _logger = logger;
+    }
+
     public async Task<DistributedLockResult> TryAcquireLockAsync(string lockKey, string lockValue, TimeSpan ttl)
     {
         if (ttl <= TimeSpan.Zero)
@@ -115,7 +124,11 @@ public class DistributedLockService : IDistributedLockService
 
         try
         {
-            var db = _redis.GetDatabase();
+            var db = GetDatabase();
+            if (db == null)
+            {
+                return DistributedLockResult.InfrastructureFailure();
+            }
             
             // SET NX with TTL - atomic operation
             var acquired = await db.StringSetAsync(
@@ -150,7 +163,11 @@ public class DistributedLockService : IDistributedLockService
 
         try
         {
-            var db = _redis.GetDatabase();
+            var db = GetDatabase();
+            if (db == null)
+            {
+                return DistributedLockResult.InfrastructureFailure();
+            }
             var result = await db.ScriptEvaluateAsync(
                 RefreshLockScript,
                 new RedisKey[] { lockKey },
@@ -183,7 +200,11 @@ public class DistributedLockService : IDistributedLockService
     {
         try
         {
-            var db = _redis.GetDatabase();
+            var db = GetDatabase();
+            if (db == null)
+            {
+                return false;
+            }
             
             // Use Lua script for atomic check-and-delete
             var result = await db.ScriptEvaluateAsync(
@@ -215,7 +236,11 @@ public class DistributedLockService : IDistributedLockService
     {
         try
         {
-            var db = _redis.GetDatabase();
+            var db = GetDatabase();
+            if (db == null)
+            {
+                return false;
+            }
             return await db.KeyExistsAsync(lockKey);
         }
         catch (Exception ex)
@@ -224,4 +249,7 @@ public class DistributedLockService : IDistributedLockService
             return false;
         }
     }
+
+    private IDatabase? GetDatabase() =>
+        _connectionFactory?.GetDatabase() ?? _redis?.GetDatabase();
 }

@@ -24,6 +24,11 @@ const storefrontUser = {
     id: '11111111-1111-4111-8111-111111111111',
     tenantId: '22222222-2222-4222-8222-222222222222',
     role: 'Owner',
+    effectivePermissions: [
+        'dashboard.view',
+        'storefront.orders.view',
+        'storefront.design.manage',
+    ],
     navigationCapabilities: [],
 }
 
@@ -187,7 +192,7 @@ describe('Storefront constitutional information architecture', () => {
             expect(appSource).toContain(`path="${path}"`)
         }
         expect(appSource).toContain('path="settings" element={<Settings />}')
-        expect(appSource).toContain("roles={['Owner', 'Admin']}")
+        expect(appSource).toContain('<Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>')
         expect(STOREFRONT_ROUTE_COMPATIBILITY).toHaveLength(22)
 
         const headerRoute = new URL(STOREFRONT_NAVIGATION.children[7].children[0].path, 'http://localhost')

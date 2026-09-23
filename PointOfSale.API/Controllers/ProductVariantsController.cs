@@ -1396,7 +1396,6 @@ public class ProductVariantsController : ControllerBase
     /// Update variant stock for a specific warehouse.
     /// </summary>
     [HttpPut("{variantId}/stock/{warehouseId}")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> UpdateVariantStock(
         Guid productId, Guid variantId, Guid warehouseId, [FromBody] UpdateStockRequest request)
     {

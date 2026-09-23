@@ -83,9 +83,9 @@ public sealed class StorefrontArchitectureHardeningGovernanceTests
             "PointOfSale.API/Services/Cart/CartService.cs");
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productService, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productsController, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", productsController, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", searchController, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discoveryService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discoveryService, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", cartService, StringComparison.Ordinal);
     }
 

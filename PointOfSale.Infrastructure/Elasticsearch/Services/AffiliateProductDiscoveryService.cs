@@ -8,6 +8,7 @@ using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.MongoDB.Documents;
+using PointOfSale.Core.Tenancy;
 
 namespace PointOfSale.Infrastructure.Elasticsearch.Services;
 
@@ -381,57 +382,45 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
         CancellationToken cancellationToken)
     {
         var recomposed = new List<AffiliateDiscoveryItem>(candidates.Count);
+        var validCandidates = candidates
+            .Where(candidate => candidate.TenantId != Guid.Empty && candidate.ProductId != Guid.Empty)
+            .ToList();
+        var placeholders = validCandidates
+            .Select(candidate => new ProductDocument
+            {
+                TenantId = candidate.TenantId,
+                ProductId = candidate.ProductId
+            })
+            .ToList();
+        var products = await ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync(
+            _dbContext,
+            placeholders,
+            cancellationToken);
+        var tenantIds = validCandidates.Select(candidate => candidate.TenantId).Distinct().ToList();
+        var tenants = await _dbContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(tenant =>
+                tenantIds.Contains(tenant.Id) &&
+                tenant.IsActive &&
+                tenant.Status == PointOfSale.Core.Enums.TenantStatus.Active &&
+                tenant.DeletedAtUtc == null)
+            .Select(tenant => new
+            {
+                tenant.Id,
+                tenant.Slug,
+                tenant.StorefrontBaseUrl,
+                tenant.Currency
+            })
+            .ToDictionaryAsync(tenant => tenant.Id, cancellationToken);
 
-        foreach (var candidate in candidates)
+        for (var index = 0; index < validCandidates.Count; index++)
         {
-            if (candidate.TenantId == Guid.Empty || candidate.ProductId == Guid.Empty)
-            {
-                continue;
-            }
-
-            var policyExists = await _dbContext.AffiliateProductPolicies
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Join(
-                    _dbContext.AffiliateCategories.AsNoTracking().IgnoreQueryFilters(),
-                    policy => policy.AffiliateCategoryId,
-                    category => (Guid?)category.Id,
-                    (policy, category) => new { Policy = policy, Category = category })
-                .AnyAsync(item =>
-                    item.Policy.TenantId == candidate.TenantId &&
-                    item.Policy.ProductId == candidate.ProductId &&
-                    item.Policy.IsEnabled &&
-                    !item.Policy.IsDeleted &&
-                    item.Category.IsActive &&
-                    !item.Category.IsDeleted &&
-                    ((item.Category.Level == 1 && item.Category.ParentId == null) ||
-                     (item.Category.Level == 2 &&
-                      item.Category.ParentId != null &&
-                      _dbContext.AffiliateCategories
-                          .IgnoreQueryFilters()
-                          .Any(parent =>
-                              parent.Id == item.Category.ParentId.Value &&
-                              parent.Level == 1 &&
-                              parent.IsActive &&
-                              !parent.IsDeleted))),
-                    cancellationToken);
-
-            if (!policyExists)
-            {
-                continue;
-            }
-
-            var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                _dbContext,
-                new ProductDocument
-                {
-                    TenantId = candidate.TenantId,
-                    ProductId = candidate.ProductId
-                },
-                candidate.TenantId,
-                cancellationToken);
+            var candidate = validCandidates[index];
+            var product = products[index];
 
             if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
+                !product.IsAffiliateEnabled ||
                 (categoryId.HasValue && product.CategoryId != categoryId.Value) ||
                 !product.TryResolveAffiliatePublicPricing(out var pricing) ||
                 !pricing.InStock)
@@ -439,23 +428,7 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
                 continue;
             }
 
-            var tenant = await _dbContext.Tenants
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(item =>
-                    item.Id == candidate.TenantId &&
-                    item.IsActive &&
-                    item.DeletedAtUtc == null)
-                .Select(item => new
-                {
-                    item.Name,
-                    item.Slug,
-                    item.StorefrontBaseUrl,
-                    item.Currency
-                })
-                .FirstOrDefaultAsync(cancellationToken);
-
-            if (tenant == null ||
+            if (!tenants.TryGetValue(candidate.TenantId, out var tenant) ||
                 !TryResolveStorefrontBaseUrl(tenant.StorefrontBaseUrl, tenant.Slug, out var storefrontBaseUrl))
             {
                 continue;
@@ -496,21 +469,19 @@ public class AffiliateProductDiscoveryService : IAffiliateProductDiscoveryServic
         string? tenantSlug,
         out string resolved)
     {
-        if (!string.IsNullOrWhiteSpace(storefrontBaseUrl))
+        try
         {
-            resolved = storefrontBaseUrl.TrimEnd('/');
+            resolved = StorefrontUrlAuthority.ResolveOrigin(
+                storefrontBaseUrl,
+                tenantSlug,
+                _configuration["Storefront:UrlTemplate"]);
             return true;
         }
-
-        var urlTemplate = _configuration["Storefront:UrlTemplate"];
-        if (!string.IsNullOrWhiteSpace(urlTemplate) && !string.IsNullOrWhiteSpace(tenantSlug))
+        catch (InvalidOperationException)
         {
-            resolved = urlTemplate.Replace("{slug}", tenantSlug).TrimEnd('/');
-            return true;
+            resolved = string.Empty;
+            return false;
         }
-
-        resolved = string.Empty;
-        return false;
     }
 
     private static string? ResolvePrimaryProductImage(ProductDocument product)

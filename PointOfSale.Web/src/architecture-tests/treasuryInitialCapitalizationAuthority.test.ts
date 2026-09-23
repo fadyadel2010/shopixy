@@ -8,7 +8,7 @@ describe('treasury initial capitalization frontend authority', () => {
     it('keeps the canonical workspace Owner-only and retires legacy Treasury opening routes', () => {
         const app = readSource('App.jsx')
 
-        expect(app).toContain("<Route element={<PosRoleRouteGuard roles={['Owner']} />}>")
+        expect(app).toContain('<Route element={<PosPermissionRouteGuard permission="finance.initialize" />}>')
         expect(app).toContain('path="treasury/initial-capitalization" element={<TreasuryInitialCapitalization />}')
         expect(app).toContain('path="opening-balance/cashbox" element={<Navigate to="/treasury/initial-capitalization" replace />}')
         expect(app).toContain('path="opening-balance/banks" element={<Navigate to="/treasury/initial-capitalization" replace />}')
@@ -20,7 +20,7 @@ describe('treasury initial capitalization frontend authority', () => {
 
         expect(sidebar).toContain("path: '/treasury/initial-capitalization'")
         expect(sidebar).toContain("label: t('nav.treasuryInitialCapitalization')")
-        expect(sidebar).toContain("requiredRoles: ['Owner']")
+        expect(sidebar).toContain("permission: 'finance.initialize'")
         expect(sidebar).not.toContain("path: '/opening-balance/cashbox'")
     })
 })

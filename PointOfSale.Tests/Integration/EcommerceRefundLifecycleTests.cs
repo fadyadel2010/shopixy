@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -159,7 +160,7 @@ public sealed class EcommerceRefundLifecycleTests
         {
             TenantId = tenantId,
             SettlementId = "settlement-visibility-001",
-            Gateway = "CARD",
+            Gateway = "STRIPE",
             OrderIds = [order.Id],
             GrossAmount = 100m,
             Fees = 3m,
@@ -536,6 +537,7 @@ public sealed class EcommerceRefundLifecycleTests
             TenantId = tenantId,
             OrderNumber = $"ORD-{Guid.NewGuid():N}"[..16],
             PaymentMethodCode = "CARD",
+            PaymentGateway = "STRIPE",
             PaymentStatus = paymentStatus,
             FulfillmentStatus = FulfillmentStatus.Delivered,
             FulfillmentMode = FulfillmentMode.Manual,
@@ -644,6 +646,14 @@ public sealed class EcommerceRefundLifecycleTests
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var constraint in entityType.GetCheckConstraints().ToArray())
+                {
+                    entityType.RemoveCheckConstraint(constraint.Name);
+                }
+            }
+
             modelBuilder.Entity<Order>().Property<uint>("xmin").HasDefaultValue(1u);
             modelBuilder.Entity<Product>().Property(product => product.RowVersion).HasDefaultValue(1u);
             modelBuilder.Entity<PaymentIntent>().Property(intent => intent.RowVersion).HasDefaultValue(1u);

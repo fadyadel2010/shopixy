@@ -445,6 +445,7 @@ public sealed class AffiliatePublicDiscoveryBoundaryTests
             affiliateService: null!,
             payoutService: null!,
             tenantContext: null!,
+            storefrontUrlResolver: null!,
             logger: null!);
 
         foreach (var rejectedSort in new[] { "commission_desc", "commission_asc", "ranking", "DROP TABLE" })

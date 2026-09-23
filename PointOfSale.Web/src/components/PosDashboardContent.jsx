@@ -10,6 +10,8 @@ import DonutChart from './DonutChart'
 import StorefrontStatusCard from './StorefrontStatusCard'
 import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
+import { useAuthStore } from '../store/authStore'
+import { hasPosPermission } from '../auth/posPermissions'
 
 export default function PosDashboardContent() {
     const { t } = useTranslation()
@@ -17,6 +19,13 @@ export default function PosDashboardContent() {
     const navigate = useNavigate()
     const { showError } = useToast()
     const { formatCurrency } = useSettings()
+    const user = useAuthStore((state) => state.user)
+    const canViewStorefrontStatus = hasPosPermission(user, 'storefront.design.manage')
+    const canCreateSale = hasPosPermission(user, 'sales.operate')
+    const canManageCatalog = hasPosPermission(user, 'catalog.manage')
+    const canManageCustomers = hasPosPermission(user, 'customers.manage')
+    const canManagePurchases = hasPosPermission(user, 'purchases.manage')
+    const canViewInventory = hasPosPermission(user, 'inventory.view')
 
     const [loading, setLoading] = useState(true)
     const [stats, setStats] = useState(null)
@@ -206,7 +215,7 @@ export default function PosDashboardContent() {
                     </div>
                 </div>
 
-                <StorefrontStatusCard />
+                {canViewStorefrontStatus ? <StorefrontStatusCard /> : null}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -364,12 +373,14 @@ export default function PosDashboardContent() {
                 <div className="card">
                     <div className={`flex justify-between items-center mb-4 gap-4 ${isRTL ? 'flex-row-reverse' : ''}`}>
                         <h3 className={`text-lg font-semibold text-gray-900 ${isRTL ? 'text-right' : 'text-left'}`}>{t('dashboard.lowStockAlert')}</h3>
+                        {canViewInventory ? (
                         <button
                             onClick={() => navigate('/inventory')}
                             className="text-sm text-orange-600 hover:text-orange-700"
                         >
                             {t('dashboard.viewAll')} {isRTL ? '<-' : '->'}
                         </button>
+                        ) : null}
                     </div>
                     {lowStockItems.length > 0 ? (
                         <div className="overflow-x-auto">
@@ -418,6 +429,7 @@ export default function PosDashboardContent() {
             <div className="card">
                 <h3 className={`text-lg font-semibold text-gray-900 mb-4 ${isRTL ? 'text-right' : 'text-left'}`}>{t('dashboard.quickActions')}</h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {canCreateSale ? (
                     <button
                         onClick={() => navigate('/pos')}
                         className="p-4 bg-gradient-to-br from-blue-50 to-blue-100 hover:from-blue-100 hover:to-blue-200 rounded-lg border border-blue-200 transition-all"
@@ -425,6 +437,8 @@ export default function PosDashboardContent() {
                         <div className="text-3xl mb-2">🛒</div>
                         <div className="text-sm font-semibold text-blue-900">{t('dashboard.newSale')}</div>
                     </button>
+                    ) : null}
+                    {canManageCatalog ? (
                     <button
                         onClick={() => navigate('/products')}
                         className="p-4 bg-gradient-to-br from-green-50 to-green-100 hover:from-green-100 hover:to-green-200 rounded-lg border border-green-200 transition-all"
@@ -432,6 +446,8 @@ export default function PosDashboardContent() {
                         <div className="text-3xl mb-2">📦</div>
                         <div className="text-sm font-semibold text-green-900">{t('dashboard.addProduct')}</div>
                     </button>
+                    ) : null}
+                    {canManageCustomers ? (
                     <button
                         onClick={() => navigate('/customers')}
                         className="p-4 bg-gradient-to-br from-purple-50 to-purple-100 hover:from-purple-100 hover:to-purple-200 rounded-lg border border-purple-200 transition-all"
@@ -439,6 +455,8 @@ export default function PosDashboardContent() {
                         <div className="text-3xl mb-2">👤</div>
                         <div className="text-sm font-semibold text-purple-900">{t('dashboard.addCustomer')}</div>
                     </button>
+                    ) : null}
+                    {canManagePurchases ? (
                     <button
                         onClick={() => navigate('/purchase-invoice')}
                         className="p-4 bg-gradient-to-br from-orange-50 to-orange-100 hover:from-orange-100 hover:to-orange-200 rounded-lg border border-orange-200 transition-all"
@@ -446,6 +464,7 @@ export default function PosDashboardContent() {
                         <div className="text-3xl mb-2">📥</div>
                         <div className="text-sm font-semibold text-orange-900">{t('dashboard.newPurchase')}</div>
                     </button>
+                    ) : null}
                 </div>
             </div>
 

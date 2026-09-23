@@ -951,7 +951,7 @@ public class StorefrontAuthController : ControllerBase
 
 public class RefreshTokenRequestDto
 {
-    public string RefreshToken { get; set; } = string.Empty;
+    public string? RefreshToken { get; set; }
 }
 
 public class LogoutRequestDto

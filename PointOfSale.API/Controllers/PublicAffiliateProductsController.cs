@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Nest;
 using PointOfSale.Infrastructure.Data;
@@ -15,6 +14,8 @@ using PointOfSale.Infrastructure.Elasticsearch.Services;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using Microsoft.Extensions.Options;
 using System.Linq;
+using PointOfSale.API.Services;
+using PointOfSale.Core.Entities;
 
 namespace PointOfSale.API.Controllers;
 
@@ -38,20 +39,20 @@ public class PublicAffiliateProductsController : ControllerBase
 
     private readonly IElasticClient _elasticClient;
     private readonly ApplicationDbContext _dbContext;
-    private readonly IConfiguration _configuration;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ElasticsearchSettings _elasticSettings;
     private readonly ILogger<PublicAffiliateProductsController> _logger;
 
     public PublicAffiliateProductsController(
         IElasticClient elasticClient,
         ApplicationDbContext dbContext,
-        IConfiguration configuration,
+        StorefrontUrlResolver storefrontUrlResolver,
         IOptions<ElasticsearchSettings> elasticSettings,
         ILogger<PublicAffiliateProductsController> logger)
     {
         _elasticClient = elasticClient;
         _dbContext = dbContext;
-        _configuration = configuration;
+        _storefrontUrlResolver = storefrontUrlResolver;
         _elasticSettings = elasticSettings.Value;
         _logger = logger;
     }
@@ -343,16 +344,113 @@ public class PublicAffiliateProductsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var visible = new List<PublicAffiliateProductSearchDocument>(candidates.Count);
-
-        foreach (var candidate in candidates)
-        {
-            var recomposed = await RecomposePublicAffiliateProductFromSqlAuthorityAsync(
-                candidate,
-                cancellationToken);
-            if (recomposed != null)
+        var validCandidates = candidates
+            .Where(candidate => candidate.TenantId != Guid.Empty && candidate.ProductId != Guid.Empty)
+            .ToList();
+        var tenantIds = validCandidates.Select(candidate => candidate.TenantId).Distinct().ToList();
+        var productIds = validCandidates.Select(candidate => candidate.ProductId).Distinct().ToList();
+        var candidateKeys = validCandidates
+            .Select(candidate => (candidate.TenantId, candidate.ProductId))
+            .ToHashSet();
+        var policyRows = await _dbContext.AffiliateProductPolicies
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Join(
+                _dbContext.AffiliateCategories.AsNoTracking().IgnoreQueryFilters(),
+                policy => policy.AffiliateCategoryId,
+                category => (Guid?)category.Id,
+                (policy, category) => new { Policy = policy, Category = category })
+            .Where(item =>
+                tenantIds.Contains(item.Policy.TenantId) &&
+                productIds.Contains(item.Policy.ProductId) &&
+                item.Policy.IsEnabled &&
+                !item.Policy.IsDeleted &&
+                item.Category.IsActive &&
+                !item.Category.IsDeleted &&
+                ((item.Category.Level == 1 && item.Category.ParentId == null) ||
+                 (item.Category.Level == 2 &&
+                  item.Category.ParentId != null &&
+                  _dbContext.AffiliateCategories
+                      .IgnoreQueryFilters()
+                      .Any(parent =>
+                          parent.Id == item.Category.ParentId.Value &&
+                          parent.Level == 1 &&
+                          parent.ParentId == null &&
+                          parent.IsActive &&
+                          !parent.IsDeleted))))
+            .Select(item => new { item.Policy.TenantId, item.Policy.ProductId })
+            .ToListAsync(cancellationToken);
+        var approvedKeys = policyRows
+            .Select(row => (row.TenantId, row.ProductId))
+            .Where(candidateKeys.Contains)
+            .ToHashSet();
+        var placeholders = validCandidates
+            .Select(candidate => new ProductDocument
             {
-                visible.Add(recomposed);
+                TenantId = candidate.TenantId,
+                ProductId = candidate.ProductId
+            })
+            .ToList();
+        var products = await ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync(
+            _dbContext,
+            placeholders,
+            cancellationToken);
+        var tenants = await _dbContext.Tenants
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(tenant =>
+                tenantIds.Contains(tenant.Id) &&
+                tenant.IsActive &&
+                tenant.Status == PointOfSale.Core.Enums.TenantStatus.Active &&
+                tenant.DeletedAtUtc == null)
+            .Select(tenant => new Tenant
+            {
+                Id = tenant.Id,
+                Name = tenant.Name,
+                Slug = tenant.Slug,
+                StorefrontBaseUrl = tenant.StorefrontBaseUrl,
+                Currency = tenant.Currency
+            })
+            .ToDictionaryAsync(tenant => tenant.Id, cancellationToken);
+
+        for (var index = 0; index < validCandidates.Count; index++)
+        {
+            var candidate = validCandidates[index];
+            var product = products[index];
+            if (!approvedKeys.Contains((candidate.TenantId, candidate.ProductId)) ||
+                product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true } ||
+                !product.IsAffiliateEnabled ||
+                !product.TryResolveAffiliatePublicPricing(out var pricing) ||
+                !pricing.InStock ||
+                 !tenants.TryGetValue(candidate.TenantId, out var tenant) ||
+                 !_storefrontUrlResolver.TryResolve(tenant, out var storefrontBaseUrl))
+            {
+                continue;
             }
+
+            visible.Add(new PublicAffiliateProductSearchDocument
+            {
+                ProductId = product.ProductId,
+                ProductName = product.Name,
+                Description = product.Description ?? string.Empty,
+                CategoryName = product.CategoryName ?? string.Empty,
+                StoreName = tenant.Name,
+                StoreSlug = tenant.Slug ?? string.Empty,
+                ProductSlug = product.Slug ?? string.Empty,
+                ThumbnailUrl = ResolvePrimaryProductImage(product) ?? string.Empty,
+                Price = pricing.Price.HasValue ? (double?)pricing.Price.Value : null,
+                MinVariantPrice = pricing.MinVariantPrice.HasValue ? (double?)pricing.MinVariantPrice.Value : null,
+                MaxVariantPrice = pricing.MaxVariantPrice.HasValue ? (double?)pricing.MaxVariantPrice.Value : null,
+                Currency = tenant.Currency ?? string.Empty,
+                HasVariants = product.HasVariants,
+                TotalAvailableStock = pricing.TotalAvailableStock,
+                InStock = pricing.InStock,
+                IsActive = product.IsActive,
+                IsAffiliateEnabled = true,
+                AffiliateEnabledAtUtc = candidate.AffiliateEnabledAtUtc,
+                TenantId = candidate.TenantId,
+                StorefrontBaseUrl = storefrontBaseUrl
+            });
         }
 
         if (visible.Count != candidates.Count)
@@ -433,17 +531,18 @@ public class PublicAffiliateProductsController : ControllerBase
                 item.IsActive &&
                 item.Status == PointOfSale.Core.Enums.TenantStatus.Active &&
                 item.DeletedAtUtc == null)
-            .Select(item => new
+            .Select(item => new Tenant
             {
-                item.Name,
-                item.Slug,
-                item.StorefrontBaseUrl,
-                item.Currency
+                Id = item.Id,
+                Name = item.Name,
+                Slug = item.Slug,
+                StorefrontBaseUrl = item.StorefrontBaseUrl,
+                Currency = item.Currency
             })
             .FirstOrDefaultAsync(cancellationToken);
 
         if (tenant == null ||
-            !TryResolveStorefrontBaseUrl(tenant.StorefrontBaseUrl, tenant.Slug, out var storefrontBaseUrl))
+            !_storefrontUrlResolver.TryResolve(tenant, out var storefrontBaseUrl))
         {
             return null;
         }
@@ -481,28 +580,6 @@ public class PublicAffiliateProductsController : ControllerBase
                    requestedSlug.Trim(),
                    currentSlug.Trim(),
                    StringComparison.OrdinalIgnoreCase);
-    }
-
-    private bool TryResolveStorefrontBaseUrl(
-        string? storefrontBaseUrl,
-        string? tenantSlug,
-        out string resolved)
-    {
-        if (!string.IsNullOrWhiteSpace(storefrontBaseUrl))
-        {
-            resolved = storefrontBaseUrl.TrimEnd('/');
-            return true;
-        }
-
-        var urlTemplate = _configuration["Storefront:UrlTemplate"];
-        if (!string.IsNullOrWhiteSpace(urlTemplate) && !string.IsNullOrWhiteSpace(tenantSlug))
-        {
-            resolved = urlTemplate.Replace("{slug}", tenantSlug).TrimEnd('/');
-            return true;
-        }
-
-        resolved = string.Empty;
-        return false;
     }
 
     private static string? ResolvePrimaryProductImage(ProductDocument product)

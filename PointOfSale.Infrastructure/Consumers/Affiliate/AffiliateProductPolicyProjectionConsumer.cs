@@ -9,6 +9,7 @@ using Nest;
 using Elasticsearch.Net;
 using PointOfSale.Core.Events;
 using PointOfSale.Core.Events.Affiliate;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Consumers;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
@@ -1166,35 +1167,19 @@ public class AffiliateProductPolicyProjectionConsumer :
                 return;
             }
             
-            // AF-16E/AF-16F: Resolve authoritative storefront URL
-            // CRITICAL: Must use same resolution logic as StorefrontUrlResolver
             string storefrontBaseUrl;
-            if (!string.IsNullOrWhiteSpace(tenant.StorefrontBaseUrl))
+            try
             {
-                // Priority 1: Tenant-specific custom domain
-                storefrontBaseUrl = tenant.StorefrontBaseUrl.TrimEnd('/');
+                storefrontBaseUrl = StorefrontUrlAuthority.ResolveOrigin(
+                    tenant.StorefrontBaseUrl,
+                    tenant.Slug,
+                    _configuration["Storefront:UrlTemplate"]);
             }
-            else if (!string.IsNullOrWhiteSpace(tenant.Slug))
+            catch (InvalidOperationException ex)
             {
-                // Priority 2: Config template with slug substitution
-                var urlTemplate = _configuration["Storefront:UrlTemplate"];
-                if (string.IsNullOrWhiteSpace(urlTemplate))
-                {
-                    _logger.LogError(
-                        "[AF-16F] Storefront:UrlTemplate not configured | TenantId: {TenantId} | ProductId: {ProductId}",
-                        tenantId, productId);
-                    throw new InvalidOperationException(
-                        $"AFFILIATE_PUBLIC_PRODUCT_URL_AUTHORITY_NOT_READY: Storefront URL template is not configured for tenant {tenantId}.");
-                }
-                storefrontBaseUrl = urlTemplate.Replace("{slug}", tenant.Slug).TrimEnd('/');
-            }
-            else
-            {
-                _logger.LogError(
-                    "[AF-16F] Cannot resolve storefront URL (no StorefrontBaseUrl or Slug) | TenantId: {TenantId} | ProductId: {ProductId}",
-                    tenantId, productId);
                 throw new InvalidOperationException(
-                    $"AFFILIATE_PUBLIC_PRODUCT_URL_AUTHORITY_NOT_READY: Storefront URL cannot be resolved for tenant {tenantId}.");
+                    $"AFFILIATE_PUBLIC_PRODUCT_URL_AUTHORITY_NOT_READY: Storefront URL cannot be resolved for tenant {tenantId}.",
+                    ex);
             }
 
             // ═══════════════════════════════════════════════════════════════════════════════

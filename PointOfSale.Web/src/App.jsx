@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import ProtectedRoute from './components/ProtectedRoute'
-import PosRoleRouteGuard from './components/PosRoleRouteGuard'
+import PosPermissionRouteGuard from './components/PosPermissionRouteGuard'
 import { ToastProvider } from './components/Toast'
 import { ConfirmDialogProvider } from './common/confirm/ConfirmDialogProvider'
 import Login from './pages/Login'
@@ -63,7 +63,9 @@ import CostAnalysisReport from './pages/CostAnalysisReport'
 import BarcodePrinting from './pages/BarcodePrinting'
 import Settings from './pages/Settings'
 import AuditLog from './pages/AuditLog'
-import ResetDatabase from './pages/ResetDatabase'
+import UsersManagementPage from './pages/UsersManagementPage'
+import AcceptInvitationPage from './pages/AcceptInvitationPage'
+import ResetPasswordPage from './pages/ResetPasswordPage'
 // E-commerce pages
 import PixelTrackingConfigPage from './modules/storefront/config/PixelTrackingConfigPage'
 import ShippingMethods from './pages/ShippingMethods'
@@ -204,6 +206,9 @@ function App() {
                                 <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />
                                 {/* Phase 8.4: Public email verification route */}
                                 <Route path="/verify-email" element={<VerifyEmail />} />
+                                {/* Users Management (Waves 2-3): anonymous invitation/reset ceremonies */}
+                                <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+                                <Route path="/reset-password" element={<ResetPasswordPage />} />
                                 <Route path="/:lang/products" element={<MarketplaceProductsPublicPage />} />
                                 <Route path="/:lang/product/:productId" element={<MarketplaceProductPublicPage />} />
                                 <Route path="/:lang/:slug" element={<MarketplaceCmsPublicPage />} />
@@ -258,76 +263,124 @@ function App() {
 
                                 <Route element={<ProtectedRoute />}>
                                     <Route path="/" element={<Layout />}>
-                                        <Route index element={<Dashboard />} />
-                                        <Route path="products" element={<Products />} />
-                                        <Route path="products/:productId/edit" element={<ProductWorkspacePage />} />
-                                        <Route path="categories" element={<Categories />} />
-                                        <Route path="units" element={<Units />} />
-                                        <Route path="customers" element={<Customers />} />
-                                        <Route path="suppliers" element={<Suppliers />} />
-                                        <Route path="pos" element={<POS />} />
-                                        <Route path="sales-history" element={<SalesHistory />} />
-                                        <Route path="sales-representatives" element={<SalesRepresentatives />} />
-                                        <Route path="sales-rep-reports" element={<SalesRepReports />} />
-                                        <Route path="purchase-invoice" element={<PurchaseInvoice />} />
-                                        <Route path="purchase-returns" element={<PurchaseReturns />} />
-                                        <Route path="sales-returns" element={<SalesReturns />} />
-                                        <Route path="warehouses" element={<Warehouses />} />
-                                        <Route path="inventory" element={<Inventory />} />
+                                        <Route element={<PosPermissionRouteGuard permission="dashboard.view" />}>
+                                            <Route index element={<Dashboard />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="catalog.view" />}>
+                                            <Route path="products" element={<Products />} />
+                                            <Route path="categories" element={<Categories />} />
+                                            <Route path="units" element={<Units />} />
+                                            <Route path="barcode-printing" element={<BarcodePrinting />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="catalog.manage" />}>
+                                            <Route path="products/:productId/edit" element={<ProductWorkspacePage />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="customers.view" />}>
+                                            <Route path="customers" element={<Customers />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="suppliers.view" />}>
+                                            <Route path="suppliers" element={<Suppliers />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="sales.operate" />}>
+                                            <Route path="pos" element={<POS />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="sales.view" />}>
+                                            <Route path="sales-history" element={<SalesHistory />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="sales.refund" />}>
+                                            <Route path="sales-returns" element={<SalesReturns />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="sales.operate" />}>
+                                            <Route path="sales-representatives" element={<SalesRepresentatives />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="reports.operational.view" />}>
+                                            <Route path="sales-rep-reports" element={<SalesRepReports />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="purchases.manage" />}>
+                                            <Route path="purchase-invoice" element={<PurchaseInvoice />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="purchases.return" />}>
+                                            <Route path="purchase-returns" element={<PurchaseReturns />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="inventory.view" />}>
+                                            <Route path="warehouses" element={<Warehouses />} />
+                                            <Route path="inventory" element={<Inventory />} />
+                                        </Route>
                                         {/* PHASE LTSR: Legacy cashbox → dynamic Treasury Hub (no fixed account identity) */}
                                         <Route path="cashbox" element={<Navigate to="/treasury/hub" replace />} />
                                         <Route path="opening-balance/cashbox" element={<Navigate to="/treasury/initial-capitalization" replace />} />
-                                        <Route path="opening-balance/customers" element={<CustomerOpeningBalance />} />
-                                        <Route path="opening-balance/suppliers" element={<SupplierOpeningBalance />} />
-                                        <Route path="opening-balance/warehouse-stock" element={<WarehouseOpeningStock />} />
+                                        <Route element={<PosPermissionRouteGuard permission="customers.balance.manage" />}>
+                                            <Route path="opening-balance/customers" element={<CustomerOpeningBalance />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="suppliers.balance.manage" />}>
+                                            <Route path="opening-balance/suppliers" element={<SupplierOpeningBalance />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="inventory.adjust" />}>
+                                            <Route path="opening-balance/warehouse-stock" element={<WarehouseOpeningStock />} />
+                                        </Route>
                                         <Route path="opening-balance/banks" element={<Navigate to="/treasury/initial-capitalization" replace />} />
-                                        <Route path="statement-of-account" element={<StatementOfAccount />} />
-                                        <Route path="payments" element={<Payments />} />
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.view" />}>
+                                            <Route path="statement-of-account" element={<StatementOfAccount />} />
+                                            <Route path="outstanding-balances" element={<OutstandingBalances />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.operate" />}>
+                                            <Route path="payments" element={<Payments />} />
+                                            <Route path="adjustments" element={<Adjustments />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="suppliers.balance.manage" />}>
                                             <Route path="supplier-card-funding" element={<SupplierCardFundingInstruments />} />
                                         </Route>
-                                        <Route element={<PosRoleRouteGuard roles={['Owner']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.initialize" />}>
                                             <Route path="treasury/initial-capitalization" element={<TreasuryInitialCapitalization />} />
                                         </Route>
-                                        <Route path="outstanding-balances" element={<OutstandingBalances />} />
-                                        <Route path="adjustments" element={<Adjustments />} />
-                                        <Route path="stock-transfers" element={<StockTransfers />} />
-                                        <Route path="financial-accounts" element={<FinancialAccounts />} />
+                                        <Route element={<PosPermissionRouteGuard permission="inventory.transfer" />}>
+                                            <Route path="stock-transfers" element={<StockTransfers />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.view" />}>
+                                            <Route path="financial-accounts" element={<FinancialAccounts />} />
+                                            <Route path="banks" element={<Banks />} />
+                                            <Route path="expense-categories" element={<ExpenseCategories />} />
+                                            <Route path="expenses" element={<Expenses />} />
+                                        </Route>
                                         <Route path="balance-transfer" element={<Navigate to="/treasury/transfers" replace />} />
-                                        <Route path="banks" element={<Banks />} />
-                                        <Route path="expense-categories" element={<ExpenseCategories />} />
-                                        <Route path="expenses" element={<Expenses />} />
                                         {/* PHASE LTSR: Legacy treasury-movements → Ledger redirect */}
                                         <Route path="treasury-movements" element={<Navigate to="/treasury/hub" replace />} />
                                         {/* PHASE LTSR: Legacy bank-statement → dynamic Treasury Hub (no fixed account identity) */}
                                         <Route path="reports/bank-statement" element={<Navigate to="/treasury/hub" replace />} />
                                         {/* PHASE LTSR: Legacy visa-statement → dynamic Clearing Aging (no fixed account identity) */}
                                         <Route path="reports/visa-statement" element={<Navigate to="/treasury/clearing-aging" replace />} />
-                                        <Route path="reports/sales-analysis" element={<SalesAnalysis />} />
-                                        <Route path="reports/sales-summary" element={<SalesSummaryReport />} />
-                                        <Route path="reports/sales-by-category" element={<SalesByCategoryReport />} />
-                                        <Route path="reports/sales-by-payment-method" element={<SalesByPaymentMethodReport />} />
-                                        <Route path="reports/inventory-valuation" element={<InventoryValuation />} />
-                                        <Route path="reports/daily-close" element={<DailyCloseReport />} />
-                                        <Route path="reports/product-movement" element={<ProductMovementReport />} />
-                                        <Route path="reports/ar-aging" element={<AccountsReceivableAging />} />
-                                        <Route path="reports/ap-aging" element={<AccountsPayableAging />} />
-                                        <Route path="reports/sales-return-report" element={<SalesReturnReport />} />
-                                        <Route path="reports/purchase-return-report" element={<PurchaseReturnReport />} />
-                                        <Route path="reports/purchase-register" element={<PurchaseRegisterReport />} />
-                                        <Route path="reports/purchases-by-supplier" element={<PurchasesBySupplierReport />} />
-                                        <Route path="reports/cost-analysis" element={<CostAnalysisReport />} />
+                                        <Route element={<PosPermissionRouteGuard permission="reports.operational.view" />}>
+                                            <Route path="reports/sales-analysis" element={<SalesAnalysis />} />
+                                            <Route path="reports/sales-summary" element={<SalesSummaryReport />} />
+                                            <Route path="reports/sales-by-category" element={<SalesByCategoryReport />} />
+                                            <Route path="reports/sales-by-payment-method" element={<SalesByPaymentMethodReport />} />
+                                            <Route path="reports/inventory-valuation" element={<InventoryValuation />} />
+                                            <Route path="reports/daily-close" element={<DailyCloseReport />} />
+                                            <Route path="reports/product-movement" element={<ProductMovementReport />} />
+                                            <Route path="reports/ar-aging" element={<AccountsReceivableAging />} />
+                                            <Route path="reports/ap-aging" element={<AccountsPayableAging />} />
+                                            <Route path="reports/sales-return-report" element={<SalesReturnReport />} />
+                                            <Route path="reports/purchase-return-report" element={<PurchaseReturnReport />} />
+                                            <Route path="reports/purchase-register" element={<PurchaseRegisterReport />} />
+                                            <Route path="reports/purchases-by-supplier" element={<PurchasesBySupplierReport />} />
+                                            <Route path="reports/cost-analysis" element={<CostAnalysisReport />} />
+                                            <Route path="reports/expenses" element={<ExpenseReport />} />
+                                        </Route>
                                         {/* REMOVED: Legacy financial report routes (Phase C2 - Domain Consolidation)
                                     Trial Balance, P&L, Balance Sheet now at /treasury/* */}
-                                        <Route path="reports/expenses" element={<ExpenseReport />} />
-                                        <Route path="barcode-printing" element={<BarcodePrinting />} />
-                                        <Route path="settings" element={<Settings />} />
-                                        <Route path="settings/audit-log" element={<AuditLog />} />
-                                        <Route path="maintenance/reset-database" element={<ResetDatabase />} />
+                                        <Route element={<PosPermissionRouteGuard permission="settings.view" />}>
+                                            <Route path="settings" element={<Settings />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="audit.view" />}>
+                                            <Route path="settings/audit-log" element={<AuditLog />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="users.view" />}>
+                                            <Route path="users" element={<UsersManagementPage />} />
+                                        </Route>
                                         {/* E-commerce Routes */}
-                                        {/* Storefront Operations domain — POS Admin screens (Owner/Admin) */}
+                                        {/* Storefront Operations domain — POS permission projection */}
                                         {/* These are the store owner's own storefront screens, NOT CommerceHub marketplace routes */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.orders.view" />}>
                                             {/* Operations Overview — canonical entry point */}
                                             <Route path="ecommerce/overview" element={<OperationsOverview />} />
                                             {/* Orders */}
@@ -338,20 +391,27 @@ function App() {
                                             <Route path="ecommerce/whatsapp" element={<WhatsAppSettings />} />
                                             <Route path="ecommerce/cart-recovery" element={<AbandonedCartRecovery />} />
                                             <Route path="ecommerce/abandoned-checkouts" element={<AbandonedCheckouts />} />
-                                            {/* Payments */}
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.payments.manage" />}>
                                             <Route path="ecommerce/payment-methods" element={<PaymentMethods />} />
                                             <Route path="ecommerce/manual-payments" element={<ManualPayments />} />
-                                            {/* Catalog */}
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.promotions.manage" />}>
                                             <Route path="ecommerce/coupons" element={<Coupons />} />
                                             <Route path="ecommerce/promotions" element={<Promotions />} />
                                             <Route path="ecommerce/smart-offers" element={<SmartOffersPage />} />
-                                            {/* Commerce AI */}
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>
                                             <Route path="ecommerce/commerce-ai" element={<CommerceAI />} />
-                                            {/* Pixel Tracking */}
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.analytics.configure" />}>
                                             <Route path="ecommerce/pixel-tracking" element={<PixelTrackingConfigPage />} />
-                                            {/* Auth Providers */}
+                                            <Route path="settings/analytics" element={<AnalyticsSettings />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.auth.manage" />}>
                                             <Route path="ecommerce/auth-providers" element={<AuthProvidersPage />} />
-                                            {/* Analytics */}
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.analytics.view" />}>
                                             <Route path="analytics/funnels" element={<FunnelsListPage />} />
                                             <Route path="analytics/funnels/:funnelKey" element={<FunnelDetailsPage />} />
                                             <Route path="analytics/attribution" element={<AttributionOverviewPage />} />
@@ -360,15 +420,12 @@ function App() {
                                             <Route path="analytics/attribution/costs" element={<CampaignCostsPage />} />
                                             <Route path="analytics/attribution/roi" element={<RoiDashboardPage />} />
                                             <Route path="analytics/storefront" element={<StorefrontAnalyticsDashboard />} />
-                                            {/* Settings */}
-                                            <Route path="settings/analytics" element={<AnalyticsSettings />} />
                                         </Route>
-                                        {/* Shipping — Owner/Admin/Manager (Manager needs shipping access) */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="shipping.manage" />}>
                                             <Route path="ecommerce/shipping-methods" element={<ShippingMethods />} />
                                         </Route>
                                         {/* Storefront administration: canonical IA routes plus legacy aliases */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.design.manage" />}>
                                             <Route path="storefront/builder" element={<StorefrontBuilderPage />} />
                                             <Route path="storefront/homepage" element={<StorefrontBuilderPage />} />
                                             <Route path="storefront/catalog/product-template" element={<StorefrontBuilderPage />} />
@@ -408,14 +465,16 @@ function App() {
                                             </Route>
                                         </Route>
                                         {/* Shipping Admin Dashboard (Shipping Frontend Phase + Unified Configuration) */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin', 'Manager']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="shipping.manage" />}>
                                             <Route path="admin/shipping" element={<ShippingAdministrationWorkspace />} />
                                             <Route path="admin/shipping/setup" element={<ShippingAdministrationWorkspace />} />
                                         </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
-                                            <Route path="admin/shipping/shipments" element={<ShipmentsListPage />} />
-                                            <Route path="admin/shipping/shipments/:id" element={<ShipmentDetailsPage />} />
-                                            <Route path="admin/shipping/health" element={<ShippingHealthPage />} />
+                                        <Route element={<PosPermissionRouteGuard permission="shipping.view" />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.storefront.manage" />}>
+                                                <Route path="admin/shipping/shipments" element={<ShipmentsListPage />} />
+                                                <Route path="admin/shipping/shipments/:id" element={<ShipmentDetailsPage />} />
+                                                <Route path="admin/shipping/health" element={<ShippingHealthPage />} />
+                                            </Route>
                                         </Route>
 
                                         {/* Services Marketplace - Tab-Based System */}
@@ -424,43 +483,56 @@ function App() {
                                         <Route path="marketplace/chat/:requestId" element={<MarketplaceQueryBoundary><MarketplaceAuthorityBoundary><ChatPage /></MarketplaceAuthorityBoundary></MarketplaceQueryBoundary>} />
 
                                         {/* Admin Affiliate Management (AF-4B) */}
-                                        <Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>
+                                        <Route element={<PosPermissionRouteGuard permission="affiliates.manage" />}>
                                             <Route path="admin/affiliates" element={<AdminAffiliatesList />} />
                                             <Route path="admin/affiliates/products" element={<AffiliateProducts />} />
                                             <Route path="admin/affiliates/:id" element={<AdminAffiliateDetail />} />
                                         </Route>
 
                                         {/* CommerceHub Admin (Global Marketplace Publishing) */}
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
-                                            <Route path="commercehub/orders" element={<CommerceHubOrders />} />
-                                            <Route path="commercehub/orders/:subOrderId" element={<CommerceHubOrders />} />
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.orders.view" />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.orders.view" />}>
+                                                <Route path="commercehub/orders" element={<CommerceHubOrders />} />
+                                                <Route path="commercehub/orders/:subOrderId" element={<CommerceHubOrders />} />
+                                            </Route>
                                         </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.catalog.manage" />}>
-                                            <Route path="admin/commercehub" element={<CommerceHubSettings />} />
+                                        <Route element={<PosPermissionRouteGuard permission="catalog.publish" />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.catalog.manage" />}>
+                                                <Route path="admin/commercehub" element={<CommerceHubSettings />} />
+                                            </Route>
                                         </Route>
                                         <Route path="admin/commercehub/finance" element={<Navigate to="/commercehub/finance" replace />} />
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.finance.view" />}>
-                                            <Route path="commercehub/finance" element={<CommerceHubFinance />} />
-                                            <Route path="commercehub/earnings" element={<CommerceHubEarnings />} />
+                                        <Route element={<PosPermissionRouteGuard permission="reports.financial.view" />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.finance.view" />}>
+                                                <Route path="commercehub/finance" element={<CommerceHubFinance />} />
+                                                <Route path="commercehub/earnings" element={<CommerceHubEarnings />} />
+                                                <Route path="admin/commercehub/earnings" element={<CommerceHubEarnings />} />
+                                            </Route>
                                         </Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.finance.view" />}><Route path="admin/commercehub/earnings" element={<CommerceHubEarnings />} /></Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.payments.view" />}><Route path="admin/commercehub/payments" element={<CommerceHubPayments />} /></Route>
-                                        <Route element={<CommerceHubVendorRouteGuard capability="commercehub.payments.view" />}>
-                                            <Route path="commercehub/payments" element={<CommerceHubPayments />} />
+                                        <Route element={<PosPermissionRouteGuard permission="storefront.payments.view" />}>
+                                            <Route element={<CommerceHubVendorRouteGuard capability="commercehub.payments.view" />}>
+                                                <Route path="admin/commercehub/payments" element={<CommerceHubPayments />} />
+                                                <Route path="commercehub/payments" element={<CommerceHubPayments />} />
+                                            </Route>
                                         </Route>
 
                                         {/* Treasury & Finance Control Center (Phase 5 + Phase FTM) */}
-                                        <Route path="treasury" element={<TreasuryDashboard />} />
-                                        <Route path="treasury/trial-balance" element={<TreasuryTrialBalance />} />
-                                        <Route path="treasury/profit-loss" element={<TreasuryProfitLoss />} />
-                                        <Route path="treasury/balance-sheet" element={<TreasuryBalanceSheet />} />
-                                        <Route path="treasury/cash-flow" element={<TreasuryCashFlow />} />
-                                        <Route path="treasury/general-ledger" element={<TreasuryGeneralLedger />} />
-                                        <Route path="treasury/clearing-aging" element={<TreasuryClearingAging />} />
-                                        <Route path="treasury/transfers" element={<TreasuryTransfers />} />
-                                        {/* Phase FTM: Ledger-driven Treasury UI */}
-                                        <Route path="treasury/hub" element={<TreasuryHub />} />
-                                        <Route path="treasury/account/:accountCode" element={<TreasuryAccountViewer />} />
+                                        <Route element={<PosPermissionRouteGuard permission="reports.financial.view" />}>
+                                            <Route path="treasury" element={<TreasuryDashboard />} />
+                                            <Route path="treasury/trial-balance" element={<TreasuryTrialBalance />} />
+                                            <Route path="treasury/profit-loss" element={<TreasuryProfitLoss />} />
+                                            <Route path="treasury/balance-sheet" element={<TreasuryBalanceSheet />} />
+                                            <Route path="treasury/cash-flow" element={<TreasuryCashFlow />} />
+                                            <Route path="treasury/general-ledger" element={<TreasuryGeneralLedger />} />
+                                            <Route path="treasury/clearing-aging" element={<TreasuryClearingAging />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.operate" />}>
+                                            <Route path="treasury/transfers" element={<TreasuryTransfers />} />
+                                        </Route>
+                                        <Route element={<PosPermissionRouteGuard permission="finance.view" />}>
+                                            <Route path="treasury/hub" element={<TreasuryHub />} />
+                                            <Route path="treasury/account/:accountCode" element={<TreasuryAccountViewer />} />
+                                        </Route>
                                         {/* Catch-all: keep authenticated users in the protected layout */}
                                         <Route path="*" element={<Navigate to="/" replace />} />
                                     </Route>

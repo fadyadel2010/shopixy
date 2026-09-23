@@ -117,9 +117,7 @@ export function CmsPageEditor() {
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
     const [rollbackState, setRollbackState] = useState({ version: null, reason: '', confirmed: false, isRollingBack: false })
 
-    const storefrontBaseUrl = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174'
     const currentUser = useAuthStore((state) => state.user)
-    const currentTenantId = currentUser?.tenantId || ''
     const currentFingerprint = useMemo(() => getPageFormFingerprint(form), [form])
     const isDirty = currentFingerprint !== acceptedFingerprint
     const canPublish = !isSaving && !isPublishing && (isDirty || Boolean(page?.draft))
@@ -375,12 +373,8 @@ export function CmsPageEditor() {
         }
 
         try {
-            if (!currentTenantId) {
-                throw new Error('Current backend vendor identity is unavailable.')
-            }
             const previewAccess = await cmsService.createPreviewLink(pageId)
-            const previewUrl = `${storefrontBaseUrl}/${previewAccess.slug}?tenant=${encodeURIComponent(currentTenantId)}&preview=true&previewToken=${encodeURIComponent(previewAccess.previewToken)}`
-            window.open(previewUrl, '_blank', 'noopener,noreferrer')
+            window.open(previewAccess.previewUrl, '_blank', 'noopener,noreferrer')
         } catch (err) {
             console.error('Failed to create CMS preview link', err)
             setError(isRTL ? 'تعذر إنشاء رابط معاينة آمن.' : 'Unable to create a secure preview link.')

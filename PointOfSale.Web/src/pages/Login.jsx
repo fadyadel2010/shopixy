@@ -18,6 +18,7 @@ export default function Login() {
     const { reloadSettings } = useSettings()
     const location = useLocation()
     const navigate = useNavigate()
+    const isSwitchingAccount = new URLSearchParams(location.search).get('switchAccount') === '1'
     const redirectTo = resolvePosRouteRedirect(
         location.state?.from
             ? `${location.state.from.pathname || ''}${location.state.from.search || ''}${location.state.from.hash || ''}`
@@ -25,10 +26,10 @@ export default function Login() {
     )
 
     useEffect(() => {
-        if (isAuthenticated) {
+        if (isAuthenticated && !isSwitchingAccount) {
             navigate(redirectTo, { replace: true })
         }
-    }, [isAuthenticated, navigate, redirectTo])
+    }, [isAuthenticated, isSwitchingAccount, navigate, redirectTo])
 
     const handleSubmit = async (e) => {
         e.preventDefault()
@@ -94,8 +95,9 @@ export default function Login() {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div>
-                        <label className="label">{t('login.username')}</label>
+                        <label className="label" htmlFor="pos-login-username">{t('login.usernameOrEmail')}</label>
                         <input
+                            id="pos-login-username"
                             type="text"
                             value={username}
                             onChange={(e) => setUsername(e.target.value)}
@@ -108,8 +110,9 @@ export default function Login() {
                     </div>
 
                     <div>
-                        <label className="label">{t('login.password')}</label>
+                        <label className="label" htmlFor="pos-login-password">{t('login.password')}</label>
                         <input
+                            id="pos-login-password"
                             type="password"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}

@@ -121,7 +121,7 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
 
         Assert.Contains("ProductDiscoveryPricingDto", productDiscoveryDtos, StringComparison.Ordinal);
         Assert.Contains("BuildPricingPresentation", productDiscoveryService, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productDiscoveryService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", productDiscoveryService, StringComparison.Ordinal);
 
         Assert.Contains("const pricing = selectedVariant?.pricing ?? product?.pricing", useVariantSelector, StringComparison.Ordinal);
         Assert.Contains("pricing.currentPrice", runtimeSectionContainer, StringComparison.Ordinal);
@@ -284,11 +284,11 @@ public sealed class StorefrontCatalogPresentationAuthorityCertificationTests
         var categoryService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontCategoryService.cs");
         var overlay = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/Services/ProductSearchSqlAuthorityOverlay.cs");
 
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", searchController, StringComparison.Ordinal);
-        Assert.Contains("CategoryLineageAuthority.RequireLiveCategoryAsync", searchController, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByIdsAsync", searchController, StringComparison.Ordinal);
+        Assert.Contains("CategoryLineageAuthority.LoadTenantSnapshotAsync", searchController, StringComparison.Ordinal);
         Assert.Contains("RecomposeHeaderSuggestionsBySqlAuthorityAsync", searchController, StringComparison.Ordinal);
 
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discoveryService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discoveryService, StringComparison.Ordinal);
         Assert.Contains("IsActive: true, IsOnlineVisible: true", discoveryService, StringComparison.Ordinal);
 
         Assert.Contains("RecomposeProductCardsFromSqlAuthorityAsync", homeService, StringComparison.Ordinal);

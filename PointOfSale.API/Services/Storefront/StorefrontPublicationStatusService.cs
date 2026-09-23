@@ -39,6 +39,7 @@ public sealed class StorefrontPublicationStatusService : IStorefrontPublicationS
                 (config, tenant) => new
                 {
                     config.StorefrontStatus,
+                    tenant.IsActive,
                     tenant.Status,
                     tenant.DeletedAtUtc
                 })
@@ -52,7 +53,8 @@ public sealed class StorefrontPublicationStatusService : IStorefrontPublicationS
             return false;
         }
 
-        return authority.Status == TenantStatus.Active &&
+        return authority.IsActive &&
+               authority.Status == TenantStatus.Active &&
                authority.DeletedAtUtc == null &&
                IsLive(authority.StorefrontStatus);
     }

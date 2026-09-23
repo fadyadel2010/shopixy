@@ -20,15 +20,6 @@ import {
     AuthoringStatusBadge,
 } from '../authoringPlatform'
 
-const STOREFRONT_BASE_URL = import.meta.env.VITE_STOREFRONT_URL || 'http://localhost:5174'
-
-function buildPreviewUrl(previewToken) {
-    const url = new URL(STOREFRONT_BASE_URL)
-
-    url.searchParams.set('themePreviewToken', previewToken)
-    return url.toString()
-}
-
 const normalizeRowVersion = (rowVersion) => (
     typeof rowVersion === 'string' && rowVersion.trim() ? rowVersion.trim() : ''
 )
@@ -178,7 +169,7 @@ export function ThemeMarketplacePage() {
     const openPreview = async (themeId) => {
         try {
             const preview = await storeConfigService.createThemePreviewLink(themeId)
-            window.open(buildPreviewUrl(preview.previewToken), '_blank', 'noopener,noreferrer')
+            window.open(preview.previewUrl, '_blank', 'noopener,noreferrer')
             showInfo(isRTL ? 'جارٍ فتح معاينة الثيم في المتجر' : 'Opening storefront theme preview...')
         } catch (error) {
             console.error('Failed to create storefront theme preview:', error)

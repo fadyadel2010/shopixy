@@ -162,12 +162,18 @@ export const fetchProductsDiscover = async (
     return response.data;
 };
 
+const PRODUCT_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
- * Fetch single product by slug
+ * Fetch a single product using its canonical slug or the ProductId fallback
+ * emitted by product cards for historical records without a slug.
  */
-export const fetchProductBySlug = async (slug: string): Promise<ProductReadDto> => {
+export const fetchProductByIdentifier = async (identifier: string): Promise<ProductReadDto> => {
+    const endpoint = PRODUCT_ID_PATTERN.test(identifier)
+        ? ENDPOINTS.PRODUCT_BY_ID(identifier)
+        : ENDPOINTS.PRODUCT_BY_SLUG(identifier);
     const response = await httpClient.get<ProductReadDto>(
-        ENDPOINTS.PRODUCT_BY_SLUG(slug)
+        endpoint
     );
     return response.data;
 };
@@ -265,7 +271,7 @@ export const removeCartItem = async (productId: string): Promise<CartDto> => {
 
 /**
  * Update cart item quantity by VariantId.
- * PHASE 11.7: VariantId is the ONLY identifier for cart items.
+ * VariantId is the canonical line identifier for simple and variant products.
  * @param variantId Variant ID to update
  * @param request Update request with quantity
  * @returns Updated cart
@@ -285,7 +291,7 @@ export const updateCartItemByVariant = async (
 
 /**
  * Remove cart item by VariantId.
- * PHASE 11.7: VariantId is the ONLY identifier for cart items.
+ * VariantId is the canonical line identifier for simple and variant products.
  * @param variantId Variant ID to remove
  * @returns Updated cart
  * @throws CART_ITEM_NOT_FOUND if variant not in cart

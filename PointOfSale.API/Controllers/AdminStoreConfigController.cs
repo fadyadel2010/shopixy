@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
+using PointOfSale.API.Services;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Storefront;
 using PointOfSale.Core.Interfaces;
@@ -40,6 +41,7 @@ public class AdminStoreConfigController : ControllerBase
     private readonly IStoreConfigAuditService _auditService;
     private readonly ITenantContext _tenantContext;
     private readonly IStorefrontThemePreviewTokenService? _themePreviewTokenService;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
     private readonly ILogger<AdminStoreConfigController> _logger;
 
     public AdminStoreConfigController(
@@ -48,12 +50,14 @@ public class AdminStoreConfigController : ControllerBase
         IStoreConfigAuditService auditService,
         ITenantContext tenantContext,
         ILogger<AdminStoreConfigController> logger,
+        StorefrontUrlResolver storefrontUrlResolver,
         IStorefrontThemePreviewTokenService? themePreviewTokenService = null)
     {
         _storeConfigService = storeConfigService;
         _themeActivationService = themeActivationService;
         _auditService = auditService;
         _tenantContext = tenantContext;
+        _storefrontUrlResolver = storefrontUrlResolver;
         _themePreviewTokenService = themePreviewTokenService;
         _logger = logger;
     }
@@ -851,7 +855,9 @@ public class AdminStoreConfigController : ControllerBase
     [HttpPost("theme/preview-link/{themeId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(AdminStoreConfigApiErrorResponse), StatusCodes.Status400BadRequest)]
-    public IActionResult CreateThemePreviewLink([FromRoute] string themeId)
+    public async Task<IActionResult> CreateThemePreviewLink(
+        [FromRoute] string themeId,
+        CancellationToken cancellationToken = default)
     {
         var traceId = GetTraceId();
         var validation = ValidateTenantHeader(traceId);
@@ -867,9 +873,14 @@ public class AdminStoreConfigController : ControllerBase
             }
 
             var preview = _themePreviewTokenService.Create(validation.TenantId!.Value, themeId);
+            var previewUrl = await _storefrontUrlResolver.BuildThemePreviewUrlAsync(
+                validation.TenantId.Value,
+                preview.Token,
+                cancellationToken);
             return Ok(new
             {
                 previewToken = preview.Token,
+                previewUrl,
                 expiresAtUtc = preview.ExpiresAtUtc
             });
         }

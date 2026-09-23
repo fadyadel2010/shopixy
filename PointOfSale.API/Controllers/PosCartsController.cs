@@ -1,8 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.PosCart;
 using PointOfSale.API.Services.Pos;
+using PointOfSale.Core.Interfaces;
+using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
 
@@ -13,10 +16,38 @@ public sealed class PosCartsController : ControllerBase
 {
     private const string IdempotencyKeyHeader = "Idempotency-Key";
     private readonly IPosCartRuntimeService _cartRuntime;
+    private readonly ApplicationDbContext _db;
+    private readonly ITenantContext _tenantContext;
 
-    public PosCartsController(IPosCartRuntimeService cartRuntime)
+    public PosCartsController(
+        IPosCartRuntimeService cartRuntime,
+        ApplicationDbContext db,
+        ITenantContext tenantContext)
     {
         _cartRuntime = cartRuntime;
+        _db = db;
+        _tenantContext = tenantContext;
+    }
+
+    [HttpGet("warehouse-options")]
+    public async Task<ActionResult<IReadOnlyList<PosWarehouseOptionResponse>>> GetWarehouseOptions(
+        CancellationToken cancellationToken)
+    {
+        var tenantId = _tenantContext.RequiredTenantId;
+        var warehouses = await _db.Warehouses
+            .AsNoTracking()
+            .Where(warehouse => warehouse.TenantId == tenantId && warehouse.IsActive)
+            .OrderBy(warehouse => warehouse.Name)
+            .Select(warehouse => new PosWarehouseOptionResponse
+            {
+                Id = warehouse.Id,
+                Name = warehouse.Name,
+                Code = warehouse.Code,
+                IsDefault = warehouse.IsDefault,
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(warehouses);
     }
 
     [HttpPost]
@@ -195,4 +226,12 @@ public sealed class PosCartsController : ControllerBase
                   User.FindFirstValue("userId");
         return Guid.TryParse(raw, out cashierId) && cashierId != Guid.Empty;
     }
+}
+
+public sealed record PosWarehouseOptionResponse
+{
+    public Guid Id { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public string? Code { get; init; }
+    public bool IsDefault { get; init; }
 }

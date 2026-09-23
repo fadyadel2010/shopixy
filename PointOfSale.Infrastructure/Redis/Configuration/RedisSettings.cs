@@ -14,7 +14,7 @@ public class RedisSettings
     /// <summary>
     /// Redis connection string (e.g., "192.168.131.128:6379" or "localhost:6379,password=xxx")
     /// </summary>
-    public string ConnectionString { get; set; } = "localhost:6379";
+    public string ConnectionString { get; set; } = string.Empty;
 
     /// <summary>
     /// Instance name prefix for all keys (helps identify source in shared Redis)
@@ -87,4 +87,10 @@ public class RedisSettings
     /// Sync timeout for operations in milliseconds
     /// </summary>
     public int SyncTimeoutMs { get; set; } = 1000;
+
+    /// <summary>
+    /// Async command timeout. Kept explicit and equal to the existing operation
+    /// budget rather than lengthening queues during dependency saturation.
+    /// </summary>
+    public int AsyncTimeoutMs { get; set; } = 1000;
 }

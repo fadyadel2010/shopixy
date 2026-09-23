@@ -3,10 +3,10 @@
   "seedVersion": "m2.1",
   "seedNamespace": "b9c4d3a1-7e22-4f5a-9c1d-2a6f8e0b4d11",
   "timestampUtc": "2026-09-15T16:31:38.839297+00:00",
-  "environment": "local",
+  "environment": "loadtest-new",
   "database": {
-    "host": "192.168.1.5",
-    "database": "PosEcommerceDb_Baseline"
+    "host": "192.168.1.190",
+    "database": "PosEcommerceDb_LoadTest"
   },
   "counts": {
     "created": 0,
@@ -1345,10 +1345,20 @@
   ],
   "projectionReady": true,
   "publicationReady": true,
-  "verifiedAtUtc": "2026-09-15T18:10:04.366458+00:00",
+  "verifiedAtUtc": "2026-09-17T18:03:43.092357+00:00",
   "mongoVerified": true,
   "elasticsearchVerified": true,
   "storefrontVerified": true,
   "isolationProbesVerified": true,
-  "stockBudgetVerified": true
+  "stockBudgetVerified": true,
+  "m5NewEnvironment": {
+    "host": "192.168.1.190",
+    "postgres": "PosEcommerceDb_LoadTest",
+    "mongo": "ecommerce_read_db_loadtest",
+    "redis": "pos-loadtest db0 (see M5 report \u00a713: replica fan-out limitation)",
+    "rabbitmq": "shopixy/loadtest-windows",
+    "opensearch": "https://192.168.1.190:9200",
+    "productsIndex": "products_loadtest",
+    "verdict": "PASS WITH LIMITATIONS"
+  }
 }

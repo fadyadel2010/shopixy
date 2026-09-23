@@ -48,27 +48,21 @@ public sealed class S16BPaymentAuthorityExternalIdempotencyTests
     }
 
     [Fact]
-    public void ShipmentSafetyMigration_MustUseConcurrentPostgresIndexes()
+    public void ShipmentSafetyBaseline_MustUseUniqueFilteredIndexes()
     {
         var migrationSource = ReadRepoFile(
             "PointOfSale.Infrastructure",
             "Migrations",
-            "20260422224500_S16A_ShipmentCheckoutSafety.cs");
-        var sqlScript = ReadRepoFile(
-            "PointOfSale.Infrastructure",
-            "Migrations",
-            "20260422224500_S16A_ShipmentCheckoutSafety.sql");
+            "20260723214642_Baseline_Recovery3.cs");
         var telemetrySource = ReadRepoFile(
             "PointOfSale.Infrastructure",
             "Instrumentation",
             "CommerceReliabilityTelemetry.cs");
 
-        Assert.Contains("CREATE INDEX CONCURRENTLY", migrationSource, StringComparison.Ordinal);
-        Assert.Contains("companion .sql file", migrationSource, StringComparison.Ordinal);
-        Assert.Contains("DROP INDEX CONCURRENTLY", migrationSource, StringComparison.Ordinal);
-        Assert.Contains("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS", sqlScript, StringComparison.Ordinal);
-        Assert.Contains("DROP INDEX CONCURRENTLY IF EXISTS", sqlScript, StringComparison.Ordinal);
         Assert.Contains("IX_Shipments_TenantId_CarrierCode_CarrierRequestId", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("columns: new[] { \"TenantId\", \"CarrierCode\", \"CarrierRequestId\" }", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("unique: true", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("filter: \"\\\"IsDeleted\\\" = false AND \\\"CarrierRequestId\\\" IS NOT NULL\"", migrationSource, StringComparison.Ordinal);
         Assert.Contains("migration_concurrent_index_applied_total", telemetrySource, StringComparison.Ordinal);
     }
 

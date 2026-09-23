@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Redis.Services;
 
@@ -14,6 +15,7 @@ public sealed class RedisPerformanceTelemetry
     public Counter<long> CacheHits { get; }
     public Counter<long> CacheMisses { get; }
     public Counter<long> CacheCorruptions { get; }
+    public Counter<long> CacheFailures { get; }
     public Histogram<double> CacheRefreshDurationMs { get; }
     public Histogram<double> ProjectionLagMs { get; }
     public Histogram<double> ReadLatencyMs { get; }
@@ -26,6 +28,13 @@ public sealed class RedisPerformanceTelemetry
         CacheHits = _meter.CreateCounter<long>("redis.cache.hits", "count", "Redis cache hits");
         CacheMisses = _meter.CreateCounter<long>("redis.cache.misses", "count", "Redis cache misses");
         CacheCorruptions = _meter.CreateCounter<long>("redis.cache.corruptions", "count", "Redis cache deserialization failures");
+        CacheFailures = _meter.CreateCounter<long>("redis.cache.failures", "count", "Redis cache operation failures and timeouts");
+        CacheFailures.Add(0,
+            new KeyValuePair<string, object?>("cache_type", "domain"),
+            new KeyValuePair<string, object?>("reason", "timeout"));
+        CacheFailures.Add(0,
+            new KeyValuePair<string, object?>("cache_type", "domain"),
+            new KeyValuePair<string, object?>("reason", "unavailable_or_error"));
         CacheRefreshDurationMs = _meter.CreateHistogram<double>("redis.cache.refresh_ms", "ms", "Redis cache refresh duration");
         ProjectionLagMs = _meter.CreateHistogram<double>("redis.cache.projection_lag_ms", "ms", "Read-model projection lag at cache population time");
         ReadLatencyMs = _meter.CreateHistogram<double>("redis.cache.read_latency_ms", "ms", "Redis cache read latency");
@@ -38,6 +47,11 @@ public sealed class RedisPerformanceTelemetry
     public void RecordMiss(string cacheType) => CacheMisses.Add(1, CreateTags(cacheType));
 
     public void RecordCorruption(string cacheType) => CacheCorruptions.Add(1, CreateTags(cacheType));
+
+    public void RecordFailure(string cacheType, Exception? exception = null) =>
+        CacheFailures.Add(1,
+            new KeyValuePair<string, object?>("cache_type", NormalizeCacheType(cacheType)),
+            new KeyValuePair<string, object?>("reason", exception is RedisTimeoutException or TimeoutException ? "timeout" : "unavailable_or_error"));
 
     public void RecordRefresh(string cacheType, TimeSpan duration) =>
         CacheRefreshDurationMs.Record(duration.TotalMilliseconds, CreateTags(cacheType));
@@ -68,6 +82,10 @@ public sealed class RedisPerformanceTelemetry
     {
         var normalized = PointOfSale.Infrastructure.Instrumentation.OperationalTelemetryDimensions.NormalizeTagValue(cacheType);
 
+        if (normalized == "domain-resolution")
+            return "domain";
+        if (normalized == "seo-slug-negative")
+            return "seo-slug-negative";
         if (normalized.Contains("homepage", StringComparison.Ordinal))
             return "homepage";
         if (normalized.Contains("cms", StringComparison.Ordinal))

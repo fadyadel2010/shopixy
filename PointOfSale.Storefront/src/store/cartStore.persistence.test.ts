@@ -149,7 +149,12 @@ describe('cart persistence regression', () => {
     });
 
     it('keeps listing quick-add behavior on the same canonical add pipeline', async () => {
-        const addedCart = makeCart({ productId: 'product-listing' });
+        const addedCart = makeCart({
+            productId: 'product-listing',
+            variantId: 'variant-listing-default',
+        });
+        addedCart.items[0].sku = 'SKU-SIMPLE';
+        addedCart.items[0].variantAttributes = [];
         addCartItemMock.mockResolvedValueOnce(addedCart);
 
         const success = await useCartStore.getState().addItem('product-listing', 1);
@@ -160,7 +165,49 @@ describe('cart persistence regression', () => {
             quantity: 1,
             variantId: undefined,
         });
+        expect(useCartStore.getState().cart?.items[0].variantId).toBe('variant-listing-default');
         expect(useCartStore.getState().cart?.items[0].sku).toBe('SKU-SIMPLE');
+    });
+
+    it('mutates a canonical simple-product line through variant-scoped endpoints', async () => {
+        const simpleCart = makeCart({
+            productId: 'product-simple',
+            variantId: 'variant-simple-default',
+        });
+        const updatedCart = makeCart({
+            productId: 'product-simple',
+            variantId: 'variant-simple-default',
+            quantity: 2,
+        });
+        useCartStore.setState({ cart: simpleCart, isInitialized: true });
+        vi.mocked(updateCartItemByVariant).mockResolvedValueOnce(updatedCart);
+        vi.mocked(removeCartItemByVariant).mockResolvedValueOnce({
+            ...updatedCart,
+            items: [],
+            itemCount: 0,
+            subtotal: 0,
+            grandTotal: 0,
+        });
+
+        const updated = await useCartStore.getState().updateQuantity(
+            'product-simple',
+            2,
+            'variant-simple-default'
+        );
+        const removed = await useCartStore.getState().removeItem(
+            'product-simple',
+            'variant-simple-default'
+        );
+
+        expect(updated).toBe(true);
+        expect(removed).toBe(true);
+        expect(updateCartItemByVariant).toHaveBeenCalledWith(
+            'variant-simple-default',
+            { quantity: 2 }
+        );
+        expect(removeCartItemByVariant).toHaveBeenCalledWith('variant-simple-default');
+        expect(updateCartItem).not.toHaveBeenCalled();
+        expect(removeCartItem).not.toHaveBeenCalled();
     });
 
     it('loads a persisted guest cart for browser refresh or direct Cart URL entry', async () => {

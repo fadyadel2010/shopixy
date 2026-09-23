@@ -25,7 +25,6 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/search")]
-[Authorize(Roles = "Owner,Admin")]
 public class SearchReindexController : ControllerBase
 {
     private readonly IUnifiedSearchIndexService _indexService;

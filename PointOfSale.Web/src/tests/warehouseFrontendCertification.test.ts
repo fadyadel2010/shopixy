@@ -49,7 +49,9 @@ describe('Warehouse frontend certification', () => {
         expect(purchaseReturns).toContain("from '../components/AsyncEntitySelect'");
         expect(inventory).toContain('isRequestCanceled');
         expect(source).not.toMatch(/axios\.create|from 'axios'|\bfetch\s*\(/);
-        expect(source).not.toMatch(/new WebSocket|EventSource|localStorage\.setItem|sessionStorage\.setItem/);
+        expect(source).not.toMatch(/new WebSocket|EventSource|sessionStorage\.setItem/);
+        expect(source.replace(readWeb('components/Sidebar.jsx'), '')).not.toContain('localStorage.setItem');
+        expect(readWeb('components/Sidebar.jsx')).toContain('localStorage.setItem(STOREFRONT_SIDEBAR_STATE_KEY');
     });
 
     it('consumes certified warehouse APIs and does not call inventory persistence internals directly', () => {

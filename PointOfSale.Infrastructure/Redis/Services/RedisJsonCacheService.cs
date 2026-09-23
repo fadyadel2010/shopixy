@@ -19,6 +19,14 @@ public interface IRedisJsonCacheService
         CancellationToken cancellationToken = default)
         where T : class;
 
+    Task<T?> GetOwnedAsync<T>(
+        string key,
+        string cacheType,
+        string invalidationGenerationKey,
+        TimeSpan? maxProjectionLag = null,
+        CancellationToken cancellationToken = default)
+        where T : class => GetAsync<T>(key, cacheType, maxProjectionLag, cancellationToken);
+
     Task SetAsync<T>(
         string key,
         string cacheType,
@@ -62,6 +70,8 @@ public interface IRedisJsonCacheService
 
 public sealed class RedisJsonCacheService : IRedisJsonCacheService
 {
+    private const string ReadOwnedScript = "local g = redis.call('get', KEYS[2]) or '0'; local v = redis.call('get', KEYS[1]); return {g, v or false}";
+    private const string SetOwnedScript = "local g = redis.call('get', KEYS[2]) or '0'; if g ~= ARGV[1] then return 0 end; redis.call('psetex', KEYS[1], ARGV[2], ARGV[3]); return 1";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -103,6 +113,23 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             cancellationToken);
     }
 
+    public Task<T?> GetOwnedAsync<T>(
+        string key,
+        string cacheType,
+        string invalidationGenerationKey,
+        TimeSpan? maxProjectionLag = null,
+        CancellationToken cancellationToken = default)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invalidationGenerationKey);
+        return GetCoreAsync<T>(
+            key,
+            cacheType,
+            invalidationGenerationKey,
+            maxProjectionLag,
+            cancellationToken);
+    }
+
     private async Task<T?> GetCoreAsync<T>(
         string key,
         string cacheType,
@@ -116,19 +143,36 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         if (database == null)
         {
             _telemetry.RecordMiss(cacheType);
+            if (_connectionFactory.IsEnabled)
+            {
+                _telemetry.RecordFailure(cacheType);
+            }
             return null;
         }
 
         var sw = Stopwatch.StartNew();
         try
         {
-            var generationBeforeRead = invalidationGenerationKey == null
-                ? 0L
-                : await ReadInvalidationGenerationAsync(database, invalidationGenerationKey);
-            var cachedValue = await database.StringGetAsync(key);
-            var generationAfterRead = invalidationGenerationKey == null
-                ? generationBeforeRead
-                : await ReadInvalidationGenerationAsync(database, invalidationGenerationKey);
+            long generationAfterRead;
+            RedisValue cachedValue;
+            if (invalidationGenerationKey == null)
+            {
+                generationAfterRead = 0L;
+                cachedValue = await database.StringGetAsync(key);
+            }
+            else
+            {
+                var result = (RedisResult[]?)await database.ScriptEvaluateAsync(
+                    ReadOwnedScript,
+                    new RedisKey[] { key, invalidationGenerationKey });
+                generationAfterRead = result is { Length: > 0 } &&
+                                      long.TryParse(result[0].ToString(), out var generation)
+                    ? generation
+                    : 0L;
+                cachedValue = result is { Length: > 1 } && !result[1].IsNull
+                    ? result[1].ToString()
+                    : RedisValue.Null;
+            }
             sw.Stop();
             _telemetry.RecordReadLatency(cacheType, sw.Elapsed);
 
@@ -147,8 +191,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                 return null;
             }
 
-            if (generationBeforeRead != generationAfterRead ||
-                envelope.InvalidationGeneration != generationAfterRead)
+            if (envelope.InvalidationGeneration != generationAfterRead)
             {
                 _telemetry.RecordMiss(cacheType);
                 return null;
@@ -186,6 +229,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         {
             sw.Stop();
             _telemetry.RecordMiss(cacheType);
+            _telemetry.RecordFailure(cacheType, ex);
             _logger.LogWarning(ex, "Redis cache read failed | Key: {Key} | CacheType: {CacheType}", key, cacheType);
             return null;
         }
@@ -234,6 +278,10 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         var database = _connectionFactory.GetDatabase();
         if (database == null)
         {
+            if (_connectionFactory.IsEnabled)
+            {
+                _telemetry.RecordFailure(cacheType);
+            }
             return;
         }
 
@@ -265,25 +313,16 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             }
             else
             {
-                var transaction = database.CreateTransaction();
-                var currentGeneration = await database.StringGetAsync(invalidationGenerationKey);
-                var currentGenerationValue = ParseInvalidationGeneration(currentGeneration);
-                if (currentGenerationValue != expectedInvalidationGeneration)
-                {
-                    return;
-                }
-
-                if (currentGeneration.IsNullOrEmpty)
-                {
-                    transaction.AddCondition(Condition.KeyNotExists(invalidationGenerationKey));
-                }
-                else
-                {
-                    transaction.AddCondition(Condition.StringEqual(invalidationGenerationKey, currentGeneration));
-                }
-
-                _ = transaction.StringSetAsync(key, payload, ttl);
-                if (!await transaction.ExecuteAsync())
+                var written = (int)await database.ScriptEvaluateAsync(
+                    SetOwnedScript,
+                    new RedisKey[] { key, invalidationGenerationKey },
+                    new RedisValue[]
+                    {
+                        expectedInvalidationGeneration,
+                        (long)Math.Ceiling(ttl.TotalMilliseconds),
+                        payload
+                    });
+                if (written != 1)
                 {
                     _logger.LogInformation(
                         "Skipped stale Redis cache population after invalidation advanced | Key: {Key} | CacheType: {CacheType}",
@@ -297,6 +336,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         }
         catch (Exception ex)
         {
+            _telemetry.RecordFailure(cacheType, ex);
             _logger.LogWarning(ex, "Redis cache write failed | Key: {Key} | CacheType: {CacheType}", key, cacheType);
         }
     }
@@ -369,18 +409,36 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
 
         try
         {
-            var acquireResult = await _lockService.TryAcquireLockAsync(lockKey, lockToken, lockTtl);
-            lockAcquired = acquireResult.IsAcquired;
+            while (!lockAcquired)
+            {
+                var acquireResult = await _lockService.TryAcquireLockAsync(lockKey, lockToken, lockTtl);
+                lockAcquired = acquireResult.IsAcquired;
+                if (lockAcquired)
+                {
+                    cached = await GetCoreAsync<T>(
+                        key,
+                        cacheType,
+                        invalidationGenerationKey,
+                        maxProjectionLag,
+                        cancellationToken);
+                    if (cached != null)
+                    {
+                        return cached;
+                    }
 
-            if (acquireResult.IsInfrastructureFailure)
-            {
-                _logger.LogWarning(
-                    "Redis cache refresh lock unavailable | Key: {Key} | CacheType: {CacheType}",
-                    key,
-                    cacheType);
-            }
-            else if (!lockAcquired)
-            {
+                    break;
+                }
+
+                if (acquireResult.IsInfrastructureFailure)
+                {
+                    _telemetry.RecordFailure(cacheType);
+                    _logger.LogWarning(
+                        "Redis cache refresh lock unavailable | Key: {Key} | CacheType: {CacheType}",
+                        key,
+                        cacheType);
+                    break;
+                }
+
                 await Task.Delay(Math.Max(25, _settings.CacheRefreshWaitMilliseconds), cancellationToken);
 
                 cached = await GetCoreAsync<T>(
@@ -464,6 +522,11 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
         }
         catch (Exception ex)
         {
+            _telemetry.RecordFailure(
+                invalidationGenerationKey.Contains(":authority:domain:", StringComparison.Ordinal)
+                    ? "domain-resolution"
+                    : "other",
+                ex);
             _logger.LogError(
                 ex,
                 "Redis invalidation generation advance failed | GenerationKey: {GenerationKey}",

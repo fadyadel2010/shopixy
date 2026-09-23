@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.Platform;
@@ -139,9 +140,101 @@ public sealed class TenantRegistrationFreshDatabaseTests
         Assert.Equal("We couldn't create your store right now. Please try again.", result.Error?.Message);
     }
 
+    [Theory]
+    [InlineData("متجر")]
+    [InlineData("my store")]
+    [InlineData("my_store")]
+    [InlineData("my.store")]
+    [InlineData("my/store")]
+    [InlineData("my\\store")]
+    [InlineData("my@store")]
+    [InlineData("my:store")]
+    [InlineData("my?store")]
+    [InlineData("my#store")]
+    [InlineData("my--store")]
+    [InlineData("abc\r\ndef")]
+    public async Task RegisterTenantAsync_InvalidStoreAddressCreatesNoTenantOrOwner(string subdomain)
+    {
+        await using var context = CreateDbContext();
+        await context.Database.EnsureCreatedAsync();
+
+        var result = await CreateService(context).RegisterTenantAsync(Request(subdomain));
+
+        Assert.False(result.Success);
+        Assert.Equal("INVALID_SUBDOMAIN", result.Error?.Error);
+        Assert.Empty(await context.Tenants.ToListAsync());
+        Assert.Empty(await context.Users.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RegisterTenantAsync_NormalizesUppercaseAndWhitespaceBeforePersistenceAndUrlGeneration()
+    {
+        await using var context = CreateDbContext();
+        await context.Database.EnsureCreatedAsync();
+
+        var request = Request("  SHOPIXY-STORE  ");
+        request.Email = "normalized-store@example.test";
+        var result = await CreateService(context).RegisterTenantAsync(request);
+
+        Assert.True(result.Success, result.Error?.Message);
+        Assert.Equal("shopixy-store", result.Response?.Subdomain);
+        Assert.Equal("https://shopixy-store.example.test", result.Response?.StorefrontUrl);
+        Assert.Equal("shopixy-store", await context.Tenants.Select(tenant => tenant.Slug).SingleAsync());
+    }
+
+    [Fact]
+    public async Task CheckSubdomainAvailabilityAsync_AvailableSlugReturnsAuthoritativeStorefrontUrl()
+    {
+        await using var context = CreateDbContext();
+        await context.Database.EnsureCreatedAsync();
+
+        var result = await CreateService(context).CheckSubdomainAvailabilityAsync("  AVAILABLE-STORE  ");
+
+        Assert.True(result.Available);
+        Assert.Equal("available-store", result.Slug);
+        Assert.Equal("https://available-store.example.test", result.StorefrontUrl);
+    }
+
+    [Fact]
+    public async Task RegisterTenantAsync_MissingStorefrontUrlAuthorityPersistsNothing()
+    {
+        await using var context = CreateDbContext();
+        await context.Database.EnsureCreatedAsync();
+
+        var result = await CreateService(context, storefrontUrlTemplate: null)
+            .RegisterTenantAsync(Request("missing-url-authority"));
+
+        Assert.False(result.Success);
+        Assert.Equal("REGISTRATION_FAILED", result.Error?.Error);
+        Assert.Empty(await context.Tenants.ToListAsync());
+        Assert.Empty(await context.Users.IgnoreQueryFilters().ToListAsync());
+    }
+
+    [Fact]
+    public async Task RegisterTenantAsync_DuplicateDifferentOnlyByCaseIsRejectedWithoutPartialSecondTenant()
+    {
+        await using var context = CreateDbContext();
+        await context.Database.EnsureCreatedAsync();
+        var service = CreateService(context);
+
+        var first = Request("case-store");
+        first.Email = "first@example.test";
+        var second = Request("CASE-STORE");
+        second.Email = "second@example.test";
+
+        Assert.True((await service.RegisterTenantAsync(first)).Success);
+        var duplicate = await service.RegisterTenantAsync(second);
+
+        Assert.False(duplicate.Success);
+        Assert.Equal("SUBDOMAIN_TAKEN", duplicate.Error?.Error);
+        Assert.Equal(1, await context.Tenants.CountAsync());
+        Assert.Equal(1, await context.Users.IgnoreQueryFilters().CountAsync());
+    }
+
     private static TenantRegistrationService CreateService(
         ApplicationDbContext context,
-        IUserGovernanceService? governanceService = null)
+        IUserGovernanceService? governanceService = null,
+        string? storefrontUrlTemplate = "https://{slug}.example.test")
     {
         var emailVerification = new Mock<IEmailVerificationService>();
         emailVerification
@@ -187,7 +280,16 @@ public sealed class TenantRegistrationFreshDatabaseTests
             accountSeeder.Object,
             governanceService ?? new NoOpUserGovernanceService(),
             eventPublisher.Object,
-            new HttpContextAccessor { HttpContext = httpContext });
+            new HttpContextAccessor { HttpContext = httpContext },
+            new PointOfSale.API.Services.StorefrontUrlResolver(
+                new ConfigurationBuilder()
+                    .AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["Storefront:UrlTemplate"] = storefrontUrlTemplate
+                    })
+                    .Build(),
+                NullLogger<PointOfSale.API.Services.StorefrontUrlResolver>.Instance,
+                new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>()));
     }
 
     private static TenantRegistrationRequest Request(string subdomain) =>

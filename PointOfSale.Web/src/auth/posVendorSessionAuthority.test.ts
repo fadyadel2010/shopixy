@@ -25,6 +25,7 @@ const navigationCapabilities = [
 
 const userId = '11111111-1111-4111-8111-111111111111'
 const tenantId = '22222222-2222-4222-8222-222222222222'
+const effectivePermissions = ['dashboard.view', 'audit.view']
 
 const activeLifecycle = {
     vendorId: tenantId,
@@ -48,6 +49,7 @@ const buildUser = (overrides = {}) => ({
     id: userId,
     tenantId,
     role: 'Admin',
+    effectivePermissions,
     navigationCapabilities,
     vendorLifecycleAuthority: activeLifecycle,
     ...overrides,
@@ -59,6 +61,7 @@ describe('POS Admin CommerceHub vendor session authority', () => {
             id: userId,
             tenantId,
             role: 'Admin',
+            effectivePermissions,
             navigationCapabilities,
             vendorLifecycleAuthority: { status: 'Active' },
         })
@@ -69,6 +72,16 @@ describe('POS Admin CommerceHub vendor session authority', () => {
         expect(derivePosVendorSessionUserAuthority({ id: 'user-1', tenantId: 'tenant-1' })).toBeNull()
         expect(derivePosVendorSessionUserAuthority(buildUser({ role: 'SuperAdmin' }))).toBeNull()
         expect(derivePosVendorSessionUserAuthority(buildUser({ role: 'FabricatedRole' }))).toBeNull()
+    })
+
+    it('accepts only known unique backend-derived POS permissions', () => {
+        expect(derivePosVendorSessionUserAuthority(buildUser({ effectivePermissions: undefined }))).toBeNull()
+        expect(derivePosVendorSessionUserAuthority(buildUser({
+            effectivePermissions: ['dashboard.view', 'fabricated.permission'],
+        }))).toBeNull()
+        expect(derivePosVendorSessionUserAuthority(buildUser({
+            effectivePermissions: ['dashboard.view', 'dashboard.view'],
+        }))).toBeNull()
     })
 
     it('accepts only backend-issued CommerceHub navigation capabilities', () => {

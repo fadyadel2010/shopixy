@@ -202,7 +202,7 @@ export function resolveTenant(): TenantResolutionResult {
 
 /**
  * Current resolved tenant state
- * Set during bootstrap, never changes after
+ * Starts with the host candidate and is replaced by backend-issued authority.
  */
 let resolvedTenant: string | null = null;
 
@@ -238,6 +238,17 @@ export function setResolvedTenant(tenantId: string, options?: { overwrite?: bool
     }
 
     resolvedTenant = tenantId;
+}
+
+/**
+ * Replace the host candidate with canonical tenant authority from StoreConfig.
+ */
+export function setCanonicalTenant(tenantId: string | undefined): void {
+    if (!tenantId || !UUID_PATTERN.test(tenantId)) {
+        throw new Error('[TenantResolver] StoreConfig did not provide a canonical tenant ID.');
+    }
+
+    setResolvedTenant(tenantId, { overwrite: true });
 }
 
 /**

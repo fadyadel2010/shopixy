@@ -89,7 +89,6 @@ public class ProductsController : ControllerBase
     /// Get all products with optional filtering
     /// </summary>
     [HttpGet]
-    [Authorize(Roles = "Owner,Admin,Manager,Cashier")]
     public async Task<ActionResult<IEnumerable<ProductResponseDto>>> GetProducts(
         [FromQuery] string? search,
         [FromQuery] Guid? categoryId,
@@ -316,7 +315,6 @@ public class ProductsController : ControllerBase
     /// Get minimal product data for lookups (id, name, sku only)
     /// </summary>
     [HttpGet("lookup")]
-    [Authorize(Roles = "Owner,Admin,Manager,Cashier")]
     public async Task<ActionResult<IEnumerable<object>>> GetProductsLookup(
         [FromQuery] string? search,
         [FromQuery] bool? isActive,
@@ -374,7 +372,6 @@ public class ProductsController : ControllerBase
     /// Get product by ID
     /// </summary>
     [HttpGet("{id}")]
-    [Authorize(Roles = "Owner,Admin,Manager,Cashier")]
     public async Task<ActionResult<ProductResponseDto>> GetProduct(Guid id)
     {
         var product = await LoadProductForResponseAsync(id);
@@ -392,7 +389,6 @@ public class ProductsController : ControllerBase
     /// PHASE 11.6: VARIANT-AWARE BARCODE SEARCH
     /// </summary>
     [HttpGet("barcode/{barcode}")]
-    [Authorize(Roles = "Owner,Admin,Manager,Cashier")]
     public async Task<ActionResult<ProductBarcodeResponseDto>> GetProductByBarcode(string barcode)
     {
         // First, try to find by product barcode
@@ -1159,7 +1155,6 @@ public class ProductsController : ControllerBase
     /// Adjust product stock
     /// </summary>
     [HttpPost("{id}/adjust-stock")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> AdjustStock(Guid id, AdjustStockRequest request)
     {
         var idempotencyPrecondition = RequireProductMutationIdempotencyKey();
@@ -2082,7 +2077,6 @@ public class ProductsController : ControllerBase
     /// Creates a base unit (Piece) for all products that don't have units configured
     /// </summary>
     [HttpPost("migrate-to-multi-unit")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> MigrateToMultiUnit()
     {
         await Task.CompletedTask;
@@ -2417,7 +2411,6 @@ public class ProductsController : ControllerBase
     /// Run this after enabling stock visibility on storefront.
     /// </summary>
     [HttpPost("sync-stock-to-mongo")]
-    [Authorize(Roles = "Owner,Admin")]
     public async Task<IActionResult> SyncStockToMongo()
     {
         try

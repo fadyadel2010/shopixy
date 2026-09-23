@@ -187,7 +187,6 @@ public class AdminOrdersController : ControllerBase
     }
 
     [HttpGet("{orderId:guid}/checkout-attachments/{attachmentId:guid}/download")]
-    [Authorize(Roles = "Owner,Admin")]
     [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public async Task<IActionResult> DownloadCheckoutAttachment(
         [FromRoute] Guid orderId,

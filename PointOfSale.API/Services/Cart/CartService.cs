@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using MassTransit;
@@ -70,6 +71,7 @@ public class CartService : ICartService
     private readonly ITaxCalculationService _taxCalculationService;
     private readonly CommerceReliabilityTelemetry _reliabilityTelemetry;
     private readonly IDistributedLockService _distributedLockService;
+    private readonly AsyncLocal<List<object>?> _deferredCartEvents = new();
 
     // =============================================================================
     // CART CONFIGURATION CONSTANTS
@@ -113,6 +115,7 @@ public class CartService : ICartService
     /// Heartbeat mechanism to extend the lock while the operation is still running.
     /// </summary>
     private static readonly TimeSpan CartMutationLockRenewalInterval = TimeSpan.FromSeconds(30);
+    private readonly TimeSpan _cartMutationLockRenewalInterval;
 
     public CartService(
         ApplicationDbContext dbContext,
@@ -125,7 +128,8 @@ public class CartService : ICartService
         ITaxCalculationService taxCalculationService,
         CommerceReliabilityTelemetry reliabilityTelemetry,
         IDistributedLockService distributedLockService,
-        ILogger<CartService> logger)
+        ILogger<CartService> logger,
+        TimeSpan? lockRenewalInterval = null)
     {
         _dbContext = dbContext;
         _redisFactory = redisFactory;
@@ -138,6 +142,11 @@ public class CartService : ICartService
         _reliabilityTelemetry = reliabilityTelemetry;
         _distributedLockService = distributedLockService;
         _logger = logger;
+        _cartMutationLockRenewalInterval = lockRenewalInterval ?? CartMutationLockRenewalInterval;
+        if (_cartMutationLockRenewalInterval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(lockRenewalInterval));
+        }
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -299,6 +308,11 @@ public class CartService : ICartService
         CancellationToken cancellationToken = default)
     {
         await EnsureOwnerTenantMatchAsync(tenantId, owner, correlationId, cancellationToken);
+        // Mongo supplies only a candidate. Fetch it before acquiring the cart
+        // owner lock; SQL stock, visibility, variant and price are still read
+        // fresh under the lock before any cart mutation or Redis persistence.
+        var projectedProduct = await _productRepository.FindByProductIdAsync(
+            tenantId, request.ProductId, cancellationToken);
         return await ExecuteWithCartMutationLockAsync(
             tenantId,
             owner,
@@ -312,7 +326,9 @@ public class CartService : ICartService
                 affiliateReferralCode,
                 promotionLinkId,
                 correlationId,
-                ct));
+                ct,
+                projectedProduct,
+                candidateAlreadyLoaded: true));
     }
 
     public Task<CartDto> AddItemAsync(
@@ -346,7 +362,9 @@ public class CartService : ICartService
         string? affiliateReferralCode,
         Guid? promotionLinkId,
         string correlationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ProductDocument? projectedProduct = null,
+        bool candidateAlreadyLoaded = false)
     {
 
         var cacheKey = BuildCacheKey(tenantId, owner);
@@ -360,7 +378,9 @@ public class CartService : ICartService
         // =============================================================================
         
         // Step 1: Load product document from MongoDB
-        var product = await ValidateProductAsync(tenantId, request.ProductId, correlationId, cancellationToken);
+        var product = await ValidateProductAsync(
+            tenantId, request.ProductId, correlationId, cancellationToken,
+            projectedProduct, candidateAlreadyLoaded);
         if (product == null)
         {
             throw new ProductNotFoundException(request.ProductId);
@@ -378,8 +398,7 @@ public class CartService : ICartService
                 cancellationToken)
             : AffiliateCartLineAdmission.NotEligible;
 
-        // Step 2: Resolve and validate variant
-        // PHASE 11.4: VariantId is REQUIRED for products with variants
+        // Step 2: Resolve and validate the sellable SKU.
         ProductVariantDocument? variant = null;
         StorefrontPurchasabilityResult? variantPurchasability = null;
         
@@ -398,32 +417,10 @@ public class CartService : ICartService
             
             if (request.VariantId == null)
             {
-                // Check if this is a "variant product" that REQUIRES variant selection
-                // vs a "simple product" that happens to have a default variant
-                if (product.HasVariants)
-                {
-                    // PHASE 11.6: Variant products REQUIRE variantId - no silent fallback
-                    _logger.LogWarning(
-                        "AddItem rejected - variant selection required but not provided | TenantId: {TenantId} | ProductId: {ProductId} | ProductName: {ProductName} | CorrelationId: {CorrelationId}",
-                        tenantId, request.ProductId, product.Name, correlationId);
-                    throw new VariantRequiredException(request.ProductId, product.Name);
-                }
-                
-                // Simple product (HasVariants = false) - use default variant
-                variant = product.Variants.FirstOrDefault(v => v.IsDefault && v.IsActive)
-                       ?? product.Variants.FirstOrDefault(v => v.IsActive);
-                
-                if (variant == null)
-                {
-                    _logger.LogError(
-                        "AddItem rejected - no active variants for simple product | TenantId: {TenantId} | ProductId: {ProductId} | VariantCount: {VariantCount} | CorrelationId: {CorrelationId}",
-                        tenantId, request.ProductId, product.Variants.Count, correlationId);
-                    throw new VariantNotFoundException(request.ProductId, Guid.Empty);
-                }
-                
-                _logger.LogDebug(
-                    "AddItem - using default variant for simple product | ProductId: {ProductId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
-                    request.ProductId, variant.VariantId, correlationId);
+                _logger.LogWarning(
+                    "AddItem rejected - variant selection required but not provided | TenantId: {TenantId} | ProductId: {ProductId} | ProductName: {ProductName} | CorrelationId: {CorrelationId}",
+                    tenantId, request.ProductId, product.Name, correlationId);
+                throw new VariantRequiredException(request.ProductId, product.Name);
             }
             else
             {
@@ -484,6 +481,28 @@ public class CartService : ICartService
                     tenantId, request.ProductId, productPurchasability.StockQuantity, correlationId);
                 throw new ProductOutOfStockException(request.ProductId, product.Name);
             }
+
+            // Simple products still have exactly one server-authoritative sellable SKU.
+            // Resolve it from the tenant/product-scoped authority and never adopt an
+            // arbitrary caller-supplied VariantId as cart identity.
+            variant = ResolveCanonicalSimpleProductVariant(product);
+            if (variant == null)
+            {
+                _logger.LogWarning(
+                    "AddItem rejected - simple product has no active canonical variant | TenantId: {TenantId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}",
+                    tenantId, request.ProductId, correlationId);
+                throw new VariantNotFoundException(request.ProductId, request.VariantId ?? Guid.Empty);
+            }
+
+            if (request.VariantId.HasValue && request.VariantId.Value != variant.VariantId)
+            {
+                _logger.LogWarning(
+                    "AddItem rejected - submitted variant is not the product's canonical simple variant | TenantId: {TenantId} | ProductId: {ProductId} | SubmittedVariantId: {SubmittedVariantId} | CanonicalVariantId: {CanonicalVariantId} | CorrelationId: {CorrelationId}",
+                    tenantId, request.ProductId, request.VariantId.Value, variant.VariantId, correlationId);
+                throw new VariantNotFoundException(request.ProductId, request.VariantId.Value);
+            }
+
+            variantPurchasability = productPurchasability;
         }
 
         // Step 3: Get or create cart
@@ -500,7 +519,11 @@ public class CartService : ICartService
         }
 
         // PHASE 10.4.X: Currency Authority Lockdown
-        var storefrontCurrency = GetStorefrontCurrency(tenantId);
+        // CreateEmptyCart just read the current tenant SQL currency for this
+        // new cart. Repeating that same query in this mutation acquires another
+        // connection while the owner lock is held. Existing Redis carts still
+        // require a fresh SQL currency check to catch drift.
+        var storefrontCurrency = isNewCart ? cart.Currency : GetStorefrontCurrency(tenantId);
         
         // Validate cart currency matches storefront
         if (!string.Equals(cart.Currency, storefrontCurrency, StringComparison.OrdinalIgnoreCase))
@@ -530,11 +553,19 @@ public class CartService : ICartService
         // =============================================================================
         
         // Step 4: Add or update item
-        // CRITICAL: Cart items are keyed by VariantId (or ProductId for legacy)
+        // Canonical lines are keyed by VariantId. ProductId is only a migration
+        // fallback for Redis lines written before simple-product SKU persistence.
         var variantId = variant?.VariantId;
-        var existingItem = variantId.HasValue
-            ? cart.Items.FirstOrDefault(i => i.VariantId == variantId.Value)
-            : cart.Items.FirstOrDefault(i => i.ProductId == request.ProductId && i.VariantId == null);
+        var existingItem = cart.Items.FirstOrDefault(i => i.VariantId == variantId);
+        if (existingItem == null && !product.HasVariants && variantId.HasValue)
+        {
+            existingItem = cart.Items.FirstOrDefault(i =>
+                i.ProductId == request.ProductId && !i.VariantId.HasValue);
+            if (existingItem != null)
+            {
+                existingItem.VariantId = variantId;
+            }
+        }
         
         int previousQuantity = existingItem?.Quantity ?? 0;
         if (variant != null && variantPurchasability != null)
@@ -657,9 +688,7 @@ public class CartService : ICartService
         }
 
         // PHASE 11.4: Get the actual cart item to emit correct SKU/Price (not product-level values)
-        var addedCartItem = variantId.HasValue
-            ? cart.Items.FirstOrDefault(i => i.VariantId == variantId.Value)
-            : cart.Items.FirstOrDefault(i => i.ProductId == request.ProductId && i.VariantId == null);
+        var addedCartItem = cart.Items.FirstOrDefault(i => i.VariantId == variantId);
         
         if (addedCartItem != null)
         {
@@ -883,10 +912,28 @@ public class CartService : ICartService
             }
             else
             {
-                var variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
-                if (!product.HasVariants || !variantPurchasability.IsAvailable)
+                StorefrontPurchasabilityResult variantPurchasability;
+                if (product.HasVariants)
                 {
-                    throw new VariantNotFoundException(existingItem.ProductId, variantId);
+                    variantPurchasability = ProductStorefrontVisibilityAuthority.EvaluateVariant(product, variant);
+                    if (!variantPurchasability.IsAvailable)
+                    {
+                        throw new VariantNotFoundException(existingItem.ProductId, variantId);
+                    }
+                }
+                else
+                {
+                    var canonicalVariant = ResolveCanonicalSimpleProductVariant(product);
+                    if (canonicalVariant == null || canonicalVariant.VariantId != variantId)
+                    {
+                        throw new VariantNotFoundException(existingItem.ProductId, variantId);
+                    }
+
+                    variantPurchasability = ProductStorefrontVisibilityAuthority.Evaluate(product);
+                    if (!variantPurchasability.IsAvailable)
+                    {
+                        throw new VariantNotFoundException(existingItem.ProductId, variantId);
+                    }
                 }
 
                 var availableStock = variantPurchasability.StockQuantity;
@@ -1537,7 +1584,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartItemAddedEvent (merge) emitted | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
@@ -1590,7 +1637,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartMergedEvent emitted | TenantId: {TenantId} | SourceCartId: {SourceCartId} | TargetCartId: {TargetCartId} | CorrelationId: {CorrelationId}",
@@ -1967,22 +2014,42 @@ public class CartService : ICartService
             return cart;
         }
 
-        var productIds = cart.Items.Select(i => i.ProductId).ToList();
+        var productIds = cart.Items
+            .Select(item => item.ProductId)
+            .Where(productId => productId != Guid.Empty)
+            .Distinct()
+            .ToList();
         var itemsToRemove = new List<CartItemDto>();
         var cartWasUpdated = false;
         try
         {
-            // Batch validate all products and populate AvailableStock
+            var projectedProducts = await _productRepository.GetByProductIdsAsync(
+                cart.TenantId,
+                productIds,
+                affiliateModeOnly: false,
+                cancellationToken) ?? [];
+            var tenantCandidates = projectedProducts
+                .Where(product =>
+                    product.TenantId == cart.TenantId &&
+                    productIds.Contains(product.ProductId))
+                .ToList();
+            var authoritativeProducts = await ProductSearchSqlAuthorityOverlay.ApplyBatchAsync(
+                _dbContext,
+                tenantCandidates,
+                cart.TenantId,
+                cancellationToken);
+            var productsById = authoritativeProducts
+                .Where(product => product != null)
+                .ToDictionary(product => product!.ProductId, product => product!);
+            var affiliateAdmissions = new Dictionary<
+                (Guid ProductId, Guid? AccountId, string? ReferralCode, Guid? PromotionLinkId),
+                AffiliateCartLineAdmission>();
+
+            // Product and SQL authority are loaded once for the complete cart. Per-line
+            // checks below remain in-memory except attributed affiliate admission.
             foreach (var item in cart.Items)
             {
-                var projectedProduct = await _productRepository.FindByProductIdAsync(cart.TenantId, item.ProductId, cancellationToken);
-                var product = projectedProduct == null
-                    ? null
-                    : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                        _dbContext,
-                        projectedProduct,
-                        cart.TenantId,
-                        cancellationToken);
+                productsById.TryGetValue(item.ProductId, out var product);
                 
                 if (product == null || !product.IsActive || !product.IsOnlineVisible)
                 {
@@ -2004,6 +2071,40 @@ public class CartService : ICartService
                                 cart.CartId,
                                 item.ProductId,
                                 productPurchasability.UnavailableReason,
+                                correlationId);
+                            itemsToRemove.Add(item);
+                            continue;
+                        }
+
+                        var canonicalVariant = ResolveCanonicalSimpleProductVariant(product);
+                        if (canonicalVariant == null)
+                        {
+                            _logger.LogWarning(
+                                "Simple product has no active canonical variant - removing from cart | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}",
+                                cart.TenantId,
+                                cart.CartId,
+                                item.ProductId,
+                                correlationId);
+                            itemsToRemove.Add(item);
+                            continue;
+                        }
+
+                        if (!item.VariantId.HasValue)
+                        {
+                            // Redis carts can outlive a deployment. Upgrade legacy simple
+                            // lines in place to the canonical SKU identity.
+                            item.VariantId = canonicalVariant.VariantId;
+                            cartWasUpdated = true;
+                        }
+                        else if (item.VariantId.Value != canonicalVariant.VariantId)
+                        {
+                            _logger.LogWarning(
+                                "Simple cart item variant is not canonical - removing from cart | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | VariantId: {VariantId} | CanonicalVariantId: {CanonicalVariantId} | CorrelationId: {CorrelationId}",
+                                cart.TenantId,
+                                cart.CartId,
+                                item.ProductId,
+                                item.VariantId,
+                                canonicalVariant.VariantId,
                                 correlationId);
                             itemsToRemove.Add(item);
                             continue;
@@ -2081,14 +2182,24 @@ public class CartService : ICartService
                         }
                     }
 
-                    var refreshedLineAdmission = await ResolveAffiliateCartLineAdmissionAsync(
-                        cart.TenantId,
+                    var admissionKey = (
                         item.ProductId,
                         item.AffiliateAccountId,
                         item.AffiliateReferralCode,
-                        item.PromotionLinkId,
-                        correlationId,
-                        cancellationToken);
+                        item.PromotionLinkId);
+                    if (!affiliateAdmissions.TryGetValue(admissionKey, out var refreshedLineAdmission))
+                    {
+                        refreshedLineAdmission = await ResolveAffiliateCartLineAdmissionAsync(
+                            cart.TenantId,
+                            item.ProductId,
+                            item.AffiliateAccountId,
+                            item.AffiliateReferralCode,
+                            item.PromotionLinkId,
+                            correlationId,
+                            cancellationToken);
+                        affiliateAdmissions[admissionKey] = refreshedLineAdmission;
+                    }
+
                     if (ApplyAffiliateCartLineAdmission(item, refreshedLineAdmission))
                     {
                         cartWasUpdated = true;
@@ -2100,6 +2211,10 @@ public class CartService : ICartService
                     }
                 }
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -2151,6 +2266,17 @@ public class CartService : ICartService
         }
 
         return cart;
+    }
+
+    internal static ProductVariantDocument? ResolveCanonicalSimpleProductVariant(ProductDocument product)
+    {
+        if (product.HasVariants)
+        {
+            return null;
+        }
+
+        return product.Variants.FirstOrDefault(variant => variant.IsDefault && variant.IsActive)
+            ?? product.Variants.FirstOrDefault(variant => variant.IsActive);
     }
 
     private async Task<AffiliateCartLineAdmission> ResolveAffiliateCartLineAdmissionAsync(
@@ -2649,12 +2775,15 @@ public class CartService : ICartService
             "Cart mutation lock acquired | LockKey: {LockKey} | TenantId: {TenantId} | Owner: {OwnerType}:{OwnerId} | CorrelationId: {CorrelationId}",
             lockKey, tenantId, owner.OwnerType, owner.OwnerId, correlationId);
 
-        return await ExecuteWithRedisLockAsync(
-            lockKey,
-            "cart_mutation",
+        return await ExecuteWithDeferredCartEventsAsync(
+            () => ExecuteWithRedisLockAsync(
+                lockKey,
+                "cart_mutation",
+                correlationId,
+                cancellationToken,
+                operation),
             correlationId,
-            cancellationToken,
-            operation);
+            cancellationToken);
     }
 
     private async Task<T> ExecuteWithCartMergeLocksAsync<T>(
@@ -2672,12 +2801,63 @@ public class CartService : ICartService
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToArray();
 
-        return await ExecuteWithRedisLocksAsync(
-            lockKeys,
-            "cart_merge",
+        return await ExecuteWithDeferredCartEventsAsync(
+            () => ExecuteWithRedisLocksAsync(
+                lockKeys,
+                "cart_merge",
+                correlationId,
+                cancellationToken,
+                operation),
             correlationId,
-            cancellationToken,
-            operation);
+            cancellationToken);
+    }
+
+    private async Task<T> ExecuteWithDeferredCartEventsAsync<T>(
+        Func<Task<T>> lockedOperation,
+        string correlationId,
+        CancellationToken cancellationToken)
+    {
+        if (_deferredCartEvents.Value != null)
+        {
+            return await lockedOperation();
+        }
+
+        var pendingEvents = new List<object>();
+        _deferredCartEvents.Value = pendingEvents;
+
+        T result;
+        try
+        {
+            result = await lockedOperation();
+        }
+        finally
+        {
+            _deferredCartEvents.Value = null;
+        }
+
+        if (pendingEvents.Count == 0)
+        {
+            return result;
+        }
+
+        try
+        {
+            await _eventPublisher.PublishBatchAsync(pendingEvents, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to emit deferred cart events (best-effort, continuing) | EventCount: {EventCount} | CorrelationId: {CorrelationId}",
+                pendingEvents.Count,
+                correlationId);
+        }
+
+        return result;
     }
 
     private async Task<string> ResolveCartMutationLockKeyAsync(
@@ -2716,6 +2896,7 @@ public class CartService : ICartService
 
         var lockToken = Guid.NewGuid().ToString("N");
         var acquiredLocks = new List<string>(lockKeys.Count);
+        long firstAcquiredAt = 0;
         using var renewalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var operationCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         Task? renewalTask = null;
@@ -2752,6 +2933,10 @@ public class CartService : ICartService
                 }
 
                 acquiredLocks.Add(lockKey);
+                if (firstAcquiredAt == 0)
+                {
+                    firstAcquiredAt = Stopwatch.GetTimestamp();
+                }
             }
 
             // Start background lock renewal task
@@ -2786,6 +2971,7 @@ public class CartService : ICartService
         {
             // Stop renewal task
             renewalCts.Cancel();
+            CartConcurrencyConflictException? renewalConflict = null;
             if (renewalTask != null)
             {
                 try
@@ -2796,11 +2982,12 @@ public class CartService : ICartService
                 {
                     // Expected when cancelling renewal
                 }
-                catch (CartConcurrencyConflictException)
+                catch (CartConcurrencyConflictException ex)
                 {
-                    // Lock was lost during operation - this exception should propagate
-                    // The operation should have been cancelled via operationCts
-                    throw;
+                    // Keep the conflict, but always attempt token-owned release
+                    // for *all* acquired locks before propagating it. Throwing
+                    // here used to bypass the release loop on renewal failure.
+                    renewalConflict = ex;
                 }
                 catch (Exception ex)
                 {
@@ -2829,6 +3016,17 @@ public class CartService : ICartService
                         correlationId);
                 }
             }
+
+            if (firstAcquiredAt != 0)
+            {
+                _reliabilityTelemetry.RecordCartMutationLockDuration(
+                    operationName, Stopwatch.GetElapsedTime(firstAcquiredAt));
+            }
+
+            if (renewalConflict != null)
+            {
+                throw renewalConflict;
+            }
         }
     }
 
@@ -2847,7 +3045,7 @@ public class CartService : ICartService
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await Task.Delay(CartMutationLockRenewalInterval, cancellationToken);
+                await Task.Delay(_cartMutationLockRenewalInterval, cancellationToken);
 
                 foreach (var lockKey in lockKeys)
                 {
@@ -3160,11 +3358,18 @@ public class CartService : ICartService
         Guid tenantId,
         Guid productId,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ProductDocument? projectedCandidate = null,
+        bool candidateAlreadyLoaded = false)
     {
         try
         {
-            var projectedProduct = await _productRepository.FindByProductIdAsync(tenantId, productId, cancellationToken);
+            var projectedProduct = candidateAlreadyLoaded
+                ? projectedCandidate
+                : await _productRepository.FindByProductIdAsync(tenantId, productId, cancellationToken);
+            if (projectedProduct != null &&
+                (projectedProduct.TenantId != tenantId || projectedProduct.ProductId != productId))
+                return null;
             var product = projectedProduct == null
                 ? null
                 : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
@@ -3248,6 +3453,18 @@ public class CartService : ICartService
 
     #region Event Emission
 
+    private Task PublishCartEventAsync(object @event, CancellationToken cancellationToken)
+    {
+        var pendingEvents = _deferredCartEvents.Value;
+        if (pendingEvents != null)
+        {
+            pendingEvents.Add(@event);
+            return Task.CompletedTask;
+        }
+
+        return _eventPublisher.PublishAsync(@event, cancellationToken);
+    }
+
     private async Task EmitCartCreatedEventAsync(CartDto cart, string correlationId, CancellationToken cancellationToken)
     {
         try
@@ -3264,7 +3481,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartCreatedEvent emitted | TenantId: {TenantId} | CartId: {CartId} | CorrelationId: {CorrelationId}",
@@ -3327,7 +3544,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartItemAddedEvent emitted | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | VariantId: {VariantId} | SKU: {SKU} | UnitPrice: {UnitPrice} | CorrelationId: {CorrelationId}",
@@ -3376,7 +3593,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartItemUpdatedEvent emitted | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
@@ -3423,7 +3640,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartItemRemovedEvent emitted | TenantId: {TenantId} | CartId: {CartId} | ProductId: {ProductId} | VariantId: {VariantId} | CorrelationId: {CorrelationId}",
@@ -3468,7 +3685,7 @@ public class CartService : ICartService
                 OccurredAtUtc = DateTime.UtcNow
             };
 
-            await _eventPublisher.PublishAsync(evt, cancellationToken);
+            await PublishCartEventAsync(evt, cancellationToken);
 
             _logger.LogDebug(
                 "CartClearedEvent emitted | TenantId: {TenantId} | CartId: {CartId} | CorrelationId: {CorrelationId}",

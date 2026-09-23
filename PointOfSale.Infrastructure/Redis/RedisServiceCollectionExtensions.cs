@@ -36,9 +36,14 @@ public static class RedisServiceCollectionExtensions
     {
         var redisSettings = configuration.GetSection(RedisSettings.SectionName).Get<RedisSettings>() ?? new RedisSettings();
 
-        // Bind Redis settings from configuration
-        services.Configure<RedisSettings>(
-            configuration.GetSection(RedisSettings.SectionName));
+        // Fail at host startup, before any authority/lock operation can silently
+        // run without its configured shared Redis endpoint.
+        services.AddOptions<RedisSettings>()
+            .Bind(configuration.GetSection(RedisSettings.SectionName))
+            .Validate(
+                settings => !settings.Enabled || !string.IsNullOrWhiteSpace(settings.ConnectionString),
+                "Redis:ConnectionString is required when Redis:Enabled=true.")
+            .ValidateOnStart();
 
         if (redisSettings.Enabled && !string.IsNullOrWhiteSpace(redisSettings.ConnectionString))
         {
@@ -71,7 +76,9 @@ public static class RedisServiceCollectionExtensions
         });
 
         // Register distributed lock service as singleton (consumed by singleton RedisJsonCacheService)
-        services.AddSingleton<IDistributedLockService, DistributedLockService>();
+        services.AddSingleton<IDistributedLockService>(sp => new DistributedLockService(
+            sp.GetRequiredService<RedisConnectionFactory>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<DistributedLockService>>()));
 
         services.AddSingleton<RedisPerformanceTelemetry>();
         services.AddSingleton<IRedisJsonCacheService, RedisJsonCacheService>();

@@ -61,7 +61,7 @@ public sealed class ExpenseFinancialSafetyHardeningTests
     }
 
     [Fact]
-    public void ExpenseMutationVersionMigration_MustBackfillDefaultZero_AndRegisterHistory()
+    public void ExpenseMutationVersion_MustBePresentInCurrentBaseline()
     {
         var migrationPath = Path.Combine(
             AppContext.BaseDirectory,
@@ -71,13 +71,11 @@ public sealed class ExpenseFinancialSafetyHardeningTests
             "..",
             "PointOfSale.Infrastructure",
             "Migrations",
-            "20260408153000_AddExpenseAccountingMutationVersion.sql");
+            "20260723214642_Baseline_Recovery3.cs");
 
-        var migrationSql = File.ReadAllText(Path.GetFullPath(migrationPath));
+        var migrationSource = File.ReadAllText(Path.GetFullPath(migrationPath));
 
-        Assert.Contains("ALTER TABLE \"Expenses\"", migrationSql, StringComparison.Ordinal);
-        Assert.Contains("ADD COLUMN IF NOT EXISTS \"AccountingMutationVersion\" integer NOT NULL DEFAULT 0", migrationSql, StringComparison.Ordinal);
-        Assert.Contains("__EFMigrationsHistory", migrationSql, StringComparison.Ordinal);
-        Assert.Contains("20260408153000_AddExpenseAccountingMutationVersion", migrationSql, StringComparison.Ordinal);
+        Assert.Contains("name: \"Expenses\"", migrationSource, StringComparison.Ordinal);
+        Assert.Contains("AccountingMutationVersion = table.Column<int>(type: \"integer\", nullable: false)", migrationSource, StringComparison.Ordinal);
     }
 }

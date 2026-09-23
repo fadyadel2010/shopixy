@@ -77,7 +77,6 @@ public class WarehousesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<ActionResult<WarehouseDetailDto>> CreateWarehouse(CreateWarehouseRequest request)
     {
         var warehouse = new Warehouse
@@ -99,7 +98,6 @@ public class WarehousesController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> UpdateWarehouse(Guid id, UpdateWarehouseRequest request)
     {
         var tenantId = _tenantContext.RequiredTenantId;
@@ -201,7 +199,6 @@ public class WarehousesController : ControllerBase
     }
 
     [HttpPost("adjust-stock")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> AdjustStock(PointOfSale.API.DTOs.StockAdjustmentDto dto)
     {
         var resolution = ResolveWarehouseTransferIdempotencyContext();
@@ -308,7 +305,6 @@ public class WarehousesController : ControllerBase
     }
 
     [HttpPost("transfer-stock")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> TransferStock(PointOfSale.API.DTOs.StockTransferDto dto)
     {
         var resolution = ResolveWarehouseTransferIdempotencyContext();
@@ -502,7 +498,6 @@ public class WarehousesController : ControllerBase
     /// Stock must reference VariantId, not ProductId.
     /// </summary>
     [HttpPost("opening-stock")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<IActionResult> SaveOpeningStock(SaveOpeningStockRequest request)
     {
         try

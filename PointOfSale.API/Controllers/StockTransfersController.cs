@@ -48,7 +48,6 @@ public class StockTransfersController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<ActionResult> CreateTransfer(CreateTransferRequest request)
     {
         if (!TryResolveCurrentUserId(out var userId))
@@ -341,7 +340,6 @@ public class StockTransfersController : ControllerBase
     }
 
     [HttpPost("{id}/complete")]
-    [Authorize(Roles = "Owner,Admin,Manager")]
     public async Task<ActionResult> CompleteTransfer(Guid id)
     {
         if (!TryResolveCurrentUserId(out var userId))

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using PointOfSale.API.Configuration;
 using PointOfSale.API.DTOs.Platform;
 using PointOfSale.API.Middleware;
@@ -18,6 +19,7 @@ using PointOfSale.Core.Events;
 using PointOfSale.Core.Interfaces;
 using PointOfSale.Core.Interfaces.Accounting;
 using PointOfSale.Core.Security;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Services.Platform;
@@ -71,6 +73,7 @@ public class TenantRegistrationService : ITenantRegistrationService
     private readonly IUserGovernanceService _userGovernanceService;
     private readonly IEventPublisher _eventPublisher;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly StorefrontUrlResolver _storefrontUrlResolver;
 
     public TenantRegistrationService(
         ApplicationDbContext context,
@@ -83,7 +86,8 @@ public class TenantRegistrationService : ITenantRegistrationService
         ITenantAccountSeeder accountSeeder,
         IUserGovernanceService userGovernanceService,
         IEventPublisher eventPublisher,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        StorefrontUrlResolver storefrontUrlResolver)
     {
         _context = context;
         _passwordHasher = passwordHasher;
@@ -96,13 +100,18 @@ public class TenantRegistrationService : ITenantRegistrationService
         _userGovernanceService = userGovernanceService;
         _eventPublisher = eventPublisher;
         _httpContextAccessor = httpContextAccessor;
+        _storefrontUrlResolver = storefrontUrlResolver;
     }
 
     public async Task<TenantRegistrationResult> RegisterTenantAsync(
         TenantRegistrationRequest request, 
         CancellationToken cancellationToken = default)
     {
-        var normalizedSubdomain = request.Subdomain.ToLowerInvariant().Trim();
+        if (!StoreSlug.TryNormalize(request.Subdomain, out var normalizedSubdomain, out var subdomainError))
+        {
+            return CreateError("INVALID_SUBDOMAIN", subdomainError!, "subdomain");
+        }
+
         var normalizedEmail = request.Email.ToLowerInvariant().Trim();
         
         _logger.LogInformation("Starting tenant registration for {Email}, subdomain: {Subdomain}", 
@@ -130,16 +139,10 @@ public class TenantRegistrationService : ITenantRegistrationService
         // PRE-VALIDATION (before transaction)
         // =====================================================================
         
-        // Validate subdomain format
-        var (isValidSubdomain, subdomainError) = SubdomainValidator.Validate(normalizedSubdomain);
-        if (!isValidSubdomain)
-        {
-            return CreateError("INVALID_SUBDOMAIN", subdomainError!, "subdomain");
-        }
-        
-        // Check email uniqueness
+        // Check email uniqueness (server-authoritative normalized key)
+        var normalizedIdentityEmail = PointOfSale.Core.Security.PosIdentityNormalizer.NormalizeEmail(request.Email);
         var emailExists = await _context.Users
-            .AnyAsync(u => u.Email.ToLower() == normalizedEmail, cancellationToken);
+            .AnyAsync(u => u.NormalizedEmail == normalizedIdentityEmail, cancellationToken);
         if (emailExists)
         {
             return CreateError("EMAIL_TAKEN", 
@@ -228,6 +231,8 @@ public class TenantRegistrationService : ITenantRegistrationService
                 TenantId = tenantId,
                 Username = normalizedEmail, // Email as username
                 Email = normalizedEmail,
+                NormalizedUsername = PointOfSale.Core.Security.PosIdentityNormalizer.NormalizeUsername(normalizedEmail),
+                NormalizedEmail = PointOfSale.Core.Security.PosIdentityNormalizer.NormalizeEmail(normalizedEmail),
                 FirstName = request.BusinessName.Split(' ').FirstOrDefault() ?? "Owner",
                 LastName = "",
                 Role = UserRole.Owner,
@@ -477,18 +482,27 @@ public class TenantRegistrationService : ITenantRegistrationService
             
             _logger.LogDebug("Step 11: Tenant {TenantId} status set to ACTIVE", tenantId);
             
-            // -----------------------------------------------------------------
-            // COMMIT TRANSACTION
-            // -----------------------------------------------------------------
+            // Persist the session binding inside the bootstrap transaction. A
+            // successful registration response must never point at a tenant
+            // whose owner session failed to persist after commit.
+            // Resolve URL authority before commit as well, so configuration
+            // failure cannot leave a committed tenant behind a failed response.
+            var storefrontUrl = _storefrontUrlResolver.Resolve(tenant);
+            var (accessToken, refreshToken) = GenerateTokens(user, tenantId);
+
             await _context.SaveChangesAsync(cancellationToken);
             await _userGovernanceService.EnsureProfileExistsAsync(
                 UserGovernanceRole.Vendor,
                 tenantId,
                 cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            await transaction.DisposeAsync();
+            _context.ChangeTracker.Clear();
 
-            // Fire-and-forget: publish bootstrap events without blocking response
-            _ = PublishBootstrapReadModelEventsAsync(storeConfig, tenantId, cancellationToken);
+            // The publisher uses this request's scoped outbox/DbContext. Await it
+            // after releasing the bootstrap transaction so scoped state cannot race
+            // later registration work or outlive the request.
+            await PublishBootstrapReadModelEventsAsync(storeConfig, tenantId, cancellationToken);
             
             _logger.LogInformation("Tenant registration completed successfully: {TenantId} ({Subdomain})", 
                 tenantId, normalizedSubdomain);
@@ -522,15 +536,8 @@ public class TenantRegistrationService : ITenantRegistrationService
                 _logger.LogWarning(seedEx, "Failed to seed Chart of Accounts for tenant {TenantId}. Use POST /api/admin/accounting/seed to seed manually.", tenantId);
             }
             
-            // -----------------------------------------------------------------
-            // Generate JWT tokens for immediate login
-            // -----------------------------------------------------------------
-            var (accessToken, refreshToken) = GenerateTokens(user, tenantId);
-            await _context.SaveChangesAsync(cancellationToken);
-            
-            // Build response URLs
-            var platformDomain = _configuration["Platform:Domain"] ?? "myplatform.com";
-            var storefrontUrl = $"https://{normalizedSubdomain}.{platformDomain}";
+            // Build response URLs from the same authority used by every other
+            // storefront link and by host-based tenant resolution.
             var posUrl = _configuration["Platform:PosUrl"] ?? "https://pos.myplatform.com";
             
             return new TenantRegistrationResult
@@ -558,6 +565,16 @@ public class TenantRegistrationService : ITenantRegistrationService
                     RefreshToken = refreshToken
                 }
             };
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex, "IX_Tenants_Slug"))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return CreateSubdomainTakenError(normalizedSubdomain);
+        }
+        catch (DbUpdateException ex) when (IsUniqueViolation(ex, "IX_Users_NormalizedEmail"))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return CreateError("EMAIL_TAKEN", "This email is already registered. Sign in instead?", "email");
         }
         catch (Exception ex)
         {
@@ -621,11 +638,8 @@ public class TenantRegistrationService : ITenantRegistrationService
         string subdomain, 
         CancellationToken cancellationToken = default)
     {
-        var normalized = subdomain.ToLowerInvariant().Trim();
-        
         // Validate format first
-        var (isValid, errorMessage) = SubdomainValidator.Validate(normalized);
-        if (!isValid)
+        if (!StoreSlug.TryNormalize(subdomain, out var normalized, out var errorMessage))
         {
             return new SubdomainCheckResponse
             {
@@ -666,6 +680,11 @@ public class TenantRegistrationService : ITenantRegistrationService
         {
             Available = true,
             Slug = normalized,
+            StorefrontUrl = _storefrontUrlResolver.TryResolve(
+                new Tenant { Slug = normalized },
+                out var storefrontUrl)
+                    ? storefrontUrl
+                    : null,
             Suggestions = new List<string>()
         };
     }
@@ -729,5 +748,25 @@ public class TenantRegistrationService : ITenantRegistrationService
             }
         };
     }
+
+    private static TenantRegistrationResult CreateSubdomainTakenError(string normalizedSubdomain) =>
+        new()
+        {
+            Success = false,
+            Error = new RegistrationErrorResponse
+            {
+                Error = "SUBDOMAIN_TAKEN",
+                Message = "This address is already taken",
+                FieldErrors = new Dictionary<string, string> { ["subdomain"] = "This address is already taken" },
+                Suggestions = StoreSlug.GenerateSuggestions(normalizedSubdomain).ToList()
+            }
+        };
+
+    private static bool IsUniqueViolation(DbUpdateException exception, string constraintName) =>
+        exception.InnerException is PostgresException
+        {
+            SqlState: PostgresErrorCodes.UniqueViolation
+        } postgresException &&
+        string.Equals(postgresException.ConstraintName, constraintName, StringComparison.Ordinal);
 
 }

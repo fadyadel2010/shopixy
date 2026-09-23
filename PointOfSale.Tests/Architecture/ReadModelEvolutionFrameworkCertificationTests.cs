@@ -154,8 +154,8 @@ public sealed class ReadModelEvolutionFrameworkCertificationTests
         Assert.Contains("ReadModelEvolutionQueryFilters.RequiredBoolean", productSearchIndexService, StringComparison.Ordinal);
         Assert.Contains("IReadModelEvolutionConvergenceService", discoveryService, StringComparison.Ordinal);
         Assert.Contains("IReadModelEvolutionConvergenceService", productSearchIndexService, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discoveryService, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productSearchService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", discoveryService, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", productSearchService, StringComparison.Ordinal);
     }
 
     [Fact]

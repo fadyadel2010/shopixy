@@ -45,13 +45,17 @@ public sealed class AdminAuthenticationSessionCertificationTests
     }
 
     [Fact]
-    public void PosUserRegistration_MustNotCreateSessionAuthority()
+    public void PosStaffRegistration_MustFailClosedUntilInvitationAcceptanceExists()
     {
         var authSource = File.ReadAllText(ApiPath("Controllers", "AuthController.cs"));
         var register = ExtractMethod(authSource, "Register(");
 
-        Assert.Contains("_context.Users.Add(user)", register, StringComparison.Ordinal);
-        Assert.Contains("SaveChangesAsync", register, StringComparison.Ordinal);
+        Assert.Contains("POS_STAFF_REGISTRATION_DISABLED", register, StringComparison.Ordinal);
+        Assert.Contains("StatusCodes.Status410Gone", register, StringComparison.Ordinal);
+        Assert.Contains("PosPermissions.UsersInvite", authSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("[AllowAnonymous]", register, StringComparison.Ordinal);
+        Assert.DoesNotContain("_context.Users.Add", register, StringComparison.Ordinal);
+        Assert.DoesNotContain("SaveChangesAsync", register, StringComparison.Ordinal);
         Assert.DoesNotContain("GenerateTokens(", register, StringComparison.Ordinal);
         Assert.DoesNotContain("SetSessionCookies", register, StringComparison.Ordinal);
         Assert.DoesNotContain("RefreshTokenGenerator.Generate()", register, StringComparison.Ordinal);

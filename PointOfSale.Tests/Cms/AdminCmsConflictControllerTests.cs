@@ -1,11 +1,14 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PointOfSale.API.Controllers;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Exceptions;
+using PointOfSale.API.Services;
 using PointOfSale.API.Services.Admin;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Instrumentation;
@@ -187,6 +190,7 @@ public sealed class AdminCmsConflictControllerTests
             Mock.Of<ICmsSeedService>(),
             new CommerceReliabilityTelemetry(),
             new TestTenantContext(tenantId),
+            CreateStorefrontUrlResolver(),
             NullLogger<AdminCmsPagesController>.Instance)
         {
             ControllerContext = new ControllerContext
@@ -226,6 +230,16 @@ public sealed class AdminCmsConflictControllerTests
         Assert.Equal("About Us", latestPayload.Title);
         Assert.Equal(4, latestPayload.Draft?.Version);
     }
+
+    private static StorefrontUrlResolver CreateStorefrontUrlResolver() => new(
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Storefront:UrlTemplate"] = "https://{slug}.example.test"
+            })
+            .Build(),
+        NullLogger<StorefrontUrlResolver>.Instance,
+        new ServiceCollection().BuildServiceProvider().GetRequiredService<IServiceScopeFactory>());
 
     [Fact]
     public async Task PublishCmsPage_WhenConcurrentEditDetected_ReturnsStructuredConflictWithLatestVersion()
@@ -317,6 +331,7 @@ public sealed class AdminCmsConflictControllerTests
             Mock.Of<ICmsSeedService>(),
             new CommerceReliabilityTelemetry(),
             new TestTenantContext(tenantId),
+            CreateStorefrontUrlResolver(),
             NullLogger<AdminCmsPagesController>.Instance)
         {
             ControllerContext = new ControllerContext

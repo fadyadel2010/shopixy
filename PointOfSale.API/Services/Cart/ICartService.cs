@@ -93,7 +93,7 @@ public interface ICartService
 
     /// <summary>
     /// Updates the quantity of an item in the cart by VariantId.
-    /// PHASE 11.7: VariantId is the ONLY identifier for cart items.
+    /// VariantId is the canonical SKU identifier for simple and variant products.
     /// If quantity is 0, removes the item.
     /// </summary>
     /// <param name="tenantId">Tenant identifier</param>
@@ -131,7 +131,7 @@ public interface ICartService
 
     /// <summary>
     /// Removes an item from the cart by VariantId.
-    /// PHASE 11.7: VariantId is the ONLY identifier for cart items.
+    /// VariantId is the canonical SKU identifier for simple and variant products.
     /// </summary>
     /// <param name="tenantId">Tenant identifier</param>
     /// <param name="owner">Cart owner</param>

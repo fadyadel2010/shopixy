@@ -346,7 +346,7 @@ public class CartVariantAttribute
 }
 
 /// <summary>
-/// Cart item DTO representing a product variant in the cart.
+/// Cart item DTO representing a sellable product variant in the cart.
 /// Contains snapshot pricing at time of add.
 /// 
 /// PHASE 11.3 — STOREFRONT VARIANT SELECTION:
@@ -364,7 +364,9 @@ public class CartItemDto
     /// <summary>
     /// Variant ID reference (for pricing and stock).
     /// PHASE 11.3: This is the primary key for cart items.
-    /// Null for legacy cart items without variant selection.
+    /// Persisted for both simple products (their canonical default variant) and
+    /// products that require variant selection. Nullable only for migration of
+    /// Redis carts written by older application versions.
     /// </summary>
     public Guid? VariantId { get; set; }
 
@@ -504,22 +506,23 @@ public class CartItemDto
 /// Request DTO for adding item to cart.
 /// 
 /// PHASE 11.3 — VARIANT SELECTION:
-/// - VariantId is the primary identifier (replaces ProductId for variant products)
-/// - ProductId is kept for backward compatibility with legacy products
-/// - If VariantId is provided, it takes precedence over ProductId
+/// - ProductId identifies the product whose sellable SKU must be resolved
+/// - VariantId is required for products with selectable variants
+/// - VariantId is optional for simple-product requests and, when supplied, must
+///   match the server-resolved canonical variant
 /// </summary>
 public class AddCartItemRequest
 {
     /// <summary>
-    /// Product ID to add (LEGACY, for backward compatibility).
-    /// Use VariantId for variant products.
+    /// Product ID whose sellable SKU is being added.
     /// </summary>
     [Required]
     public Guid ProductId { get; set; }
 
     /// <summary>
-    /// Variant ID to add (PHASE 11.3+).
-    /// Takes precedence over ProductId when set.
+    /// Selected variant ID. Required for products with selectable variants.
+    /// Optional for simple products, where the server resolves and persists the
+    /// canonical default variant and rejects a mismatched supplied value.
     /// </summary>
     public Guid? VariantId { get; set; }
 
@@ -540,7 +543,6 @@ public class AddCartItemRequest
     /// </summary>
     public (string? ErrorCode, string? ErrorMessage) Validate()
     {
-        // PHASE 11.3: VariantId takes precedence
         if (VariantId == null && ProductId == Guid.Empty)
         {
             return ("INVALID_REQUEST", "Either VariantId or ProductId is required");

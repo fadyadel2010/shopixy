@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using Nest;
 using PointOfSale.Core.Enums;
+using PointOfSale.Core.Tenancy;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Configuration;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
@@ -100,37 +101,13 @@ public class AF16E_ReindexAffiliateProductsWithStorefrontUrl
 
             var tenantProjectionMap = new Dictionary<Guid, (string StorefrontBaseUrl, string Currency)>();
             var urlTemplate = _configuration["Storefront:UrlTemplate"];
-            
-            if (string.IsNullOrWhiteSpace(urlTemplate))
-            {
-                _logger.LogError("[AF-16F] Storefront:UrlTemplate not configured. Cannot reindex.");
-                result.Success = false;
-                result.ErrorMessage = "Storefront:UrlTemplate configuration is missing";
-                return result;
-            }
 
             foreach (var tenant in tenants)
             {
-                string storefrontUrl;
-                if (!string.IsNullOrWhiteSpace(tenant.StorefrontBaseUrl))
-                {
-                    storefrontUrl = tenant.StorefrontBaseUrl.TrimEnd('/');
-                }
-                else if (!string.IsNullOrWhiteSpace(tenant.Slug))
-                {
-                    storefrontUrl = urlTemplate.Replace("{slug}", tenant.Slug);
-                }
-                else
-                {
-                    _logger.LogWarning("[AF-16E] Skipping tenant without slug | TenantId: {TenantId}", tenant.Id);
-                    result.SkippedTenants++;
-                    continue;
-                }
-
                 try
                 {
                     tenantProjectionMap[tenant.Id] = (
-                        storefrontUrl,
+                        StorefrontUrlAuthority.ResolveOrigin(tenant.StorefrontBaseUrl, tenant.Slug, urlTemplate),
                         NormalizeCurrency(
                             tenant.Currency,
                             $"Script: AF16E_ReindexAffiliateProductsWithStorefrontUrl, Method: {nameof(ReindexCoreAsync)}, TenantId: {tenant.Id}"));

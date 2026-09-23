@@ -9,7 +9,7 @@ using PointOfSale.Core.Interfaces;
 
 namespace PointOfSale.API.Controllers;
 
-[Authorize(Roles = "Owner,Admin")]
+[Authorize]
 [ApiController]
 [Route("api/commercehub/payouts")]
 public class CommerceHubPayoutsController : ControllerBase

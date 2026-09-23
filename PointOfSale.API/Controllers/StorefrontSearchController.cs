@@ -406,23 +406,59 @@ public class StorefrontSearchController : ControllerBase
         IReadOnlyCollection<UnifiedSearchItem> items,
         CancellationToken cancellationToken)
     {
-        var tenantIsActive = await _dbContext.Tenants
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                tenant => tenant.Id == tenantId &&
-                          tenant.IsActive &&
-                          tenant.Status == TenantStatus.Active,
-                cancellationToken);
-
-        if (!tenantIsActive)
+        if (items.Count == 0)
         {
             return new List<UnifiedSearchItem>();
+        }
+
+        // Product-only candidates are validated by the SQL product query's
+        // active-tenant predicate. Category/CMS candidates need their own tenant
+        // check because neither path passes through the product overlay.
+        if (items.Any(item => !string.Equals(item.EntityType, "product", StringComparison.OrdinalIgnoreCase)))
+        {
+            var tenantIsActive = await _dbContext.Tenants
+                .AsNoTracking()
+                .IgnoreQueryFilters()
+                .AnyAsync(
+                    tenant => tenant.Id == tenantId &&
+                              tenant.IsActive &&
+                              tenant.Status == TenantStatus.Active &&
+                              tenant.DeletedAtUtc == null,
+                    cancellationToken);
+
+            if (!tenantIsActive)
+            {
+                return new List<UnifiedSearchItem>();
+            }
         }
 
         var cmsItems = items
             .Where(item => string.Equals(item.EntityType, "cms", StringComparison.OrdinalIgnoreCase))
             .ToList();
+        var productIds = items
+            .Where(item => string.Equals(item.EntityType, "product", StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.EntityId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToList();
+        var productsById = await ProductSearchSqlAuthorityOverlay.ApplyBatchByIdsAsync(
+            _dbContext,
+            tenantId,
+            productIds,
+            cancellationToken);
+        var categoryIds = items
+            .Where(item => string.Equals(item.EntityType, "category", StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.EntityId)
+            .Where(id => id != Guid.Empty)
+            .ToHashSet();
+        CategoryLineageSnapshot? categoryLineage = null;
+        if (categoryIds.Count > 0)
+        {
+            categoryLineage = await CategoryLineageAuthority.LoadTenantSnapshotAsync(
+                _dbContext,
+                tenantId,
+                cancellationToken);
+        }
 
         var visibleGroups = new HashSet<Guid>();
         var visibleSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -466,15 +502,7 @@ public class StorefrontSearchController : ControllerBase
         {
             if (string.Equals(item.EntityType, "product", StringComparison.OrdinalIgnoreCase))
             {
-                var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                    _dbContext,
-                    new ProductDocument
-                    {
-                        TenantId = tenantId,
-                        ProductId = item.EntityId
-                    },
-                    tenantId,
-                    cancellationToken);
+                productsById.TryGetValue(item.EntityId, out var product);
 
                 if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
                 {
@@ -494,7 +522,7 @@ public class StorefrontSearchController : ControllerBase
 
             if (string.Equals(item.EntityType, "category", StringComparison.OrdinalIgnoreCase))
             {
-                if (await CategoryLineageAuthority.RequireLiveCategoryAsync(_dbContext, tenantId, item.EntityId, cancellationToken) != null)
+                if (categoryLineage?.TryGetLiveCategory(item.EntityId, out _) == true)
                 {
                     visibleItems.Add(item);
                 }
@@ -522,18 +550,16 @@ public class StorefrontSearchController : ControllerBase
         IReadOnlyCollection<HeaderSearchItem> items,
         CancellationToken cancellationToken)
     {
-        var visible = new List<HeaderSearchItem>(items.Count);
-        foreach (var item in items)
+        var sourceItems = items.ToList();
+        var productsById = await ProductSearchSqlAuthorityOverlay.ApplyBatchByIdsAsync(
+            _dbContext,
+            tenantId,
+            sourceItems.Select(item => item.ProductId).Where(id => id != Guid.Empty).ToList(),
+            cancellationToken);
+        var visible = new List<HeaderSearchItem>(sourceItems.Count);
+        foreach (var item in sourceItems)
         {
-            var product = await ProductSearchSqlAuthorityOverlay.ApplyAsync(
-                _dbContext,
-                new ProductDocument
-                {
-                    TenantId = tenantId,
-                    ProductId = item.ProductId
-                },
-                tenantId,
-                cancellationToken);
+            productsById.TryGetValue(item.ProductId, out var product);
 
             if (product is not { IsActive: true, IsOnlineVisible: true, IsSearchable: true })
             {

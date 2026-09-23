@@ -33,7 +33,6 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/shipments")]
-[Authorize(Roles = "Owner,Admin,Manager")]
 public class AdminShipmentsController : ControllerBase
 {
     private readonly IAdminShipmentService _adminShipmentService;

@@ -309,11 +309,11 @@ public sealed class AdminStoreConfigThemeContractTests
             CancellationToken.None);
 
         Assert.Equal("minimal", response.StorefrontTheme);
-        Assert.Equal("#111827", response.Theme.Colors.Primary);
+        Assert.Equal("#0f172a", response.Theme.Colors.Primary);
         Assert.Equal("#eeeeee", response.Theme.Colors.Background);
         Assert.Equal("Inter", response.Theme.Font.Family);
-        Assert.Equal("14px", response.Theme.Font.BaseSize);
-        Assert.Equal("4px", response.Theme.Ui.BorderRadius);
+        Assert.Equal("15px", response.Theme.Font.BaseSize);
+        Assert.Equal("6px", response.Theme.Ui.BorderRadius);
         Assert.Equal("compact", response.Theme.Layout.ProductCardVariant);
         Assert.Equal("minimal", response.Theme.Layout.HeaderVariant);
 
@@ -347,10 +347,10 @@ public sealed class AdminStoreConfigThemeContractTests
 
         var runtimeConfig = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
         Assert.Equal("minimal", runtimeConfig.StorefrontTheme);
-        Assert.Equal("#111827", runtimeConfig.Theme.Colors.Primary);
+        Assert.Equal("#0f172a", runtimeConfig.Theme.Colors.Primary);
         Assert.Equal("#eeeeee", runtimeConfig.Theme.Colors.Background);
-        Assert.Equal("14px", runtimeConfig.Theme.Font.BaseSize);
-        Assert.Equal("4px", runtimeConfig.Theme.Ui.BorderRadius);
+        Assert.Equal("15px", runtimeConfig.Theme.Font.BaseSize);
+        Assert.Equal("6px", runtimeConfig.Theme.Ui.BorderRadius);
 
         eventPublisher.Verify(
             publisher => publisher.PublishAsync(

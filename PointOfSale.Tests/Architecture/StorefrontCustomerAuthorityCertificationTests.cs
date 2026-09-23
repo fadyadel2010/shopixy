@@ -34,6 +34,16 @@ public sealed class StorefrontCustomerAuthorityCertificationTests
     }
 
     [Fact]
+    public void StorefrontRefreshBody_MustRemainOptionalForCookieBasedSessions()
+    {
+        var authController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/StorefrontAuthController.cs");
+
+        Assert.Contains("[FromBody] RefreshTokenRequestDto? request", authController, StringComparison.Ordinal);
+        Assert.Contains("public string? RefreshToken { get; set; }", authController, StringComparison.Ordinal);
+        Assert.Contains("request?.RefreshToken", authController, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StorefrontJwtAndAccountApis_MustRevalidateCurrentSqlAndCallerOwnership()
     {
         var middleware = CertificationSource.ReadRepoFile("PointOfSale.API/Middleware/StorefrontJwtBlacklistMiddleware.cs");

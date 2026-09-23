@@ -6,6 +6,8 @@ import { useAuthStore } from '../store/authStore'
 import { useDebounce } from '../hooks/useDebounce'
 import { useRTL } from '../hooks/useRTL'
 import { formatDateTime } from '../utils/dateFormat'
+import { hasPosPermission } from '../auth/posPermissions'
+import { PermissionGate } from '../components/PermissionGuard'
 
 const TIMESTAMP_OPTIONS = {
     year: 'numeric',
@@ -195,7 +197,7 @@ export default function AuditLog() {
         }
     }
 
-    if (!user || (user.role !== 'Admin' && user.role !== 'SuperAdmin')) {
+    if (!hasPosPermission(user, 'audit.view')) {
         return (
             <div dir={dir} className="flex h-full items-center justify-center">
                 <div className="rounded-xl bg-red-50 p-8 text-center">
@@ -213,15 +215,17 @@ export default function AuditLog() {
                     <h1 className="text-2xl font-bold text-gray-800">{t('auditLog.title')}</h1>
                     <p className="text-gray-500">{t('auditLog.subtitle')}</p>
                 </div>
-                <button
-                    onClick={handleExport}
-                    className={`flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white transition-colors hover:bg-indigo-700 ${isRTL ? 'flex-row-reverse' : ''}`}
-                >
-                    <span>{t('auditLog.export')}</span>
-                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                </button>
+                <PermissionGate permission="audit.export">
+                    <button
+                        onClick={handleExport}
+                        className={`flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-white transition-colors hover:bg-indigo-700 ${isRTL ? 'flex-row-reverse' : ''}`}
+                    >
+                        <span>{t('auditLog.export')}</span>
+                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                    </button>
+                </PermissionGate>
             </div>
 
             <div className="grid grid-cols-1 gap-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm md:grid-cols-4 lg:grid-cols-6">
@@ -249,7 +253,29 @@ export default function AuditLog() {
                         <option value="Login">{t('auditLog.actions.login')}</option>
                         <option value="Post">{t('auditLog.actions.post')}</option>
                         <option value="Inactivate">{t('auditLog.actions.inactivate')}</option>
+                        <option value="POS_USER_INVITED">{t('auditLog.actions.pos_user_invited')}</option>
+                        <option value="POS_USER_INVITATION_RESENT">{t('auditLog.actions.pos_user_invitation_resent')}</option>
+                        <option value="POS_USER_INVITATION_REVOKED">{t('auditLog.actions.pos_user_invitation_revoked')}</option>
+                        <option value="POS_USER_INVITATION_ACCEPTED">{t('auditLog.actions.pos_user_invitation_accepted')}</option>
+                        <option value="POS_USER_PROFILE_CHANGED">{t('auditLog.actions.pos_user_profile_changed')}</option>
+                        <option value="POS_USER_ROLE_CHANGED">{t('auditLog.actions.pos_user_role_changed')}</option>
+                        <option value="POS_USER_DISABLED">{t('auditLog.actions.pos_user_disabled')}</option>
+                        <option value="POS_USER_ENABLED">{t('auditLog.actions.pos_user_enabled')}</option>
+                        <option value="POS_USER_PASSWORD_RESET_ISSUED">{t('auditLog.actions.pos_user_password_reset_issued')}</option>
+                        <option value="POS_USER_PASSWORD_RESET_COMPLETED">{t('auditLog.actions.pos_user_password_reset_completed')}</option>
+                        <option value="POS_USER_SESSION_REVOKED">{t('auditLog.actions.pos_user_session_revoked')}</option>
+                        <option value="POS_USER_OWNERSHIP_TRANSFERRED">{t('auditLog.actions.pos_user_ownership_transferred')}</option>
                     </select>
+                </div>
+                <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">{t('auditLog.userId')}</label>
+                    <input
+                        type="text"
+                        value={filter.userId}
+                        onChange={(e) => setFilter({ ...filter, userId: e.target.value, page: 1 })}
+                        placeholder={t('auditLog.userId')}
+                        className="w-full rounded-lg border px-4 py-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500"
+                    />
                 </div>
                 <div>
                     <label className="mb-1 block text-sm font-medium text-gray-700">{t('auditLog.entity')}</label>

@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { deriveCurrentStoreIdentityPresentation } from '../auth/commerceHubVendorIdentityAuthority'
 import { useAuthStore } from '../store/authStore'
 import { storeConfigService } from '../modules/storefront/services'
+import { useSettings } from '../contexts/SettingsContext'
 
 /**
  * Storefront Status Card Component
@@ -17,12 +18,11 @@ import { storeConfigService } from '../modules/storefront/services'
  * - Quick link to open storefront
  */
 
-const STOREFRONT_DOMAIN = import.meta.env.VITE_STOREFRONT_DOMAIN || 'localhost:5174'
-
 export default function StorefrontStatusCard() {
     const { t, i18n } = useTranslation()
     const navigate = useNavigate()
     const { user } = useAuthStore()
+    const { settings } = useSettings()
     const isRTL = i18n.language === 'ar'
     const dir = isRTL ? 'rtl' : 'ltr'
     const tenantId = user?.tenantId
@@ -123,7 +123,9 @@ export default function StorefrontStatusCard() {
     }
 
     const openStorefront = () => {
-        window.open(`http://${STOREFRONT_DOMAIN}`, '_blank', 'noopener,noreferrer')
+        if (settings.storefrontUrl) {
+            window.open(settings.storefrontUrl, '_blank', 'noopener,noreferrer')
+        }
     }
 
     const goToSettings = () => {
@@ -185,7 +187,8 @@ export default function StorefrontStatusCard() {
                     <div className="flex items-center gap-4 mt-2">
                         <button
                             onClick={openStorefront}
-                            className={`text-sm ${statusConfig.subtext} hover:underline flex items-center gap-1`}
+                            disabled={!settings.storefrontUrl}
+                            className={`text-sm ${statusConfig.subtext} hover:underline flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-50`}
                         >
                             {t('storefront.viewStore', 'View Store')}
                             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">

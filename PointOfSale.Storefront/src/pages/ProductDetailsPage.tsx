@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Layout } from '@/components/layout';
 import { ProductDetailSkeleton } from '@/components/common';
 import { SectionRenderer } from '@/components/sections/SectionRenderer';
-import { fetchCategories, fetchProductBySlug } from '@/services/api';
+import { fetchCategories, fetchProductByIdentifier } from '@/services/api';
 import { useAnalytics } from '@/analytics';
 import { useLocalizedContent } from '@/i18n';
 import { useStoreConfigStore, selectConfig } from '@/store';
@@ -11,7 +11,7 @@ import { resolveProductTemplate } from '@/storefront/products/ProductTemplateRes
 import type { CategoryTreeDto, ProductReadDto } from '@/types';
 
 export const ProductDetailsPage: React.FC = () => {
-    const { slug } = useParams<{ slug: string }>();
+    const { slug: productIdentifier } = useParams<{ slug: string }>();
     const { t } = useLocalizedContent();
     const config = useStoreConfigStore(selectConfig);
     const [product, setProduct] = useState<ProductReadDto | null>(null);
@@ -23,7 +23,7 @@ export const ProductDetailsPage: React.FC = () => {
 
     useEffect(() => {
         const loadProduct = async () => {
-            if (!slug) {
+            if (!productIdentifier) {
                 return;
             }
 
@@ -31,7 +31,7 @@ export const ProductDetailsPage: React.FC = () => {
                 setLoading(true);
 
                 const [productResult, categoriesResult] = await Promise.all([
-                    fetchProductBySlug(slug),
+                    fetchProductByIdentifier(productIdentifier),
                     fetchCategories(),
                 ]);
 
@@ -47,7 +47,7 @@ export const ProductDetailsPage: React.FC = () => {
         };
 
         loadProduct();
-    }, [slug]);
+    }, [productIdentifier]);
 
     useEffect(() => {
         if (product && product.id && productViewedRef.current !== product.id) {

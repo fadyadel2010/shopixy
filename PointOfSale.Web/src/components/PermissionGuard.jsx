@@ -2,8 +2,7 @@
  * Permission Guard Component
  * Phase 9.9: Storefront Admin Completion
  * 
- * Enforces role-based access at UI level:
- * - Storefront pages: Owner / Admin only
+ * Enforces server-derived POS permissions at UI level.
  * - Graceful error UI on 403 responses
  */
 
@@ -11,17 +10,14 @@ import { useTranslation } from 'react-i18next'
 import { ShieldAlert, Lock } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { canManageStorefrontSettings } from '../auth/storefrontAdminAuthority'
+import { hasPosPermission } from '../auth/posPermissions'
 
 /**
- * Check if user has required role
+ * Check if the current POS session has a server-derived permission.
  */
-export function useHasPermission(requiredRoles = []) {
+export function useHasPermission(permission) {
     const user = useAuthStore((s) => s.user)
-
-    if (!user || !requiredRoles.length) return true
-
-    const userRole = user.role
-    return requiredRoles.includes(userRole)
+    return hasPosPermission(user, permission)
 }
 
 /**
@@ -44,7 +40,7 @@ export function useIsEmailVerified() {
  * Permission Guard Wrapper
  */
 export function PermissionGuard({
-    requiredRoles = [],
+    permission,
     requireEmailVerified = false,
     children,
     fallback = null,
@@ -53,7 +49,7 @@ export function PermissionGuard({
     const isRTL = i18n.language === 'ar'
     const user = useAuthStore((s) => s.user)
 
-    const hasPermission = useHasPermission(requiredRoles)
+    const hasPermission = useHasPermission(permission)
     const isEmailVerified = user?.emailVerified ?? false
 
     // Check email verification if required
@@ -100,11 +96,8 @@ export function PermissionGuard({
                         }
                     </p>
                     <p className="text-sm text-gray-500">
-                        {isRTL
-                            ? 'يتطلب الوصول دور: '
-                            : 'Required role: '
-                        }
-                        <span className="font-medium">{requiredRoles.join(' / ')}</span>
+                        {isRTL ? 'الصلاحية المطلوبة: ' : 'Required permission: '}
+                        <span className="font-medium">{permission}</span>
                     </p>
                 </div>
             </div>
@@ -119,8 +112,13 @@ export function PermissionGuard({
  */
 export function StorefrontGuard({ children }) {
     return (
-        <PermissionGuard requiredRoles={['Owner', 'Admin']}>
+        <PermissionGuard permission="storefront.design.manage">
             {children}
         </PermissionGuard>
     )
+}
+
+export function PermissionGate({ permission, children, fallback = null }) {
+    const user = useAuthStore((state) => state.user)
+    return hasPosPermission(user, permission) ? children : fallback
 }

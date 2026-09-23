@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -600,12 +601,30 @@ public sealed class CheckoutSessionConsistencyIntegrationTests
                 .EnableDetailedErrors()
                 .Options;
 
-            return new ApplicationDbContext(options, new TestTenantContext(TenantId));
+            return new SqliteCheckoutSessionDbContext(options, new TestTenantContext(TenantId));
         }
 
         public async ValueTask DisposeAsync()
         {
             await _rootConnection.DisposeAsync();
+        }
+    }
+
+    private sealed class SqliteCheckoutSessionDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ITenantContext tenantContext)
+        : ApplicationDbContext(options, tenantContext)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var constraint in entityType.GetCheckConstraints().ToArray())
+                {
+                    entityType.RemoveCheckConstraint(constraint.Name);
+                }
+            }
         }
     }
 

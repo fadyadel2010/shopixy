@@ -6,7 +6,7 @@ public sealed class CustomsEvidenceRuntimeFoundationTests
     public void CustomsRuntimeFoundation_MustUseCarrierNeutralEntitiesOnly()
     {
         var entities = CertificationSource.ReadRepoFile("PointOfSale.Core/Entities/Customs/CustomsEntities.cs");
-        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260706143000_Customs2EvidenceRuntimeFoundation.cs");
+        var migration = CertificationSource.ReadRepoFile("PointOfSale.Infrastructure/Migrations/20260723214642_Baseline_Recovery3.cs");
 
         foreach (var required in new[]
                  {
@@ -23,10 +23,10 @@ public sealed class CustomsEvidenceRuntimeFoundationTests
             Assert.Contains(required, migration, StringComparison.Ordinal);
         }
 
-        Assert.DoesNotContain("exportDeclaration", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("DHL", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("FedEx", migration, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("UPS", migration, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("exportDeclaration", entities, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DHL", entities, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("FedEx", entities, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPS", entities, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ALTER TABLE \"Products\"", migration, StringComparison.Ordinal);
         Assert.DoesNotContain("ALTER TABLE \"Orders\"", migration, StringComparison.Ordinal);
     }

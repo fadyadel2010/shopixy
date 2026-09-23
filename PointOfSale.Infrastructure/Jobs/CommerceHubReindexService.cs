@@ -596,7 +596,7 @@ public class CommerceHubReindexService : ICommerceHubReindexService
         return liveIdentities.LongCount();
     }
 
-    private static async Task<List<CommerceHubSearchDocumentIdentity>> LoadSqlVisibleListingIdentitiesAsync(
+    public static async Task<List<CommerceHubSearchDocumentIdentity>> LoadSqlVisibleListingIdentitiesAsync(
         ApplicationDbContext dbContext,
         Guid? tenantId,
         CancellationToken cancellationToken)

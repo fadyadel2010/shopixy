@@ -21,6 +21,9 @@ const windowOpenMock = vi.hoisted(() => vi.fn())
 const rtlMockState = vi.hoisted(() => ({
     current: { isRTL: false, dir: 'ltr', locale: 'en-US' },
 }))
+const settingsMockState = vi.hoisted(() => ({
+    current: { companyName: 'Test Store', storefrontUrl: 'https://store.example.test' },
+}))
 // Phase 6G.2: the page owns bulk orchestration through useBulkProductMutation;
 // these doubles prove no user interaction can reach the bulk service yet.
 const bulkActivateMock = vi.hoisted(() => vi.fn())
@@ -164,9 +167,13 @@ vi.mock('../common/confirm/ConfirmDialogProvider', () => ({
     useConfirmDialog: () => ({ confirm: confirmMock, confirmAction: confirmActionMock }),
 }))
 
+vi.mock('../components/PermissionGuard', () => ({
+    useHasPermission: () => true,
+}))
+
 vi.mock('../contexts/SettingsContext', () => ({
     useSettings: () => ({
-        settings: { companyName: 'Test Store' },
+        settings: settingsMockState.current,
         formatCurrency: (value: number) => `$${value}`,
     }),
 }))
@@ -401,6 +408,7 @@ const bulkItem = (overrides: Record<string, unknown>) => ({
 beforeEach(() => {
     vi.clearAllMocks()
     rtlMockState.current = { isRTL: false, dir: 'ltr', locale: 'en-US' }
+    settingsMockState.current = { companyName: 'Test Store', storefrontUrl: 'https://store.example.test' }
     printMock.latestOptions = null
     printMock.printed = []
     printMock.autoComplete = true
@@ -710,7 +718,21 @@ describe('Products listing — canonical query and race safety (P-1)', () => {
         })
 
         const link = screen.getByRole('link', { name: 'products.viewOnStorefront: Linked Product' })
-        expect(link.getAttribute('href')).toBe('http://localhost:5174/products/arabic%20coffee')
+        expect(link.getAttribute('href')).toBe('https://store.example.test/products/arabic%20coffee')
+    })
+
+    it('does not invent a storefront link when URL authority is unavailable', async () => {
+        settingsMockState.current = { companyName: 'Test Store', storefrontUrl: '' }
+        await renderLoaded({
+            products: [makeProduct({
+                id: 'p-link-unavailable',
+                name: 'Unlinked Product',
+                isOnlineVisible: true,
+                slug: 'unlinked-product',
+            })],
+        })
+
+        expect(screen.queryByRole('link', { name: 'products.viewOnStorefront: Unlinked Product' })).toBeNull()
     })
 })
 

@@ -30,6 +30,7 @@ using PointOfSale.API.SuperAdmin.Infrastructure;
 using PointOfSale.API.SuperAdmin.Models;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Core.Security;
 using PointOfSale.Core.SuperAdmin.Models;
 using PointOfSale.Infrastructure.Consumers;
 using PointOfSale.Infrastructure.Data;
@@ -156,6 +157,7 @@ builder.Services.AddControllers(options =>
         options.Filters.AddService<ApiRequestNormalizationFilter>();
         options.Filters.AddService<PreventEntityExposureFilter>();
         options.Filters.AddService<ApiErrorResponseNormalizationFilter>();
+        options.Conventions.Add(new PosPermissionApplicationModelConvention());
     })
     .ConfigureApplicationPartManager(manager =>
     {
@@ -336,6 +338,9 @@ builder.Services.AddScoped<OrderStatusSaveChangesInterceptor>();
 builder.Services.AddScoped<FulfillmentStatusSaveChangesInterceptor>();
 builder.Services.AddScoped<MarketplaceInvariantInterceptor>();
 builder.Services.AddScoped<PrivilegedRefreshTokenRevocationInterceptor>();
+builder.Services.AddScoped<DomainAuthorityCacheInvalidationState>();
+builder.Services.AddScoped<DomainAuthorityCacheInvalidationInterceptor>();
+builder.Services.AddScoped<DomainAuthorityTransactionInvalidationInterceptor>();
 builder.Services.AddScoped<PointOfSale.Infrastructure.Observability.SlowQueryLoggingInterceptor>();
 builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
 {
@@ -347,7 +352,9 @@ builder.Services.AddDbContext<ApplicationDbContext>((sp, options) =>
         sp.GetRequiredService<OrderStatusSaveChangesInterceptor>(),
         sp.GetRequiredService<FulfillmentStatusSaveChangesInterceptor>(),
         sp.GetRequiredService<MarketplaceInvariantInterceptor>(),
-        sp.GetRequiredService<PrivilegedRefreshTokenRevocationInterceptor>());
+        sp.GetRequiredService<PrivilegedRefreshTokenRevocationInterceptor>(),
+        sp.GetRequiredService<DomainAuthorityCacheInvalidationInterceptor>(),
+        sp.GetRequiredService<DomainAuthorityTransactionInvalidationInterceptor>());
 });
 
 // =============================================================================
@@ -375,6 +382,23 @@ builder.Services.AddAffiliateTaxonomyBootstrap();
 
 // Add password hashers
 builder.Services.AddScoped<Microsoft.AspNetCore.Identity.IPasswordHasher<User>, Microsoft.AspNetCore.Identity.PasswordHasher<User>>();
+
+// Users Management (Waves 1-3): tenant POS user lifecycle authority.
+builder.Services.AddOptions<PointOfSale.API.Services.Users.PosUserManagementOptions>()
+    .Bind(builder.Configuration.GetSection(PointOfSale.API.Services.Users.PosUserManagementOptions.SectionName))
+    .Validate(options =>
+    {
+        if (!Uri.TryCreate(options.FrontendBaseUrl, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        return (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            && string.IsNullOrEmpty(uri.Query)
+            && string.IsNullOrEmpty(uri.Fragment);
+    }, "PosUserManagement:FrontendBaseUrl must be an absolute HTTP(S) URL without a query or fragment.")
+    .ValidateOnStart();
+builder.Services.AddScoped<PointOfSale.API.Services.Users.IPosUserManagementService, PointOfSale.API.Services.Users.PosUserManagementService>();
 builder.Services.AddScoped<Microsoft.AspNetCore.Identity.IPasswordHasher<SuperAdminUser>, Microsoft.AspNetCore.Identity.PasswordHasher<SuperAdminUser>>();
 // AF-10: Separate password hasher for affiliate identity (decoupled from POS User)
 builder.Services.AddScoped<Microsoft.AspNetCore.Identity.IPasswordHasher<PointOfSale.Core.Entities.Affiliate.AffiliateUser>, Microsoft.AspNetCore.Identity.PasswordHasher<PointOfSale.Core.Entities.Affiliate.AffiliateUser>>();
@@ -439,12 +463,13 @@ builder.Services.AddScoped<PointOfSale.Core.Interfaces.IHostResolutionContext, P
 // Resolution pipeline (DOMAIN-2C):
 //   NormalizedHost → IDomainRepository → Domain Entity → DomainResolutionResult → STOP
 //
-// IDomainResolutionCache — cache abstraction only; runtime caching is disabled.
-// NoOpDomainResolutionCache keeps caching disabled explicitly (always miss, no storage).
-// Future domain-cache waves may replace this with Redis/MemoryCache.
+// Domain resolution uses the shared Redis transport with per-authority
+// single-flight and a multi-instance invalidation generation. When Redis is
+// disabled/unavailable, reads fall through to PostgreSQL; enabled invalidation
+// failures fail authority mutations before commit.
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainRepository, PointOfSale.Infrastructure.Data.Repositories.DomainRepository>();
 builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainResolver, PointOfSale.Infrastructure.Data.Repositories.PersistenceDomainResolver>();
-builder.Services.AddScoped<PointOfSale.Core.Interfaces.IDomainResolutionCache, PointOfSale.API.Middleware.NoOpDomainResolutionCache>();
+builder.Services.AddSingleton<PointOfSale.Core.Interfaces.IDomainResolutionCache, PointOfSale.Infrastructure.Redis.Services.RedisDomainResolutionCache>();
 
 // DOMAIN-4.2A: DNS Resolver Foundation for domain ownership verification.
 // IDnsResolver — DNS/HTTP lookup abstraction for TXT, CNAME, and HTTP file verification.
@@ -595,6 +620,7 @@ builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontPublic
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontOrderProjectionRepairService, PointOfSale.API.Services.Storefront.StorefrontOrderProjectionRepairService>();
 builder.Services.AddScoped<PointOfSale.API.Services.CommerceHub.ICommerceHubOrderProjectionRepairService, PointOfSale.API.Services.CommerceHub.CommerceHubOrderProjectionRepairService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Storefront.ISeoService, PointOfSale.API.Services.Storefront.SeoService>();
+builder.Services.AddSingleton<PointOfSale.API.Services.Storefront.SlugDiscoveryFlights>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageSectionSchemaRegistry, PointOfSale.API.Services.Homepage.HomepageSectionSchemaRegistry>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageSectionReadService, PointOfSale.API.Services.Homepage.HomepageSectionReadService>();
 builder.Services.AddScoped<PointOfSale.API.Services.Homepage.IHomepageTemplateSeeder, PointOfSale.API.Services.Homepage.HomepageTemplateSeeder>();
@@ -1058,9 +1084,8 @@ builder.Services.AddScoped<PointOfSale.API.Services.Storefront.IStorefrontThemeP
 // Provides compliance trail for support and debugging
 builder.Services.AddScoped<PointOfSale.API.Services.Admin.IStoreConfigAuditService, PointOfSale.API.Services.Admin.StoreConfigAuditService>();
 
-// Distributed Lock Service - Redis-based distributed locking
-// Prevents race conditions in concurrent operations
-builder.Services.AddScoped<PointOfSale.Infrastructure.Redis.Services.IDistributedLockService, PointOfSale.Infrastructure.Redis.Services.DistributedLockService>();
+// Distributed locking is registered as a singleton by AddRedisCache below so
+// every consumer uses the shared RedisConnectionFactory transport.
 
 // Publish Lock Service - Prevents concurrent publish operations per tenant
 // Returns 423 Locked when publish is already in progress
@@ -2336,6 +2361,7 @@ builder.Services.AddOpenTelemetry()
             .AddMeter(PointOfSale.Infrastructure.Accounting.AccountingMetrics.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Analytics.Delivery.ProviderDeliveryMetrics.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Redis.Services.RedisPerformanceTelemetry.MeterName)
+            .AddMeter(PointOfSale.Infrastructure.Data.Repositories.PersistenceDomainResolver.MeterName)
             .AddMeter(PointOfSale.API.Instrumentation.MetaFeedTelemetry.MeterName)
             .AddMeter(PointOfSale.Infrastructure.Elasticsearch.Services.SearchTelemetry.MeterName)
             .AddMeter(PointOfSale.API.Services.Checkout.CheckoutLockTelemetry.MeterName)
@@ -2419,6 +2445,7 @@ builder.Services.AddScoped<TenantContext>();
 builder.Services.AddScoped<ITenantContext>(sp => sp.GetRequiredService<TenantContext>());
 builder.Services.AddScoped<IAdminTenantAuthority, AdminTenantAuthority>();
 builder.Services.AddScoped<IPosSessionAuthority, PosSessionAuthority>();
+builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, PosPermissionAuthorizationHandler>();
 
 // Configure JWT Authentication
 // =============================================================================
@@ -2566,7 +2593,23 @@ builder.Services.AddAuthentication(options =>
                     authorityResult.TenantId,
                     PublicFeedPathRedactor.Redact(context.HttpContext.Request.Path.Value ?? "unknown"));
                 context.Fail("POS session is no longer current");
+                return;
             }
+
+            if (context.Principal?.Identity is not System.Security.Claims.ClaimsIdentity identity)
+            {
+                context.Fail("POS principal is malformed");
+                return;
+            }
+
+            foreach (var untrustedMarker in identity.FindAll(PosSecurityConstants.SqlAuthorityClaim).ToArray())
+            {
+                identity.RemoveClaim(untrustedMarker);
+            }
+
+            identity.AddClaim(new System.Security.Claims.Claim(
+                PosSecurityConstants.SqlAuthorityClaim,
+                PosSecurityConstants.SqlAuthorityValue));
         }
     };
     options.TokenValidationParameters = new TokenValidationParameters
@@ -3021,6 +3064,16 @@ builder.Services.AddAuthorization(options =>
         policy.AuthenticationSchemes.Add("AffiliateJwt");
         policy.RequireClaim(System.Security.Claims.ClaimTypes.Role, "Affiliate");
     });
+
+    foreach (var permission in PosPermissions.All)
+    {
+        options.AddPolicy(permission, policy =>
+        {
+            policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
+            policy.RequireAuthenticatedUser();
+            policy.AddRequirements(new PosPermissionRequirement(permission));
+        });
+    }
     
     // AF-10 DIAGNOSTIC: Log authorization failures
     options.InvokeHandlersAfterFailure = true;
@@ -3146,7 +3199,8 @@ static bool CanInitializeHangfireStorage(string? connectionString, out string? f
         var connectionStringBuilder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString)
         {
             Timeout = 5,
-            CommandTimeout = 5
+            CommandTimeout = 5,
+            Pooling = false
         };
 
         using var connection = new Npgsql.NpgsqlConnection(connectionStringBuilder.ConnectionString);
@@ -3319,10 +3373,41 @@ builder.Services.AddRateLimiter(options =>
     {
         var clientIp = GetRateLimitClientIp(httpContext);
         var path = httpContext.Request.Path.Value?.ToLowerInvariant() ?? "unknown";
-        
+
         var partitionKey = $"affiliate-auth:{path}:ip:{clientIp}";
 
         return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(5));
+    });
+
+    // Users Management (Waves 2-3): invitation, password-reset, and anonymous
+    // token-acceptance ceremonies. Partitioned by resolved tenant plus trusted
+    // subject for authenticated calls, and by path plus caller IP for the
+    // anonymous ceremonies (tenant is untrusted before hash lookup).
+    options.AddPolicy("UsersInvitationRateLimit", httpContext =>
+    {
+        var clientIp = GetRateLimitClientIp(httpContext);
+        var tenantPartition = GetRateLimitTenantPartition(httpContext);
+        var subject = GetTrustedRateLimitSubject(httpContext, clientIp);
+        var partitionKey = $"users-invitation:tenant:{tenantPartition}:subject:{subject}";
+
+        return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(10, segmentsPerWindow: 4));
+    });
+    options.AddPolicy("UsersPasswordResetRateLimit", httpContext =>
+    {
+        var clientIp = GetRateLimitClientIp(httpContext);
+        var tenantPartition = GetRateLimitTenantPartition(httpContext);
+        var subject = GetTrustedRateLimitSubject(httpContext, clientIp);
+        var partitionKey = $"users-password-reset:tenant:{tenantPartition}:subject:{subject}";
+
+        return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(10, segmentsPerWindow: 4));
+    });
+    options.AddPolicy("UsersTokenAcceptanceRateLimit", httpContext =>
+    {
+        var clientIp = GetRateLimitClientIp(httpContext);
+        var path = httpContext.Request.Path.Value?.ToLowerInvariant() ?? "unknown";
+        var partitionKey = $"users-token-acceptance:{path}:ip:{clientIp}";
+
+        return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, _ => CreateSlidingWindowOptions(10, segmentsPerWindow: 4));
     });
     options.AddPolicy(SuperAdminSecurityConstants.RateLimitPolicyName, httpContext =>
     {

@@ -42,6 +42,12 @@ vi.mock('../components/Toast', () => ({
     }),
 }))
 
+vi.mock('../contexts/SettingsContext', () => ({
+    useSettings: () => ({
+        settings: { storefrontUrl: 'https://store.example.test' },
+    }),
+}))
+
 vi.mock('react-i18next', () => ({
     useTranslation: () => ({
         t: (key: string, fallback?: string) => fallback || key,

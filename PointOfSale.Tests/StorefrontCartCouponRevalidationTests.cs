@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -215,12 +216,25 @@ public sealed class StorefrontCartCouponRevalidationTests
             httpContext.Request.Headers["X-Session-Id"] = sessionId;
         }
 
+        var dbContext = CreateDbContext(tenantContext);
+        if (customerId.HasValue)
+        {
+            // Seed only the authority read needs; the full production
+            // SaveChanges pipeline also provisions unrelated canonical links.
+            dbContext.Database.ExecuteSqlInterpolated(
+                $"INSERT INTO \"Currencies\" (\"Code\", \"Name\", \"Symbol\", \"DecimalPlaces\") VALUES ({"USD"}, {"US Dollar"}, {"$"}, {2})");
+            dbContext.Database.ExecuteSqlInterpolated(
+                $"INSERT INTO \"Tenants\" (\"Id\", \"Name\", \"Currency\", \"IsActive\", \"Status\", \"CreatedAtUtc\", \"BootstrapVersion\", \"UseBaileys\") VALUES ({tenantId}, {"Coupon revalidation tenant"}, {"USD"}, {true}, {1}, {DateTime.UtcNow}, {1}, {false})");
+            dbContext.Database.ExecuteSqlInterpolated(
+                $"INSERT INTO \"OnlineCustomers\" (\"Id\", \"TenantId\", \"Email\", \"NormalizedEmail\", \"Provider\", \"IsActive\", \"EmailVerified\", \"CreatedAtUtc\", \"PhoneVerified\") VALUES ({customerId.Value}, {tenantId}, {$"customer-{customerId:N}@example.com"}, {$"customer-{customerId:N}@example.com"}, {"Local"}, {true}, {true}, {DateTime.UtcNow}, {false})");
+        }
+
         return new StorefrontCartController(
             cartService,
             couponService,
             CreateEventPublisher(),
             Mock.Of<ISmartOfferRedeemTokenService>(),
-            CreateDbContext(),
+            dbContext,
             new CommerceReliabilityTelemetry(),
             NullLogger<StorefrontCartController>.Instance)
         {
@@ -271,7 +285,7 @@ public sealed class StorefrontCartCouponRevalidationTests
             scheme));
     }
 
-    private static ApplicationDbContext CreateDbContext()
+    private static ApplicationDbContext CreateDbContext(TenantContext tenantContext)
     {
         var connection = new SqliteConnection("Data Source=:memory:");
         connection.Open();
@@ -281,9 +295,40 @@ public sealed class StorefrontCartCouponRevalidationTests
             .UseSqlite(connection)
             .Options;
 
-        var dbContext = new ApplicationDbContext(options);
+        var dbContext = new SqliteCouponTestDbContext(options, tenantContext);
         dbContext.Database.EnsureCreated();
         return dbContext;
+    }
+
+    // The production model has PostgreSQL-only CHECK expressions (including
+    // btrim and regex operators). Keep relational transactions and queries in
+    // these controller tests while excluding constraints SQLite cannot parse.
+    private sealed class SqliteCouponTestDbContext(
+        DbContextOptions<ApplicationDbContext> options,
+        ITenantContext tenantContext)
+        : ApplicationDbContext(options, tenantContext)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                foreach (var constraint in entityType.GetCheckConstraints().ToArray())
+                {
+                    entityType.RemoveCheckConstraint(constraint.Name);
+                }
+
+                foreach (var property in entityType.GetProperties().Where(property =>
+                             string.Equals(property.GetColumnName(), "xmin", StringComparison.OrdinalIgnoreCase)))
+                {
+                    property.SetColumnType("INTEGER");
+                    property.ValueGenerated = ValueGenerated.Never;
+                    property.IsConcurrencyToken = false;
+                    property.SetDefaultValue(0u);
+                }
+            }
+        }
     }
 
     private static void RegisterSqliteFunctions(SqliteConnection connection)

@@ -233,6 +233,41 @@ public class ApiRequestNormalizationFilterTests
             message.Contains("required", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task OnActionExecutionAsync_ConcurrentPrimitiveValidation_IsThreadSafe()
+    {
+        var filter = new ApiRequestNormalizationFilter();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tasks = Enumerable.Range(0, 128).Select(async index =>
+        {
+            var controller = new ConcurrentPrimitiveProbeController();
+            var context = CreateActionExecutingContext(
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["slug"] = $"slug-{index}"
+                },
+                $"corr-concurrent-{index}",
+                controller,
+                nameof(ConcurrentPrimitiveProbeController.Get));
+            var nextInvoked = false;
+
+            await start.Task;
+            await filter.OnActionExecutionAsync(
+                context,
+                () =>
+                {
+                    nextInvoked = true;
+                    return Task.FromResult(new ActionExecutedContext(context, [], controller));
+                });
+
+            Assert.True(nextInvoked);
+            Assert.Null(context.Result);
+        }).ToArray();
+
+        start.SetResult();
+        await Task.WhenAll(tasks);
+    }
+
     private static ActionExecutingContext CreateActionExecutingContext(
         IDictionary<string, object?> actionArguments,
         string traceIdentifier)
@@ -299,6 +334,11 @@ public class ApiRequestNormalizationFilterTests
     private sealed class OptionalParameterProbeController : ControllerBase
     {
         public IActionResult Get(string period = "month") => Ok(period);
+    }
+
+    private sealed class ConcurrentPrimitiveProbeController : ControllerBase
+    {
+        public IActionResult Get(string slug) => Ok(slug);
     }
 
     private sealed class ValidationProbeDto

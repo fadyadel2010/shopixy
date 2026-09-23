@@ -32,12 +32,12 @@ export function getAuthoringErrorFeedback(error) {
         ? backendMessage
         : null
 
-    if (status === 409 || code === 'FOOTER_CONCURRENCY_CONFLICT' || /CONCURRENCY/.test(code)) {
-        return { kind: 'conflict', code, title: 'Another author saved first', message: message || 'Review the latest authoring revision, then retry your draft.' }
-    }
     if (/ALREADY_PUBLISHED/.test(code)) return { kind: 'already-published', code, title: 'Already published', message: message || 'This content is already published.' }
     if (/ALREADY_EXISTS/.test(code)) return { kind: 'already-exists', code, title: 'Already exists', message: message || 'A matching resource already exists.' }
     if (/DUPLICATE/.test(code)) return { kind: 'duplicate', code, title: 'Duplicate content', message: message || 'Remove the duplicate value and try again.' }
+    if (status === 409 || code === 'FOOTER_CONCURRENCY_CONFLICT' || /CONCURRENCY/.test(code)) {
+        return { kind: 'conflict', code, title: 'Another author saved first', message: message || 'Review the latest authoring revision, then retry your draft.' }
+    }
     if (status === 404 || /NOT_FOUND|MISSING/.test(code)) return { kind: 'missing', code, title: 'Resource unavailable', message: message || 'A referenced resource no longer exists.' }
     if (status === 401 || status === 403 || /UNAUTHORIZED|FORBIDDEN/.test(code)) return { kind: 'forbidden', code, title: 'Permission required', message: message || 'You do not have permission to perform this action.' }
     if (status === 428 || /PRECONDITION/.test(code)) return { kind: 'precondition', code, title: 'Latest version required', message: message || 'Load the latest accepted version, then retry your draft.' }

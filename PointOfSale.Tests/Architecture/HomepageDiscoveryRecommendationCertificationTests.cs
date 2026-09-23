@@ -8,12 +8,10 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
         var service = ReadRepoFile("PointOfSale.API/Services/Storefront/StorefrontHomeService.cs");
 
         Assert.Contains("RecomposeProductCardsFromSqlAuthorityAsync", service, StringComparison.Ordinal);
-        Assert.Contains("TenantLineageAuthority.IsActiveTenantAsync", service, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchAsync", service, StringComparison.Ordinal);
         Assert.Contains("CategoryLineageAuthority.LoadTenantSnapshotAsync", service, StringComparison.Ordinal);
-        Assert.Contains("AffiliateProductPolicies", service, StringComparison.Ordinal);
-        Assert.Contains("ProductVariantInventoryLineageAuthority.FilterCurrentInventoryStockOwnersAsync", service, StringComparison.Ordinal);
-        Assert.Contains("IsProductHomepageVisible", service, StringComparison.Ordinal);
-        Assert.Contains("product.PublishStatus == PublishStatus.Published", service, StringComparison.Ordinal);
+        Assert.Contains("!product.IsAffiliateEnabled", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ProductSearchSqlAuthorityOverlay.ApplyAsync", service, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -42,8 +40,7 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
         var registration = ReadRepoFile("PointOfSale.Infrastructure/Elasticsearch/ElasticsearchServiceCollectionExtensions.cs");
 
         Assert.Contains("RecomposeDiscoveryItemsFromSqlAuthorityAsync", discovery, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", discovery, StringComparison.Ordinal);
-        Assert.Contains("AffiliateProductPolicies", discovery, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync", discovery, StringComparison.Ordinal);
         Assert.Contains("product.TryResolveAffiliatePublicPricing(out var pricing)", discovery, StringComparison.Ordinal);
         Assert.Contains("ReadAllSearchCandidatesAsync", discovery, StringComparison.Ordinal);
         Assert.Contains("(categoryId.HasValue && product.CategoryId != categoryId.Value)", discovery, StringComparison.Ordinal);
@@ -53,6 +50,7 @@ public sealed class HomepageDiscoveryRecommendationCertificationTests
         Assert.Contains("RecomposePublicAffiliateProductsFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("RecomposePublicAffiliateProductFromSqlAuthorityAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("ReadAllSearchCandidatesAsync", publicController, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", publicController, StringComparison.Ordinal);
         Assert.Contains("var total = docs.Count", publicController, StringComparison.Ordinal);
         Assert.Contains("pageDocs = docs.Skip(skip).Take(pageSize)", publicController, StringComparison.Ordinal);

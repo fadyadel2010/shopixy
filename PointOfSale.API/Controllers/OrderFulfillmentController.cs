@@ -23,7 +23,7 @@ namespace PointOfSale.API.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/orders/{orderId}/fulfillment")]
-[Authorize(Roles = "Owner,Admin,Manager")]
+[Authorize]
 public class OrderFulfillmentController : ControllerBase
 {
     private readonly IOrderFulfillmentService _fulfillmentService;

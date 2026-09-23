@@ -27,7 +27,6 @@ namespace PointOfSale.API.Controllers;
 ///   List/revoke never expose the raw token or the stored hash.
 /// </summary>
 [ApiController]
-[Authorize(Roles = "Owner,Admin")]
 [Route("api/admin/feeds/{channel:regex(meta|google|tiktok|snapchat)}/tokens")]
 public sealed class AdminProductFeedTokensController : ControllerBase
 {

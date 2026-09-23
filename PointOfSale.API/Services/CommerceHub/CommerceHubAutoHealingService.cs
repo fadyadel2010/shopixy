@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.Elasticsearch.Documents;
 using PointOfSale.Infrastructure.Elasticsearch.Services;
+using PointOfSale.Infrastructure.Jobs;
 using PointOfSale.Infrastructure.MongoDB.Documents;
 using PointOfSale.Infrastructure.MongoDB.Services;
 
@@ -307,6 +308,7 @@ public class CommerceHubAutoHealingService :
             using var scope = _scopeFactory.CreateScope();
             var mongoDbContext = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var searchIndexService = scope.ServiceProvider.GetRequiredService<ICommerceHubSearchIndexService>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var reconciledAtUtc = DateTime.UtcNow;
 
             var mongoCandidates = await mongoDbContext.CommerceHubProducts
@@ -328,6 +330,17 @@ public class CommerceHubAutoHealingService :
                     0);
                 return;
             }
+
+            var visibleIdentities = await CommerceHubReindexService.LoadSqlVisibleListingIdentitiesAsync(
+                dbContext,
+                tenantId: null,
+                cancellationToken);
+            var visibleIdentitySet = visibleIdentities
+                .Select(identity => (identity.TenantId, identity.ListingId))
+                .ToHashSet();
+            mongoCandidates = mongoCandidates
+                .Where(candidate => visibleIdentitySet.Contains((candidate.TenantId, candidate.Id)))
+                .ToList();
 
             var existingElasticsearchIds = await GetExistingElasticsearchIdsAsync(
                 mongoCandidates,
@@ -474,6 +487,7 @@ public class CommerceHubAutoHealingService :
             using var scope = _scopeFactory.CreateScope();
             var mongoDbContext = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var searchIndexService = scope.ServiceProvider.GetRequiredService<ICommerceHubSearchIndexService>();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var startupRecoveryAtUtc = DateTime.UtcNow;
 
             var pendingRecoveryFilter = Builders<CommerceHubProductDocument>.Filter.Ne(
@@ -491,6 +505,20 @@ public class CommerceHubAutoHealingService :
                 .SortByDescending(x => x.UpdatedAtUtc)
                 .Limit(StartupRecoveryBatchSize)
                 .ToListAsync(cancellationToken);
+
+            var visibleIdentities = await CommerceHubReindexService.LoadSqlVisibleListingIdentitiesAsync(
+                dbContext,
+                tenantId: null,
+                cancellationToken);
+            var visibleIdentitySet = visibleIdentities
+                .Select(identity => (identity.TenantId, identity.ListingId))
+                .ToHashSet();
+            pendingRecoveryDocuments = pendingRecoveryDocuments
+                .Where(candidate => visibleIdentitySet.Contains((candidate.TenantId, candidate.Id)))
+                .ToList();
+            publishedCandidates = publishedCandidates
+                .Where(candidate => visibleIdentitySet.Contains((candidate.TenantId, candidate.Id)))
+                .ToList();
 
             var existingElasticsearchIds = await GetExistingElasticsearchIdsAsync(
                 publishedCandidates,
