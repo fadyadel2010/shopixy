@@ -99,6 +99,22 @@ describe('footerAuthoringContract', () => {
         expect(codes).toContain('FOOTER_DUPLICATE_SOCIAL_LINK')
     })
 
+    it('enforces localized label and social icon length limits before save', () => {
+        const draft = admitFooterConfiguration(response(), 'Tenant')
+        draft.sections[0].links[0].labelLocalized.ar = 'س'.repeat(161)
+        draft.socialLinks[0].icon = 'i'.repeat(81)
+
+        const issues = validateFooterDraft(draft, {
+            isLocalized: true,
+            cmsPages: [{ slug: 'about', title: 'About' }],
+        })
+
+        expect(issues).toEqual(expect.arrayContaining([
+            expect.objectContaining({ field: 'sections[0].links[0].labelLocalized.ar', code: 'FOOTER_FIELD_TOO_LONG' }),
+            expect.objectContaining({ field: 'socialLinks[0].icon', code: 'FOOTER_FIELD_TOO_LONG' }),
+        ]))
+    })
+
     it('maps every structured authoring failure class to meaningful feedback', () => {
         const cases = [
             [{ status: 422, code: 'FOOTER_VALIDATION_ERROR' }, 'validation'],

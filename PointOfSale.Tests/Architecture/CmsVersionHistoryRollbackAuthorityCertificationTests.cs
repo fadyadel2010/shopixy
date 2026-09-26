@@ -28,7 +28,7 @@ public sealed class CmsVersionHistoryRollbackAuthorityCertificationTests
         Assert.Contains("Version = pages.Max(item => item.Version) + 1", service, StringComparison.Ordinal);
         Assert.Contains("IsPublished = true", service, StringComparison.Ordinal);
         Assert.Contains("StageStorefrontCmsPagePublishedEventAsync", service, StringComparison.Ordinal);
-        Assert.Contains("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
 
         Assert.Contains("async getVersionHistory(pageId)", frontendService, StringComparison.Ordinal);
         Assert.Contains("/admin/pages/${pageId}/versions", frontendService, StringComparison.Ordinal);

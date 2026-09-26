@@ -16,6 +16,7 @@ import type { ApiErrorResponse } from '@/types';
 import { getRequestHeaders, isRequestContextReady } from '@/bootstrap';
 import { getAffiliateRefCode } from '@/bootstrap/affiliateRefTracker';
 import { useLanguageStore } from '@/i18n';
+import { getThemePreviewToken } from '@/storefront/preview/themePreviewMode';
 import { appendCsrfHeader } from './csrf';
 
 /**
@@ -107,16 +108,6 @@ export function setAuthInterceptor(actions: {
 
 export function isAuthEndpoint(url: string): boolean {
     return url.includes('/api/storefront/auth/');
-}
-
-function getThemePreviewToken(): string | null {
-    if (typeof window === 'undefined') {
-        return null;
-    }
-
-    const token = new URLSearchParams(window.location.search).get('themePreviewToken');
-    const normalized = token?.trim();
-    return normalized ? normalized : null;
 }
 
 function isReadOnlyStorefrontRequest(config: InternalAxiosRequestConfig): boolean {

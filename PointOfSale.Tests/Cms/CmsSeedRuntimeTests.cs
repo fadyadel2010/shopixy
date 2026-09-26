@@ -54,6 +54,9 @@ public sealed class CmsSeedRuntimeTests
         var navigation = customization.RootElement.GetProperty("navigation");
         Assert.Equal(2, navigation.GetProperty("live").GetProperty("header").GetProperty("links").GetArrayLength());
         Assert.Equal(4, navigation.GetProperty("live").GetProperty("footer").GetProperty("links").GetArrayLength());
+        var homepageLayout = customization.RootElement.GetProperty("pages").GetProperty("home");
+        Assert.Equal(4, homepageLayout.GetProperty("draft").GetProperty("sections").GetArrayLength());
+        Assert.Equal(4, homepageLayout.GetProperty("live").GetProperty("sections").GetArrayLength());
 
         var homepage = await harness.Context.HomepageSections.AsNoTracking().OrderBy(section => section.Order).ToListAsync();
         Assert.Equal(4, homepage.Count);
@@ -64,10 +67,11 @@ public sealed class CmsSeedRuntimeTests
             .Include(section => section.Links)
             .SingleAsync();
         Assert.Equal(4, footer.Links.Count);
-        Assert.Equal(7, harness.Publisher.Events.Count);
+        Assert.Equal(8, harness.Publisher.Events.Count);
         Assert.Equal(4, harness.Publisher.Events.OfType<StorefrontCmsPagePublishedEvent>().Count());
         Assert.Single(harness.Publisher.Events.OfType<NavigationPublishedEvent>());
         Assert.Single(harness.Publisher.Events.OfType<HomepageSectionsPublishedEvent>());
+        Assert.Single(harness.Publisher.Events.OfType<StoreConfigPublishedEvent>());
         Assert.Single(harness.Publisher.Events.OfType<StorefrontFooterUpdatedEvent>());
         Assert.Equal(
             harness.Publisher.Events.Count,
@@ -214,7 +218,7 @@ public sealed class CmsSeedRuntimeTests
     {
         await using var harness = await SeedHarness.CreateAsync(includeStoreConfig: true);
         var config = await harness.Context.StoreConfigs.SingleAsync();
-        config.CustomizationJson = "{\"navigation\":{\"draft\":{\"header\":{\"links\":[]},\"footer\":{\"links\":[]}},\"live\":{\"header\":{\"links\":[]},\"footer\":{\"links\":[]}}}}";
+        config.CustomizationJson = "{\"navigation\":{\"draft\":{\"header\":{\"links\":[]},\"footer\":{\"links\":[]}},\"live\":{\"header\":{\"links\":[]},\"footer\":{\"links\":[]}}},\"pages\":{\"home\":{\"draft\":{\"sections\":[]},\"live\":{\"sections\":[]}}}}";
         harness.Context.HomepageSections.Add(new HomepageSection
         {
             Id = Guid.NewGuid(),

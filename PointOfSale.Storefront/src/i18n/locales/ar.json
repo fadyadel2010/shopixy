@@ -386,6 +386,14 @@
         "shopByCategory": "تسوق حسب القسم",
         "subcategories": "الأقسام الفرعية"
     },
+    "catalog": {
+        "browsingSummary": "ملخص الكتالوج",
+        "available": "المتوفر",
+        "availableProducts": "{count} منتج متوفر",
+        "brands": "العلامات التجارية",
+        "offers": "العروض",
+        "promotedProducts": "{count} منتج ضمن العروض"
+    },
     "promotion": {
         "endsIn": "ينتهي خلال",
         "onAllProducts": "على جميع منتجات {category}",
@@ -537,9 +545,19 @@
         "featuredProducts": "المنتجات المميزة",
         "noProductsYet": "لا توجد منتجات بعد",
         "productsWillAppear": "ستظهر المنتجات هنا بمجرد إضافتها.",
+        "noSelectedProductsYet": "لا توجد منتجات محددة بعد",
+        "selectProductsToPopulate": "حدد منتجات المتجر لعرضها في هذا القسم.",
+        "randomProductsWillAppear": "ستظهر منتجات من كتالوج المتجر الحالي هنا تلقائيًا.",
+        "invalidProductSelection": "المنتجات المحددة غير صالحة",
+        "invalidProductSelectionHelp": "حدد منتجات صالحة من المتجر لهذا القسم.",
         "failedToLoad": "فشل تحميل المنتجات",
         "noCategoriesYet": "لا توجد أقسام بعد",
         "categoriesWillAppear": "ستظهر الأقسام هنا بمجرد إضافتها.",
+        "noSelectedCategoriesYet": "لا توجد أقسام محددة بعد",
+        "selectCategoriesToPopulate": "حدد أقسام المتجر لعرضها في هذا القسم.",
+        "randomCategoriesWillAppear": "ستظهر أقسام من شجرة أقسام المتجر هنا تلقائيًا.",
+        "noSelectedSubcategoriesYet": "لا توجد أقسام فرعية محددة بعد",
+        "selectSubcategoriesToPopulate": "حدد أقسامًا فرعية من المتجر لعرضها في هذا القسم.",
         "failedToLoadCategories": "فشل تحميل الأقسام",
         "whatCustomersSay": "ماذا يقول عملاؤنا",
         "guestBanner": {

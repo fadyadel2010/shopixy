@@ -71,7 +71,7 @@ const HeroBanner: React.FC<any> = ({
                         {backgroundImage ? (
                             <img
                                 src={backgroundImage}
-                                alt={title || 'Focused product image'}
+                                alt={title || ''}
                                 className="h-full w-full object-cover"
                             />
                         ) : (
@@ -80,10 +80,6 @@ const HeroBanner: React.FC<any> = ({
                             </div>
                         )}
                         <div className="absolute inset-0 bg-white" style={{ opacity: resolvedOverlayOpacity * 0.12 }} />
-                    </div>
-                    <div className="mt-5 flex items-center justify-between border-t border-slate-200 pt-4 text-xs uppercase tracking-[0.22em] text-slate-500">
-                        <span>selected</span>
-                        <span>quiet edit</span>
                     </div>
                 </div>
             </div>

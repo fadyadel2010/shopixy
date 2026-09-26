@@ -274,10 +274,24 @@ public class AdminStoreConfigService : IAdminStoreConfigService
     {
         _logger.LogInformation("UpdatePageLayout (Draft) | TenantId: {TenantId} | PageId: {PageId}", tenantId, pageId);
 
-        var config = await GetRequiredStoreConfigForMutationAsync(
-            tenantId,
-            expectedRowVersion,
-            cancellationToken);
+        var config = await _dbContext.StoreConfigs
+            .FirstOrDefaultAsync(c => c.TenantId == tenantId, cancellationToken);
+        if (config == null)
+        {
+            // The GET response is a read-only default with RowVersion 0. Admit its
+            // first page draft as an insert instead of returning a 500 for a new store.
+            if (expectedRowVersion != 0)
+            {
+                throw new ConcurrencyConflictException("StoreConfig", tenantId);
+            }
+
+            config = BuildDefaultConfig(tenantId);
+            _dbContext.StoreConfigs.Add(config);
+        }
+        else
+        {
+            ApplyExpectedRowVersion(config, expectedRowVersion);
+        }
 
         // Parse CustomizationJson
         var json = config.CustomizationJson ?? "{}";
@@ -316,7 +330,10 @@ public class AdminStoreConfigService : IAdminStoreConfigService
 
             // Update DRAFT only
             var pageContent = pages[pageId];
-            pageContent["draft"] = NormalizeBuilderPageComposition(pageConfig, pageContent); // Replace draft entirely
+            var normalizedPage = NormalizeBuilderPageComposition(pageConfig, pageContent);
+            if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
+                await ValidateCuratedProductsAsync(normalizedPage, tenantId, cancellationToken);
+            pageContent["draft"] = normalizedPage; // Replace draft entirely
 
             // Ensure LIVE exists if not present (don't break it)
             if (!pageContent.ContainsKey("live")) pageContent["live"] = new Dictionary<string, object>();
@@ -402,6 +419,9 @@ public class AdminStoreConfigService : IAdminStoreConfigService
             var normalizedDraft = !string.IsNullOrWhiteSpace(templateId)
                 ? NormalizeBuilderPageComposition(draftConfig, pageContent, authoritativeTemplateId: templateId)
                 : NormalizeBuilderPageComposition(draftConfig, pageContent);
+
+            if (pageId.Equals("home", StringComparison.OrdinalIgnoreCase))
+                await ValidateCuratedProductsAsync(normalizedDraft, tenantId, cancellationToken);
 
             pageContent["draft"] = normalizedDraft;
             pageContent["live"] = System.Text.Json.JsonSerializer.Deserialize<object>(
@@ -1559,6 +1579,7 @@ public class AdminStoreConfigService : IAdminStoreConfigService
                 Muted = theme.Colors.Muted
             },
             Font = theme.Font.Family,
+            BaseSize = theme.Font.BaseSize,
             BorderRadius = ParseBorderRadius(theme.Ui.BorderRadius)
         };
     }
@@ -2054,6 +2075,35 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         return StorefrontSectionContracts.NormalizeSectionType(sectionType);
     }
 
+    private async Task ValidateCuratedProductsAsync(
+        Dictionary<string, object> composition, Guid tenantId, CancellationToken cancellationToken)
+    {
+        var document = JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(composition)) as JsonObject;
+        var ids = new HashSet<Guid>();
+        if (document?["sections"] is JsonArray sections)
+        {
+            foreach (var section in sections.OfType<JsonObject>())
+            {
+                if (section["type"]?.GetValue<string>() is not ("product-grid" or "featured-products") ||
+                    section["settings"] is not JsonObject settings ||
+                    settings["source"]?.GetValue<string>() != "curated" ||
+                    settings["productIds"] is not JsonArray selectedIds)
+                    continue;
+
+                foreach (var selectedId in selectedIds)
+                    if (Guid.TryParse(selectedId?.GetValue<string>(), out var id)) ids.Add(id);
+            }
+        }
+
+        if (ids.Count == 0) return;
+
+        // Explicit tenant check in addition to the DbContext product query filter.
+        var ownedCount = await _dbContext.Products.AsNoTracking()
+            .CountAsync(product => product.TenantId == tenantId && ids.Contains(product.Id) && product.IsActive, cancellationToken);
+        if (ownedCount != ids.Count)
+            throw new ArgumentException("Curated products must be active products belonging to this store. Remove unavailable selections before saving or publishing.");
+    }
+
     private static object NormalizeSectionSettings(JsonObject sectionObject, string sectionType)
     {
         if (sectionObject["settings"] is not JsonObject settingsObject)
@@ -2081,7 +2131,9 @@ public class AdminStoreConfigService : IAdminStoreConfigService
         var normalized = new Dictionary<string, object?>(StringComparer.Ordinal);
         foreach (var field in StorefrontSectionContracts.GetFields(sectionType))
         {
-            var submittedValue = submittedSettings[field.Key];
+            var submittedValue = submittedSettings.TryGetValue(field.Key, out var value)
+                ? value
+                : field.DefaultValue;
             normalized[field.Key] = submittedValue is string stringValue && field.Options.Count > 0
                 ? field.Options.First(option => option.Equals(stringValue, StringComparison.OrdinalIgnoreCase))
                 : submittedValue;

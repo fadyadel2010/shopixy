@@ -22,7 +22,7 @@ const MinimalFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                 href={link.href}
                                 target={link.openInNewTab ? '_blank' : undefined}
                                 rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                className="text-sm text-slate-500 transition-colors hover:text-slate-900"
+                                className="min-w-0 break-words text-sm text-slate-500 transition-colors hover:text-slate-900"
                             >
                                 {link.label}
                             </AffiliateLink>
@@ -30,17 +30,24 @@ const MinimalFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                     </nav>
 
                     {sections.length > 0 ? (
-                        <div className="flex flex-wrap gap-x-6 gap-y-3">
-                            {sections.flatMap((section) => section.links).map((link) => (
-                                <AffiliateLink
-                                    key={`section-${link.key}`}
-                                    href={link.href}
-                                    target={link.openInNewTab ? '_blank' : undefined}
-                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="text-sm text-slate-400 transition-colors hover:text-slate-700"
-                                >
-                                    {link.label}
-                                </AffiliateLink>
+                        <div className="flex flex-wrap items-start gap-x-8 gap-y-5">
+                            {sections.map((section) => (
+                                <section key={section.key} className="min-w-0">
+                                    <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{section.title}</h3>
+                                    <div className="mt-2 flex flex-wrap gap-x-6 gap-y-3">
+                                        {section.links.map((link) => (
+                                            <AffiliateLink
+                                                key={link.key}
+                                                href={link.href}
+                                                target={link.openInNewTab ? '_blank' : undefined}
+                                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                                className="min-w-0 break-words text-sm text-slate-400 transition-colors hover:text-slate-700"
+                                            >
+                                                {link.label}
+                                            </AffiliateLink>
+                                        ))}
+                                    </div>
+                                </section>
                             ))}
                         </div>
                     ) : null}

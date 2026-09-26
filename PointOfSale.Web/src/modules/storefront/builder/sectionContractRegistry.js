@@ -17,7 +17,7 @@ const FIELD_LABEL_OVERRIDES = {
     categoryIds: 'Category IDs',
 }
 
-const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+const GUID_PATTERN = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i
 const HEX_COLOR_PATTERN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
 const DEFAULT_TEXT_MAX_LENGTH = 500
 const DEFAULT_LONG_TEXT_MAX_LENGTH = 5000
@@ -115,6 +115,7 @@ export function validateContractSettingsStrict(sectionType, settings = {}) {
 
     contract.fields.forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(settings, field.key)) {
+            if (sectionType === 'hero-banner' && field.key === 'highlights') return
             throw new Error(`Section "${sectionType}" is missing required setting "${field.key}".`)
         }
 

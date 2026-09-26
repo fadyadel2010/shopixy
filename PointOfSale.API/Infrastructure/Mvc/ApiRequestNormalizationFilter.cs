@@ -14,8 +14,6 @@ namespace PointOfSale.API.Infrastructure.Mvc;
 public sealed class ApiRequestNormalizationFilter : IAsyncActionFilter
 {
     private const decimal MaxAllowedAmount = 1_000_000_000m;
-    private static readonly NullabilityInfoContext NullabilityInfoContext = new();
-    private static readonly object NullabilityInfoLock = new();
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -551,17 +549,16 @@ public sealed class ApiRequestNormalizationFilter : IAsyncActionFilter
             return false;
         }
 
-        // NullabilityInfoContext maintains an internal cache that is not safe for
-        // concurrent first-use reflection across requests.
-        lock (NullabilityInfoLock)
+        // NullabilityInfoContext is not thread-safe. Keep its mutable reflection cache
+        // local so concurrent requests never share or serialize access to it.
+        var nullabilityContext = new NullabilityInfoContext();
+
+        return member switch
         {
-            return member switch
-            {
-                PropertyInfo property => NullabilityInfoContext.Create(property).WriteState == NullabilityState.NotNull,
-                ParameterInfo parameter => NullabilityInfoContext.Create(parameter).ReadState == NullabilityState.NotNull,
-                _ => false
-            };
-        }
+            PropertyInfo property => nullabilityContext.Create(property).WriteState == NullabilityState.NotNull,
+            ParameterInfo parameter => nullabilityContext.Create(parameter).ReadState == NullabilityState.NotNull,
+            _ => false
+        };
     }
 
     private static bool IsIdentifier(string path)

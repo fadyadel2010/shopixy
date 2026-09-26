@@ -31,8 +31,8 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                 ) : model.isCuratedSelectionInvalid ? (
                     <ThemeEmptyState
                         themeId="hype"
-                        title="Selected products are still invalid"
-                        message="Use valid product identifiers to render this curated shelf."
+                        title={model.emptyStateTitle}
+                        message={model.emptyStateMessage}
                     />
                 ) : model.products.length === 0 ? (
                     <ThemeEmptyState

@@ -229,6 +229,12 @@ public sealed class CmsPageService : ICmsPageService
         {
             existingDraft.IsDraft = false;
             existingDraft.UpdatedAt = now;
+
+            // Release filtered unique-index slots before inserting the replacement draft.
+            if (transaction != null)
+            {
+                await SaveChangesAsync(cancellationToken);
+            }
         }
 
         var draftPage = new CmsPage
@@ -303,6 +309,13 @@ public sealed class CmsPageService : ICmsPageService
             publishedPage.UpdatedAt = now;
         }
 
+        // PostgreSQL checks filtered unique indexes per statement, so the old live
+        // version must be cleared before the replacement is activated.
+        if (transaction != null && publishedPages.Count > 0)
+        {
+            await SaveChangesAsync(cancellationToken);
+        }
+
         draftPage.IsDraft = false;
         draftPage.IsPublished = true;
         draftPage.PublishedAt = now;
@@ -374,6 +387,11 @@ public sealed class CmsPageService : ICmsPageService
             page.IsDraft = false;
             page.IsPublished = false;
             page.UpdatedAt = now;
+        }
+
+        if (transaction != null)
+        {
+            await SaveChangesAsync(cancellationToken);
         }
 
         var rollbackPage = new CmsPage
@@ -645,10 +663,12 @@ public sealed class CmsPageService : ICmsPageService
         }
         catch (DbUpdateConcurrencyException ex)
         {
+            _dbContext.ChangeTracker.Clear();
             throw new ConcurrencyConflictException("CmsPage", Guid.Empty, ex);
         }
         catch (DbUpdateException ex)
         {
+            _dbContext.ChangeTracker.Clear();
             throw new ConcurrencyConflictException("CmsPage", Guid.Empty, ex);
         }
     }

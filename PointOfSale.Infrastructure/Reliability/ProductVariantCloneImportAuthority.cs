@@ -23,7 +23,9 @@ public static class ProductVariantCloneImportAuthority
         var baseCandidate = FirstNonEmpty(preferredSku, fallbackBarcode);
         if (string.IsNullOrWhiteSpace(baseCandidate))
         {
-            baseCandidate = $"AUTO-{productId:N}".Substring(0, 13).ToUpperInvariant();
+            // Never truncate the product identity: the first eight GUID digits
+            // can collide across products and concurrent requests.
+            baseCandidate = $"AUTO-{productId:N}".ToUpperInvariant();
         }
 
         baseCandidate = baseCandidate.Trim();

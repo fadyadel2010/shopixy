@@ -386,6 +386,14 @@
         "shopByCategory": "Shop by Category",
         "subcategories": "Subcategories"
     },
+    "catalog": {
+        "browsingSummary": "Catalog summary",
+        "available": "Available",
+        "availableProducts": "{count} available products",
+        "brands": "Brands",
+        "offers": "Offers",
+        "promotedProducts": "{count} promoted products"
+    },
     "promotion": {
         "endsIn": "Ends in",
         "onAllProducts": "On all {category} products",
@@ -537,9 +545,19 @@
         "featuredProducts": "Featured Products",
         "noProductsYet": "No products yet",
         "productsWillAppear": "Products will appear here once they are added.",
+        "noSelectedProductsYet": "No selected products yet",
+        "selectProductsToPopulate": "Select storefront products to populate this section.",
+        "randomProductsWillAppear": "Products from the current storefront catalog will appear here automatically.",
+        "invalidProductSelection": "The selected products are invalid",
+        "invalidProductSelectionHelp": "Select valid storefront products for this section.",
         "failedToLoad": "Failed to load products",
         "noCategoriesYet": "No categories yet",
         "categoriesWillAppear": "Categories will appear here once they are added.",
+        "noSelectedCategoriesYet": "No selected categories yet",
+        "selectCategoriesToPopulate": "Select storefront categories to populate this section.",
+        "randomCategoriesWillAppear": "Categories from the storefront category tree will appear here automatically.",
+        "noSelectedSubcategoriesYet": "No selected subcategories yet",
+        "selectSubcategoriesToPopulate": "Select storefront subcategories to populate this section.",
         "failedToLoadCategories": "Failed to load categories",
         "whatCustomersSay": "What Our Customers Say",
         "guestBanner": {

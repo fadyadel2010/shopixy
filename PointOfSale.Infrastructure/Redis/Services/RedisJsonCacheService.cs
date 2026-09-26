@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using PointOfSale.Infrastructure.Redis.Configuration;
 using PointOfSale.Infrastructure.Redis.Models;
+using PointOfSale.Infrastructure.Tenancy;
 using StackExchange.Redis;
 
 namespace PointOfSale.Infrastructure.Redis.Services;
@@ -57,9 +58,24 @@ public interface IRedisJsonCacheService
         CancellationToken cancellationToken = default)
         where T : class;
 
+    Task<CacheReadResult<T>> GetOrCreateOwnedWithStatusAsync<T>(
+        string key,
+        string cacheType,
+        string invalidationGenerationKey,
+        TimeSpan ttl,
+        Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+        TimeSpan? maxProjectionLag = null,
+        CancellationToken cancellationToken = default)
+        where T : class;
+
     Task AdvanceInvalidationGenerationAsync(
         string invalidationGenerationKey,
         CancellationToken cancellationToken = default);
+
+    Task<long?> GetInvalidationGenerationAsync(
+        string invalidationGenerationKey,
+        string cacheType,
+        CancellationToken cancellationToken = default) => Task.FromResult<long?>(null);
 
     Task RemoveAsync(string key, CancellationToken cancellationToken = default);
 
@@ -381,7 +397,49 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             cancellationToken);
     }
 
+    public Task<CacheReadResult<T>> GetOrCreateOwnedWithStatusAsync<T>(
+        string key,
+        string cacheType,
+        string invalidationGenerationKey,
+        TimeSpan ttl,
+        Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+        TimeSpan? maxProjectionLag = null,
+        CancellationToken cancellationToken = default)
+        where T : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invalidationGenerationKey);
+        return GetOrCreateCoreWithStatusAsync(
+            key,
+            cacheType,
+            invalidationGenerationKey,
+            ttl,
+            factory,
+            maxProjectionLag,
+            cancellationToken);
+    }
+
     private async Task<T?> GetOrCreateCoreAsync<T>(
+        string key,
+        string cacheType,
+        string? invalidationGenerationKey,
+        TimeSpan ttl,
+        Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+        TimeSpan? maxProjectionLag,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        var result = await GetOrCreateCoreWithStatusAsync(
+            key,
+            cacheType,
+            invalidationGenerationKey,
+            ttl,
+            factory,
+            maxProjectionLag,
+            cancellationToken).ConfigureAwait(false);
+        return result.Value;
+    }
+
+    private async Task<CacheReadResult<T>> GetOrCreateCoreWithStatusAsync<T>(
         string key,
         string cacheType,
         string? invalidationGenerationKey,
@@ -399,9 +457,43 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
             cancellationToken);
         if (cached != null)
         {
-            return cached;
+            return new CacheReadResult<T>(cached, Refreshed: false);
         }
 
+        return await KeyedSingleFlight.GetOrAddAsync(
+            $"redis-refresh:{key}",
+            async ct =>
+            {
+                var rechecked = await GetCoreAsync<T>(
+                    key,
+                    cacheType,
+                    invalidationGenerationKey,
+                    maxProjectionLag,
+                    ct).ConfigureAwait(false);
+                return (rechecked != null, new CacheReadResult<T>(rechecked, Refreshed: false));
+            },
+            ct => PopulateCacheAsync(
+                key,
+                cacheType,
+                invalidationGenerationKey,
+                ttl,
+                factory,
+                maxProjectionLag,
+                ct),
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<CacheReadResult<T>> PopulateCacheAsync<T>(
+        string key,
+        string cacheType,
+        string? invalidationGenerationKey,
+        TimeSpan ttl,
+        Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+        TimeSpan? maxProjectionLag,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        T? cached;
         var lockKey = CacheKeyBuilder.CacheRefreshLockKey(_settings.InstanceName, HashKey(key));
         var lockToken = Guid.NewGuid().ToString("N");
         var lockTtl = TimeSpan.FromSeconds(Math.Max(3, _settings.CacheRefreshLockTtlSeconds));
@@ -423,7 +515,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                         cancellationToken);
                     if (cached != null)
                     {
-                        return cached;
+                        return new CacheReadResult<T>(cached, Refreshed: false);
                     }
 
                     break;
@@ -449,7 +541,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                     cancellationToken);
                 if (cached != null)
                 {
-                    return cached;
+                    return new CacheReadResult<T>(cached, Refreshed: false);
                 }
             }
 
@@ -466,7 +558,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
 
             if (population.Value == null)
             {
-                return null;
+                return new CacheReadResult<T>(null, Refreshed: true);
             }
 
             var shouldBypassCache = population.SkipCache || ShouldBypassForProjectionLag(
@@ -491,7 +583,7 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                     cancellationToken);
             }
 
-            return population.Value;
+            return new CacheReadResult<T>(population.Value, Refreshed: true);
         }
         finally
         {
@@ -532,6 +624,45 @@ public sealed class RedisJsonCacheService : IRedisJsonCacheService
                 "Redis invalidation generation advance failed | GenerationKey: {GenerationKey}",
                 invalidationGenerationKey);
             throw new RedisCacheInvalidationException(invalidationGenerationKey, ex);
+        }
+    }
+
+    public async Task<long?> GetInvalidationGenerationAsync(
+        string invalidationGenerationKey,
+        string cacheType,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invalidationGenerationKey);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var database = _connectionFactory.GetDatabase();
+        if (database == null)
+        {
+            if (_connectionFactory.IsEnabled)
+            {
+                _telemetry.RecordFailure(cacheType);
+            }
+
+            return null;
+        }
+
+        try
+        {
+            return await ReadInvalidationGenerationAsync(database, invalidationGenerationKey);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _telemetry.RecordFailure(cacheType, ex);
+            _logger.LogWarning(
+                ex,
+                "Redis invalidation generation read failed | GenerationKey: {GenerationKey} | CacheType: {CacheType}",
+                invalidationGenerationKey,
+                cacheType);
+            return null;
         }
     }
 

@@ -10,6 +10,34 @@ namespace PointOfSale.Tests.Infrastructure;
 public sealed class ProductVariantCloneImportAuthorityTests
 {
     [Fact]
+    public async Task ResolveUniqueSkuAsync_AutoFallbackUsesEntireProductId_AndRetriesTenantCollision()
+    {
+        var tenantId = Guid.NewGuid();
+        var productA = Guid.Parse("aaaaaaaa-1234-4567-8123-000000000001");
+        var productB = Guid.Parse("aaaaaaaa-1234-4567-8123-000000000002");
+        await using var db = CreateDbContext();
+        var autoA = await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
+            db, tenantId, null, null, productA, Guid.Empty);
+        var autoB = await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
+            db, tenantId, null, null, productB, Guid.Empty);
+        Assert.Equal($"AUTO-{productA:N}".ToUpperInvariant(), autoA);
+        Assert.NotEqual(autoA, autoB);
+        Assert.Matches("^[A-Z0-9-]+$", autoA!);
+
+        var owner = CreateProduct(tenantId, Guid.NewGuid(), "Owner");
+        owner.SKU = autoB;
+        db.Products.Add(owner);
+        await db.SaveChangesAsync();
+        var retry = await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
+            db, tenantId, null, null, productB, Guid.Empty);
+        Assert.Equal($"{autoB}-1", retry);
+
+        var otherTenant = await ProductVariantCloneImportAuthority.ResolveUniqueSkuAsync(
+            db, Guid.NewGuid(), null, null, productB, Guid.Empty);
+        Assert.Equal(autoB, otherTenant);
+    }
+
+    [Fact]
     public async Task ResolveUniqueSkuAsync_Regenerates_WhenClonePayloadCarriesExistingVariantSku()
     {
         var tenantId = Guid.NewGuid();

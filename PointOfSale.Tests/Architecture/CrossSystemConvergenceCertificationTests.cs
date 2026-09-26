@@ -44,7 +44,8 @@ public sealed class CrossSystemConvergenceCertificationTests
 
         Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", productWriter, StringComparison.Ordinal);
         Assert.Contains("ReviewedVisibilityTombstone", productWriter, StringComparison.Ordinal);
-        Assert.Contains("TenantLineageAuthority.IsActiveTenantAsync", productSearchOverlay, StringComparison.Ordinal);
+        Assert.Contains("dbContext.Tenants.IgnoreQueryFilters().Any", productSearchOverlay, StringComparison.Ordinal);
+        Assert.Contains("tenant.Status == TenantStatus.Active", productSearchOverlay, StringComparison.Ordinal);
         Assert.Contains("ResolveCurrentSqlProductSlugAsync", productCacheInvalidation, StringComparison.Ordinal);
         Assert.Contains("ProjectionConsumerEventFence.TryAcquireAsync", productCacheInvalidation, StringComparison.Ordinal);
 
@@ -59,7 +60,7 @@ public sealed class CrossSystemConvergenceCertificationTests
         Assert.Contains("MapSqlVisibleFacetsAsync", commerceHubQuery, StringComparison.Ordinal);
         Assert.Contains("CommerceHubSearchSqlAuthorityOverlay.ApplyAsync", commerceHubReindex, StringComparison.Ordinal);
         Assert.Contains("CountSqlVisibleCommerceHubListingsAsync", commerceHubReindex, StringComparison.Ordinal);
-        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyAsync", affiliateDiscovery, StringComparison.Ordinal);
+        Assert.Contains("ProductSearchSqlAuthorityOverlay.ApplyBatchByTenantAsync", affiliateDiscovery, StringComparison.Ordinal);
     }
 
     [Fact]

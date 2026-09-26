@@ -52,6 +52,7 @@ public interface ICommerceHubSearchIndexService
         string? targetIndexName = null,
         CancellationToken cancellationToken = default);
     Task<long?> CountAsync(string? targetIndexName = null, CancellationToken cancellationToken = default);
+    Task<CommerceHubSearchWriteReadiness> CheckWriteReadinessAsync(CancellationToken cancellationToken = default);
 }
 
 public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
@@ -773,6 +774,82 @@ public class CommerceHubSearchIndexService : ICommerceHubSearchIndexService
             : "CommerceHub alias promotion completed, but post-promotion verification did not fully pass.";
         result.Verification = postPromotionVerification;
         return result;
+    }
+
+    public async Task<CommerceHubSearchWriteReadiness> CheckWriteReadinessAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_settings.Enabled)
+        {
+            return CommerceHubSearchWriteReadiness.Ready(
+                _settings.CommerceHubProductsIndexName,
+                "disabled-bypass");
+        }
+
+        try
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
+
+            var ping = await _client.PingAsync(c => c, timeoutCts.Token);
+            if (!ping.IsValid)
+            {
+                return CommerceHubSearchWriteReadiness.NotReady("elasticsearch-ping-failed");
+            }
+
+            var clusterHealth = await _client.Cluster.HealthAsync(ct: timeoutCts.Token);
+            var clusterStatus = clusterHealth.IsValid ? clusterHealth.Status.ToString() : "unknown";
+            if (!clusterHealth.IsValid)
+            {
+                return CommerceHubSearchWriteReadiness.NotReady(
+                    "elasticsearch-cluster-health-unavailable",
+                    clusterStatus);
+            }
+
+            if (clusterHealth.Status == global::Elasticsearch.Net.Health.Red)
+            {
+                return CommerceHubSearchWriteReadiness.NotReady(
+                    "elasticsearch-cluster-red-not-recovered",
+                    clusterStatus);
+            }
+
+            var status = await GetStatusAsync(timeoutCts.Token);
+            if (string.IsNullOrWhiteSpace(status.WriteIndexName))
+            {
+                return CommerceHubSearchWriteReadiness.NotReady(
+                    "commercehub-write-index-not-resolvable",
+                    clusterStatus);
+            }
+
+            if (!status.AliasExists && !status.LegacyConcreteIndexExists)
+            {
+                return CommerceHubSearchWriteReadiness.NotReady(
+                    "commercehub-alias-index-not-created",
+                    clusterStatus);
+            }
+
+            var writeIndexExists = await _client.Indices.ExistsAsync(
+                status.WriteIndexName,
+                ct: timeoutCts.Token);
+            if (!writeIndexExists.Exists)
+            {
+                return CommerceHubSearchWriteReadiness.NotReady(
+                    "commercehub-write-index-missing",
+                    clusterStatus);
+            }
+
+            return CommerceHubSearchWriteReadiness.Ready(status.WriteIndexName, clusterStatus);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            return CommerceHubSearchWriteReadiness.NotReady(
+                $"readiness-probe-timed-out: {exception.GetType().Name}");
+        }
+        catch (Exception exception)
+        {
+            return CommerceHubSearchWriteReadiness.NotReady(
+                $"readiness-probe-failed: {exception.GetType().Name}");
+        }
     }
 
     public async Task<long?> CountAsync(string? targetIndexName = null, CancellationToken cancellationToken = default)

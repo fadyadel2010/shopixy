@@ -533,7 +533,8 @@
         "overlayOpacity": 40,
         "textColor": "#ffffff",
         "alignment": "left",
-        "height": "medium"
+        "height": "medium",
+        "highlights": []
       },
       "fields": [
         { "key": "title", "type": "text", "defaultValue": "Welcome to Your Store", "rendererConsumer": "hero title", "visualEffect": "Primary headline" },
@@ -545,7 +546,8 @@
         { "key": "overlayOpacity", "type": "number", "defaultValue": 40, "min": 0, "max": 100, "rendererConsumer": "hero overlay", "visualEffect": "Image contrast overlay" },
         { "key": "textColor", "type": "color", "defaultValue": "#ffffff", "rendererConsumer": "hero typography", "visualEffect": "Text color" },
         { "key": "alignment", "type": "select", "defaultValue": "left", "options": ["left", "center", "right"], "rendererConsumer": "hero layout", "visualEffect": "Content alignment" },
-        { "key": "height", "type": "select", "defaultValue": "medium", "options": ["small", "medium", "large"], "rendererConsumer": "hero shell", "visualEffect": "Vertical scale" }
+        { "key": "height", "type": "select", "defaultValue": "medium", "options": ["small", "medium", "large"], "rendererConsumer": "hero shell", "visualEffect": "Vertical scale" },
+        { "key": "highlights", "type": "list", "defaultValue": [], "maxItems": 3, "itemLabel": "Highlight", "itemSchema": { "defaultValue": { "value": "", "label": "" }, "fields": [ { "key": "value", "type": "text", "defaultValue": "", "maxLength": 32, "allowEmpty": false }, { "key": "label", "type": "text", "defaultValue": "", "maxLength": 80, "allowEmpty": false } ] }, "rendererConsumer": "modern hero highlight strip", "visualEffect": "Authored highlight values and captions" }
       ]
     },
     {

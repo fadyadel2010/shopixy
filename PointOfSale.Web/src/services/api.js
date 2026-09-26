@@ -8,6 +8,7 @@ import {
     isCommerceHubVendorSessionAuthorityEndpoint,
     requirePosVendorSessionUserAuthority,
 } from '../auth/posVendorSessionAuthority'
+import { runWithCrossTabRefreshLock } from '../auth/crossTabRefreshLock'
 
 export const API_REQUEST_TIMEOUT_MS = 30000
 export const API_REQUEST_TIMEOUT_MESSAGE = 'Request timeout after 30 seconds'
@@ -62,26 +63,6 @@ const forceLogoutOnce = () => {
         logoutPromise = Promise.resolve()
             .then(() => {
                 clearPosAuthStorage()
-
-                // Normalize path by removing trailing slash
-                const normalizedPath = window.location.pathname.replace(/\/$/, '')
-                
-                // Strip locale prefix (e.g., /en, /ar) to avoid treating locale-prefixed protected routes as public
-                const localeMatch = normalizedPath.match(/^\/[a-z]{2}(\/|$)/)
-                const pathWithoutLocale = localeMatch 
-                    ? normalizedPath.slice(3) || '/' // Remove "/xx" prefix, default to "/" if empty
-                    : normalizedPath
-                
-                const isNonPosPublicPath =
-                    pathWithoutLocale === '/login'
-                    || pathWithoutLocale === '/register'
-                    || pathWithoutLocale === '/verify-email'
-                    || pathWithoutLocale.startsWith('/affiliate')
-                    || pathWithoutLocale.startsWith('/super-admin')
-
-                if (!isNonPosPublicPath) {
-                    window.location.href = '/login'
-                }
             })
             .finally(() => {
                 logoutPromise = null
@@ -91,38 +72,70 @@ const forceLogoutOnce = () => {
     return logoutPromise
 }
 
-const refreshAccessToken = async () => {
+export const isDefinitiveAuthFailure = (error) => (
+    error?.response?.status === 401 || error?.response?.status === 403
+)
+
+const readPosSessionAuthority = async () => {
+    const sessionResponse = await axios.get('/api/auth/session', {
+        withCredentials: true,
+        timeout: API_REQUEST_TIMEOUT_MS,
+        timeoutErrorMessage: API_REQUEST_TIMEOUT_MESSAGE,
+        headers: {
+            'Content-Type': 'application/json',
+        },
+    })
+
+    try {
+        return requirePosVendorSessionUserAuthority(sessionResponse.data?.user ?? null)
+    } catch {
+        const authorityError = new Error('POS session authority payload was invalid.')
+        authorityError.response = { status: 401 }
+        throw authorityError
+    }
+}
+
+export const requestPosSessionRefresh = async () => {
     if (!refreshPromise) {
-        refreshPromise = (async () => {
-            await axios.post(
-                '/api/auth/refresh',
-                {},
-                {
-                    withCredentials: true,
-                    timeout: API_REQUEST_TIMEOUT_MS,
-                    timeoutErrorMessage: API_REQUEST_TIMEOUT_MESSAGE,
-                    headers: appendCsrfHeader(
-                        {
-                            'Content-Type': 'application/json',
-                        },
-                        'post',
-                    ),
-                },
-            )
+        refreshPromise = runWithCrossTabRefreshLock('pos-session-refresh', async () => {
+            // A different tab may have refreshed while this tab waited for the lock.
+            try {
+                return await readPosSessionAuthority()
+            } catch (sessionError) {
+                if (sessionError?.response?.status !== 401) {
+                    throw sessionError
+                }
+            }
 
-            const sessionResponse = await axios.get('/api/auth/session', {
-                withCredentials: true,
-                timeout: API_REQUEST_TIMEOUT_MS,
-                timeoutErrorMessage: API_REQUEST_TIMEOUT_MESSAGE,
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            })
+            try {
+                await axios.post(
+                    '/api/auth/refresh',
+                    {},
+                    {
+                        withCredentials: true,
+                        timeout: API_REQUEST_TIMEOUT_MS,
+                        timeoutErrorMessage: API_REQUEST_TIMEOUT_MESSAGE,
+                        headers: appendCsrfHeader(
+                            {
+                                'Content-Type': 'application/json',
+                            },
+                            'post',
+                        ),
+                    },
+                )
+            } catch (refreshError) {
+                if (refreshError?.response?.status !== 401) {
+                    throw refreshError
+                }
 
-            useAuthStore.getState().hydrateSession(
-                requirePosVendorSessionUserAuthority(sessionResponse.data?.user ?? null),
-            )
-        })().finally(() => {
+                // Browsers without Web Locks can lose a refresh-token rotation race.
+                // Re-read the shared cookie session once before treating it as expired.
+                await delay(100)
+                return readPosSessionAuthority()
+            }
+
+            return readPosSessionAuthority()
+        }).finally(() => {
             refreshPromise = null
         })
     }
@@ -316,7 +329,8 @@ api.interceptors.response.use(
             originalRequest._retry = true
 
             try {
-                await refreshAccessToken()
+                const refreshedUser = await requestPosSessionRefresh()
+                useAuthStore.getState().hydrateSession(refreshedUser)
                 if (canReplayAfterAuthRefresh(originalRequest)) {
                     return api(originalRequest)
                 }
@@ -331,7 +345,9 @@ api.interceptors.response.use(
                     // exposing authorization metadata or raw backend detail.
                     console.error('Token refresh failed')
                 }
-                await forceLogoutOnce()
+                if (isDefinitiveAuthFailure(refreshError)) {
+                    await forceLogoutOnce()
+                }
                 return Promise.reject(refreshError)
             }
         }

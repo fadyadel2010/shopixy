@@ -265,7 +265,7 @@ public class CartService : ICartService
         }
 
         // Return empty cart structure (expired/missing cart = empty)
-        var emptyCart = CreateEmptyCart(tenantId, owner);
+        var emptyCart = await CreateEmptyCartAsync(tenantId, owner, cancellationToken);
         _logger.LogInformation(
             "GetCart - empty cart | TenantId: {TenantId} | OwnerType: {OwnerType} | OwnerId: {OwnerId} | CorrelationId: {CorrelationId}",
             tenantId, owner.OwnerType, owner.OwnerId, correlationId);
@@ -508,7 +508,7 @@ public class CartService : ICartService
         // Step 3: Get or create cart
         var cart = await GetCartFromRedisAsync(tenantId, owner, cacheKey, correlationId);
         var isNewCart = cart == null;
-        cart ??= CreateEmptyCart(tenantId, owner);
+        cart ??= await CreateEmptyCartAsync(tenantId, owner, cancellationToken);
 
         // Phase 3.2: Validate and fix existing cart
         if (!isNewCart)
@@ -523,7 +523,9 @@ public class CartService : ICartService
         // new cart. Repeating that same query in this mutation acquires another
         // connection while the owner lock is held. Existing Redis carts still
         // require a fresh SQL currency check to catch drift.
-        var storefrontCurrency = isNewCart ? cart.Currency : GetStorefrontCurrency(tenantId);
+        var storefrontCurrency = isNewCart
+            ? cart.Currency
+            : await GetStorefrontCurrencyAsync(tenantId, cancellationToken);
         
         // Validate cart currency matches storefront
         if (!string.Equals(cart.Currency, storefrontCurrency, StringComparison.OrdinalIgnoreCase))
@@ -739,7 +741,7 @@ public class CartService : ICartService
             _logger.LogWarning(
                 "UpdateItem - cart not found | TenantId: {TenantId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}",
                 tenantId, productId, correlationId);
-            return CreateEmptyCart(tenantId, owner);
+            return await CreateEmptyCartAsync(tenantId, owner, ct);
         }
 
         // Phase 3.2: Validate and fix cart
@@ -1013,7 +1015,7 @@ public class CartService : ICartService
             _logger.LogWarning(
                 "RemoveItem - cart not found | TenantId: {TenantId} | ProductId: {ProductId} | CorrelationId: {CorrelationId}",
                 tenantId, productId, correlationId);
-            return CreateEmptyCart(tenantId, owner);
+            return await CreateEmptyCartAsync(tenantId, owner, ct);
         }
 
         // Phase 3.2: Validate and fix cart
@@ -1161,7 +1163,7 @@ public class CartService : ICartService
             _logger.LogInformation(
                 "ClearCart - cart already empty | TenantId: {TenantId} | CorrelationId: {CorrelationId}",
                 tenantId, correlationId);
-            return CreateEmptyCart(tenantId, owner);
+            return await CreateEmptyCartAsync(tenantId, owner, ct);
         }
 
         int itemsCleared = cart.Items.Count;
@@ -1178,7 +1180,7 @@ public class CartService : ICartService
             "ClearCart success | TenantId: {TenantId} | CartId: {CartId} | ItemsCleared: {ItemsCleared} | ValueCleared: {ValueCleared} | CorrelationId: {CorrelationId}",
             tenantId, cartId, itemsCleared, totalValueCleared, correlationId);
 
-        return CreateEmptyCart(tenantId, owner);
+        return await CreateEmptyCartAsync(tenantId, owner, ct);
             });
     }
 
@@ -1240,7 +1242,14 @@ public class CartService : ICartService
                         "ApplyDraft - variant missing for {ProductId}, attempting to auto-resolve default variant | CorrelationId: {CorrelationId}",
                         item.ProductId, correlationId);
                     
-                    var product = await _productRepository.FindByProductIdAsync(tenantId, item.ProductId, ct);
+                    var projectedProduct = await _productRepository.FindByProductIdAsync(tenantId, item.ProductId, ct);
+                    var product = projectedProduct == null
+                        ? null
+                        : await ProductSearchSqlAuthorityOverlay.ApplyAsync(
+                            _dbContext,
+                            projectedProduct,
+                            tenantId,
+                            ct);
                     if (product != null && product.Variants != null && product.Variants.Count > 0)
                     {
                         var defaultVariant = product.Variants.FirstOrDefault(v => v.IsDefault && v.IsActive) 
@@ -1349,13 +1358,13 @@ public class CartService : ICartService
             
             // Return customer cart (or empty if none)
             var existingCustomerCart = await GetCartFromRedisAsync(tenantId, customerOwner, customerCacheKey, correlationId);
-            return existingCustomerCart ?? CreateEmptyCart(tenantId, customerOwner);
+            return existingCustomerCart ?? await CreateEmptyCartAsync(tenantId, customerOwner, ct);
         }
 
         // Step 2: Get or create customer cart
         var customerCart = await GetCartFromRedisAsync(tenantId, customerOwner, customerCacheKey, correlationId);
         var isNewCustomerCart = customerCart == null;
-        customerCart ??= CreateEmptyCart(tenantId, customerOwner);
+        customerCart ??= await CreateEmptyCartAsync(tenantId, customerOwner, ct);
 
         // Step 3: Currency check - abort if mismatch
         if (customerCart.Items.Count > 0 && 
@@ -1928,7 +1937,7 @@ public class CartService : ICartService
         {
             // Reset cart and emit event
             var oldCartId = cart.CartId;
-            cart = CreateEmptyCart(tenantId, owner);
+            cart = await CreateEmptyCartAsync(tenantId, owner, cancellationToken);
             
             await EmitCartClearedEventAsync(tenantId, oldCartId, owner, 0, 0, correlationId, cancellationToken);
             await DeleteCartFromRedisAsync(cacheKey, correlationId, cancellationToken);
@@ -3714,10 +3723,13 @@ public class CartService : ICartService
     /// PHASE 10.4.X: Creates an empty cart with currency from StorefrontConfig.
     /// Throws CurrencyNotConfiguredException if currency is not configured.
     /// </summary>
-    private CartDto CreateEmptyCart(Guid tenantId, CartOwner owner)
+    private async Task<CartDto> CreateEmptyCartAsync(
+        Guid tenantId,
+        CartOwner owner,
+        CancellationToken cancellationToken)
     {
         // Fetch tenant currency from StorefrontConfig
-        var currency = GetStorefrontCurrency(tenantId);
+        var currency = await GetStorefrontCurrencyAsync(tenantId, cancellationToken);
 
         return new CartDto
         {
@@ -3740,15 +3752,15 @@ public class CartService : ICartService
     /// Gets storefront currency from current tenant SQL authority.
     /// Throws CurrencyNotConfiguredException if not configured - NO FALLBACKS.
     /// </summary>
-    private string GetStorefrontCurrency(Guid tenantId)
+    internal async Task<string> GetStorefrontCurrencyAsync(
+        Guid tenantId,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var currency = _dbContext.Tenants
-                .AsNoTracking()
-                .Where(tenant => tenant.Id == tenantId)
-                .Select(tenant => tenant.Currency)
-                .SingleOrDefault();
+            var tenant = await PointOfSale.Infrastructure.Tenancy.TenantAuthorityMemo
+                .GetTenantByIdAsync(_dbContext, tenantId, cancellationToken);
+            var currency = tenant?.Currency;
 
             if (!string.IsNullOrWhiteSpace(currency))
             {
@@ -3773,12 +3785,6 @@ public class CartService : ICartService
                 tenantId);
             throw new CurrencyNotConfiguredException(tenantId);
         }
-    }
-
-    [Obsolete("Use GetStorefrontCurrency instead - Phase 10.4.X Currency Lockdown")]
-    private string GetTenantCurrency(Guid tenantId)
-    {
-        return GetStorefrontCurrency(tenantId);
     }
 
     private static string? ResolveVariantImageUrl(ProductDocument product, ProductVariantDocument variant)

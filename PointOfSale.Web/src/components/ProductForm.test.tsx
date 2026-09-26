@@ -719,6 +719,48 @@ describe('product affiliate entry presentation', () => {
         expect(screen.queryByText('This product changed while you were editing it. Refresh the product before retrying.')).toBeNull()
     })
 
+    it('generates English simple SKUs as before and Arabic simple SKUs from unique draft identities', async () => {
+        const first = render(<ProductForm mode="modal" />)
+        await screen.findByText('products.basicInfo')
+        fireEvent.change(screen.getByLabelText('products.productName *'), { target: { value: 'Blue Widget' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU' }))
+        const skuInput = first.container.querySelector('input[id$="-sku"]') as HTMLInputElement
+        expect(skuInput.value).toBe('BLUE-WIDGET')
+        fireEvent.change(screen.getByLabelText('products.productName *'), { target: { value: 'حاسوب Pro 16' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU' }))
+        const firstArabicSku = skuInput.value
+        expect(firstArabicSku).toMatch(/^PX-[A-F0-9]{32}$/)
+        first.unmount()
+
+        const second = render(<ProductForm mode="modal" />)
+        await screen.findByText('products.basicInfo')
+        fireEvent.change(screen.getByLabelText('products.productName *'), { target: { value: 'حاسوب Pro 16' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU' }))
+        expect((second.container.querySelector('input[id$="-sku"]') as HTMLInputElement).value).not.toBe(firstArabicSku)
+    })
+
+    it('retries an authoritative SKU collision using a new idempotency key and candidate', async () => {
+        apiPostMock.mockReset()
+            .mockRejectedValueOnce({ response: { status: 409, data: { errors: [{ code: 'PRODUCT_SKU_CONFLICT' }] } } })
+            .mockResolvedValueOnce({ data: { id: 'product-new' } })
+        const { container } = render(<ProductForm mode="modal" />)
+        await screen.findByText('products.basicInfo')
+        fireEvent.change(screen.getByLabelText('products.productName *'), { target: { value: 'منتج' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU' }))
+        fireEvent.change(container.querySelector('select')!, { target: { value: 'category-1' } })
+        const publishStatusSelect = Array.from(container.querySelectorAll('select'))
+            .find(select => Array.from(select.options).some(option => option.textContent === 'products.statusDraft'))!
+        fireEvent.change(publishStatusSelect, { target: { value: '0' } })
+        fireEvent.click(screen.getByRole('button', { name: 'products.create' }))
+        await waitFor(() => expect(apiPostMock).toHaveBeenCalledTimes(2))
+        const [first, second] = apiPostMock.mock.calls
+        expect(first[1].sku).toMatch(/^PX-[A-F0-9]{32}$/)
+        expect(second[1].sku).toMatch(/^PX-[A-F0-9]{32}$/)
+        expect(first[1].sku).not.toBe(second[1].sku)
+        expect(first[2].headers['Idempotency-Key']).not.toBe(second[2].headers['Idempotency-Key'])
+        expect((container.querySelector('input[id$="-sku"]') as HTMLInputElement).value).toBe(second[1].sku)
+    })
+
     it('surfaces post-matrix variant validation at the parent form and prevents the parent update', async () => {
         variantsHasPendingChangesMock.mockReturnValue(true)
         variantsPrepareDraftMock.mockResolvedValue({

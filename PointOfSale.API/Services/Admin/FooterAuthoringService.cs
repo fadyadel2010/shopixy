@@ -96,8 +96,8 @@ public sealed class FooterAuthoringService : IFooterAuthoringService
                 throw CreateConflict();
             }
 
-            var publishedCmsSlugs = await LoadPublishedCmsSlugsAsync(scope, tenantId, cancellationToken);
-            _validator.Validate(request, scope, publishedCmsSlugs);
+            var publishedCmsTargets = await LoadPublishedCmsTargetsAsync(scope, tenantId, cancellationToken);
+            _validator.Validate(request, scope, publishedCmsTargets.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase));
 
             var now = DateTime.UtcNow;
             if (scope == FooterAuthoringScope.Marketplace)
@@ -106,7 +106,7 @@ public sealed class FooterAuthoringService : IFooterAuthoringService
             }
             else
             {
-                ReplaceStorefront(scope, tenantId, request, now);
+                ReplaceStorefront(scope, tenantId, request, now, publishedCmsTargets);
             }
 
             await SaveChangesAsync(cancellationToken);
@@ -156,7 +156,11 @@ public sealed class FooterAuthoringService : IFooterAuthoringService
 
         var sections = await sectionsQuery.ToListAsync(cancellationToken);
         var socialLinks = await socialQuery.ToListAsync(cancellationToken);
-        return _mapper.MapStorefrontResponse(scope, sections, socialLinks);
+        var canonicalCmsSlugs = tenantId.HasValue
+            ? (await LoadPublishedCmsTargetsAsync(scope, tenantId, cancellationToken))
+                .ToDictionary(target => target.Value, target => target.Key)
+            : null;
+        return _mapper.MapStorefrontResponse(scope, sections, socialLinks, canonicalCmsSlugs);
     }
 
     private async Task<AdminStorefrontFooterConfigurationResponse> LoadMarketplaceResponseAsync(
@@ -182,47 +186,51 @@ public sealed class FooterAuthoringService : IFooterAuthoringService
         return _mapper.MapMarketplaceResponse(sections, socialLinks);
     }
 
-    private async Task<IReadOnlySet<string>> LoadPublishedCmsSlugsAsync(
+    private async Task<IReadOnlyDictionary<string, Guid>> LoadPublishedCmsTargetsAsync(
         FooterAuthoringScope scope,
         Guid? tenantId,
         CancellationToken cancellationToken)
     {
         if (scope == FooterAuthoringScope.Global)
         {
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
         }
 
-        List<string> slugs;
         if (scope == FooterAuthoringScope.Marketplace)
         {
-            slugs = await _dbContext.MarketplaceCmsPages
+            var pages = await _dbContext.MarketplaceCmsPages
                 .AsNoTracking()
                 .IgnoreQueryFilters()
                 .Where(page => page.IsPublished && !page.IsDraft && page.PublishedAt != null)
-                .Select(page => page.Slug)
-                .Distinct()
+                .Select(page => new { page.PageGroupId, page.Slug, page.Version, page.PublishedAt })
                 .ToListAsync(cancellationToken);
-        }
-        else
-        {
-            slugs = await _dbContext.CmsPages
-                .AsNoTracking()
-                .IgnoreQueryFilters()
-                .Where(page => page.TenantId == tenantId)
-                .Where(page => !page.IsDeleted && page.IsPublished && !page.IsDraft && page.PublishedAt != null)
-                .Select(page => page.Slug)
-                .Distinct()
-                .ToListAsync(cancellationToken);
+
+            return pages
+                .GroupBy(page => page.PageGroupId)
+                .Select(group => group.OrderByDescending(page => page.Version).ThenByDescending(page => page.PublishedAt).First())
+                .ToDictionary(page => page.Slug, page => page.PageGroupId, StringComparer.OrdinalIgnoreCase);
         }
 
-        return new HashSet<string>(slugs, StringComparer.OrdinalIgnoreCase);
+        var storefrontPages = await _dbContext.CmsPages
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(page => page.TenantId == tenantId)
+            .Where(page => !page.IsDeleted && page.IsPublished && !page.IsDraft && page.PublishedAt != null)
+            .Select(page => new { page.PageGroupId, page.Slug, page.Version, page.PublishedAt })
+            .ToListAsync(cancellationToken);
+
+        return storefrontPages
+            .GroupBy(page => page.PageGroupId)
+            .Select(group => group.OrderByDescending(page => page.Version).ThenByDescending(page => page.PublishedAt).First())
+            .ToDictionary(page => page.Slug, page => page.PageGroupId, StringComparer.OrdinalIgnoreCase);
     }
 
     private void ReplaceStorefront(
         FooterAuthoringScope scope,
         Guid? tenantId,
         AdminStorefrontFooterConfigurationRequest request,
-        DateTime now)
+        DateTime now,
+        IReadOnlyDictionary<string, Guid> publishedCmsTargets)
     {
         var existingSections = _dbContext.ChangeTracker.Entries<StorefrontFooterSection>()
             .Where(entry => entry.Entity.TenantId == tenantId)
@@ -235,7 +243,8 @@ public sealed class FooterAuthoringService : IFooterAuthoringService
 
         _dbContext.StorefrontFooterSections.RemoveRange(existingSections);
         _dbContext.StorefrontSocialLinks.RemoveRange(existingSocialLinks);
-        _dbContext.StorefrontFooterSections.AddRange(_mapper.MapStorefrontSections(request, tenantId, now));
+        _dbContext.StorefrontFooterSections.AddRange(
+            _mapper.MapStorefrontSections(request, tenantId, now, publishedCmsTargets));
         _dbContext.StorefrontSocialLinks.AddRange(_mapper.MapStorefrontSocialLinks(request, tenantId, now));
     }
 

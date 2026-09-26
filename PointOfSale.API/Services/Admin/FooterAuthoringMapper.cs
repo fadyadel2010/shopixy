@@ -14,7 +14,8 @@ public sealed class FooterAuthoringMapper
     public AdminStorefrontFooterConfigurationResponse MapStorefrontResponse(
         FooterAuthoringScope scope,
         IReadOnlyCollection<StorefrontFooterSection> sections,
-        IReadOnlyCollection<StorefrontSocialLink> socialLinks)
+        IReadOnlyCollection<StorefrontSocialLink> socialLinks,
+        IReadOnlyDictionary<Guid, string>? canonicalCmsSlugs = null)
     {
         var response = new AdminStorefrontFooterConfigurationResponse
         {
@@ -43,7 +44,8 @@ public sealed class FooterAuthoringMapper
                             LabelLocalized = new LocalizedField { En = link.Label, Ar = link.LabelAr },
                             Type = link.LinkType,
                             Url = link.Url,
-                            CmsPageSlug = link.CmsPageSlug,
+                            CmsPageGroupId = link.CmsPageGroupId,
+                            CmsPageSlug = ResolveCanonicalCmsSlug(link, canonicalCmsSlugs),
                             OpenInNewTab = link.OpenInNewTab,
                             Order = link.SortOrder,
                             IsActive = link.IsActive
@@ -131,7 +133,8 @@ public sealed class FooterAuthoringMapper
     public IReadOnlyList<StorefrontFooterSection> MapStorefrontSections(
         AdminStorefrontFooterConfigurationRequest request,
         Guid? tenantId,
-        DateTime now)
+        DateTime now,
+        IReadOnlyDictionary<string, Guid> publishedCmsTargets)
     {
         return request.Sections!.Select(section => new StorefrontFooterSection
         {
@@ -150,6 +153,7 @@ public sealed class FooterAuthoringMapper
                 LabelAr = NormalizeOptional(link.LabelLocalized?.Ar),
                 LinkType = link.Type,
                 Url = link.Type == FooterLinkType.Cms ? null : link.Url!.Trim(),
+                CmsPageGroupId = ResolveCmsPageGroupId(link, tenantId, publishedCmsTargets),
                 CmsPageSlug = NormalizeCmsSlug(link),
                 OpenInNewTab = link.OpenInNewTab,
                 SortOrder = link.Order,
@@ -275,5 +279,33 @@ public sealed class FooterAuthoringMapper
         return link.Type == FooterLinkType.Cms
             ? CmsPageReadService.NormalizeSlug(link.CmsPageSlug!)
             : null;
+    }
+
+    private static Guid? ResolveCmsPageGroupId(
+        AdminStorefrontFooterLinkRequest link,
+        Guid? tenantId,
+        IReadOnlyDictionary<string, Guid> publishedCmsTargets)
+    {
+        if (link.Type != FooterLinkType.Cms || !tenantId.HasValue)
+        {
+            return null;
+        }
+
+        var slug = CmsPageReadService.NormalizeSlug(link.CmsPageSlug!);
+        return publishedCmsTargets.TryGetValue(slug, out var pageGroupId) ? pageGroupId : null;
+    }
+
+    private static string? ResolveCanonicalCmsSlug(
+        StorefrontFooterLink link,
+        IReadOnlyDictionary<Guid, string>? canonicalCmsSlugs)
+    {
+        if (link.CmsPageGroupId.HasValue &&
+            canonicalCmsSlugs != null &&
+            canonicalCmsSlugs.TryGetValue(link.CmsPageGroupId.Value, out var canonicalSlug))
+        {
+            return canonicalSlug;
+        }
+
+        return link.CmsPageSlug;
     }
 }

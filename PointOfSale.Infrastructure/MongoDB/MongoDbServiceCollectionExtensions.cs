@@ -49,6 +49,19 @@ public static class MongoDbServiceCollectionExtensions
 
         // Register repositories as scoped (following EF patterns)
         services.AddScoped<IProductReadRepository, ProductReadRepository>();
+        services.AddOptions<ProductLookupValidationCacheOptions>()
+            .Bind(configuration.GetSection(ProductLookupValidationCacheOptions.SectionName))
+            .Validate(
+                options => options.PositiveTtlSeconds is > 0 and <= 60,
+                "MongoProductLookupCache:PositiveTtlSeconds must be greater than 0 and no more than 60 seconds.")
+            .Validate(
+                options => options.NegativeTtlSeconds is > 0 and <= 10,
+                "MongoProductLookupCache:NegativeTtlSeconds must be greater than 0 and no more than 10 seconds.")
+            .Validate(
+                options => options.MaxEntries is > 0 and <= 100000,
+                "MongoProductLookupCache:MaxEntries must be between 1 and 100000.")
+            .ValidateOnStart();
+        services.AddSingleton<IProductLookupValidationCache, ProductLookupValidationCache>();
         services.AddScoped<IStorefrontProductProjectionAdmissionPolicy, StorefrontProductProjectionAdmissionPolicy>();
         services.AddScoped<IStorefrontProductProjectionMutationBoundary, StorefrontProductProjectionMutationBoundary>();
         services.AddScoped<IProductSqlAuthorityProjectionWriter, ProductSqlAuthorityProjectionWriter>();

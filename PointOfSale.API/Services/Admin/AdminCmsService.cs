@@ -658,6 +658,12 @@ public sealed class AdminCmsService : IAdminCmsService
         }
 
         var draftElement = JsonSerializer.SerializeToElement(draftObj, JsonOptions);
+        if (navigation.TryGetValue("live", out var liveObj) &&
+            JsonElement.DeepEquals(draftElement, JsonSerializer.SerializeToElement(liveObj, JsonOptions)))
+        {
+            return ExtractNavigationFromConfig(config.CustomizationJson, config.RowVersion);
+        }
+
         var draft = NavigationStorageAdapter.FromStorage(draftElement);
         var admitted = await _navigationAdmission.AdmitAsync(
             tenantId,
@@ -873,6 +879,11 @@ public sealed class AdminCmsService : IAdminCmsService
 
     private void ApplyExpectedRowVersion(Core.Entities.StoreConfig config, uint expectedRowVersion)
     {
+        if (config.RowVersion != expectedRowVersion)
+        {
+            throw new ConcurrencyConflictException("StoreConfig", config.Id);
+        }
+
         _dbContext.Entry(config)
             .Property(item => item.RowVersion)
             .OriginalValue = expectedRowVersion;

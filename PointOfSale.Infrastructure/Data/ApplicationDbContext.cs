@@ -511,6 +511,9 @@ public class ApplicationDbContext : DbContext
             modelBuilder.Entity<Tenant>().ToTable("Tenants", table => table.HasCheckConstraint(
                 "CK_Tenants_Slug_Canonical",
                 "\"Slug\" IS NULL OR (\"Slug\" = LOWER(BTRIM(\"Slug\")) AND LENGTH(\"Slug\") BETWEEN 3 AND 63 AND \"Slug\" ~ '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' AND POSITION('--' IN \"Slug\") = 0)"));
+            modelBuilder.Entity<SupplierCardFundingInstrument>().ToTable("SupplierCardFundingInstruments", table => table.HasCheckConstraint(
+                "CK_SupplierCardFundingInstrument_Last4",
+                "\"Last4\" IS NULL OR \"Last4\" ~ '^[0-9]{4}$'"));
         }
         ConfigurePosUserRowVersion(modelBuilder);
         modelBuilder.Entity<ProviderDeliveryOutboxMessage>().HasQueryFilter(e =>

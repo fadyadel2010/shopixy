@@ -2,11 +2,10 @@
  * Phoenix Sports Theme — Footer (Phase T1.1)
  *
  * Layout identity: solid black footer (#202021) with white text, columns for
- * Shop, Pages, Contact, Social, and a Payment area. Placeholder content is used
- * for the payment row (no real payment-method logos are bundled yet).
+ * Shop, Pages, Contact, and Social content.
  *
  * Runtime injects a localized footer presentation model. Only the black/white
- * presentation and the payment placeholder are Phoenix-specific.
+ * presentation is Phoenix-specific.
  */
 
 import React from 'react';
@@ -17,7 +16,6 @@ import { PHOENIX_CONTAINER, PHOENIX_EYEBROW, PHOENIX_FONT_BODY, PHOENIX_FONT_DIS
 
 const PhoenixFooter: React.FC<FooterPresentationProps> = ({ model }) => {
     const { copyright, labels, navigation, sections, socialLinks, storeName } = model;
-    const sectionLinks = sections.flatMap((section) => section.links);
 
     return (
         <footer className={`mt-auto bg-[#202021] ${PHOENIX_FONT_BODY} text-white`}>
@@ -44,27 +42,29 @@ const PhoenixFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                     href={link.href}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="block text-sm uppercase tracking-[0.18em] text-white/75 transition-colors hover:text-white"
+                                    className="block min-w-0 break-words text-sm uppercase tracking-[0.18em] text-white/75 transition-colors hover:text-white"
                                 >
                                     {link.label}
                                 </AffiliateLink>
                             ))}
                         </div>
-                        {sectionLinks.length > 0 ? (
-                            <div className="mt-6 space-y-3 border-t border-white/10 pt-5">
-                                <p className={`${PHOENIX_EYEBROW} text-white/45`}>
-                                    {sections[0]?.title || labels.customerService}
-                                </p>
-                                {sectionLinks.map((link) => (
-                                    <AffiliateLink
-                                        key={`section-${link.key}`}
-                                        href={link.href}
-                                        target={link.openInNewTab ? '_blank' : undefined}
-                                        rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                        className="block text-sm uppercase tracking-[0.18em] text-white/60 transition-colors hover:text-white"
-                                    >
-                                        {link.label}
-                                    </AffiliateLink>
+                        {sections.length > 0 ? (
+                            <div className="mt-6 space-y-6 border-t border-white/10 pt-5">
+                                {sections.map((section) => (
+                                    <section key={section.key} className="min-w-0 space-y-3">
+                                        <h3 className={`${PHOENIX_EYEBROW} text-white/45`}>{section.title}</h3>
+                                        {section.links.map((link) => (
+                                            <AffiliateLink
+                                                key={link.key}
+                                                href={link.href}
+                                                target={link.openInNewTab ? '_blank' : undefined}
+                                                rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                                className="block min-w-0 break-words text-sm uppercase tracking-[0.18em] text-white/60 transition-colors hover:text-white"
+                                            >
+                                                {link.label}
+                                            </AffiliateLink>
+                                        ))}
+                                    </section>
                                 ))}
                             </div>
                         ) : null}
@@ -91,16 +91,6 @@ const PhoenixFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                         ) : (
                             <p className="mt-4 text-sm text-white/60">{labels.followUs}</p>
                         )}
-                    </div>
-                </div>
-
-                {/* Payment area (placeholder) */}
-                <div className="mt-10 border-t border-white/15 pt-6">
-                    <p className={`${PHOENIX_EYEBROW} text-white/50`}>{labels.paymentMethods}</p>
-                    <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-white/60">
-                        <span className="rounded-sm border border-white/20 px-3 py-1">Visa</span>
-                        <span className="rounded-sm border border-white/20 px-3 py-1">Mastercard</span>
-                        <span className="rounded-sm border border-white/20 px-3 py-1">Cash on Delivery</span>
                     </div>
                 </div>
             </div>

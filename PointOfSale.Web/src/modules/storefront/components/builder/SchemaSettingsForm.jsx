@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { CuratedProductSelector } from './CuratedProductSelector'
 
 function getLocalizedText(value, isRTL) {
     if (!value) {
@@ -85,7 +86,7 @@ function ListCard({ children }) {
 }
 
 export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
-    const { i18n } = useTranslation()
+    const { i18n, t } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const settings = section.settings || {}
 
@@ -94,7 +95,7 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
     }
 
     const renderField = (field, value, onValueChange, fieldKey) => {
-        const label = getLocalizedText(field.label, isRTL)
+        const label = t(`storefront.homepageEditor.fields.${field.key}`, { defaultValue: getLocalizedText(field.label, isRTL) })
         const helpText = getLocalizedText(field.helpText, isRTL)
 
         switch (field.type) {
@@ -137,7 +138,7 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
                         >
                             {(field.options || []).map((option) => (
                                 <option key={`${fieldKey}.${option.value}`} value={option.value}>
-                                    {getLocalizedText(option.label, isRTL)}
+                                    {t(`storefront.homepageEditor.options.${option.value}`, { defaultValue: getLocalizedText(option.label, isRTL) })}
                                 </option>
                             ))}
                         </select>
@@ -276,6 +277,14 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
             case 'guid-list': {
                 const items = Array.isArray(value) ? value : []
 
+                if (field.key === 'productIds') {
+                    if (settings.source !== 'curated') return null
+                    return <div key={fieldKey}>
+                        <CuratedProductSelector ids={items} onChange={onValueChange}
+                            maxItems={settings.maxItems} limit={field.maxItems || 50} />
+                    </div>
+                }
+
                 return (
                     <div key={fieldKey}>
                         <FieldLabel>{label}</FieldLabel>
@@ -349,10 +358,11 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
                             <FieldLabel>{label}</FieldLabel>
                             <button
                                 type="button"
+                                disabled={typeof field.maxItems === 'number' && items.length >= field.maxItems}
                                 onClick={() => onValueChange([...items, cloneValue(field.defaultItem || {})])}
-                                className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                                className="text-xs font-medium text-indigo-600 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                {isRTL ? 'إضافة عنصر' : 'Add Item'}
+                                 {t(field.key === 'highlights' ? 'storefront.homepageEditor.addHighlight' : 'storefront.homepageEditor.addItem')}
                             </button>
                         </div>
 
@@ -361,14 +371,14 @@ export function SchemaSettingsForm({ section, schema = [], onUpdate }) {
                                 <ListCard key={`${fieldKey}.${index}`}>
                                     <div className="flex items-center justify-between">
                                         <p className="text-sm font-medium text-gray-700">
-                                            {field.itemLabel || label} {index + 1}
+                                             {field.key === 'highlights' ? label : field.itemLabel || label} {index + 1}
                                         </p>
                                         <button
                                             type="button"
                                             onClick={() => onValueChange(items.filter((_, itemIndex) => itemIndex !== index))}
                                             className="text-xs font-medium text-red-600 hover:text-red-700"
                                         >
-                                            {isRTL ? 'حذف' : 'Remove'}
+                                             {t('storefront.homepageEditor.remove')}
                                         </button>
                                     </div>
 

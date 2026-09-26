@@ -69,13 +69,15 @@ public sealed class StorefrontNavigationAuthorityCertificationTests
     {
         var projection = ReadRepoFile("PointOfSale.Infrastructure/Consumers/StorefrontConfigProjectionConsumer.cs");
         var navigationStore = ReadRepoFile("PointOfSale.Storefront/src/stores/navigationStore.ts");
+        var layoutRuntime = ReadRepoFile("PointOfSale.Storefront/src/storefront/runtime/layout/LayoutRuntime.tsx");
         var header = ReadRepoFile("PointOfSale.Storefront/src/components/layout/Header.tsx");
 
         Assert.Contains("ProjectionEventFence.TryAcquireAsync", projection, StringComparison.Ordinal);
         Assert.Contains("BuildFreshStoreConfigEventFilter", projection, StringComparison.Ordinal);
         Assert.Contains("DerivativeProjectionMutationGuard.RequireReviewedMutation", projection, StringComparison.Ordinal);
         Assert.Contains("Empty navigation - NO fallback content", navigationStore, StringComparison.Ordinal);
-        Assert.Contains("headerLinks.map", header, StringComparison.Ordinal);
+        Assert.Contains("headerLinks.map", layoutRuntime, StringComparison.Ordinal);
+        Assert.Contains("NavigationSlot", header, StringComparison.Ordinal);
         Assert.DoesNotContain("Fallback: Loading state or basic navigation", header, StringComparison.Ordinal);
     }
 

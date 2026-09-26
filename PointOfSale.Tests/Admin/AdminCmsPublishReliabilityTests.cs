@@ -118,6 +118,57 @@ public sealed class AdminCmsPublishReliabilityTests
         Assert.Equal("Draft Home", snapshotRoot["navigation"]?["live"]?["header"]?["links"]?[0]?["label"]?.GetValue<string>());
     }
 
+    [Fact]
+    public async Task PublishNavigationAsync_WhenDraftAlreadyMatchesLive_IsIdempotent()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var publisher = new Mock<IEventPublisher>();
+        var customization = BuildNavigationCustomizationJson();
+        var root = JsonNode.Parse(customization)!.AsObject();
+        root["navigation"]!["live"] = root["navigation"]!["draft"]!.DeepClone();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId);
+        seedContext.StoreConfigs.Add(new StoreConfig
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            StoreName = "Idempotent Navigation Store",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            CustomizationJson = root.ToJsonString(),
+            VersionsJson = "[]",
+            LiveVersion = 4,
+            RowVersion = 7,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
+        await seedContext.SaveChangesAsync();
+
+        await using var testContext = CreateDbContext(databaseName, tenantId);
+        var service = new AdminCmsService(
+            testContext,
+            Mock.Of<ICmsPageService>(),
+            Mock.Of<ICmsPageReadService>(),
+            Mock.Of<ICmsPagePreviewTokenService>(),
+            new NavigationAdmissionService(testContext),
+            publisher.Object,
+            NullLogger<AdminCmsService>.Instance);
+
+        var result = await service.PublishNavigationAsync(
+            tenantId,
+            7,
+            "trace-navigation-idempotent",
+            CancellationToken.None);
+
+        Assert.False(result.HasPendingChanges);
+        Assert.Equal("7", result.RowVersion);
+        Assert.Equal(4, testContext.StoreConfigs.Single().LiveVersion);
+        Assert.Equal("[]", testContext.StoreConfigs.Single().VersionsJson);
+        publisher.Verify(
+            endpoint => endpoint.PublishAsync(It.IsAny<NavigationPublishedEvent>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId)
     {
         var databaseRoot = DatabaseRoots.GetOrAdd(databaseName, _ => new InMemoryDatabaseRoot());

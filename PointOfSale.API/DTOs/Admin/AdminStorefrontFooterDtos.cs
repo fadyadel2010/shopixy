@@ -66,6 +66,7 @@ public sealed class AdminStorefrontFooterLinkResponse
     public LocalizedField LabelLocalized { get; set; } = new();
     public FooterLinkType Type { get; set; } = FooterLinkType.Internal;
     public string? Url { get; set; }
+    public Guid? CmsPageGroupId { get; set; }
     public string? CmsPageSlug { get; set; }
     public bool OpenInNewTab { get; set; }
     public int Order { get; set; }

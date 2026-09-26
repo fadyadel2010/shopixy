@@ -121,11 +121,11 @@ describe('Sharp layout — Header rendering contract', () => {
 });
 
 describe('Sharp layout — Footer rendering contract', () => {
-    it('renders footer landmark with shop links, social, payment area', () => {
+    it('renders footer landmark with authoritative navigation and social content', () => {
         expect(footerSrc).toContain('<footer');
-        expect(footerSrc).toContain('labels.paymentMethods');
         expect(footerSrc).toContain('labels.followUs');
         expect(footerSrc).toContain('labels.customerService');
+        expect(footerSrc).not.toMatch(/Visa|Mastercard|Cash on Delivery/);
     });
 
     it('uses the emerald/white luxury palette', () => {

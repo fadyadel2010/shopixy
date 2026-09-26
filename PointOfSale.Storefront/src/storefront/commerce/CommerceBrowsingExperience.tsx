@@ -1,6 +1,7 @@
 import { AffiliateLink } from '@/components/common/AffiliateLink';
 import { ThemeBadge, ThemeEmptyState } from '@/components/theme-components';
 import type { ThemeComponentTheme } from '@/components/theme-components';
+import { useTranslation } from '@/i18n';
 import type { ProductDiscoveryFacets, ProductListItemDto } from '@/types';
 import { resolveProductImage } from '@/utils';
 import { normalizeCommerceTheme } from './commerceTheme';
@@ -286,42 +287,15 @@ export function CommercePageHeader({
     resultText?: string;
     categoryName?: string;
 }) {
+    const { t } = useTranslation();
     const theme = normalizeCommerceTheme(themeId);
     const styles = commercePageStyles[theme];
-    const eyebrow = {
-        modern: 'Shop faster',
-        minimal: 'Browse quietly',
-        fashion: 'Collection edit',
-        pearl: 'Private selection',
-        phoenix: 'Performance edit',
-        hype: 'Tech drop',
-        electronics: 'Product matrix',
-        alizon: 'Superstore browse',
-        sharp: 'Jewelry browse',
-        cosmetics: 'Beauty edit',
-        seven: 'Collection edit',
-        default: 'Browse',
-    }[theme];
-    const subtitle = {
-        modern: categoryName ? 'Promotions, categories, and essentials stay close so discovery keeps moving.' : 'A balanced catalog view for quick product discovery.',
-        minimal: 'A quieter catalog view with fewer interruptions and more room to compare.',
-        fashion: categoryName ? 'An editorial path through the current collection.' : 'Collections lead the rhythm, with products arranged like a buying edit.',
-        pearl: 'A boutique browsing pace with product detail treated as part of the presentation.',
-        phoenix: 'Activewear browsing keeps launches, stock, and movement-ready products prominent.',
-        hype: 'A fast electronics browsing path for comparing drops, offers, and availability.',
-        electronics: 'Availability, sorting, and facets are kept prominent for comparison-led decisions.',
-        alizon: 'A general-merchandise browsing path with product shelves organized by category.',
-        sharp: 'A jewelry browsing path with product carousels organized by collection.',
-        cosmetics: 'A beauty browsing path with square product cards, compact pricing, and editorial collection rhythm.',
-        seven: 'An editorial path through the current collection.',
-        default: 'Browse available products.',
-    }[theme];
 
     return (
         <div className={styles.header}>
-            <p className={styles.eyebrow}>{eyebrow}</p>
+            <p className={styles.eyebrow}>{categoryName || t('common.products')}</p>
             <h1 className={styles.title}>{title}</h1>
-            <p className={styles.subtitle}>{resultText ? `${resultText}. ${subtitle}` : subtitle}</p>
+            {resultText ? <p className={styles.subtitle}>{resultText}</p> : null}
         </div>
     );
 }
@@ -339,6 +313,8 @@ export function CommerceMerchandisingBlock({
     categoryName?: string;
     isRTL?: boolean;
 }) {
+    const { t } = useTranslation();
+
     if (products.length === 0) {
         return null;
     }
@@ -350,13 +326,16 @@ export function CommerceMerchandisingBlock({
     const inStockCount = facets?.stock?.inStockCount ?? products.filter(product => product.inStock).length;
     const brandCount = facets?.brands?.length ?? 0;
     const topCategories = (facets?.categories ?? []).slice(0, 3).map(category => category.name).filter(Boolean);
+    const availableText = t('catalog.availableProducts', { count: inStockCount });
+    const promotedText = t('catalog.promotedProducts', { count: promotedCount });
+    const summaryLabel = t('catalog.browsingSummary');
 
     if (theme === 'minimal') {
         return (
-            <section className="mb-10 border-y border-muted/15 py-4" aria-label="Browsing summary">
+            <section className="mb-10 border-y border-muted/15 py-4" aria-label={summaryLabel}>
                 <div className={cx('flex flex-wrap items-center justify-between gap-4 text-sm text-muted', isRTL && 'flex-row-reverse text-right')}>
-                    <span>{categoryName ? `Curated in ${categoryName}` : 'Curated product browsing'}</span>
-                    <span>{inStockCount} available now</span>
+                    <span>{categoryName || t('common.products')}</span>
+                    <span>{availableText}</span>
                     {topCategories.length > 0 ? <span>{topCategories.join(' / ')}</span> : null}
                 </div>
             </section>
@@ -365,16 +344,14 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'fashion') {
         return (
-            <section className="mb-9 grid gap-4 border-y-2 border-text py-5 md:grid-cols-[minmax(0,1fr)_16rem]" aria-label="Collection feature">
+            <section className="mb-9 grid gap-4 border-y-2 border-text py-5 md:grid-cols-[minmax(0,1fr)_16rem]" aria-label={summaryLabel}>
                 <div className={cx('self-end', isRTL && 'text-right')}>
-                    <p className="text-xs font-black uppercase tracking-[0.3em] text-primary">Campaign focus</p>
+                    <p className="text-xs font-black uppercase tracking-[0.3em] text-primary">{t('common.products')}</p>
                     <h2 className="mt-3 max-w-2xl text-3xl font-black uppercase leading-none text-text md:text-5xl">
-                        {categoryName || promotedProduct.categoryName || 'The current edit'}
+                        {categoryName || promotedProduct.categoryName || t('common.products')}
                     </h2>
                     <p className="mt-4 max-w-xl text-sm font-medium leading-7 text-muted">
-                        {promotedCount > 0
-                            ? `${promotedCount} promoted products are surfaced inside the same catalog flow.`
-                            : 'Products stay arranged for editorial scanning without changing availability or pricing rules.'}
+                        {promotedCount > 0 ? promotedText : availableText}
                     </p>
                 </div>
                 <AffiliateLink href={promotedProduct.slug ? `/products/${promotedProduct.slug}` : `/products/${promotedProduct.id}`} className="group block">
@@ -388,12 +365,10 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'pearl') {
         return (
-            <section className="mx-auto mb-10 max-w-5xl border border-secondary/25 bg-background/90 px-6 py-6 text-center shadow-[0_18px_40px_rgba(15,23,42,0.04)]" aria-label="Boutique curation">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-secondary">Boutique curation</p>
+            <section className="mx-auto mb-10 max-w-5xl border border-secondary/25 bg-background/90 px-6 py-6 text-center shadow-[0_18px_40px_rgba(15,23,42,0.04)]" aria-label={summaryLabel}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.32em] text-secondary">{categoryName || t('common.products')}</p>
                 <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-muted">
-                    {topCategories.length > 0
-                        ? `Explore ${topCategories.join(', ')} with ${inStockCount} available pieces.`
-                        : `Explore ${inStockCount} available pieces selected from the current catalog.`}
+                    {topCategories.length > 0 ? `${topCategories.join(', ')}. ${availableText}` : availableText}
                 </p>
             </section>
         );
@@ -401,12 +376,10 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'phoenix') {
         return (
-            <section className="mb-8 border-y border-black/10 py-5" aria-label="Performance curation">
-                <p className="text-xs font-bold uppercase tracking-[0.22em] text-primary">Performance curation</p>
+            <section className="mb-8 border-y border-black/10 py-5" aria-label={summaryLabel}>
+                <p className="text-xs font-bold uppercase tracking-[0.22em] text-primary">{categoryName || t('common.products')}</p>
                 <p className="mt-3 max-w-2xl text-sm leading-7 text-muted">
-                    {topCategories.length > 0
-                        ? `${topCategories.join(', ')} stay ready with ${inStockCount} available products.`
-                        : `${inStockCount} available products are ready for the current drop.`}
+                    {topCategories.length > 0 ? `${topCategories.join(', ')}. ${availableText}` : availableText}
                 </p>
             </section>
         );
@@ -414,12 +387,10 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'sharp') {
         return (
-            <section className="mx-auto mb-10 max-w-5xl border border-muted/20 bg-background/95 px-6 py-6 text-center shadow-[0_4px_16px_rgba(1,52,35,0.04)]" aria-label="Jewelry curation">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary">Jewelry curation</p>
+            <section className="mx-auto mb-10 max-w-5xl border border-muted/20 bg-background/95 px-6 py-6 text-center shadow-[0_4px_16px_rgba(1,52,35,0.04)]" aria-label={summaryLabel}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-secondary">{categoryName || t('common.products')}</p>
                 <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-muted">
-                    {topCategories.length > 0
-                        ? `Explore ${topCategories.join(', ')} with ${inStockCount} available pieces.`
-                        : `Explore ${inStockCount} available pieces selected from the current catalog.`}
+                    {topCategories.length > 0 ? `${topCategories.join(', ')}. ${availableText}` : availableText}
                 </p>
             </section>
         );
@@ -427,12 +398,10 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'cosmetics') {
         return (
-            <section className="mx-3 mb-8 border-y border-primary/20 bg-background py-5 text-center" aria-label="Beauty curation">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">Beauty curation</p>
+            <section className="mx-3 mb-8 border-y border-primary/20 bg-background py-5 text-center" aria-label={summaryLabel}>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">{categoryName || t('common.products')}</p>
                 <p className="mx-auto mt-3 max-w-2xl text-sm leading-7 text-muted">
-                    {topCategories.length > 0
-                        ? `Explore ${topCategories.join(', ')} with ${inStockCount} available beauty essentials.`
-                        : `Explore ${inStockCount} available beauty essentials selected from the current catalog.`}
+                    {topCategories.length > 0 ? `${topCategories.join(', ')}. ${availableText}` : availableText}
                 </p>
             </section>
         );
@@ -440,24 +409,24 @@ export function CommerceMerchandisingBlock({
 
     if (theme === 'electronics' || theme === 'hype' || theme === 'alizon') {
         return (
-            <section className="mb-5 grid gap-3 rounded-md border border-muted/25 bg-background p-3 sm:grid-cols-3" aria-label="Decision support summary">
-                <Metric label="Available" value={String(inStockCount)} />
-                <Metric label="Brands" value={String(brandCount)} />
-                <Metric label="Offers" value={String(promotedCount)} />
+            <section className="mb-5 grid gap-3 rounded-md border border-muted/25 bg-background p-3 sm:grid-cols-3" aria-label={summaryLabel}>
+                <Metric label={t('catalog.available')} value={String(inStockCount)} />
+                <Metric label={t('catalog.brands')} value={String(brandCount)} />
+                <Metric label={t('catalog.offers')} value={String(promotedCount)} />
             </section>
         );
     }
 
     return (
-        <section className="mb-7 rounded-md border border-primary/15 bg-primary/5 p-4" aria-label="Merchandising summary">
+        <section className="mb-7 rounded-md border border-primary/15 bg-primary/5 p-4" aria-label={summaryLabel}>
             <div className={cx('flex flex-wrap items-center justify-between gap-3', isRTL && 'flex-row-reverse text-right')}>
                 <div>
-                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">Featured browsing</p>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-primary">{categoryName || t('common.products')}</p>
                     <p className="mt-1 text-sm text-muted">
-                        {promotedCount > 0 ? `${promotedCount} active offers are visible in this catalog view.` : 'Browse featured products with current pricing and stock evidence.'}
+                        {promotedCount > 0 ? promotedText : availableText}
                     </p>
                 </div>
-                {promotedCount > 0 ? <ThemeBadge themeId={theme} tone="accent">{promotedCount} offers</ThemeBadge> : null}
+                {promotedCount > 0 ? <ThemeBadge themeId={theme} tone="accent">{promotedText}</ThemeBadge> : null}
             </div>
         </section>
     );

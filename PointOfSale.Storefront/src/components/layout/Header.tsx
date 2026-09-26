@@ -79,7 +79,7 @@ const MobileMenu: React.FC<MobileMenuProps> = ({ isOpen, onClose, model, slots }
             {/* Menu Panel */}
             <div
                 ref={menuRef}
-                className="fixed inset-y-0 right-0 w-72 max-w-[85vw] bg-background shadow-xl z-50 md:hidden animate-slide-in-right"
+                className="fixed inset-y-0 w-72 max-w-[85vw] bg-background shadow-xl z-50 md:hidden animate-slide-in-right ltr:right-0 rtl:left-0"
                 role="dialog"
                 aria-modal="true"
                 aria-label="Navigation menu"

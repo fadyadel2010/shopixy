@@ -1,4 +1,5 @@
 import { AlertCircle, CheckCircle2, Clock3 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { AUTHORING_STATUS_LABELS } from '../contracts/authoringContracts'
 
@@ -14,6 +15,7 @@ const statusStyles = {
 }
 
 export function AuthoringStatusBadge({ state = 'draft', children }) {
+    const { t } = useTranslation()
     const Icon = state === 'dirty' || state === 'error'
         ? AlertCircle
         : state === 'published' || state === 'live'
@@ -23,7 +25,7 @@ export function AuthoringStatusBadge({ state = 'draft', children }) {
     return (
         <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${statusStyles[state] || statusStyles.draft}`}>
             <Icon size={13} aria-hidden="true" />
-            {children || AUTHORING_STATUS_LABELS[state] || AUTHORING_STATUS_LABELS.draft}
+            {children || t(`storefront.homepageEditor.status.${state}`, { defaultValue: AUTHORING_STATUS_LABELS[state] || AUTHORING_STATUS_LABELS.draft })}
         </span>
     )
 }

@@ -11,18 +11,18 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         var list = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/pages/CmsPagesList.jsx");
         var admission = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/cmsPageIdentityAuthority.js");
 
-        Assert.Contains("<Route element={<PosRoleRouteGuard roles={['Owner', 'Admin']} />}>", app, StringComparison.Ordinal);
+        Assert.Contains("<Route element={<PosPermissionRouteGuard permission=\"storefront.design.manage\" />}>", app, StringComparison.Ordinal);
         Assert.Contains("api.get('/admin/pages', noStoreOptions)", frontendService, StringComparison.Ordinal);
         Assert.Contains("api.get(`/admin/pages/${pageId}/versions`, noStoreOptions)", frontendService, StringComparison.Ordinal);
         Assert.Contains("api.post(`/admin/pages/${pageId}/preview-link`, undefined, noStoreOptions)", frontendService, StringComparison.Ordinal);
         Assert.Contains("'If-Match': `\"${expectedVersion}\"`", frontendService, StringComparison.Ordinal);
         Assert.DoesNotContain("localStorage", editor, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("sessionStorage", editor, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(savedPage", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(published", editor, StringComparison.Ordinal);
+        Assert.Contains("const admittedPage = adoptAuthoritativePage(", editor, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(published, targetPage.id", editor, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentCmsPageVersionHistoryPresentation(data, currentUser", editor, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentCmsPageIdentityPresentation(rolledBack", editor, StringComparison.Ordinal);
-        Assert.Contains("previewToken", editor, StringComparison.Ordinal);
+        Assert.Contains("window.open(previewAccess.previewUrl", editor, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentCmsPageListPresentation(data, currentUser)", list, StringComparison.Ordinal);
         Assert.Contains("await loadPages()", list, StringComparison.Ordinal);
         Assert.Contains("deriveCurrentCmsPageVersionHistoryPresentation", admission, StringComparison.Ordinal);
@@ -56,7 +56,7 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         Assert.Contains("NormalizeOptionalUrl", service, StringComparison.Ordinal);
         Assert.Contains("StageStorefrontCmsPagePublishedEventAsync", service, StringComparison.Ordinal);
         Assert.Contains("StageStorefrontCmsPageDeletedEventAsync", service, StringComparison.Ordinal);
-        Assert.Contains("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
 
         Assert.Contains("TryValidatePreviewToken(", publicController, StringComparison.Ordinal);
         Assert.Contains("GetPreviewPageByIdAsync", publicController, StringComparison.Ordinal);
@@ -80,6 +80,36 @@ public sealed class CmsEndToEndAuthorityCertificationTests
         Assert.Contains("NavigationAdmissionMode.Publish", navigationService, StringComparison.Ordinal);
         Assert.Contains("ResolveCmsPage(", navigationAdmission, StringComparison.Ordinal);
         Assert.Contains("NAVIGATION_CMS_PAGE_UNPUBLISHED", navigationAdmission, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CmsPagePostgresStateTransitions_MustReleaseUniqueSlotsAndDiscardFailedTrackedState()
+    {
+        var service = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Cms/CmsPageService.cs");
+        var publishedSlotRelease = service.IndexOf(
+            "if (transaction != null && publishedPages.Count > 0)",
+            StringComparison.Ordinal);
+        var replacementActivation = service.IndexOf(
+            "draftPage.IsPublished = true;",
+            StringComparison.Ordinal);
+
+        Assert.True(publishedSlotRelease >= 0 && publishedSlotRelease < replacementActivation);
+        Assert.Contains("_dbContext.ChangeTracker.Clear();", service, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CmsSeedPostgresLock_MustProjectXminConcurrencyToken()
+    {
+        var seedService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/CmsSeedService.cs");
+
+        Assert.Contains("SELECT sc.*, sc.xmin", seedService, StringComparison.Ordinal);
+        Assert.Contains("FOR UPDATE", seedService, StringComparison.Ordinal);
+        Assert.Contains("AddDefaultStorefrontHomepage", seedService, StringComparison.Ordinal);
+        Assert.Contains("new StoreConfigPublishedEvent", seedService, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "[\"backgroundImage\"] = CreatePlaceholderImageDataUrl",
+            seedService,
+            StringComparison.Ordinal);
     }
 
     [Fact]

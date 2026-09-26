@@ -66,6 +66,10 @@ public class CommerceHubAutoHealingService :
     private const int BackgroundMongoScanBatchSize = 200;
     private const int MaxBackgroundPerRun = 100;
     private const int CircuitBreakerFailureThreshold = 20;
+    private const int StartupReadinessMaxAttempts = 30;
+    private static readonly TimeSpan StartupReadinessInitialDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan StartupReadinessMaxDelay = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan StartupReadinessAttemptTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BatchWindow = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan BackgroundReconciliationInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DeduplicationTtl = TimeSpan.FromMinutes(3);
@@ -215,7 +219,17 @@ public class CommerceHubAutoHealingService :
     {
         _logger.LogInformation("CommerceHub auto-healing service is starting.");
 
-        await EnqueueStartupRecoveryAsync(stoppingToken);
+        var startupRunId = Guid.NewGuid();
+        if (await WaitForSearchWriteReadinessAsync(startupRunId, stoppingToken))
+        {
+            await EnqueueStartupRecoveryAsync(stoppingToken, startupRunId);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "STARTUP_RECOVERY_DEFERRED_DEPENDENCY_NOT_READY | Dependency: Elasticsearch | RunId: {RunId} | Reason: startup-readiness-exhausted",
+                startupRunId);
+        }
         var nextBackgroundReconciliationAtUtc = DateTime.UtcNow.Add(BackgroundReconciliationInterval);
 
         while (!stoppingToken.IsCancellationRequested)
@@ -309,6 +323,17 @@ public class CommerceHubAutoHealingService :
             var mongoDbContext = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var searchIndexService = scope.ServiceProvider.GetRequiredService<ICommerceHubSearchIndexService>();
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            var readiness = await searchIndexService.CheckWriteReadinessAsync(cancellationToken);
+            if (!readiness.IsReady)
+            {
+                _logger.LogWarning(
+                    "STARTUP_RECOVERY_DEFERRED_DEPENDENCY_NOT_READY | Dependency: Elasticsearch | Reason: {Reason} | ClusterStatus: {ClusterStatus} | Detail: background-reconciliation-skipped",
+                    readiness.Reason,
+                    readiness.ClusterStatus);
+                return;
+            }
+
             var reconciledAtUtc = DateTime.UtcNow;
 
             var mongoCandidates = await mongoDbContext.CommerceHubProducts
@@ -480,13 +505,85 @@ public class CommerceHubAutoHealingService :
             document.TenantId);
     }
 
-    private async Task EnqueueStartupRecoveryAsync(CancellationToken cancellationToken)
+    private async Task<bool> WaitForSearchWriteReadinessAsync(
+        Guid runId,
+        CancellationToken cancellationToken)
     {
+        using var scope = _scopeFactory.CreateScope();
+        var searchIndexService = scope.ServiceProvider.GetRequiredService<ICommerceHubSearchIndexService>();
+        var delay = StartupReadinessInitialDelay;
+
+        for (var attempt = 1; attempt <= StartupReadinessMaxAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            CommerceHubSearchWriteReadiness readiness;
+            using (var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                attemptCts.CancelAfter(StartupReadinessAttemptTimeout);
+                try
+                {
+                    readiness = await searchIndexService.CheckWriteReadinessAsync(attemptCts.Token);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    readiness = CommerceHubSearchWriteReadiness.NotReady(
+                        "startup-readiness-attempt-timed-out");
+                }
+            }
+
+            if (readiness.IsReady)
+            {
+                _logger.LogInformation(
+                    "STARTUP_RECOVERY_DEPENDENCY_READY | Dependency: Elasticsearch | RunId: {RunId} | Attempt: {Attempt} | ClusterStatus: {ClusterStatus} | WriteIndex: {WriteIndex}",
+                    runId,
+                    attempt,
+                    readiness.ClusterStatus,
+                    readiness.WriteIndexName);
+                return true;
+            }
+
+            var isLastAttempt = attempt == StartupReadinessMaxAttempts;
+            _logger.LogWarning(
+                "STARTUP_RECOVERY_DEFERRED_DEPENDENCY_NOT_READY | Dependency: Elasticsearch | RunId: {RunId} | Reason: {Reason} | ClusterStatus: {ClusterStatus} | Attempt: {Attempt}/{MaxAttempts} | NextRetryIn: {NextRetryIn}",
+                runId,
+                readiness.Reason,
+                readiness.ClusterStatus,
+                attempt,
+                StartupReadinessMaxAttempts,
+                isLastAttempt ? "none-exhausted" : delay.ToString());
+            if (isLastAttempt)
+            {
+                return false;
+            }
+
+            await Task.Delay(delay, cancellationToken);
+            delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, StartupReadinessMaxDelay.Ticks));
+        }
+
+        return false;
+    }
+
+    private async Task EnqueueStartupRecoveryAsync(
+        CancellationToken cancellationToken,
+        Guid? runId = null)
+    {
+        var startupRunId = runId ?? Guid.NewGuid();
         try
         {
             using var scope = _scopeFactory.CreateScope();
-            var mongoDbContext = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var searchIndexService = scope.ServiceProvider.GetRequiredService<ICommerceHubSearchIndexService>();
+            var readiness = await searchIndexService.CheckWriteReadinessAsync(cancellationToken);
+            if (!readiness.IsReady)
+            {
+                _logger.LogWarning(
+                    "STARTUP_RECOVERY_DEFERRED_DEPENDENCY_NOT_READY | Dependency: Elasticsearch | RunId: {RunId} | Reason: {Reason} | ClusterStatus: {ClusterStatus} | Detail: pre-scan-readiness-check-failed",
+                    startupRunId,
+                    readiness.Reason,
+                    readiness.ClusterStatus);
+                return;
+            }
+
+            var mongoDbContext = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var startupRecoveryAtUtc = DateTime.UtcNow;
 
@@ -736,6 +833,9 @@ public class CommerceHubAutoHealingService :
         var retryCount = 0;
         string? failureReason = null;
         Exception? failureException = null;
+        var deferredDependencyNotReady = false;
+        string? deferredReason = null;
+        string? deferredClusterStatus = null;
 
         for (var attempt = 1; attempt <= MaxRetryAttempts; attempt++)
         {
@@ -797,12 +897,42 @@ public class CommerceHubAutoHealingService :
                         ? "Elasticsearch index returned false."
                         : "Elasticsearch delete returned false.";
                 failureException = null;
+
+                var falseReadiness = await indexService.CheckWriteReadinessAsync(cancellationToken);
+                if (!falseReadiness.IsReady)
+                {
+                    deferredDependencyNotReady = true;
+                    deferredReason = falseReadiness.Reason;
+                    deferredClusterStatus = falseReadiness.ClusterStatus;
+                    failureReason = $"Deferred: search dependency not ready ({falseReadiness.Reason}).";
+                    break;
+                }
+
                 RecordFailureAttempt(DateTime.UtcNow);
             }
-            catch (Exception ex)
+            catch (CommerceHubSearchDependencyNotReadyException exception)
             {
-                failureReason = ex.Message;
-                failureException = ex;
+                deferredDependencyNotReady = true;
+                deferredReason = exception.Reason;
+                failureReason = $"Deferred: search dependency not ready ({exception.Reason}).";
+                failureException = null;
+                break;
+            }
+            catch (Exception exception)
+            {
+                var exceptionReadiness = await indexService.CheckWriteReadinessAsync(cancellationToken);
+                if (!exceptionReadiness.IsReady)
+                {
+                    deferredDependencyNotReady = true;
+                    deferredReason = exceptionReadiness.Reason;
+                    deferredClusterStatus = exceptionReadiness.ClusterStatus;
+                    failureReason = $"Deferred: search dependency not ready ({exceptionReadiness.Reason}). Last error: {exception.Message}";
+                    failureException = null;
+                    break;
+                }
+
+                failureReason = exception.Message;
+                failureException = exception;
                 RecordFailureAttempt(DateTime.UtcNow);
             }
 
@@ -823,6 +953,39 @@ public class CommerceHubAutoHealingService :
             }
         }
 
+        if (deferredDependencyNotReady)
+        {
+            stopwatch.Stop();
+            if (document != null)
+            {
+                await UpdateSearchSyncDeferredAsync(
+                    document.Id,
+                    document.TenantId,
+                    lastAttemptedAtUtc,
+                    deferredReason,
+                    mongoDbContext,
+                    cancellationToken);
+            }
+
+            _logger.LogWarning(
+                "STARTUP_RECOVERY_DEFERRED_DEPENDENCY_NOT_READY | Dependency: Elasticsearch | ListingId: {ListingId} | TenantId: {TenantId} | Reason: {Reason} | ClusterStatus: {ClusterStatus} | RecoveryReason: {RecoveryReason} | DurationMs: {DurationMs}",
+                queuedItem.ListingId,
+                tenantId,
+                deferredReason,
+                deferredClusterStatus,
+                queuedItem.Reason,
+                stopwatch.ElapsedMilliseconds);
+            await PersistRecoveryEvidenceAsync(
+                dbContext,
+                queuedItem,
+                tenantId,
+                "Deferred",
+                stopwatch,
+                failureReason,
+                cancellationToken);
+            return;
+        }
+
         if (document != null)
         {
             await UpdateSearchSyncStatusAsync(
@@ -838,6 +1001,14 @@ public class CommerceHubAutoHealingService :
         stopwatch.Stop();
         Interlocked.Increment(ref _processedCount);
         Interlocked.Increment(ref _failureCount);
+        _logger.LogError(
+            "STARTUP_RECOVERY_REAL_INDEX_FAILURE | ListingId: {ListingId} | TenantId: {TenantId} | RecoveryReason: {RecoveryReason} | RetryCount: {RetryCount} | DurationMs: {DurationMs} | Error: {Error}",
+            queuedItem.ListingId,
+            tenantId,
+            queuedItem.Reason,
+            retryCount,
+            stopwatch.ElapsedMilliseconds,
+            failureReason ?? "Unknown auto-healing failure.");
         LogResult(
             logError: true,
             exception: failureException,
@@ -1083,6 +1254,31 @@ public class CommerceHubAutoHealingService :
             Builders<CommerceHubProductDocument>.Update.Set(x => x.SearchSyncStatus, CommerceHubProductDocument.SearchSyncPending),
             Builders<CommerceHubProductDocument>.Update.Set(x => x.SearchLastAttemptedAtUtc, attemptedAtUtc),
             Builders<CommerceHubProductDocument>.Update.Set(x => x.SearchLastError, null));
+
+        await mongoDbContext.CommerceHubProducts.UpdateOneAsync(
+            x => x.Id == listingId && x.TenantId == tenantId,
+            update,
+            cancellationToken: cancellationToken);
+    }
+
+    private static async Task UpdateSearchSyncDeferredAsync(
+        Guid listingId,
+        Guid tenantId,
+        DateTime attemptedAtUtc,
+        string? deferredReason,
+        MongoDbContext mongoDbContext,
+        CancellationToken cancellationToken)
+    {
+        var update = Builders<CommerceHubProductDocument>.Update.Combine(
+            Builders<CommerceHubProductDocument>.Update.Set(
+                x => x.SearchSyncStatus,
+                CommerceHubProductDocument.SearchSyncPending),
+            Builders<CommerceHubProductDocument>.Update.Set(
+                x => x.SearchLastAttemptedAtUtc,
+                attemptedAtUtc),
+            Builders<CommerceHubProductDocument>.Update.Set(
+                x => x.SearchLastError,
+                $"Deferred: search dependency not ready ({deferredReason ?? "unknown"}). Will converge on a later reconciliation pass."));
 
         await mongoDbContext.CommerceHubProducts.UpdateOneAsync(
             x => x.Id == listingId && x.TenantId == tenantId,

@@ -194,6 +194,9 @@ export function validateFooterDraft(draft, { isLocalized, cmsPages = [], allowCm
             } else if (label.trim().length > 160) {
                 issues.push(issue('FOOTER_FIELD_TOO_LONG', `Link ${linkIndex + 1} label must be 160 characters or fewer.`, `${path}.label`))
             }
+            if ((link.labelLocalized?.ar || '').trim().length > 160) {
+                issues.push(issue('FOOTER_FIELD_TOO_LONG', `Link ${linkIndex + 1} Arabic label must be 160 characters or fewer.`, `${path}.labelLocalized.ar`))
+            }
             if (!LINK_TYPES.has(link.type)) {
                 issues.push(issue('FOOTER_LINK_TYPE_INVALID', `Link ${linkIndex + 1} has an invalid type.`, `${path}.type`))
                 return
@@ -244,6 +247,9 @@ export function validateFooterDraft(draft, { isLocalized, cmsPages = [], allowCm
         }
         if (!isExternalUrl(url)) {
             issues.push(issue('FOOTER_EXTERNAL_URL_INVALID', `Social link ${index + 1} must include http:// or https:// and cannot contain credentials.`, `${path}.url`))
+        }
+        if ((link.icon || '').trim().length > 80) {
+            issues.push(issue('FOOTER_FIELD_TOO_LONG', `Social link ${index + 1} icon must be 80 characters or fewer.`, `${path}.icon`))
         }
         if (platforms.has(platform?.toLowerCase()) || socialTargets.has(url?.toLowerCase())) {
             issues.push(issue('FOOTER_DUPLICATE_SOCIAL_LINK', 'Social platforms and social URLs must be unique.', path))

@@ -157,10 +157,10 @@ public class StorefrontLandingPageController : ControllerBase
             tenantId.Value,
             cancellationToken);
 
-        if (product == null)
+        if (product == null || !string.Equals(product.Slug, slug, StringComparison.Ordinal))
         {
             _logger.LogInformation(
-                "[AF-27A:LandingPage] Product failed SQL authority overlay | Slug: {Slug} | TenantId: {TenantId} | TraceId: {TraceId}",
+                "[AF-27A:LandingPage] Product failed current SQL authority or slug check | Slug: {Slug} | TenantId: {TenantId} | TraceId: {TraceId}",
                 slug, tenantId.Value, traceId);
             return NotFound(new ApiErrorResponse(
                 "PRODUCT_NOT_AVAILABLE",

@@ -835,6 +835,26 @@ public sealed class MarketplaceReadControllerTests
             return GetOrCreateAsync(key, cacheType, ttl, factory, maxProjectionLag, cancellationToken);
         }
 
+        public async Task<CacheReadResult<T>> GetOrCreateOwnedWithStatusAsync<T>(
+            string key,
+            string cacheType,
+            string invalidationGenerationKey,
+            TimeSpan ttl,
+            Func<CancellationToken, Task<CachePopulationResult<T>>> factory,
+            TimeSpan? maxProjectionLag = null,
+            CancellationToken cancellationToken = default)
+            where T : class
+        {
+            var value = await GetOrCreateAsync(
+                key,
+                cacheType,
+                ttl,
+                factory,
+                maxProjectionLag,
+                cancellationToken);
+            return new CacheReadResult<T>(value, Refreshed: true);
+        }
+
         public Task AdvanceInvalidationGenerationAsync(
             string invalidationGenerationKey,
             CancellationToken cancellationToken = default)

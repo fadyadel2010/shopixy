@@ -7,6 +7,18 @@ const service = vi.hoisted(() => ({
 }))
 
 vi.mock('./footerAuthoringService', () => service)
+vi.mock('react-i18next', () => ({
+    useTranslation: () => ({
+        t: (key: string, options?: { defaultValue?: string }) => ({
+            'storefront.homepageEditor.concurrentChange': 'Another author saved first.',
+            'storefront.homepageEditor.conflictHint': 'Choose Load Latest to adopt the accepted server version, or Retry My Draft to reapply your retained changes against it.',
+            'storefront.homepageEditor.keepEditing': 'Keep editing',
+            'storefront.homepageEditor.loadLatest': 'Load Latest',
+            'storefront.homepageEditor.newerVersion': 'A newer version is live',
+            'storefront.homepageEditor.retryDraft': 'Retry My Draft',
+        }[key] || options?.defaultValue || key),
+    }),
+}))
 
 import { FooterConfigScreen } from './FooterConfigScreen'
 
@@ -146,5 +158,39 @@ describe('FooterConfigScreen', () => {
         await screen.findByText('Permission required')
         expect(screen.queryByRole('button', { name: 'Save live Footer' })).not.toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Retry loading' })).toBeInTheDocument()
+    })
+
+    it('preserves unsaved localized edits across focus and visibility changes', async () => {
+        renderEditor()
+        await screen.findByText('Live')
+
+        const title = screen.getByRole('textbox', { name: 'Section title EN' })
+        fireEvent.change(title, { target: { value: 'Unsaved focus-safe title' } })
+        fireEvent.blur(title)
+        window.dispatchEvent(new Event('blur'))
+        window.dispatchEvent(new Event('focus'))
+        document.dispatchEvent(new Event('visibilitychange'))
+
+        expect(screen.getByRole('textbox', { name: 'Section title EN' })).toHaveValue('Unsaved focus-safe title')
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+        expect(service.loadFooterConfiguration).toHaveBeenCalledTimes(1)
+        expect(service.saveFooterConfiguration).not.toHaveBeenCalled()
+    })
+
+    it('exposes labelled reorder, toggle, localized, target, and social controls', async () => {
+        const configured = configuration()
+        configured.socialLinks = [{
+            id: 'social-id', platform: 'Instagram', url: 'https://instagram.com/store', icon: null, order: 0, isActive: true,
+        }]
+        service.loadFooterConfiguration.mockResolvedValueOnce(configured)
+        renderEditor()
+        await screen.findByText('Live')
+
+        expect(screen.getByRole('checkbox', { name: 'Section 1 active' })).toBeChecked()
+        expect(screen.getByRole('combobox', { name: 'Link 1 type' })).toHaveValue('Cms')
+        expect(screen.getByRole('combobox', { name: 'Link 1 CMS page' })).toHaveValue('about')
+        expect(screen.getByRole('checkbox', { name: 'Link 1 opens in new tab' })).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: 'Move link 1 up' })).toBeDisabled()
+        expect(screen.getByRole('textbox', { name: 'Social link 1 platform' })).toHaveValue('Instagram')
     })
 })

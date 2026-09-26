@@ -170,18 +170,28 @@ public class ProductReadRepository : IProductReadRepository
 {
     private readonly MongoDbContext _context;
     private readonly ILogger<ProductReadRepository> _logger;
+    private readonly IProductLookupValidationCache? _lookupCache;
 
     public ProductReadRepository(MongoDbContext context)
-        : this(context, NullLogger<ProductReadRepository>.Instance)
+        : this(context, NullLogger<ProductReadRepository>.Instance, lookupCache: null)
     {
     }
 
     public ProductReadRepository(
         MongoDbContext context,
         ILogger<ProductReadRepository> logger)
+        : this(context, logger, lookupCache: null)
+    {
+    }
+
+    public ProductReadRepository(
+        MongoDbContext context,
+        ILogger<ProductReadRepository> logger,
+        IProductLookupValidationCache? lookupCache)
     {
         _context = context;
         _logger = logger;
+        _lookupCache = lookupCache;
     }
 
     /// <inheritdoc />
@@ -244,10 +254,24 @@ public class ProductReadRepository : IProductReadRepository
     }
 
     /// <inheritdoc />
-    public async Task<ProductDocument?> FindByProductIdAsync(
-        Guid tenantId, 
-        Guid productId, 
+    public Task<ProductDocument?> FindByProductIdAsync(
+        Guid tenantId,
+        Guid productId,
         CancellationToken cancellationToken = default)
+    {
+        return _lookupCache is null
+            ? LoadByProductIdFromMongoAsync(tenantId, productId, cancellationToken)
+            : _lookupCache.GetOrAddByIdAsync(
+                tenantId,
+                productId,
+                ct => LoadByProductIdFromMongoAsync(tenantId, productId, ct),
+                cancellationToken);
+    }
+
+    protected virtual async Task<ProductDocument?> LoadByProductIdFromMongoAsync(
+        Guid tenantId,
+        Guid productId,
+        CancellationToken cancellationToken)
     {
         var filter = Builders<ProductDocument>.Filter.And(
             Builders<ProductDocument>.Filter.Eq(p => p.TenantId, tenantId),
@@ -260,11 +284,27 @@ public class ProductReadRepository : IProductReadRepository
     }
 
     /// <inheritdoc />
-    public async Task<ProductDocument?> FindBySlugAsync(
-        Guid tenantId, 
-        string slug, 
+    public Task<ProductDocument?> FindBySlugAsync(
+        Guid tenantId,
+        string slug,
         bool onlineVisibleOnly = true,
         CancellationToken cancellationToken = default)
+    {
+        return _lookupCache is null
+            ? LoadBySlugFromMongoAsync(tenantId, slug, onlineVisibleOnly, cancellationToken)
+            : _lookupCache.GetOrAddBySlugAsync(
+                tenantId,
+                slug,
+                onlineVisibleOnly,
+                ct => LoadBySlugFromMongoAsync(tenantId, slug, onlineVisibleOnly, ct),
+                cancellationToken);
+    }
+
+    protected virtual async Task<ProductDocument?> LoadBySlugFromMongoAsync(
+        Guid tenantId,
+        string slug,
+        bool onlineVisibleOnly,
+        CancellationToken cancellationToken)
     {
         var filterBuilder = Builders<ProductDocument>.Filter;
         var filters = new List<FilterDefinition<ProductDocument>>

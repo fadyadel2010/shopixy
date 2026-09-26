@@ -34,12 +34,14 @@ public sealed class ProductSearchSqlAuthorityBatchTests
         var requestedProduct = Guid.NewGuid();
         var cachedProduct = Guid.NewGuid();
         var cache = new Mock<IRedisJsonCacheService>();
-        cache.Setup(c => c.GetOrCreateOwnedAsync(
+        cache.Setup(c => c.GetOrCreateOwnedWithStatusAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<Func<CancellationToken, Task<CachePopulationResult<ProductReadDto>>>>(),
                 It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ProductReadDto { Id = cachedProduct });
+            .ReturnsAsync(new CacheReadResult<ProductReadDto>(
+                new ProductReadDto { Id = cachedProduct },
+                Refreshed: false));
         var service = new StorefrontProductService(
             Mock.Of<IProductReadRepository>(), db, cache.Object,
             Options.Create(new RedisSettings()), NullLogger<StorefrontProductService>.Instance);
@@ -74,7 +76,7 @@ public sealed class ProductSearchSqlAuthorityBatchTests
                 TenantId = Guid.NewGuid(), ProductId = actualProduct, Slug = "wrong-candidate"
             });
         var cache = new Mock<IRedisJsonCacheService>();
-        cache.Setup(c => c.GetOrCreateOwnedAsync(
+        cache.Setup(c => c.GetOrCreateOwnedWithStatusAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<Func<CancellationToken, Task<CachePopulationResult<ProductReadDto>>>>(),
@@ -85,7 +87,7 @@ public sealed class ProductSearchSqlAuthorityBatchTests
                 {
                     var populated = await factory(ct);
                     Assert.Null(populated.Value);
-                    return populated.Value;
+                    return new CacheReadResult<ProductReadDto>(populated.Value, Refreshed: true);
                 });
         var service = new StorefrontProductService(repository.Object, db, cache.Object,
             Options.Create(new RedisSettings()), NullLogger<StorefrontProductService>.Instance);
@@ -185,7 +187,7 @@ public sealed class ProductSearchSqlAuthorityBatchTests
         bool? cacheSkipped = null;
         DateTime? cachedEventTimestamp = null;
         var cache = new Mock<IRedisJsonCacheService>();
-        cache.Setup(c => c.GetOrCreateOwnedAsync(
+        cache.Setup(c => c.GetOrCreateOwnedWithStatusAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<TimeSpan>(),
                 It.IsAny<Func<CancellationToken, Task<CachePopulationResult<ProductReadDto>>>>(),
@@ -194,12 +196,16 @@ public sealed class ProductSearchSqlAuthorityBatchTests
                 Func<CancellationToken, Task<CachePopulationResult<ProductReadDto>>>, TimeSpan?, CancellationToken>(
                 async (_, _, _, _, factory, _, ct) =>
                 {
-                    if (candidate != null) return candidate;
+                    if (candidate != null)
+                    {
+                        return new CacheReadResult<ProductReadDto>(candidate, Refreshed: false);
+                    }
+
                     var population = await factory(ct);
                     cacheSkipped = population.SkipCache;
                     cachedEventTimestamp = population.SourceEventOccurredAtUtc;
                     if (!population.SkipCache) candidate = population.Value;
-                    return population.Value;
+                    return new CacheReadResult<ProductReadDto>(population.Value, Refreshed: true);
                 });
 
         var service = new StorefrontProductService(

@@ -6,13 +6,14 @@ public sealed class CmsPreviewAuthorityCertificationTests
     public void CmsPublicPreview_MustRemainBackendTokenAndDraftResolutionOwned()
     {
         var storefrontController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/StorefrontPagesController.cs");
+        var cachePolicy = CertificationSource.ReadRepoFile("PointOfSale.API/Middleware/StorefrontHttpCachePolicyMiddleware.cs");
+        var program = CertificationSource.ReadRepoFile("PointOfSale.API/Program.cs");
         var adminController = CertificationSource.ReadRepoFile("PointOfSale.API/Controllers/AdminCmsPagesController.cs");
         var tokenService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Cms/CmsPagePreviewTokenService.cs");
         var readService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Cms/CmsPageReadService.cs");
         var adminService = CertificationSource.ReadRepoFile("PointOfSale.API/Services/Admin/AdminCmsService.cs");
         var frontendService = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/services/cmsService.js");
         var editor = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/pages/CmsPageEditor.jsx");
-        var list = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/pages/CmsPagesList.jsx");
 
         Assert.Contains("TryValidatePreviewToken(", storefrontController, StringComparison.Ordinal);
         Assert.Contains("tenantId!.Value", storefrontController, StringComparison.Ordinal);
@@ -21,7 +22,8 @@ public sealed class CmsPreviewAuthorityCertificationTests
         Assert.Contains("pageVersion", storefrontController, StringComparison.Ordinal);
         Assert.Contains("return Forbid();", storefrontController, StringComparison.Ordinal);
         Assert.Contains("X-Preview-Mode", storefrontController, StringComparison.Ordinal);
-        Assert.Contains("no-store, no-cache, must-revalidate", storefrontController, StringComparison.Ordinal);
+        Assert.Contains("private, no-store, no-cache, max-age=0, must-revalidate", cachePolicy, StringComparison.Ordinal);
+        Assert.Contains("UseMiddleware<PointOfSale.API.Middleware.StorefrontHttpCachePolicyMiddleware>", program, StringComparison.Ordinal);
         Assert.DoesNotContain("IsAuthorizedPreviewRequest", storefrontController, StringComparison.Ordinal);
         Assert.DoesNotContain("GetPagePreviewAsync", storefrontController, StringComparison.Ordinal);
 
@@ -48,10 +50,8 @@ public sealed class CmsPreviewAuthorityCertificationTests
 
         Assert.Contains("admitCmsPreviewAccess", frontendService, StringComparison.Ordinal);
         Assert.Contains("api.post(`/admin/pages/${pageId}/preview-link`, undefined, noStoreOptions)", frontendService, StringComparison.Ordinal);
-        Assert.Contains("previewToken", editor, StringComparison.Ordinal);
-        Assert.Contains("previewToken", list, StringComparison.Ordinal);
-        Assert.Contains("tenant=${encodeURIComponent(currentTenantId)}", editor, StringComparison.Ordinal);
-        Assert.Contains("tenant=${encodeURIComponent(currentTenantId)}", list, StringComparison.Ordinal);
+        Assert.Contains("const previewAccess = await cmsService.createPreviewLink(pageId)", editor, StringComparison.Ordinal);
+        Assert.Contains("window.open(previewAccess.previewUrl", editor, StringComparison.Ordinal);
     }
 
     [Fact]

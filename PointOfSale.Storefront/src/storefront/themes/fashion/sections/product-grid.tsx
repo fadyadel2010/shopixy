@@ -16,11 +16,6 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
     return (
         <section className="bg-white py-12 sm:py-16">
             <div className="mx-auto max-w-7xl px-5 sm:px-6 lg:px-8">
-                <div className="mb-10 bg-slate-950 px-5 py-4 text-xs font-black uppercase tracking-[0.28em] text-white sm:flex sm:items-center sm:justify-between">
-                    <span>Runway shelf</span>
-                    <span className="mt-2 block text-white/60 sm:mt-0">new shapes / styled edits / campaign buys</span>
-                </div>
-
                 <ThemeSectionHeader
                     themeId="fashion"
                     eyebrow={model.labels.eyebrowProducts}
@@ -35,8 +30,8 @@ const ProductGrid: React.FC<ProductGridProps> = ({ productGridModel: model, rend
                 ) : model.isCuratedSelectionInvalid ? (
                     <ThemeEmptyState
                         themeId="fashion"
-                        title="Selected products are still invalid"
-                        message="Use valid product identifiers to render this curated shelf."
+                        title={model.emptyStateTitle}
+                        message={model.emptyStateMessage}
                     />
                 ) : model.products.length === 0 ? (
                     <ThemeEmptyState

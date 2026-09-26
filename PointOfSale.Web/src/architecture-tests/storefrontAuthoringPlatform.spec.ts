@@ -83,9 +83,10 @@ describe('Wave 3 Storefront Authoring Platform architecture', () => {
 
     it('preserves exact feature lifecycle labels and ownership exclusions', () => {
         const combined = featureFiles.map(source).join('\n')
+        const englishLocale = JSON.parse(source(path.join(SRC_DIR, 'i18n', 'locales', 'en.json')))
+        expect(englishLocale.storefront.homepageEditor.publishHomepage).toBe('Publish Homepage')
+        expect(englishLocale.storefront.homepageEditor.publishTemplate).toBe('Publish Product Template')
         ;[
-            'Publish Homepage',
-            'Publish Product Template',
             'Publish Page',
             'Publish Header and Footer Navigation',
             'Save live Footer',

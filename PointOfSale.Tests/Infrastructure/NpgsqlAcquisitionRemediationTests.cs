@@ -367,7 +367,7 @@ public sealed class NpgsqlAcquisitionRemediationTests
     }
 
     [Fact]
-    public async Task MatchingAuthenticatedDomain_ReusesTenantAuthorityWithOneRelationalCommand()
+    public async Task MatchingAuthenticatedDomain_ReusesHostAuthorityWithoutRelationalCommand()
     {
         await using var fixture = CreateFixture();
         var tenant = ActiveTenant("authenticated");
@@ -385,6 +385,36 @@ public sealed class NpgsqlAcquisitionRemediationTests
         await middleware.InvokeAsync(httpContext, tenantContext, fixture.Context);
 
         Assert.Equal(tenant.Id, tenantContext.TenantId);
+        Assert.Equal(0, fixture.Counter.CommandCount);
+    }
+
+    [Fact]
+    public async Task MatchingAuthenticatedDomain_WithSlugHeaderRetainsRelationalSlugValidation()
+    {
+        await using var fixture = CreateFixture();
+        var tenant = ActiveTenant("authenticated-slug");
+        fixture.Context.Tenants.Add(tenant);
+        await fixture.Context.SaveChangesAsync();
+        fixture.Counter.Reset();
+
+        var tenantContext = new TenantContext();
+        var nextCalled = false;
+        var middleware = CreateTenantMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var httpContext = CreateHttpContext("authenticated-slug.example.com");
+        httpContext.User = AuthenticatedUser(tenant.Id);
+        httpContext.Request.Headers[TenantResolutionMiddleware.TenantIdHeaderName] = tenant.Slug;
+        httpContext.Items[HostResolutionContextKeys.DomainResolutionResultItemKey] =
+            DomainResolutionResult.Found("authenticated-slug.example.com", Guid.NewGuid(), tenant.Id);
+
+        await middleware.InvokeAsync(httpContext, tenantContext, fixture.Context);
+
+        Assert.True(nextCalled);
+        Assert.Equal(tenant.Id, tenantContext.TenantId);
+        Assert.Equal(tenant.Id.ToString(), httpContext.Request.Headers[TenantResolutionMiddleware.TenantIdHeaderName]);
         Assert.Equal(1, fixture.Counter.CommandCount);
     }
 

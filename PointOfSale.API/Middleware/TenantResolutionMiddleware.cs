@@ -10,6 +10,7 @@ using PointOfSale.Core.Models;
 using PointOfSale.Infrastructure.Instrumentation;
 using PointOfSale.Infrastructure.Data;
 using PointOfSale.Infrastructure.MultiTenancy;
+using PointOfSale.Infrastructure.Tenancy;
 
 namespace PointOfSale.API.Middleware;
 
@@ -95,8 +96,9 @@ public class TenantResolutionMiddleware
         var allowsAnonymousTenant = endpoint?.Metadata.GetMetadata<AllowAnonymousTenantAttribute>() != null;
 
         var authenticatedTenant = await ResolveAuthenticatedTenantAsync(
-            context.User,
+            context,
             dbContext,
+            inboundTenantHeader,
             context.RequestAborted);
 
         var requestTenant = await ResolveRequestTenantAsync(
@@ -227,23 +229,37 @@ public class TenantResolutionMiddleware
     }
 
     private static async Task<Tenant?> ResolveAuthenticatedTenantAsync(
-        ClaimsPrincipal user,
+        HttpContext context,
         ApplicationDbContext dbContext,
+        string inboundTenantHeader,
         CancellationToken cancellationToken)
     {
-        if (!TryGetAuthenticatedTenantId(user, out var tenantId))
+        if (!TryGetAuthenticatedTenantId(context.User, out var tenantId))
         {
             return null;
         }
 
-        return await dbContext.Tenants
-            .AsNoTracking()
-            .FirstOrDefaultAsync(
-                tenant => tenant.Id == tenantId &&
-                          tenant.IsActive &&
-                          tenant.Status == TenantStatus.Active &&
-                          tenant.DeletedAtUtc == null,
-                cancellationToken);
+        // HostResolution already proved the active tenant and generation-fenced
+        // that verdict across replicas. A matching claim does not need to repeat
+        // the same Tenants query unless a slug-form header needs validation;
+        // mismatches still use the guarded lookup below.
+        if (context.Items.TryGetValue(HostResolutionContextKeys.DomainResolutionResultItemKey, out var existingResult) &&
+            existingResult is DomainResolutionResult domainResolutionResult &&
+            domainResolutionResult.Status == DomainResolutionStatus.Found &&
+            domainResolutionResult.TenantId == tenantId &&
+            (string.IsNullOrWhiteSpace(inboundTenantHeader) ||
+             Guid.TryParse(inboundTenantHeader.Trim(), out _)))
+        {
+            return new Tenant
+            {
+                Id = tenantId,
+                Name = domainResolutionResult.NormalizedHost ?? "resolved-storefront",
+                IsActive = true,
+                Status = TenantStatus.Active
+            };
+        }
+
+        return await TenantAuthorityMemo.GetTenantByIdAsync(dbContext, tenantId, cancellationToken);
     }
 
     private async Task<Tenant?> ResolveRequestTenantAsync(
@@ -314,7 +330,7 @@ public class TenantResolutionMiddleware
         // that is expected to miss on every normal storefront request.
         if (TryExtractTenantSlug(candidateUri, out var slug))
         {
-            return await dbContext.Tenants
+            var tenant = await dbContext.Tenants
                 .AsNoTracking()
                 .FirstOrDefaultAsync(
                     tenant => tenant.Slug == slug &&
@@ -322,6 +338,12 @@ public class TenantResolutionMiddleware
                               tenant.Status == TenantStatus.Active &&
                               tenant.DeletedAtUtc == null,
                     cancellationToken);
+            if (tenant != null)
+            {
+                TenantAuthorityMemo.Store(dbContext, tenant);
+            }
+
+            return tenant;
         }
 
         return await ResolveTenantFromStorefrontBaseUrlAsync(candidateUri, dbContext, cancellationToken);
@@ -353,7 +375,13 @@ public class TenantResolutionMiddleware
             .Take(2)
             .ToListAsync(cancellationToken);
 
-        return matches.Count == 1 ? matches[0] : null;
+        var tenant = matches.Count == 1 ? matches[0] : null;
+        if (tenant != null)
+        {
+            TenantAuthorityMemo.Store(dbContext, tenant);
+        }
+
+        return tenant;
     }
 
     private bool TryExtractTenantSlug(Uri candidateUri, out string slug)

@@ -11,7 +11,14 @@ const cmsService = vi.hoisted(() => ({
 }))
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => navigate }))
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ i18n: { language: 'en' } }) }))
+vi.mock('react-i18next', () => ({
+    useTranslation: () => ({
+        i18n: { language: 'en' },
+        t: (key: string, options?: { defaultValue?: string }) => ({
+            'storefront.homepageEditor.keepEditing': 'Keep editing',
+        }[key] || options?.defaultValue || key),
+    }),
+}))
 vi.mock('../services', () => ({ cmsService }))
 vi.mock('../../../../store/authStore', () => ({
     useAuthStore: (selector: (state: unknown) => unknown) => selector({

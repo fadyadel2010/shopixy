@@ -70,15 +70,13 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductBySlug starting | TenantId: {TenantId} | Slug: {Slug} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, slug, affiliateModeOnly, cacheKey);
 
-        var cacheFactoryExecuted = false;
-        var product = await _cacheService.GetOrCreateOwnedAsync(
+        var cacheResult = await _cacheService.GetOrCreateOwnedWithStatusAsync(
             cacheKey,
             "storefront-product",
             CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
-                cacheFactoryExecuted = true;
                 ProductDocument? document;
                 try
                 {
@@ -123,13 +121,14 @@ public class StorefrontProductService : IStorefrontProductService
             maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken);
 
+        var product = cacheResult.Value;
         if (product != null)
         {
             // The factory has just loaded current SQL authority and checked the
             // requested slug and affiliate mode. Repeating the overlay here on
             // the cold path doubles the same request's relational acquisitions.
             // A Redis hit still requires fresh SQL recomposition.
-            if (cacheFactoryExecuted)
+            if (cacheResult.Refreshed)
             {
                 return product;
             }
@@ -166,15 +165,13 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductById starting | TenantId: {TenantId} | ProductId: {ProductId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, productId, affiliateModeOnly, cacheKey);
 
-        var cacheFactoryExecuted = false;
-        var product = await _cacheService.GetOrCreateOwnedAsync(
+        var cacheResult = await _cacheService.GetOrCreateOwnedWithStatusAsync(
             cacheKey,
             "storefront-product",
             CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductCacheTtlMinutes),
             async ct =>
             {
-                cacheFactoryExecuted = true;
                 ProductDocument? document;
                 try
                 {
@@ -228,9 +225,10 @@ public class StorefrontProductService : IStorefrontProductService
             maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
             cancellationToken: cancellationToken);
 
+        var product = cacheResult.Value;
         if (product != null)
         {
-            if (cacheFactoryExecuted)
+            if (cacheResult.Refreshed)
             {
                 return product;
             }
@@ -630,15 +628,13 @@ public class StorefrontProductService : IStorefrontProductService
             "GetProductList starting | TenantId: {TenantId} | Page: {Page} | PageSize: {PageSize} | CategoryId: {CategoryId} | AffiliateMode: {AffiliateMode} | CacheKey: {CacheKey}",
             tenantId, query.Page, query.PageSize, query.CategoryId, affiliateModeOnly, cacheKey);
 
-        var cacheFactoryExecuted = false;
-        var result = await _cacheService.GetOrCreateOwnedAsync(
+        var cacheResult = await _cacheService.GetOrCreateOwnedWithStatusAsync(
             cacheKey,
             "storefront-product-list",
             CacheKeyBuilder.StorefrontProductsInvalidationGenerationKey(_redisSettings.InstanceName, tenantId),
             TimeSpan.FromMinutes(_redisSettings.ProductListCacheTtlMinutes),
             async ct =>
             {
-                cacheFactoryExecuted = true;
                 try
                 {
                     var (items, totalCount) = await _repository.GetProductListAsync(
@@ -691,12 +687,13 @@ public class StorefrontProductService : IStorefrontProductService
                 }
             },
             maxProjectionLag: TimeSpan.FromSeconds(_redisSettings.MaxProjectionLagSeconds),
-            cancellationToken: cancellationToken)
+            cancellationToken: cancellationToken);
+        var result = cacheResult.Value
             ?? new PagedResult<ProductListItemDto>([], query.Page, query.PageSize, 0);
 
         // A factory result was composed from SQL authority in this request. Running
         // the same full overlay again only reacquires the same authority domains.
-        if (cacheFactoryExecuted)
+        if (cacheResult.Refreshed)
         {
             return result;
         }

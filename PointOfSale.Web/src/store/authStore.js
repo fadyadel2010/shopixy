@@ -33,7 +33,11 @@ const clearStoredSession = () => {
     removeStoredValue(STORAGE_KEYS.AUTH_STORAGE)
 }
 
-const applyUserSession = (set, user) => {
+const hasSameUserAuthority = (currentUser, nextUser) => (
+    currentUser === nextUser || JSON.stringify(currentUser) === JSON.stringify(nextUser)
+)
+
+const applyUserSession = (set, get, user) => {
     const authorizedUser = derivePosVendorSessionUserAuthority(user)
 
     if (!authorizedUser) {
@@ -43,20 +47,24 @@ const applyUserSession = (set, user) => {
     }
 
     writeUserSession(authorizedUser)
+    const currentState = get()
+    if (currentState.isAuthenticated && hasSameUserAuthority(currentState.user, authorizedUser)) {
+        if (!currentState.hasHydrated) {
+            set({ hasHydrated: true })
+        }
+        return
+    }
+
     set({ user: authorizedUser, isAuthenticated: true, hasHydrated: true })
 }
 
-export const useAuthStore = create((set) => ({
+export const useAuthStore = create((set, get) => ({
     user: null,
     isAuthenticated: false,
     hasHydrated: false,
 
-    beginRouteAuthorityValidation: () => {
-        set({ hasHydrated: false })
-    },
-
     login: (user) => {
-        applyUserSession(set, user)
+        applyUserSession(set, get, user)
     },
 
     logout: () => {
@@ -65,11 +73,11 @@ export const useAuthStore = create((set) => ({
     },
 
     hydrateSession: (user) => {
-        applyUserSession(set, user)
+        applyUserSession(set, get, user)
     },
 
     updateUser: (user) => {
-        applyUserSession(set, user)
+        applyUserSession(set, get, user)
     },
 
     setHasHydrated: (hasHydrated) => set({ hasHydrated }),

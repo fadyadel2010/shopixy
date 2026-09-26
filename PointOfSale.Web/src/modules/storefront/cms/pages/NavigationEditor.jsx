@@ -81,6 +81,8 @@ const formatSavedAt = (value) => {
     }).format(date)
 }
 
+const getNavigationDraftFingerprint = (value) => JSON.stringify(value?.draft ?? null)
+
 const resolveNavigationView = (pathname, search) => {
     return new URLSearchParams(search).get('view') === 'footer' ? 'footer' : 'header'
 }
@@ -121,6 +123,7 @@ export function NavigationEditor() {
     // Refs for debounced save
     const saveTimeoutRef = useRef(null)
     const saveAbortControllerRef = useRef(null)
+    const savePromiseRef = useRef(null)
     const saveRequestIdRef = useRef(0)
     const navigationLoadAbortRef = useRef(null)
     const targetsLoadAbortRef = useRef(null)
@@ -223,80 +226,106 @@ export function NavigationEditor() {
         }
     }
 
-    const handleSave = useCallback(async (silent = false, candidate = navigation) => {
-        if (!candidate?.draft) {
-            return false
-        }
+    const handleSave = useCallback((silent = false, candidate = null) => {
+        clearScheduledSave(false)
 
-        clearScheduledSave(true)
-
-        const controller = new AbortController()
-        saveAbortControllerRef.current = controller
-        const requestId = saveRequestIdRef.current + 1
-        saveRequestIdRef.current = requestId
-
-        setIsSaving(true)
-        setSaveStatus('saving')
-        setSaveErrorBanner(null)
-        setConflict(null)
-
-        try {
-            const savedNavigation = await cmsService.updateNavigation(candidate, { signal: controller.signal })
-
-            if (controller.signal.aborted || requestId !== saveRequestIdRef.current) {
+        const saveOperation = async () => {
+            const submittedNavigation = candidate ?? useCmsStore.getState().navigation
+            if (!submittedNavigation?.draft) {
                 return false
             }
 
-            setNavigation(savedNavigation)
-            acceptedNavigationRef.current = savedNavigation
-            setNavigationDirty(false)
-            setLastSavedAt(new Date().toISOString())
-            setSaveStatus('saved')
-            return savedNavigation
-        } catch (err) {
-            if (isRequestCanceled(err)) {
+            const controller = new AbortController()
+            saveAbortControllerRef.current = controller
+            const requestId = saveRequestIdRef.current + 1
+            saveRequestIdRef.current = requestId
+            const submittedFingerprint = getNavigationDraftFingerprint(submittedNavigation)
+
+            setIsSaving(true)
+            setSaveStatus('saving')
+            setSaveErrorBanner(null)
+            setConflict(null)
+
+            try {
+                const savedNavigation = await cmsService.updateNavigation(submittedNavigation, { signal: controller.signal })
+
+                if (controller.signal.aborted) {
+                    return false
+                }
+
+                const currentNavigation = useCmsStore.getState().navigation
+                const hasNewerLocalEdits = getNavigationDraftFingerprint(currentNavigation) !== submittedFingerprint
+                acceptedNavigationRef.current = savedNavigation
+                setLastSavedAt(new Date().toISOString())
+
+                if (hasNewerLocalEdits) {
+                    setNavigation({
+                        ...savedNavigation,
+                        draft: currentNavigation.draft,
+                        hasPendingChanges: true,
+                    })
+                    setNavigationDirty(true)
+                    setSaveStatus('unsaved')
+                    return false
+                } else {
+                    setNavigation(savedNavigation)
+                    setNavigationDirty(false)
+                    setSaveStatus('saved')
+                }
+
+                return savedNavigation
+            } catch (err) {
+                if (isRequestCanceled(err)) {
+                    return false
+                }
+
+                console.error('Failed to save navigation:', err)
+                const conflictState = extractNavigationConflict(err)
+                const admissionState = extractNavigationAdmissionError(err)
+
+                if (conflictState) {
+                    setSaveStatus('conflict')
+                    setConflict(conflictState)
+                } else if (admissionState) {
+                    setSaveStatus('error')
+                    setSaveErrorBanner(admissionState.message)
+                } else {
+                    const message = err?.response?.data?.message
+                        || err?.message
+                        || (isRTL ? 'فشل حفظ تغييرات التنقل. حاول مرة أخرى.' : 'Failed to save navigation changes. Please try again.')
+                    setSaveStatus('error')
+                    setSaveErrorBanner(message)
+                }
+
+                if (!silent) {
+                    setError(null)
+                }
+
                 return false
-            }
+            } finally {
+                if (saveAbortControllerRef.current === controller) {
+                    saveAbortControllerRef.current = null
+                }
 
-            console.error('Failed to save navigation:', err)
-            const conflictState = extractNavigationConflict(err)
-            const admissionState = extractNavigationAdmissionError(err)
-            
-            if (conflictState) {
-                // Conflict detected - show conflict banner only
-                setSaveStatus('conflict')
-                setConflict(conflictState)
-            } else if (admissionState) {
-                setSaveStatus('error')
-                setSaveErrorBanner(admissionState.message)
-            } else {
-                // Generic error - show retry banner
-                const message = err?.response?.data?.message
-                    || err?.message
-                    || (isRTL ? 'فشل حفظ تغييرات التنقل. حاول مرة أخرى.' : 'Failed to save navigation changes. Please try again.')
-                setSaveStatus('error')
-                setSaveErrorBanner(message)
-            }
-
-            if (!silent) {
-                setError(null)
-            }
-
-            return false
-        } finally {
-            if (saveAbortControllerRef.current === controller) {
-                saveAbortControllerRef.current = null
-            }
-
-            if (!controller.signal.aborted && requestId === saveRequestIdRef.current) {
-                setIsSaving(false)
+                if (!controller.signal.aborted && requestId === saveRequestIdRef.current) {
+                    setIsSaving(false)
+                }
             }
         }
-    }, [clearScheduledSave, isRTL, navigation, setNavigation, setNavigationDirty])
+
+        const queuedSave = (savePromiseRef.current ?? Promise.resolve()).then(saveOperation)
+        const trackedSave = queuedSave.finally(() => {
+            if (savePromiseRef.current === trackedSave) {
+                savePromiseRef.current = null
+            }
+        })
+        savePromiseRef.current = trackedSave
+        return trackedSave
+    }, [clearScheduledSave, isRTL, setNavigation, setNavigationDirty])
 
     // Debounced auto-save
     const debouncedSave = useCallback(() => {
-        clearScheduledSave(true)
+        clearScheduledSave(false)
         setSaveStatus('unsaved')
         setSaveErrorBanner(null)
         saveTimeoutRef.current = setTimeout(() => {
@@ -312,7 +341,7 @@ export function NavigationEditor() {
     }, [isNavigationDirty, navigation, debouncedSave])
 
     const handlePublish = async () => {
-        if (!navigation?.draft) return
+        if (!navigation?.draft || (!isNavigationDirty && !navigation.hasPendingChanges)) return
 
         const savedNavigation = await handleSave(true)
         if (!savedNavigation) {
@@ -490,7 +519,7 @@ export function NavigationEditor() {
                 historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
                 discardAction={{ label: 'Discard', onClick: handleDiscard, disabled: !isNavigationDirty || isSaving || isPublishing }}
                 saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => void handleSave(false), disabled: !isNavigationDirty || isPublishing, busy: isSaving }}
-                publishAction={{ label: 'Publish Header and Footer Navigation', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving, busy: isPublishing }}
+                publishAction={{ label: 'Publish Header and Footer Navigation', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving || (!isNavigationDirty && !navigation.hasPendingChanges), busy: isPublishing }}
             />
 
             {publishStatus === 'published' ? <AuthoringFeedback kind="success" title="Navigation published" message="Header and Footer Navigation are now live." /> : null}
@@ -518,7 +547,7 @@ export function NavigationEditor() {
                             }`}
                     >
                         {isRTL ? 'رأس الصفحة' : 'Header'}
-                        <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                        <span className="ms-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.header?.length || 0}
                         </span>
                     </button>
@@ -533,7 +562,7 @@ export function NavigationEditor() {
                             }`}
                     >
                         {isRTL ? 'روابط التذييل' : 'Footer Links'}
-                        <span className="ml-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                        <span className="ms-2 text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {navigation?.draft?.footer?.length || 0}
                         </span>
                     </button>
@@ -575,7 +604,7 @@ export function NavigationEditor() {
                             return (
                                 <div
                                     key={index}
-                                    className={`flex items-center gap-3 p-3 rounded-lg border ${
+                                    className={`flex min-w-0 items-start gap-3 p-3 rounded-lg border sm:items-center ${
                                         isInvalid
                                             ? 'border-amber-300 bg-amber-50'
                                             : 'border-gray-200 bg-gray-50'
@@ -591,6 +620,7 @@ export function NavigationEditor() {
                                     {isEditing ? (
                                         <LinkEditForm
                                             link={link}
+                                            targets={targets}
                                             onSave={(updates) => {
                                                 handleUpdateLink(index, updates)
                                                 setEditingLink(null)
@@ -600,12 +630,12 @@ export function NavigationEditor() {
                                         />
                                     ) : (
                                         <>
-                                            <div className="flex-1">
+                                            <div className="min-w-0 flex-1">
                                                 <span className="text-sm font-medium text-gray-900">
                                                     {link.label}
                                                 </span>
-                                                <span className="mx-2 text-gray-300">→</span>
-                                                <span className="text-sm text-gray-500">
+                                                <span className="mx-2 text-gray-300">{isRTL ? '←' : '→'}</span>
+                                                <span className="break-all text-sm text-gray-500">
                                                     {getLinkDestination(link)}
                                                 </span>
                                                 {isInvalid && (
@@ -613,16 +643,23 @@ export function NavigationEditor() {
                                                         {link.validationMessage || 'This navigation target is no longer valid.'}
                                                     </p>
                                                 )}
+                                                {!link.enabled && (
+                                                    <p className="mt-1 text-xs font-medium text-gray-500">
+                                                        {isRTL ? 'معطل' : 'Disabled'}
+                                                    </p>
+                                                )}
                                             </div>
-                                            <div className="flex items-center gap-1">
+                                            <div className="flex shrink-0 items-center gap-1">
                                                 <button
                                                     onClick={() => setEditingLink(index)}
+                                                    aria-label={isRTL ? 'تعديل رابط التنقل' : 'Edit navigation link'}
                                                     className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded transition-colors"
                                                 >
                                                     <Edit2 size={14} />
                                                 </button>
                                                 <button
                                                     onClick={() => handleMoveLink(index, 'up')}
+                                                    aria-label={isRTL ? 'نقل الرابط لأعلى' : 'Move navigation link up'}
                                                     disabled={index === 0}
                                                     className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 transition-colors"
                                                 >
@@ -630,6 +667,7 @@ export function NavigationEditor() {
                                                 </button>
                                                 <button
                                                     onClick={() => handleMoveLink(index, 'down')}
+                                                    aria-label={isRTL ? 'نقل الرابط لأسفل' : 'Move navigation link down'}
                                                     disabled={index === getCurrentLinks().length - 1}
                                                     className="p-1.5 text-gray-400 hover:text-gray-600 disabled:opacity-30 transition-colors"
                                                 >
@@ -702,6 +740,7 @@ export function NavigationEditor() {
 function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
     const [linkType, setLinkType] = useState('custom')
     const [label, setLabel] = useState('')
+    const [labelAr, setLabelAr] = useState('')
     const [path, setPath] = useState('')
     const [openInNewTab, setOpenInNewTab] = useState(false)
     const [targetId, setTargetId] = useState('')
@@ -729,6 +768,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
         setCollectionKey('')
         setPath('')
         setLabel('')
+        setLabelAr('')
     }
 
     const handleSubmit = (e) => {
@@ -737,6 +777,7 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
 
         onAdd({
             label: label.trim(),
+            labelAr: labelAr.trim() || null,
             type: linkType,
             targetId: ['category', 'product', 'cms'].includes(linkType) ? targetId : null,
             collectionKey: linkType === 'collection' ? collectionKey : null,
@@ -772,7 +813,21 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                            {isRTL ? 'نص الرابط' : 'Link Label'} *
+                            {isRTL ? 'نص الرابط بالعربية (اختياري)' : 'Arabic Label (optional)'}
+                        </label>
+                        <input
+                            type="text"
+                            dir="rtl"
+                            value={labelAr}
+                            onChange={(e) => setLabelAr(e.target.value)}
+                            placeholder="مثال: من نحن"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                            {isRTL ? 'نص الرابط بالإنجليزية' : 'Link Label'} *
                         </label>
                         <input
                             type="text"
@@ -805,7 +860,11 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
                     {['category', 'product', 'cms'].includes(linkType) && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">
-                                {isRTL ? 'اختر الفئة' : 'Select Category'} *
+                                {linkType === 'category'
+                                    ? (isRTL ? 'اختر الفئة' : 'Select Category')
+                                    : linkType === 'product'
+                                        ? (isRTL ? 'اختر المنتج' : 'Select Product')
+                                        : (isRTL ? 'اختر صفحة المحتوى' : 'Select Page')} *
                             </label>
                             <select
                                 value={targetId}
@@ -813,7 +872,13 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                 required
                             >
-                                <option value="">{isRTL ? '-- اختر فئة --' : '-- Select a category --'}</option>
+                                <option value="">
+                                    {linkType === 'category'
+                                        ? (isRTL ? '-- اختر فئة --' : '-- Select a category --')
+                                        : linkType === 'product'
+                                            ? (isRTL ? '-- اختر منتجًا --' : '-- Select a product --')
+                                            : (isRTL ? '-- اختر صفحة --' : '-- Select a page --')}
+                                </option>
                                 {targetOptions.map((option) => (
                                     <option key={option.targetId} value={option.targetId}>
                                         {option.label}{option.state === 'draft' ? ' (Draft)' : ''}
@@ -891,41 +956,143 @@ function AddLinkModal({ onAdd, onClose, isRTL, targets }) {
 /**
  * Link Edit Form (inline)
  */
-function LinkEditForm({ link, onSave, onCancel, isRTL }) {
+function LinkEditForm({ link, onSave, onCancel, isRTL, targets }) {
     const [label, setLabel] = useState(link.label || '')
+    const [labelAr, setLabelAr] = useState(link.labelAr || '')
     const [path, setPath] = useState(link.path || '')
+    const [targetId, setTargetId] = useState(link.targetId || '')
+    const [collectionKey, setCollectionKey] = useState(link.collectionKey || '')
+    const [enabled, setEnabled] = useState(link.enabled !== false)
+    const [openInNewTab, setOpenInNewTab] = useState(link.openInNewTab === true)
+    const targetOptions = link.type === 'category'
+        ? targets.categories
+        : link.type === 'product'
+            ? targets.products
+            : link.type === 'cms'
+                ? targets.cmsPages
+                : []
+
+    const submit = (event) => {
+        event.preventDefault()
+        if (!label.trim()) return
+
+        onSave({
+            label: label.trim(),
+            labelAr: labelAr.trim() || null,
+            path: link.type === 'custom' || link.type === 'external' ? path.trim() : link.path,
+            targetId: ['category', 'product', 'cms'].includes(link.type) ? targetId : link.targetId,
+            collectionKey: link.type === 'collection' ? collectionKey : link.collectionKey,
+            enabled,
+            openInNewTab: link.type === 'external' && openInNewTab,
+        })
+    }
 
     return (
-        <div className="flex-1 flex items-center gap-2">
+        <form onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            <label className="sr-only" htmlFor="navigation-link-label">{isRTL ? 'نص الرابط' : 'Link label'}</label>
             <input
+                id="navigation-link-label"
                 type="text"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 placeholder={isRTL ? 'نص الرابط' : 'Label'}
                 className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                required
+            />
+            <label className="sr-only" htmlFor="navigation-link-label-ar">{isRTL ? 'النص العربي' : 'Arabic label'}</label>
+            <input
+                id="navigation-link-label-ar"
+                type="text"
+                dir="rtl"
+                value={labelAr}
+                onChange={(e) => setLabelAr(e.target.value)}
+                placeholder={isRTL ? 'النص العربي' : 'Arabic label'}
+                className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
             />
             {(link.type === 'custom' || link.type === 'external') && (
+                <>
+                    <label className="sr-only" htmlFor="navigation-link-path">{isRTL ? 'المسار' : 'Path'}</label>
+                    <input
+                        id="navigation-link-path"
+                        type={link.type === 'external' ? 'url' : 'text'}
+                        value={path}
+                        onChange={(e) => setPath(e.target.value)}
+                        placeholder={isRTL ? 'المسار' : 'Path'}
+                        className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                        required
+                    />
+                </>
+            )}
+            {['category', 'product', 'cms'].includes(link.type) && (
+                <>
+                    <label className="sr-only" htmlFor="navigation-link-target">{isRTL ? 'الهدف' : 'Target'}</label>
+                    <select
+                        id="navigation-link-target"
+                        value={targetId}
+                        onChange={(event) => setTargetId(event.target.value)}
+                        className="min-w-48 flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                        required
+                    >
+                        <option value="">{isRTL ? '-- اختر هدفًا --' : '-- Select a target --'}</option>
+                        {targetOptions.map((option) => (
+                            <option key={option.targetId} value={option.targetId}>
+                                {option.label}{option.state === 'draft' ? ' (Draft)' : ''}
+                            </option>
+                        ))}
+                    </select>
+                </>
+            )}
+            {link.type === 'collection' && (
+                <>
+                    <label className="sr-only" htmlFor="navigation-link-collection">{isRTL ? 'المجموعة' : 'Collection'}</label>
+                    <select
+                        id="navigation-link-collection"
+                        value={collectionKey}
+                        onChange={(event) => setCollectionKey(event.target.value)}
+                        className="min-w-48 flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                        required
+                    >
+                        <option value="">{isRTL ? '-- اختر مجموعة --' : '-- Select a collection --'}</option>
+                        {targets.collections.map((option) => (
+                            <option key={option.collectionKey} value={option.collectionKey}>{option.label}</option>
+                        ))}
+                    </select>
+                </>
+            )}
+            <label className="inline-flex min-h-8 items-center gap-2 text-xs text-gray-700">
                 <input
-                    type="text"
-                    value={path}
-                    onChange={(e) => setPath(e.target.value)}
-                    placeholder={isRTL ? 'المسار' : 'Path'}
-                    className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded"
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={(event) => setEnabled(event.target.checked)}
                 />
+                {isRTL ? 'مفعل' : 'Enabled'}
+            </label>
+            {link.type === 'external' && (
+                <label className="inline-flex min-h-8 items-center gap-2 text-xs text-gray-700">
+                    <input
+                        type="checkbox"
+                        checked={openInNewTab}
+                        onChange={(event) => setOpenInNewTab(event.target.checked)}
+                    />
+                    {isRTL ? 'فتح في نافذة جديدة' : 'Open in new tab'}
+                </label>
             )}
             <button
-                onClick={() => onSave({ label, path })}
+                type="submit"
+                aria-label={isRTL ? 'حفظ تعديلات الرابط' : 'Save navigation link edits'}
                 className="p-1.5 text-green-600 hover:bg-green-50 rounded"
             >
                 <Check size={14} />
             </button>
             <button
+                type="button"
                 onClick={onCancel}
+                aria-label={isRTL ? 'إلغاء تعديل الرابط' : 'Cancel navigation link edits'}
                 className="p-1.5 text-gray-400 hover:text-gray-600"
             >
                 <X size={14} />
             </button>
-        </div>
+        </form>
     )
 }
 

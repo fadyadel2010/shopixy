@@ -1,8 +1,10 @@
 using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.Services;
 using PointOfSale.Core.Interfaces;
+using PointOfSale.Infrastructure.Data;
 
 namespace PointOfSale.API.Controllers;
 
@@ -18,17 +20,20 @@ public class UploadController : ControllerBase
     private readonly IFileValidationService _fileValidationService;
     private readonly ITenantContext _tenantContext;
     private readonly ILogger<UploadController> _logger;
+    private readonly ApplicationDbContext _context;
 
     public UploadController(
         IR2StorageService r2StorageService,
         IFileValidationService fileValidationService,
         ITenantContext tenantContext,
-        ILogger<UploadController> logger)
+        ILogger<UploadController> logger,
+        ApplicationDbContext context)
     {
         _r2StorageService = r2StorageService;
         _fileValidationService = fileValidationService;
         _tenantContext = tenantContext;
         _logger = logger;
+        _context = context;
     }
 
     [HttpPost]
@@ -105,7 +110,9 @@ public class UploadController : ControllerBase
 
             return Ok(new UploadResponse
             {
-                Url = result.Url,
+                Url = result.Url ?? (entityType == "product" && Guid.TryParse(normalizedEntityId, out var productId)
+                    ? $"/api/upload/product-media/{productId:D}/{result.FileName}"
+                    : null),
                 FileName = result.FileName,
                 ContentType = normalizedContentType,
                 Size = request.File.Length
@@ -126,6 +133,41 @@ public class UploadController : ControllerBase
                 request.EntityId);
 
             return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Upload failed." });
+        }
+    }
+
+    // When object storage has no public URL (including the development storage),
+    // serve only registered media belonging to a product in the current tenant.
+    // The bytes still come from the canonical IR2StorageService implementation.
+    [HttpGet("product-media/{productId:guid}/{fileName}")]
+    public async Task<IActionResult> GetProductMediaContent(
+        Guid productId, string fileName, CancellationToken cancellationToken)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(fileName, "^[0-9a-fA-F]{32}\\.(jpg|jpeg|png|webp|mp4)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+        {
+            return NotFound();
+        }
+
+        var url = $"/api/upload/product-media/{productId:D}/{fileName}";
+        var exists = await _context.ProductMedia.AnyAsync(media =>
+            media.TenantId == _tenantContext.RequiredTenantId &&
+            media.ProductId == productId && media.Url == url &&
+            media.Product.TenantId == _tenantContext.RequiredTenantId && !media.Product.IsDeleted,
+            cancellationToken);
+        if (!exists)
+        {
+            return NotFound();
+        }
+
+        var objectKey = $"tenants/{_tenantContext.RequiredTenantId:D}/products/{productId:D}/{fileName}";
+        try
+        {
+            var result = await _r2StorageService.DownloadObjectAsync(objectKey, null, cancellationToken);
+            return File(result.Content, result.ContentType);
+        }
+        catch (FileNotFoundException)
+        {
+            return NotFound();
         }
     }
 

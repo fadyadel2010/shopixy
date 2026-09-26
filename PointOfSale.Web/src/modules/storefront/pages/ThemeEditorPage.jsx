@@ -36,6 +36,7 @@ const DEFAULT_THEME = {
         muted: '#64748b',
     },
     font: 'Inter',
+    baseSize: '16px',
     borderRadius: 8,
 }
 
@@ -115,6 +116,33 @@ const FONT_OPTIONS = [
     { value: 'Noto Sans Arabic', label: 'Noto Sans Arabic' },
 ]
 
+const HEX_COLOR_PATTERN = /^#(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/
+const ALLOWED_FONTS = new Set(FONT_OPTIONS.map((option) => option.value))
+const COLOR_FIELDS = [
+    { key: 'primary', labelEn: 'Primary Color', labelAr: 'اللون الأساسي' },
+    { key: 'secondary', labelEn: 'Secondary Color', labelAr: 'اللون الثانوي' },
+    { key: 'background', labelEn: 'Background', labelAr: 'الخلفية' },
+    { key: 'text', labelEn: 'Text Color', labelAr: 'لون النص' },
+    { key: 'muted', labelEn: 'Muted Color', labelAr: 'لون النص الثانوي' },
+]
+
+export const validateThemeCandidate = ({ colors, font, baseSize }) => {
+    const colorErrors = Object.fromEntries(COLOR_FIELDS
+        .filter(({ key }) => !HEX_COLOR_PATTERN.test(colors?.[key] || ''))
+        .map(({ key }) => [key, 'Use #RGB or #RRGGBB with no spaces.']))
+    const fontError = ALLOWED_FONTS.has(font) ? '' : 'Select a supported font family.'
+    const baseSizeError = /^(?:1[2-9]|2[0-4])px$/.test(baseSize || '')
+        ? ''
+        : 'Base size must be between 12px and 24px.'
+
+    return {
+        colors: colorErrors,
+        font: fontError,
+        baseSize: baseSizeError,
+        isValid: Object.keys(colorErrors).length === 0 && !fontError && !baseSizeError,
+    }
+}
+
 const normalizeBorderRadius = (value) => {
     if (typeof value === 'number' && Number.isFinite(value)) {
         return Math.max(0, value)
@@ -157,6 +185,7 @@ const normalizeThemeState = (theme, fallbackPresetKey = DEFAULT_THEME.presetKey)
     presetKey: theme?.presetKey || fallbackPresetKey || DEFAULT_THEME.presetKey,
     colors: normalizeColors(theme?.colors),
     font: theme?.font || DEFAULT_THEME.font,
+    baseSize: theme?.baseSize || DEFAULT_THEME.baseSize,
     borderRadius: normalizeBorderRadius(theme?.borderRadius),
 })
 
@@ -182,6 +211,7 @@ const mapPresetResponse = (preset) => {
         icon: PRESET_ICONS[preset?.key] || Sparkles,
         colors: normalizeColors(baseTheme.colors),
         font: typography.fontFamily || DEFAULT_THEME.font,
+        baseSize: typography.baseSize || DEFAULT_THEME.baseSize,
         borderRadius: normalizeBorderRadius(radius.base),
     }
 }
@@ -199,6 +229,7 @@ const ensurePresetOption = (presets, themeState) => {
             icon: PRESET_ICONS[themeState.presetKey] || Sparkles,
             colors: themeState.colors,
             font: themeState.font,
+            baseSize: themeState.baseSize,
             borderRadius: themeState.borderRadius,
         },
     ]
@@ -219,6 +250,7 @@ export function ThemeEditorPage() {
     const [conflict, setConflict] = useState(null)
     const [isPublishConfirmOpen, setIsPublishConfirmOpen] = useState(false)
     const previewRef = useRef(null)
+    const editGenerationRef = useRef(0)
 
     const [themePresets, setThemePresets] = useState([
         {
@@ -227,12 +259,14 @@ export function ThemeEditorPage() {
             icon: PRESET_ICONS.default,
             colors: DEFAULT_THEME.colors,
             font: DEFAULT_THEME.font,
+            baseSize: DEFAULT_THEME.baseSize,
             borderRadius: DEFAULT_THEME.borderRadius,
         },
     ])
     const [selectedPreset, setSelectedPreset] = useState(DEFAULT_THEME.presetKey)
     const [colors, setColors] = useState(DEFAULT_THEME.colors)
     const [font, setFont] = useState(DEFAULT_THEME.font)
+    const [baseSize, setBaseSize] = useState(DEFAULT_THEME.baseSize)
     const [borderRadius, setBorderRadius] = useState(DEFAULT_THEME.borderRadius)
     const [publishedState, setPublishedState] = useState(DEFAULT_THEME)
     const [acceptedDraftState, setAcceptedDraftState] = useState(DEFAULT_THEME)
@@ -246,10 +280,11 @@ export function ThemeEditorPage() {
         setSelectedPreset(themeState.presetKey)
         setColors(themeState.colors)
         setFont(themeState.font)
+        setBaseSize(themeState.baseSize)
         setBorderRadius(themeState.borderRadius)
     }
 
-    const syncThemeResponse = (response, currentPresets) => {
+    const syncThemeResponse = (response, currentPresets, { applyCandidate = true } = {}) => {
         const acceptedResponse = deriveCurrentStoreIdentityPresentation(response, user)
         if (!acceptedResponse) {
             throw new Error('Theme response was rejected by backend store authority admission.')
@@ -270,7 +305,9 @@ export function ThemeEditorPage() {
         )
 
         setThemePresets(nextPresets)
-        applyThemeState(draftTheme)
+        if (applyCandidate) {
+            applyThemeState(draftTheme)
+        }
         setAcceptedDraftState(draftTheme)
         setPublishedState(liveTheme)
         const rowVersion = normalizeRowVersion(acceptedResponse.rowVersion)
@@ -314,6 +351,7 @@ export function ThemeEditorPage() {
                                 icon: PRESET_ICONS.default,
                                 colors: DEFAULT_THEME.colors,
                                 font: DEFAULT_THEME.font,
+                                baseSize: DEFAULT_THEME.baseSize,
                                 borderRadius: DEFAULT_THEME.borderRadius,
                             },
                         ],
@@ -342,51 +380,77 @@ export function ThemeEditorPage() {
             throw new Error('Theme mutation requires accepted backend RowVersion evidence.')
         }
 
+        const submittedGeneration = editGenerationRef.current
         const response = await storeConfigService.updateThemeOverrides({
             presetKey: selectedPreset,
             colors,
-            font,
+            typography: {
+                fontFamily: font,
+                baseSize,
+            },
             borderRadius,
         }, buildIfMatchOptions(rowVersion))
 
-        const { nextPresets, rowVersion: acceptedResponseRowVersion } = syncThemeResponse(response, themePresets)
-        setIsDirty(false)
+        const localEditsRetained = editGenerationRef.current !== submittedGeneration
+        const { nextPresets, rowVersion: acceptedResponseRowVersion } = syncThemeResponse(
+            response,
+            themePresets,
+            { applyCandidate: !localEditsRetained }
+        )
+        setIsDirty(localEditsRetained)
 
         if (!silent) {
-            showSuccess(isRTL ? 'تم حفظ المسودة' : 'Draft saved')
+            if (localEditsRetained) {
+                showInfo(isRTL ? 'تم حفظ المسودة مع الاحتفاظ بالتعديلات الأحدث' : 'Draft saved. Newer unsaved edits were retained.')
+            } else {
+                showSuccess(isRTL ? 'تم حفظ المسودة' : 'Draft saved')
+            }
         }
 
-        return { nextPresets, rowVersion: acceptedResponseRowVersion }
+        return { nextPresets, rowVersion: acceptedResponseRowVersion, localEditsRetained }
+    }
+
+    const markDirty = () => {
+        editGenerationRef.current += 1
+        setIsDirty(true)
     }
 
     const handlePresetSelect = (preset) => {
         setSelectedPreset(preset.key)
         setColors({ ...preset.colors })
         setFont(preset.font)
+        setBaseSize(preset.baseSize)
         setBorderRadius(preset.borderRadius)
-        setIsDirty(true)
+        markDirty()
     }
 
     const handleColorChange = (key, value) => {
         setColors((current) => ({ ...current, [key]: value }))
-        setIsDirty(true)
+        markDirty()
     }
 
     const handleFontChange = (value) => {
         setFont(value)
-        setIsDirty(true)
+        markDirty()
+    }
+
+    const handleBaseSizeChange = (value) => {
+        setBaseSize(value)
+        markDirty()
     }
 
     const handleBorderRadiusChange = (value) => {
         setBorderRadius(value)
-        setIsDirty(true)
+        markDirty()
     }
 
     const handleSaveDraft = async (rowVersionOverride = null) => {
         setIsSaving(true)
         try {
-            await persistDraftTheme({ rowVersionOverride })
-            setFeedback({ kind: 'success', title: 'Appearance draft saved', message: 'The accepted Appearance draft is up to date.' })
+            const { localEditsRetained } = await persistDraftTheme({ rowVersionOverride })
+            setFeedback(localEditsRetained
+                ? { kind: 'info', title: 'Appearance draft saved', message: 'Newer unsaved edits were retained for the next save.' }
+                : { kind: 'success', title: 'Appearance draft saved', message: 'The accepted Appearance draft is up to date.' })
         } catch (err) {
             console.error('Failed to save draft:', err)
             if (err?.response?.status === 409) setConflict({ action: 'save', message: err?.response?.data?.message })
@@ -399,17 +463,26 @@ export function ThemeEditorPage() {
     const handlePublish = async (rowVersionOverride = null) => {
         setIsPublishing(true)
         try {
-            const { nextPresets: latestPresets, rowVersion: draftRowVersion } = await persistDraftTheme({ silent: true, rowVersionOverride })
+            const { nextPresets: latestPresets, rowVersion: draftRowVersion, localEditsRetained } = await persistDraftTheme({ silent: true, rowVersionOverride })
+            if (localEditsRetained) {
+                setIsPublishConfirmOpen(false)
+                setFeedback({ kind: 'info', title: 'Draft saved, publication paused', message: 'Newer unsaved edits were retained. Review and publish again.' })
+                return
+            }
             const rowVersion = normalizeRowVersion(draftRowVersion)
             if (!rowVersion) {
                 throw new Error('Theme publish requires accepted backend RowVersion evidence.')
             }
 
+            const publishGeneration = editGenerationRef.current
             const response = await storeConfigService.publishTheme(buildIfMatchOptions(rowVersion))
-            syncThemeResponse(response, latestPresets)
-            setIsDirty(false)
+            const localEditsRetainedAfterPublish = editGenerationRef.current !== publishGeneration
+            syncThemeResponse(response, latestPresets, { applyCandidate: !localEditsRetainedAfterPublish })
+            setIsDirty(localEditsRetainedAfterPublish)
             setIsPublishConfirmOpen(false)
-            setFeedback({ kind: 'success', title: 'Colors & Typography published', message: 'The accepted Appearance draft is now live.' })
+            setFeedback(localEditsRetainedAfterPublish
+                ? { kind: 'info', title: 'Colors & Typography published', message: 'The accepted draft is live. Newer local edits were retained.' }
+                : { kind: 'success', title: 'Colors & Typography published', message: 'The accepted Appearance draft is now live.' })
         } catch (err) {
             console.error('Failed to publish theme:', err)
             if (err?.response?.status === 409) {
@@ -431,6 +504,8 @@ export function ThemeEditorPage() {
         setIsDirty(false)
         setFeedback({ kind: 'info', title: 'Changes discarded', message: 'The accepted Appearance draft has been restored.' })
     }
+
+    const candidateValidation = validateThemeCandidate({ colors, font, baseSize })
 
     const { requestNavigation, unsavedDialogProps } = useAuthoringGuard({
         isDirty,
@@ -494,8 +569,8 @@ export function ThemeEditorPage() {
                 previewAction={{ label: 'Preview Candidate', onClick: () => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), disabled: isSaving || isPublishing }}
                 historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
                 discardAction={{ label: 'Discard', onClick: handleResetToPublished, disabled: !isDirty || isSaving || isPublishing }}
-                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => handleSaveDraft(), disabled: !isDirty || isPublishing, busy: isSaving }}
-                publishAction={{ label: 'Publish Colors & Typography', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving, busy: isPublishing }}
+                saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: () => handleSaveDraft(), disabled: !isDirty || isPublishing || !candidateValidation.isValid, busy: isSaving }}
+                publishAction={{ label: 'Publish Colors & Typography', busyLabel: 'Publishing…', onClick: () => setIsPublishConfirmOpen(true), disabled: isSaving || !candidateValidation.isValid, busy: isPublishing }}
             />
             {feedback ? <div className="my-6"><AuthoringFeedback {...feedback} /></div> : null}
 
@@ -555,15 +630,9 @@ export function ThemeEditorPage() {
                             {isRTL ? 'الألوان' : 'Colors'}
                         </h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {[
-                                { key: 'primary', labelEn: 'Primary Color', labelAr: 'اللون الأساسي' },
-                                { key: 'secondary', labelEn: 'Secondary Color', labelAr: 'اللون الثانوي' },
-                                { key: 'background', labelEn: 'Background', labelAr: 'الخلفية' },
-                                { key: 'text', labelEn: 'Text Color', labelAr: 'لون النص' },
-                                { key: 'muted', labelEn: 'Muted Color', labelAr: 'لون النص الثانوي' },
-                            ].map((color) => (
+                            {COLOR_FIELDS.map((color) => (
                                 <div key={color.key}>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    <label htmlFor={`appearance-${color.key}`} className="block text-sm font-medium text-gray-700 mb-2">
                                         {isRTL ? color.labelAr : color.labelEn}
                                     </label>
                                     <div className="flex items-center gap-3">
@@ -575,11 +644,19 @@ export function ThemeEditorPage() {
                                         />
                                         <input
                                             type="text"
+                                            id={`appearance-${color.key}`}
                                             value={colors[color.key]}
                                             onChange={(event) => handleColorChange(color.key, event.target.value)}
+                                            aria-invalid={candidateValidation.colors[color.key] ? 'true' : undefined}
+                                            aria-describedby={candidateValidation.colors[color.key] ? `appearance-${color.key}-error` : undefined}
                                             className="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm"
                                         />
                                     </div>
+                                    {candidateValidation.colors[color.key] ? (
+                                        <p id={`appearance-${color.key}-error`} role="alert" className="mt-2 text-xs text-red-600">
+                                            {candidateValidation.colors[color.key]}
+                                        </p>
+                                    ) : null}
                                 </div>
                             ))}
                         </div>
@@ -591,10 +668,11 @@ export function ThemeEditorPage() {
                         </h2>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                <label htmlFor="appearance-font-family" className="block text-sm font-medium text-gray-700 mb-2">
                                     {isRTL ? 'نوع الخط' : 'Font Family'}
                                 </label>
                                 <select
+                                    id="appearance-font-family"
                                     value={font}
                                     onChange={(event) => handleFontChange(event.target.value)}
                                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
@@ -613,10 +691,26 @@ export function ThemeEditorPage() {
                             </div>
 
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                <label htmlFor="appearance-base-size" className="block text-sm font-medium text-gray-700 mb-2">
+                                    {isRTL ? 'حجم الخط الأساسي' : 'Base Font Size'}: {baseSize}
+                                </label>
+                                <input
+                                    id="appearance-base-size"
+                                    type="range"
+                                    min="12"
+                                    max="24"
+                                    value={Number.parseInt(baseSize, 10)}
+                                    onChange={(event) => handleBaseSizeChange(`${event.target.value}px`)}
+                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                />
+                            </div>
+
+                            <div>
+                                <label htmlFor="appearance-border-radius" className="block text-sm font-medium text-gray-700 mb-2">
                                     {isRTL ? 'انحناء الحواف' : 'Border Radius'}: {borderRadius}px
                                 </label>
                                 <input
+                                    id="appearance-border-radius"
                                     type="range"
                                     min="0"
                                     max="24"
@@ -643,6 +737,7 @@ export function ThemeEditorPage() {
                             style={{
                                 backgroundColor: colors.background,
                                 fontFamily: font,
+                                fontSize: baseSize,
                             }}
                         >
                             <div

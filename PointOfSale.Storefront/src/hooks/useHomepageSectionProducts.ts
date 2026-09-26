@@ -15,9 +15,13 @@ import {
     type RuntimeCacheLoadOptions,
 } from '@/storefront/runtime/cache/runtimeCachePolicy';
 import type { ProductDiscoveryResult, ProductListItemDto } from '@/types';
+import {
+    getHomepageProductIdsIdentity,
+    normalizeHomepageProductIds,
+} from './homepageProductIdentity';
 
 const GUID_PATTERN =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 interface HomepageProductCacheEntry {
     generation: number;
@@ -74,20 +78,6 @@ function mapDiscoveryItemToListItem(item: ProductDiscoveryResult['items'][0]): P
     };
 }
 
-function normalizeProductIds(productIds?: string[] | null): string[] | undefined {
-    if (!Array.isArray(productIds)) {
-        return undefined;
-    }
-
-    return Array.from(
-        new Set(
-            productIds
-                .map((productId) => String(productId ?? '').trim())
-                .filter(Boolean)
-        )
-    );
-}
-
 function getValidProductIds(productIds: string[]): string[] {
     return productIds.filter((productId) => GUID_PATTERN.test(productId));
 }
@@ -133,7 +123,7 @@ async function loadProductsForKey(
                 return [];
             }
 
-            return fetchHomepageProductsByIds(productIds);
+            return (await fetchHomepageProductsByIds(productIds)).slice(0, pageSize);
         }
 
         const result = await fetchProductsDiscover({
@@ -185,7 +175,7 @@ function createHomepageProductCacheKey(
     }
 
     if (validProductIds && validProductIds.length > 0) {
-        return `${runtimeIdentity}:homepage:curated:${validProductIds.join(',')}`;
+        return `${runtimeIdentity}:homepage:curated:${pageSize}:${validProductIds.join(',')}`;
     }
 
     if (normalizedProductIds?.length === 0) {
@@ -202,7 +192,7 @@ export function refreshHomepageSectionProductsCache({
     seedKey = 'homepage-products',
     force = true,
 }: HomepageSectionProductsRefreshOptions = {}): Promise<ProductListItemDto[]> {
-    const normalizedProductIds = normalizeProductIds(productIds);
+    const normalizedProductIds = normalizeHomepageProductIds(productIds);
     const validProductIds = normalizedProductIds
         ? getValidProductIds(normalizedProductIds)
         : undefined;
@@ -255,7 +245,11 @@ export function useHomepageSectionProducts({
         () => resolveHomepageCollectionSource(source, productIds),
         [productIds, source]
     );
-    const normalizedProductIds = useMemo(() => normalizeProductIds(productIds), [productIds]);
+    const normalizedProductIdsIdentity = getHomepageProductIdsIdentity(productIds);
+    const normalizedProductIds = useMemo<string[] | undefined>(() => {
+        const normalized = JSON.parse(normalizedProductIdsIdentity) as string[] | null;
+        return normalized ?? undefined;
+    }, [normalizedProductIdsIdentity]);
     const validProductIds = useMemo(
         () => normalizedProductIds ? getValidProductIds(normalizedProductIds) : undefined,
         [normalizedProductIds]

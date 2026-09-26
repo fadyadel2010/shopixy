@@ -13,6 +13,7 @@
 
 import { useAuthStore } from '../store/authStore';
 import { setAuthInterceptor } from '@/services/api/httpClient';
+import { isThemePreviewMode } from '@/storefront/preview/themePreviewMode';
 
 let isInitialized = false;
 let initPromise: Promise<void> | null = null;
@@ -42,6 +43,12 @@ export async function initializeAuth(): Promise<void> {
     // Create and store the initialization promise
     initPromise = (async () => {
         const authStore = useAuthStore.getState();
+
+        if (isThemePreviewMode()) {
+            authStore.setUnauthenticated();
+            isInitialized = true;
+            return;
+        }
 
         // Set up HTTP client 401 interceptor
         setAuthInterceptor({

@@ -1,16 +1,26 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act } from 'react'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import PaymentMethods, { isUnsupportedMethod, mergePaymentMethodCatalog } from './PaymentMethods.jsx'
+import AuthBootstrap from '../components/AuthBootstrap'
+import ProtectedRoute from '../components/ProtectedRoute'
+import { useAuthStore } from '../store/authStore'
 
 const apiMock = vi.hoisted(() => ({
     get: vi.fn(),
     post: vi.fn(),
     put: vi.fn(),
+    requestPosSessionRefresh: vi.fn(),
 }))
 
 vi.mock('../services/api', () => ({
     default: apiMock,
+    requestPosSessionRefresh: apiMock.requestPosSessionRefresh,
+    isDefinitiveAuthFailure: (error: { response?: { status?: number } }) => (
+        error?.response?.status === 401 || error?.response?.status === 403
+    ),
 }))
 
 vi.mock('react-i18next', () => ({
@@ -40,6 +50,38 @@ const providerCatalog = [
     { code: 'FAWRY', displayName: 'Fawry Pay', sortOrder: 4, supportsOnline: true, supportsOffline: false, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
     { code: 'MANUALWALLET', displayName: 'Manual Wallet', sortOrder: 5, supportsOnline: false, supportsOffline: true, requiresConfiguration: true, fee: 0, feeType: 'fixed' },
 ]
+
+const authenticatedUser = {
+    id: '11111111-1111-4111-8111-111111111111',
+    tenantId: '22222222-2222-4222-8222-222222222222',
+    username: 'owner',
+    firstName: 'POS',
+    lastName: 'Owner',
+    role: 'Owner',
+    effectivePermissions: ['storefront.payments.manage'],
+    navigationCapabilities: [],
+    vendorLifecycleAuthority: {
+        vendorId: '22222222-2222-4222-8222-222222222222',
+        status: 'Active',
+        debtStatus: 'Current',
+        tenantActive: true,
+        marketplaceApproved: true,
+        kycVerified: true,
+        isDebtBlocked: false,
+        blocksCatalog: false,
+        blocksOrders: false,
+        blocksStorefront: false,
+        blocksAnalytics: false,
+        blocksPayments: false,
+        blocksPayouts: false,
+        blocksLogin: false,
+    },
+}
+
+beforeEach(() => {
+    useAuthStore.setState({ user: null, isAuthenticated: false, hasHydrated: false })
+    apiMock.requestPosSessionRefresh.mockReset()
+})
 
 afterEach(() => {
     vi.clearAllMocks()
@@ -168,5 +210,66 @@ describe('PaymentMethods provider catalog', () => {
                 }),
             }))
         })
+    })
+
+    it('preserves Paymob API and secret keys across focus and visibility revalidation', async () => {
+        let sessionRequestCount = 0
+        let resolveLifecycleSession: ((value: unknown) => void) | undefined
+        const lifecycleSession = new Promise((resolve) => {
+            resolveLifecycleSession = resolve
+        })
+
+        apiMock.get.mockImplementation((url: string) => {
+            if (url === '/auth/session') {
+                sessionRequestCount += 1
+                return sessionRequestCount === 1
+                    ? Promise.resolve({ data: { user: authenticatedUser } })
+                    : lifecycleSession
+            }
+            if (url === '/admin/payment-methods/catalog') {
+                return Promise.resolve({ data: providerCatalog })
+            }
+
+            return Promise.resolve({ data: [] })
+        })
+        const user = userEvent.setup()
+
+        render(
+            <>
+                <AuthBootstrap />
+                <MemoryRouter initialEntries={['/ecommerce/payment-methods']}>
+                    <Routes>
+                        <Route element={<ProtectedRoute />}>
+                            <Route path="/ecommerce/payment-methods" element={<PaymentMethods />} />
+                        </Route>
+                    </Routes>
+                </MemoryRouter>
+            </>,
+        )
+
+        const paymobRow = (await screen.findByText('Online Payment')).closest('tr')
+        expect(paymobRow).not.toBeNull()
+        await user.click(within(paymobRow as HTMLElement).getByRole('button', { name: 'Configure' }))
+        await user.type(screen.getByLabelText('API Key'), 'copied-api-key')
+        await user.type(screen.getByLabelText('Secret Key'), 'copied-secret-key')
+
+        act(() => {
+            window.dispatchEvent(new Event('blur'))
+            window.dispatchEvent(new Event('focus'))
+            document.dispatchEvent(new Event('visibilitychange'))
+        })
+
+        expect(screen.getByLabelText('API Key')).toHaveValue('copied-api-key')
+        expect(screen.getByLabelText('Secret Key')).toHaveValue('copied-secret-key')
+        expect(screen.queryByText('Restoring session...')).not.toBeInTheDocument()
+        expect(sessionRequestCount).toBe(2)
+
+        await act(async () => {
+            resolveLifecycleSession?.({ data: { user: authenticatedUser } })
+            await lifecycleSession
+        })
+
+        expect(screen.getByLabelText('API Key')).toHaveValue('copied-api-key')
+        expect(screen.getByLabelText('Secret Key')).toHaveValue('copied-secret-key')
     })
 })

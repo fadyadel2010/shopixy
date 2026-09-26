@@ -12,6 +12,31 @@ import { getProductTemplateOptions } from '@/storefront/products/ProductTemplate
 import { useToast } from '../components/Toast'
 import { normalizeProductAuthoringVariants } from '../utils/productAuthoringVariants'
 import { normalizePublishStatus } from '../utils/productStatus'
+import { normalizeSkuPart, productSkuBase } from './productSku'
+
+function isSkuConflict(error) {
+    const data = error?.response?.data
+    return error?.response?.status === 409 && [
+        ...(data?.errors || []), ...(data?.data?.errors || [])
+    ].some(item => (item.code || item.Code) === 'PRODUCT_SKU_CONFLICT')
+}
+
+function retryGeneratedSkuPayload(payload) {
+    const newBase = productSkuBase(null, crypto.randomUUID())
+    const replacements = {}
+    const replaceSku = sku => {
+        if (!/^PX-[A-F0-9]{32}(?:-V\d+)?$/.test(sku || '')) return sku
+        const updated = newBase + (sku.match(/-V\d+$/)?.[0] || '')
+        replacements[sku] = updated
+        return updated
+    }
+    const next = {
+        ...payload,
+        sku: replaceSku(payload.sku),
+        variants: payload.variants?.map(variant => ({ ...variant, sku: replaceSku(variant.sku) })) ?? payload.variants
+    }
+    return { next, replacements }
+}
 
 const WorkspaceSection = forwardRef(function WorkspaceSection({ eyebrow, title, description, children, className = '', id, tabIndex }, ref) {
     return (
@@ -582,6 +607,7 @@ const ProductForm = forwardRef(function ProductForm({
     const { showError, showSuccess } = useToast()
     const [loading, setLoading] = useState(false)
     const variantsTabRef = useRef(null)
+    const skuDraftIdRef = useRef(crypto.randomUUID())
     const variantsSectionRef = useRef(null)
     const formDataRef = useRef(null)
     const pendingSaveRef = useRef(null)
@@ -1203,7 +1229,7 @@ const ProductForm = forwardRef(function ProductForm({
         }
 
         try {
-            const productData = buildProductAuthoringPayload({ variantsOverride, includeVariants })
+            let productData = buildProductAuthoringPayload({ variantsOverride, includeVariants })
             const effectiveRowVersion = acceptedRowVersion
 
             if (productId && !hasSemanticProductAuthoringChanges(productAuthoringBaselineRef.current, productData)) {
@@ -1228,10 +1254,37 @@ const ProductForm = forwardRef(function ProductForm({
             pendingSaveRef.current = { fingerprint: saveFingerprint, key: idempotencyKey }
 
             let savedProduct
-            const requestOptions = buildProductAuthoringRequestOptions(productId, effectiveRowVersion, idempotencyKey)
+            let response
+            let replacements = {}
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                const key = attempt === 0 ? idempotencyKey : createProductAuthoringIdempotencyKey(productId)
+                const requestOptions = buildProductAuthoringRequestOptions(productId, effectiveRowVersion, key)
+                try {
+                    response = productId
+                        ? await api.put(`/products/${productId}`, productData, requestOptions)
+                        : await api.post('/products', productData, requestOptions)
+                    break
+                } catch (saveError) {
+                    if (!isSkuConflict(saveError) || attempt === 2) throw saveError
+                    const retry = retryGeneratedSkuPayload(productData)
+                    if (Object.keys(retry.replacements).length === 0) throw saveError
+                    for (const [original, current] of Object.entries(replacements)) {
+                        replacements[original] = retry.replacements[current] || current
+                    }
+                    Object.assign(replacements, retry.replacements)
+                    productData = retry.next
+                }
+            }
+
+            if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
+                return { __productAuthoringStaleResponse: true }
+            }
+            if (Object.keys(replacements).length) {
+                setSimpleProductData(prev => ({ ...prev, sku: replacements[prev.sku] || prev.sku }))
+                variantsTabRef.current?.replaceGeneratedSkus?.(replacements)
+            }
 
             if (productId) {
-                const response = await api.put(`/products/${productId}`, productData, requestOptions)
                 savedProduct = response.data || { id: productId }
                 if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
                     return { __productAuthoringStaleResponse: true }
@@ -1240,7 +1293,6 @@ const ProductForm = forwardRef(function ProductForm({
                 setAcceptedRowVersion(returnedRowVersion)
                 productAuthoringBaselineRef.current = createCanonicalProductAuthoringSnapshot(productData, productAuthoringBaselineRef.current)
             } else {
-                const response = await api.post('/products', productData, requestOptions)
                 savedProduct = response.data
                 if (productIdentityGenerationRef.current !== saveIdentityGeneration) {
                     return { __productAuthoringStaleResponse: true }
@@ -1368,6 +1420,15 @@ const ProductForm = forwardRef(function ProductForm({
 
     const handleSimpleChange = (field, value) => {
         setSimpleProductData(prev => ({ ...prev, [field]: value }))
+    }
+
+    const handleGenerateSimpleSku = () => {
+        const nameSku = /[^\x00-\x7F]/.test(formData.name)
+            ? '' : normalizeSkuPart(formData.name).toUpperCase()
+        setSimpleProductData(prev => ({
+            ...prev,
+            sku: nameSku || productSkuBase(productId, skuDraftIdRef.current)
+        }))
     }
 
     if (loading && productId) {
@@ -1640,15 +1701,20 @@ const ProductForm = forwardRef(function ProductForm({
             <div className="grid gap-4 md:grid-cols-2">
                 <div>
                     <label className="label" htmlFor={`${formId}-sku`}>{t('products.sku') || 'SKU'}</label>
-                    <input
-                        id={`${formId}-sku`}
-                        type="text"
-                        value={simpleProductData.sku}
-                        onChange={(e) => handleSimpleChange('sku', e.target.value)}
-                        className="input"
-                        placeholder={t('products.autoGenerated')}
-                        maxLength={100}
-                    />
+                    <div className="flex gap-2">
+                        <input
+                            id={`${formId}-sku`}
+                            type="text"
+                            value={simpleProductData.sku}
+                            onChange={(e) => handleSimpleChange('sku', e.target.value)}
+                            className="input flex-1"
+                            placeholder={t('products.autoGenerated')}
+                            maxLength={100}
+                        />
+                        <button type="button" onClick={handleGenerateSimpleSku} className="btn-secondary whitespace-nowrap">
+                            {t('variants.generateSku', 'Generate SKU')}
+                        </button>
+                    </div>
                 </div>
 
                 <div>

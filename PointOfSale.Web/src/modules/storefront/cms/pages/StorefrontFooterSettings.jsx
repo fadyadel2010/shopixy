@@ -11,7 +11,9 @@ export function StorefrontFooterSettings() {
             localized
             loadCmsPages={async () => {
                 const pages = await cmsService.listPages()
-                return (pages || []).map((page) => ({ slug: page.slug, title: page.title }))
+                return (pages || [])
+                    .filter((page) => page.hasPublished)
+                    .map((page) => ({ slug: page.slug, title: page.title }))
             }}
         />
     )

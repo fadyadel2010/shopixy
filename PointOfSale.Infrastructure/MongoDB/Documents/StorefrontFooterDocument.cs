@@ -52,6 +52,9 @@ public sealed class StorefrontFooterLinkDocument
 
     public string? Url { get; set; }
 
+    [BsonRepresentation(BsonType.String)]
+    public Guid? CmsPageGroupId { get; set; }
+
     public string? CmsPageSlug { get; set; }
 
     public bool OpenInNewTab { get; set; }

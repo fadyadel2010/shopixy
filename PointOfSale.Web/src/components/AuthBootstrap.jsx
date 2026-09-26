@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import api from '../services/api'
+import api, { isDefinitiveAuthFailure, requestPosSessionRefresh } from '../services/api'
 import { clearLegacyPosTokenStorage, useAuthStore } from '../store/authStore'
 import { queryClient } from '../queryClient'
 import {
@@ -16,9 +16,7 @@ export default function AuthBootstrap() {
     const hydrateSession = useAuthStore((state) => state.hydrateSession)
     const logout = useAuthStore((state) => state.logout)
     const setHasHydrated = useAuthStore((state) => state.setHasHydrated)
-    const beginRouteAuthorityValidation = useAuthStore((state) => state.beginRouteAuthorityValidation)
     const isBootstrapping = useRef(false)
-    const debounceTimer = useRef(null)
     const latestBootstrapRequestId = useRef(0)
 
     useEffect(() => {
@@ -42,49 +40,60 @@ export default function AuthBootstrap() {
             })
         }
 
-        const bootstrapSession = async ({ withholdRoutePresentation = false } = {}) => {
+        const bootstrapSession = async () => {
             if (isBootstrapping.current) {
                 return
             }
 
-            if (withholdRoutePresentation) {
-                beginRouteAuthorityValidation()
-            }
-
             isBootstrapping.current = true
             const bootstrapRequestId = ++latestBootstrapRequestId.current
+            const hadAuthenticatedSession = useAuthStore.getState().isAuthenticated
             const sessionRevisionAtStart = JSON.stringify({
                 userId: useAuthStore.getState().user?.id ?? null,
                 isAuthenticated: useAuthStore.getState().isAuthenticated,
             })
             clearLegacyPosTokenStorage()
 
-            try {
-                const response = await api.get('/auth/session')
-
-                if (!disposed && bootstrapRequestId === latestBootstrapRequestId.current) {
-                    const sessionRevisionChanged = JSON.stringify({
-                        userId: useAuthStore.getState().user?.id ?? null,
-                        isAuthenticated: useAuthStore.getState().isAuthenticated,
-                    }) !== sessionRevisionAtStart
-
-                    if (sessionRevisionChanged) {
-                        return
-                    }
-
-                    const nextUser = requirePosVendorSessionUserAuthority(response.data?.user ?? null)
-                    hydrateSession(nextUser)
+            const applySession = (user) => {
+                if (disposed || bootstrapRequestId !== latestBootstrapRequestId.current) {
+                    return
                 }
-            } catch {
+
                 const sessionRevisionChanged = JSON.stringify({
                     userId: useAuthStore.getState().user?.id ?? null,
                     isAuthenticated: useAuthStore.getState().isAuthenticated,
                 }) !== sessionRevisionAtStart
 
-                if (!disposed
-                    && bootstrapRequestId === latestBootstrapRequestId.current
-                    && !sessionRevisionChanged) {
-                    hydrateSession(null)
+                if (!sessionRevisionChanged) {
+                    hydrateSession(user)
+                }
+            }
+
+            try {
+                const response = await api.get('/auth/session')
+                try {
+                    applySession(requirePosVendorSessionUserAuthority(response.data?.user ?? null))
+                } catch {
+                    // A successful HTTP response with malformed authority is not a
+                    // transient network failure. Fail closed without reloading.
+                    applySession(null)
+                }
+            } catch (error) {
+                if (error?.response?.status === 401) {
+                    try {
+                        const refreshedUser = await requestPosSessionRefresh()
+                        applySession(refreshedUser)
+                        return
+                    } catch (refreshError) {
+                        if (!hadAuthenticatedSession || isDefinitiveAuthFailure(refreshError)) {
+                            applySession(null)
+                        }
+                        return
+                    }
+                }
+
+                if (!hadAuthenticatedSession || isDefinitiveAuthFailure(error)) {
+                    applySession(null)
                 }
             } finally {
                 if (bootstrapRequestId === latestBootstrapRequestId.current) {
@@ -107,7 +116,7 @@ export default function AuthBootstrap() {
 
         const revalidateCommerceHubVendorAuthority = () => {
             purgeCommerceHubVendorAuthority()
-            void bootstrapSession({ withholdRoutePresentation: true })
+            void bootstrapSession()
         }
 
         const unsubscribeFromActorTransitions = useAuthStore.subscribe((state, previousState) => {
@@ -126,17 +135,17 @@ export default function AuthBootstrap() {
 
         const handleVisibility = () => {
             if (document.visibilityState === 'visible') {
-                void bootstrapSession({ withholdRoutePresentation: true })
+                void bootstrapSession()
             }
         }
 
         const handleRouteLifecycle = () => {
-            void bootstrapSession({ withholdRoutePresentation: true })
+            void bootstrapSession()
         }
 
         const handlePageShow = (event) => {
             if (event.persisted) {
-                void bootstrapSession({ withholdRoutePresentation: true })
+                void bootstrapSession()
             }
         }
 
@@ -164,9 +173,6 @@ export default function AuthBootstrap() {
             latestBootstrapRequestId.current += 1
             isBootstrapping.current = false
             window.clearInterval(revalidationInterval)
-            if (debounceTimer.current) {
-                clearTimeout(debounceTimer.current)
-            }
             window.removeEventListener('storage', handleStorage)
             window.removeEventListener('focus', handleRouteLifecycle)
             window.removeEventListener('online', handleRouteLifecycle)
@@ -176,7 +182,7 @@ export default function AuthBootstrap() {
             document.removeEventListener('visibilitychange', handleVisibility)
             unsubscribeFromActorTransitions()
         }
-    }, [beginRouteAuthorityValidation, hydrateSession, logout, setHasHydrated])
+    }, [hydrateSession, logout, setHasHydrated])
 
     return null
 }

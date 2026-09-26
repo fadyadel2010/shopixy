@@ -155,3 +155,38 @@ public sealed class CommerceHubSearchMigrationCatchUpResult
     public DateTime StartedAtUtc { get; set; }
     public DateTime CompletedAtUtc { get; set; }
 }
+
+/// <summary>
+/// Application-level write readiness. Connectivity alone is insufficient while
+/// the cluster or CommerceHub write index is still recovering.
+/// </summary>
+public sealed class CommerceHubSearchWriteReadiness
+{
+    public bool IsReady { get; init; }
+    public string Reason { get; init; } = string.Empty;
+    public string? ClusterStatus { get; init; }
+    public string? WriteIndexName { get; init; }
+
+    public static CommerceHubSearchWriteReadiness Ready(string writeIndexName, string? clusterStatus) =>
+        new()
+        {
+            IsReady = true,
+            Reason = "write-index-resolvable",
+            WriteIndexName = writeIndexName,
+            ClusterStatus = clusterStatus
+        };
+
+    public static CommerceHubSearchWriteReadiness NotReady(string reason, string? clusterStatus = null) =>
+        new() { IsReady = false, Reason = reason, ClusterStatus = clusterStatus };
+}
+
+public sealed class CommerceHubSearchDependencyNotReadyException : InvalidOperationException
+{
+    public CommerceHubSearchDependencyNotReadyException(string reason)
+        : base($"CommerceHub search dependency not ready: {reason}")
+    {
+        Reason = reason;
+    }
+
+    public string Reason { get; }
+}

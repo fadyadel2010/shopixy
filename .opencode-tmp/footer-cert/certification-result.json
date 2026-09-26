@@ -1,0 +1,91 @@
+{
+  "startedAtUtc": "2026-09-25T16:32:21.6758895Z",
+  "status": "PASS",
+  "tenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+  "checks": [
+    "Pre-mutation SQL and public state match the immutable baseline",
+    "Real POS Admin Owner login succeeded without persisted credentials",
+    "Footer editor exposes labelled localized, target, activation, ordering, and deletion controls",
+    "Stale UI save returned conflict, retained the draft, fetched latest revision, and retried successfully",
+    "Accepted bilingual multi-section Footer persists through Admin reload",
+    "Authenticated tenant authority rejects a forged X-Tenant-Id header with 403 TENANT_FORBIDDEN",
+    "Anonymous English/Arabic Footer reads are immediate, localized, filtered, and tenant-isolated",
+    "Navigation, StoreConfig, Homepage, CMS Pages, Products, and other-tenant Footer state remained unchanged",
+    "Desktop, mobile, and RTL Storefront Footer rendering passed without horizontal Footer overflow",
+    "All 10 official runtime themes rendered both authored Footer sections through signed read-only previews",
+    "Original Footer IDs, timestamps, content, public reads, and unrelated fingerprints were restored exactly"
+  ],
+  "themes": [
+    {
+      "themeId": "modern",
+      "status": "PASS",
+      "screenshot": "theme-modern.png"
+    },
+    {
+      "themeId": "minimal",
+      "status": "PASS",
+      "screenshot": "theme-minimal.png"
+    },
+    {
+      "themeId": "fashion",
+      "status": "PASS",
+      "screenshot": "theme-fashion.png"
+    },
+    {
+      "themeId": "pearl",
+      "status": "PASS",
+      "screenshot": "theme-pearl.png"
+    },
+    {
+      "themeId": "phoenix",
+      "status": "PASS",
+      "screenshot": "theme-phoenix.png"
+    },
+    {
+      "themeId": "hype",
+      "status": "PASS",
+      "screenshot": "theme-hype.png"
+    },
+    {
+      "themeId": "alizon",
+      "status": "PASS",
+      "screenshot": "theme-alizon.png"
+    },
+    {
+      "themeId": "sharp",
+      "status": "PASS",
+      "screenshot": "theme-sharp.png"
+    },
+    {
+      "themeId": "cosmetics",
+      "status": "PASS",
+      "screenshot": "theme-cosmetics.png"
+    },
+    {
+      "themeId": "seven",
+      "status": "PASS",
+      "screenshot": "theme-seven.png"
+    }
+  ],
+  "screenshots": [
+    "01-admin-baseline.png",
+    "02-admin-concurrency-conflict.png",
+    "03-admin-certified-ar.png",
+    "04-storefront-desktop-en.png",
+    "05-storefront-mobile-en.png",
+    "06-storefront-mobile-ar.png",
+    "theme-modern.png",
+    "theme-minimal.png",
+    "theme-fashion.png",
+    "theme-pearl.png",
+    "theme-phoenix.png",
+    "theme-hype.png",
+    "theme-alizon.png",
+    "theme-sharp.png",
+    "theme-cosmetics.png",
+    "theme-seven.png"
+  ],
+  "restoration": "PASS_EXACT_SQL_AND_PUBLIC_BASELINE",
+  "completedAtUtc": "2026-09-25T16:32:58.4025737Z",
+  "restorationSucceeded": true
+}

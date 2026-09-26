@@ -17,6 +17,34 @@ namespace PointOfSale.Tests.Cms;
 public sealed class FooterAuthoringRecoveryTests
 {
     [Fact]
+    public async Task Save_RequiresRevisionAndKeepsTenantConfigurationsIsolated()
+    {
+        await using var harness = await FooterHarness.CreateAsync();
+        var firstTenantId = Guid.NewGuid();
+        var secondTenantId = Guid.NewGuid();
+        var first = await harness.Service.GetConfigurationAsync(FooterAuthoringScope.Tenant, firstTenantId);
+        var missingRevision = CreateRequest(first.Revision, "Rejected");
+        missingRevision.ExpectedRevision = null;
+
+        var precondition = await Assert.ThrowsAsync<FooterAuthoringException>(() =>
+            harness.Service.SaveConfigurationAsync(FooterAuthoringScope.Tenant, firstTenantId, missingRevision));
+        Assert.Equal(StatusCodes.Status428PreconditionRequired, precondition.StatusCode);
+        Assert.Equal("FOOTER_REVISION_REQUIRED", precondition.Code);
+
+        await harness.Service.SaveConfigurationAsync(
+            FooterAuthoringScope.Tenant,
+            firstTenantId,
+            CreateRequest(first.Revision, "First tenant"));
+        var second = await harness.Service.GetConfigurationAsync(FooterAuthoringScope.Tenant, secondTenantId);
+
+        Assert.Empty(second.Sections);
+        Assert.Empty(second.SocialLinks);
+        Assert.DoesNotContain(
+            await harness.Context.StorefrontFooterSections.IgnoreQueryFilters().ToListAsync(),
+            section => section.TenantId == secondTenantId);
+    }
+
+    [Fact]
     public async Task Save_AdoptsResponseRevision_RejectsStaleRetry_AndStagesEventInsideTransaction()
     {
         await using var harness = await FooterHarness.CreateAsync();
@@ -51,6 +79,40 @@ public sealed class FooterAuthoringRecoveryTests
         var unchanged = await harness.Service.GetConfigurationAsync(FooterAuthoringScope.Tenant, tenantId);
         Assert.Equal(second.Revision, unchanged.Revision);
         Assert.Equal("Support", unchanged.Sections.Single().Title);
+    }
+
+    [Fact]
+    public async Task TenantCmsLink_PersistsStableIdentity_AndReturnsCanonicalSlugAfterRename()
+    {
+        await using var harness = await FooterHarness.CreateAsync();
+        var tenantId = Guid.NewGuid();
+        var page = CreatePublishedPage(tenantId, "about");
+        harness.Context.CmsPages.Add(page);
+        await harness.Context.SaveChangesAsync();
+
+        var loaded = await harness.Service.GetConfigurationAsync(FooterAuthoringScope.Tenant, tenantId);
+        var request = CreateRequest(loaded.Revision, "Company");
+        request.Sections![0].Links =
+        [
+            CreateLink(FooterLinkType.Cms, "About", cmsPageSlug: "about")
+        ];
+
+        var saved = await harness.Service.SaveConfigurationAsync(FooterAuthoringScope.Tenant, tenantId, request);
+        var persisted = await harness.Context.StorefrontFooterSections
+            .IgnoreQueryFilters()
+            .SelectMany(section => section.Links)
+            .SingleAsync();
+        Assert.Equal(page.PageGroupId, persisted.CmsPageGroupId);
+        Assert.Equal(page.PageGroupId, saved.Sections.Single().Links.Single().CmsPageGroupId);
+
+        page.Slug = "about-us";
+        page.Version = 2;
+        page.UpdatedAt = DateTime.UtcNow;
+        await harness.Context.SaveChangesAsync();
+
+        var renamed = await harness.Service.GetConfigurationAsync(FooterAuthoringScope.Tenant, tenantId);
+        Assert.Equal("about-us", renamed.Sections.Single().Links.Single().CmsPageSlug);
+        Assert.Equal(page.PageGroupId, renamed.Sections.Single().Links.Single().CmsPageGroupId);
     }
 
     [Fact]

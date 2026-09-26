@@ -10,6 +10,7 @@ public sealed class StorefrontFooterLink
     public string? LabelAr { get; set; }
     public FooterLinkType LinkType { get; set; } = FooterLinkType.Internal;
     public string? Url { get; set; }
+    public Guid? CmsPageGroupId { get; set; }
     public string? CmsPageSlug { get; set; }
     public bool OpenInNewTab { get; set; }
     public int SortOrder { get; set; }

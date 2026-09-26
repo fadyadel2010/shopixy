@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using PointOfSale.Core.Helpers;
 using PointOfSale.Infrastructure.Data;
+using PointOfSale.Infrastructure.Tenancy;
 
 namespace PointOfSale.API.Services.Pricing;
 
@@ -90,13 +91,12 @@ public sealed class TaxCalculationService : ITaxCalculationService
 
     private async Task<string?> ResolveTenantCountryAsync(Guid tenantId, CancellationToken cancellationToken)
     {
-        var tenantCountry = await _dbContext.Tenants
-            .AsNoTracking()
-            .Where(tenant => tenant.Id == tenantId)
-            .Select(tenant => tenant.Country)
-            .FirstOrDefaultAsync(cancellationToken);
+        var tenant = await TenantAuthorityMemo.GetTenantByIdAsync(
+            _dbContext,
+            tenantId,
+            cancellationToken);
 
-        return NormalizeCountryCode(tenantCountry);
+        return NormalizeCountryCode(tenant?.Country);
     }
 
     private static TaxComputationResult CreateResult(decimal rate, string source, string? countryCode, decimal subtotal)

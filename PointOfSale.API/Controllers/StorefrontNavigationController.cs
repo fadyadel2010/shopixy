@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using PointOfSale.API.DTOs.Storefront;
+using PointOfSale.API.Services.Admin;
 using PointOfSale.API.Services.Catalog;
 using PointOfSale.Core.Enums;
 using PointOfSale.Infrastructure.Data;
@@ -140,6 +141,9 @@ public sealed class StorefrontNavigationController : ControllerBase
                         Label = GetString(link, "label")?.Trim() ?? string.Empty,
                         LabelAr = GetString(link, "labelAr")?.Trim(),
                         Type = GetString(link, "type")?.Trim().ToLowerInvariant() ?? string.Empty,
+                        AuthoringType = GetString(link, "authoringType")?.Trim().ToLowerInvariant() ?? string.Empty,
+                        TargetId = GetGuid(link, "targetId"),
+                        CollectionKey = GetString(link, "collectionKey")?.Trim().ToLowerInvariant(),
                         Path = GetString(link, "path")?.Trim(),
                         Slug = GetString(link, "slug")?.Trim().Trim('/').ToLowerInvariant(),
                         OpenInNewTab = GetBool(link, "openInNewTab")
@@ -167,22 +171,74 @@ public sealed class StorefrontNavigationController : ControllerBase
             tenantId,
             cancellationToken);
 
-        var liveCategorySlugs = lineage.Rows
+        var liveCategories = lineage.Rows
             .Where(row => lineage.IsLiveInLineage(row.CategoryId))
-            .Select(row => GenerateSlug(row.Name))
+            .Select(row => new CategoryNavigationTarget(row.CategoryId, GenerateSlug(row.Name)))
+            .ToList();
+        var categorySlugCounts = liveCategories
+            .Where(target => !string.IsNullOrWhiteSpace(target.Slug))
+            .GroupBy(target => target.Slug, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        var liveCategoriesById = liveCategories.ToDictionary(
+            target => target.TargetId,
+            target => categorySlugCounts.GetValueOrDefault(target.Slug) == 1
+                ? target.Slug
+                : target.TargetId.ToString("D"));
+        var legacyCategorySlugs = categorySlugCounts
+            .Where(item => item.Value == 1)
+            .Select(item => item.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var publishedCmsSlugs = (await _dbContext.CmsPages
+        var publishedCmsRows = await _dbContext.CmsPages
                 .AsNoTracking()
                 .Where(page => page.TenantId == tenantId)
                 .Where(page => !page.IsDeleted && page.IsPublished && !page.IsDraft && page.PublishedAt != null)
-                .Select(page => page.Slug)
-                .Distinct()
-                .ToListAsync(cancellationToken))
+                .Select(page => new { page.PageGroupId, page.Slug, page.Version })
+                .ToListAsync(cancellationToken);
+        var publishedCmsById = publishedCmsRows
+            .GroupBy(page => page.PageGroupId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderByDescending(page => page.Version).First().Slug.Trim().Trim('/').ToLowerInvariant());
+        var publishedCmsSlugs = publishedCmsById.Values
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var header = FilterNavigationMenu(navigation.Header, liveCategorySlugs, publishedCmsSlugs);
-        var footer = FilterNavigationMenu(navigation.Footer, liveCategorySlugs, publishedCmsSlugs);
+        var productRows = await _dbContext.Products
+            .AsNoTracking()
+            .IgnoreQueryFilters()
+            .Where(product =>
+                product.TenantId == tenantId &&
+                !product.IsDeleted &&
+                product.IsActive &&
+                product.IsOnlineVisible &&
+                product.PublishStatus == PublishStatus.Published &&
+                product.Slug != null &&
+                product.Slug != string.Empty)
+            .Select(product => new { product.Id, product.CategoryId, product.Slug })
+            .ToListAsync(cancellationToken);
+        var liveProductsById = productRows
+            .Where(product => lineage.IsLiveInLineage(product.CategoryId))
+            .ToDictionary(
+                product => product.Id,
+                product => $"/products/{product.Slug!.Trim().Trim('/').ToLowerInvariant()}");
+        var legacyProductPaths = liveProductsById.Values.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var header = FilterNavigationMenu(
+            navigation.Header,
+            liveCategoriesById,
+            legacyCategorySlugs,
+            publishedCmsById,
+            publishedCmsSlugs,
+            liveProductsById,
+            legacyProductPaths);
+        var footer = FilterNavigationMenu(
+            navigation.Footer,
+            liveCategoriesById,
+            legacyCategorySlugs,
+            publishedCmsById,
+            publishedCmsSlugs,
+            liveProductsById,
+            legacyProductPaths);
 
         if (header.Links.Count != navigation.Header.Links.Count ||
             footer.Links.Count != navigation.Footer.Links.Count)
@@ -203,15 +259,26 @@ public sealed class StorefrontNavigationController : ControllerBase
 
     private static NavigationMenuDto FilterNavigationMenu(
         NavigationMenuDto menu,
-        ISet<string> liveCategorySlugs,
-        ISet<string> publishedCmsSlugs)
+        IReadOnlyDictionary<Guid, string> liveCategoriesById,
+        ISet<string> legacyCategorySlugs,
+        IReadOnlyDictionary<Guid, string> publishedCmsById,
+        ISet<string> publishedCmsSlugs,
+        IReadOnlyDictionary<Guid, string> liveProductsById,
+        ISet<string> legacyProductPaths)
     {
         var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         return new NavigationMenuDto
         {
             Links = menu.Links
-                .Where(link => IsAuthoritativeTarget(link, liveCategorySlugs, publishedCmsSlugs))
+                .Where(link => IsAuthoritativeTarget(
+                    link,
+                    liveCategoriesById,
+                    legacyCategorySlugs,
+                    publishedCmsById,
+                    publishedCmsSlugs,
+                    liveProductsById,
+                    legacyProductPaths))
                 .Where(link => targets.Add(GetTargetKey(link)))
                 .ToList()
         };
@@ -219,34 +286,86 @@ public sealed class StorefrontNavigationController : ControllerBase
 
     private static bool IsAuthoritativeTarget(
         NavigationLinkDto link,
-        ISet<string> liveCategorySlugs,
-        ISet<string> publishedCmsSlugs)
+        IReadOnlyDictionary<Guid, string> liveCategoriesById,
+        ISet<string> legacyCategorySlugs,
+        IReadOnlyDictionary<Guid, string> publishedCmsById,
+        ISet<string> publishedCmsSlugs,
+        IReadOnlyDictionary<Guid, string> liveProductsById,
+        ISet<string> legacyProductPaths)
     {
         if (string.IsNullOrWhiteSpace(link.Label) || link.Label.Length > 120)
         {
             return false;
         }
 
-        return link.Type switch
+        var authoringType = string.IsNullOrWhiteSpace(link.AuthoringType)
+            ? link.Type
+            : link.AuthoringType;
+
+        return authoringType switch
         {
-            "cms" => !string.IsNullOrWhiteSpace(link.Slug) && publishedCmsSlugs.Contains(link.Slug),
-            "category" => IsLiveCategoryNavigationLink(link, liveCategorySlugs),
-            "internal" => IsSafeInternalPath(link.Path),
+            "cms" => ResolveCmsNavigationLink(link, publishedCmsById, publishedCmsSlugs),
+            "category" => ResolveCategoryNavigationLink(link, liveCategoriesById, legacyCategorySlugs),
+            "product" => ResolveProductNavigationLink(link, liveProductsById, legacyProductPaths),
+            "collection" => string.Equals(
+                    link.CollectionKey,
+                    NavigationAdmissionService.AllProductsCollectionKey,
+                    StringComparison.OrdinalIgnoreCase) &&
+                IsSafeInternalPath(link.Path),
+            "custom" or "internal" => IsSafeInternalPath(link.Path),
             "external" => IsSafeExternalUrl(link.Path),
             _ => false
         };
     }
 
-    private static bool IsLiveCategoryNavigationLink(
+    private static bool ResolveCategoryNavigationLink(
         NavigationLinkDto link,
-        ISet<string> liveCategorySlugs)
+        IReadOnlyDictionary<Guid, string> liveCategoriesById,
+        ISet<string> legacyCategorySlugs)
     {
+        if (link.TargetId.HasValue && liveCategoriesById.TryGetValue(link.TargetId.Value, out var currentRoute))
+        {
+            link.Slug = currentRoute;
+            link.Path = null;
+            return true;
+        }
+
         var slug = !string.IsNullOrWhiteSpace(link.Slug)
             ? link.Slug
             : ExtractCategorySlugFromPath(link.Path);
 
         return !string.IsNullOrWhiteSpace(slug) &&
-               liveCategorySlugs.Contains(slug.Trim().Trim('/'));
+               legacyCategorySlugs.Contains(slug.Trim().Trim('/'));
+    }
+
+    private static bool ResolveCmsNavigationLink(
+        NavigationLinkDto link,
+        IReadOnlyDictionary<Guid, string> publishedCmsById,
+        ISet<string> publishedCmsSlugs)
+    {
+        if (link.TargetId.HasValue && publishedCmsById.TryGetValue(link.TargetId.Value, out var currentSlug))
+        {
+            link.Slug = currentSlug;
+            link.Path = null;
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(link.Slug) && publishedCmsSlugs.Contains(link.Slug);
+    }
+
+    private static bool ResolveProductNavigationLink(
+        NavigationLinkDto link,
+        IReadOnlyDictionary<Guid, string> liveProductsById,
+        ISet<string> legacyProductPaths)
+    {
+        if (link.TargetId.HasValue && liveProductsById.TryGetValue(link.TargetId.Value, out var currentPath))
+        {
+            link.Path = currentPath;
+            link.Slug = currentPath["/products/".Length..];
+            return true;
+        }
+
+        return !string.IsNullOrWhiteSpace(link.Path) && legacyProductPaths.Contains(link.Path);
     }
 
     private static bool IsSafeInternalPath(string? path)
@@ -277,8 +396,9 @@ public sealed class StorefrontNavigationController : ControllerBase
 
     private static string GetTargetKey(NavigationLinkDto link)
     {
-        var target = link.Type is "cms" or "category" ? link.Slug : link.Path;
-        return $"{link.Type}:{target}";
+        var type = string.IsNullOrWhiteSpace(link.AuthoringType) ? link.Type : link.AuthoringType;
+        var target = link.TargetId?.ToString("D") ?? (type is "cms" or "category" ? link.Slug : link.Path);
+        return $"{type}:{target}";
     }
 
     private static string? ExtractCategorySlugFromPath(string? path)
@@ -327,6 +447,11 @@ public sealed class StorefrontNavigationController : ControllerBase
             : null;
     }
 
+    private static Guid? GetGuid(JsonElement element, string propertyName) =>
+        Guid.TryParse(GetString(element, propertyName), out var value) && value != Guid.Empty
+            ? value
+            : null;
+
     private static bool GetBool(JsonElement element, string propertyName, bool defaultValue = false)
     {
         if (!element.TryGetProperty(propertyName, out var property))
@@ -350,4 +475,6 @@ public sealed class StorefrontNavigationController : ControllerBase
             ? value
             : defaultValue;
     }
+
+    private sealed record CategoryNavigationTarget(Guid TargetId, string Slug);
 }

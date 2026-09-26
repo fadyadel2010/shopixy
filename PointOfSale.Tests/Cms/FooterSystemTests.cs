@@ -27,7 +27,7 @@ public sealed class FooterSystemTests
             tenantId,
             "Company",
             [
-                CreateStorefrontLink(FooterLinkType.Cms, label: "About this store", cmsPageSlug: "about"),
+                CreateStorefrontLink(FooterLinkType.Cms, label: "About this store", cmsPageSlug: "about", openInNewTab: true),
                 CreateStorefrontLink(FooterLinkType.External, label: "Bad Link", url: "javascript:void(0)")
             ]));
         dbContext.StorefrontFooterSections.Add(CreateStorefrontSection(
@@ -49,8 +49,45 @@ public sealed class FooterSystemTests
         Assert.Single(footer.Sections[0].Links);
         Assert.Equal("About this store", footer.Sections[0].Links[0].Label);
         Assert.Equal("/about", footer.Sections[0].Links[0].Url);
+        Assert.True(footer.Sections[0].Links[0].OpenInNewTab);
         Assert.Single(footer.SocialLinks);
         Assert.Equal("Instagram", footer.SocialLinks[0].Platform);
+    }
+
+    [Fact]
+    public async Task StorefrontFooterReadService_CmsTargetsFailClosedAgainstCurrentTenantPublishedAuthority()
+    {
+        await using var dbContext = CreateDbContext();
+        var tenantId = Guid.NewGuid();
+        var foreignTenantId = Guid.NewGuid();
+        SeedLiveStorefrontAuthority(dbContext, tenantId);
+        SeedLiveStorefrontAuthority(dbContext, foreignTenantId);
+
+        var renamedPage = CreateStorePublishedPage(tenantId, "current-about", "Renamed About");
+        dbContext.CmsPages.Add(renamedPage);
+        dbContext.CmsPages.Add(CreateStorePublishedPage(foreignTenantId, "foreign-only", "Foreign"));
+        var unpublished = CreateStorePublishedPage(tenantId, "unpublished", "Unpublished");
+        unpublished.IsPublished = false;
+        unpublished.IsDraft = true;
+        unpublished.PublishedAt = null;
+        dbContext.CmsPages.Add(unpublished);
+        dbContext.StorefrontFooterSections.Add(CreateStorefrontSection(
+            tenantId,
+            "Company",
+            [
+                CreateStorefrontLink(FooterLinkType.Cms, label: "Renamed", cmsPageSlug: "about", cmsPageGroupId: renamedPage.PageGroupId, sortOrder: 0),
+                CreateStorefrontLink(FooterLinkType.Cms, label: "Foreign", cmsPageSlug: "foreign-only", sortOrder: 2),
+                CreateStorefrontLink(FooterLinkType.Cms, label: "Unpublished", cmsPageSlug: "unpublished", sortOrder: 3)
+            ]));
+        await dbContext.SaveChangesAsync();
+
+        var footer = await CreateStorefrontFooterReadService(dbContext).GetFooterAsync(tenantId);
+
+        var link = Assert.Single(Assert.Single(footer.Sections).Links);
+        Assert.Equal("Renamed", link.Label);
+        Assert.Equal("/current-about", link.Url);
+        Assert.DoesNotContain(footer.Sections.SelectMany(section => section.Links), item =>
+            item.Label is "Foreign" or "Unpublished");
     }
 
     [Fact]
@@ -384,6 +421,7 @@ public sealed class FooterSystemTests
         string label,
         string? url = null,
         string? cmsPageSlug = null,
+        Guid? cmsPageGroupId = null,
         bool openInNewTab = false,
         bool isActive = true,
         int sortOrder = 0)
@@ -394,6 +432,7 @@ public sealed class FooterSystemTests
             Label = label,
             LinkType = type,
             Url = url,
+            CmsPageGroupId = cmsPageGroupId,
             CmsPageSlug = cmsPageSlug,
             OpenInNewTab = openInNewTab,
             SortOrder = sortOrder,

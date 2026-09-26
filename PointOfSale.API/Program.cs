@@ -2176,6 +2176,10 @@ builder.Services.AddMassTransit(x =>
     {
         o.UsePostgres();
         o.UseBusOutbox();
+
+        // FOR UPDATE SKIP LOCKED provides single-claimant semantics without the
+        // serialization conflicts caused by MassTransit's Serializable default.
+        o.IsolationLevel = System.Data.IsolationLevel.ReadCommitted;
         
         // PHASE 10.5.A: Configure faster outbox delivery for order events
         o.QueryDelay = TimeSpan.FromSeconds(1); // Poll every 1 second instead of default 10s

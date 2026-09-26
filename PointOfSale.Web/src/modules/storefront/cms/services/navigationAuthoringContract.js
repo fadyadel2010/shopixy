@@ -39,7 +39,7 @@ const requireArray = (value, field) => {
     return value
 }
 
-const admitLink = (candidate, menu, index) => {
+const admitLink = (candidate, snapshot, menu, index, validationWarnings) => {
     if (!candidate || typeof candidate !== 'object') {
         throw new NavigationAuthoringContractError(
             'NAVIGATION_RESPONSE_REJECTED',
@@ -57,7 +57,21 @@ const admitLink = (candidate, menu, index) => {
     }
 
     const targetId = typeof candidate.targetId === 'string' ? candidate.targetId.trim().toLowerCase() : null
-    if (ENTITY_TYPES.has(type) && !isBackendGuid(targetId)) {
+    const validationStatus = typeof candidate.validationStatus === 'string'
+        ? candidate.validationStatus.trim().toLowerCase()
+        : null
+    const validationCode = typeof candidate.validationCode === 'string' ? candidate.validationCode.trim() : ''
+    const matchingRepairWarning = validationWarnings.find((warning) => (
+        warning.status === 'invalid'
+        && warning.snapshot === snapshot
+        && warning.menu === menu
+        && warning.index === index
+        && warning.linkType === type
+        && warning.code === validationCode
+    ))
+    const isBackendRepairCandidate = validationStatus === 'invalid' && Boolean(matchingRepairWarning)
+
+    if (ENTITY_TYPES.has(type) && !isBackendGuid(targetId) && !isBackendRepairCandidate) {
         throw new NavigationAuthoringContractError(
             'NAVIGATION_RESPONSE_REJECTED',
             `Navigation ${menu} link ${index + 1} has no backend-issued target identity.`
@@ -74,17 +88,13 @@ const admitLink = (candidate, menu, index) => {
         )
     }
 
-    const validationStatus = typeof candidate.validationStatus === 'string'
-        ? candidate.validationStatus.trim().toLowerCase()
-        : null
-
     return {
         label,
         labelAr: typeof candidate.labelAr === 'string' && candidate.labelAr.trim()
             ? candidate.labelAr.trim()
             : null,
         type,
-        targetId: ENTITY_TYPES.has(type) ? targetId : null,
+        targetId: ENTITY_TYPES.has(type) && isBackendGuid(targetId) ? targetId : null,
         collectionKey: type === 'collection' ? collectionKey : null,
         path: typeof candidate.path === 'string' && candidate.path.trim() ? candidate.path.trim() : null,
         slug: typeof candidate.slug === 'string' && candidate.slug.trim() ? candidate.slug.trim() : null,
@@ -92,16 +102,14 @@ const admitLink = (candidate, menu, index) => {
         order: index,
         enabled: candidate.enabled !== false,
         validationStatus: validationStatus || null,
-        validationCode: typeof candidate.validationCode === 'string' && candidate.validationCode.trim()
-            ? candidate.validationCode.trim()
-            : null,
+        validationCode: validationCode || null,
         validationMessage: typeof candidate.validationMessage === 'string' && candidate.validationMessage.trim()
             ? candidate.validationMessage.trim()
             : null,
     }
 }
 
-const admitConfig = (candidate, field) => {
+const admitConfig = (candidate, field, validationWarnings) => {
     if (!candidate || typeof candidate !== 'object') {
         throw new NavigationAuthoringContractError(
             'NAVIGATION_RESPONSE_REJECTED',
@@ -110,8 +118,8 @@ const admitConfig = (candidate, field) => {
     }
 
     return {
-        header: requireArray(candidate.header, `${field}.header`).map((link, index) => admitLink(link, 'header', index)),
-        footer: requireArray(candidate.footer, `${field}.footer`).map((link, index) => admitLink(link, 'footer', index)),
+        header: requireArray(candidate.header, `${field}.header`).map((link, index) => admitLink(link, field, 'header', index, validationWarnings)),
+        footer: requireArray(candidate.footer, `${field}.footer`).map((link, index) => admitLink(link, field, 'footer', index, validationWarnings)),
     }
 }
 
@@ -168,8 +176,8 @@ export function admitNavigationSnapshot(candidate) {
 
     return {
         rowVersion,
-        draft: admitConfig(candidate.draft, 'draft'),
-        live: candidate.live == null ? null : admitConfig(candidate.live, 'live'),
+        draft: admitConfig(candidate.draft, 'draft', validationWarnings),
+        live: candidate.live == null ? null : admitConfig(candidate.live, 'live', validationWarnings),
         hasPendingChanges: candidate.hasPendingChanges === true,
         validationWarnings,
         brokenLinks: admitValidationWarnings(candidate.brokenLinks ?? validationWarnings),

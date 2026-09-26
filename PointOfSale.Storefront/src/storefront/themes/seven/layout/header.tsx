@@ -17,7 +17,7 @@ const SevenHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                             href="/"
                             className="min-w-0 flex-1 truncate text-center text-2xl font-medium tracking-[-0.02em] text-white md:text-left md:text-3xl"
                         >
-                            {storeName || 'La Femmea'}
+                            {storeName}
                         </AffiliateLink>
 
                         {/* Desktop Nav */}

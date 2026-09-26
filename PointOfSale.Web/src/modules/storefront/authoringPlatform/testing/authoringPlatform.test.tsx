@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import i18n from '../../../../i18n/config'
 
 import {
     AUTHORING_ACTION_ORDER,
@@ -22,6 +23,8 @@ function GuardHarness({ onSave = () => {} }) {
 }
 
 describe('Storefront Authoring Platform', () => {
+    // Exercise the same resource-backed language initialization as the POS Admin app.
+    void i18n.changeLanguage('en')
     afterEach(() => window.history.replaceState({}, '', '/'))
 
     it('publishes the constitutional action contract and renders that order', () => {

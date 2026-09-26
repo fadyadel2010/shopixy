@@ -1,15 +1,14 @@
 import axios, { type AxiosError, type AxiosInstance, type InternalAxiosRequestConfig } from 'axios'
 import { appendCsrfHeader } from '../../utils/csrf'
-import {
-    getSuperAdminAuthorityRevision,
-    getStoredSuperAdminTokenVersion,
-    useSuperAdminAuthStore,
-} from '../auth/superAdminAuthStore'
-import { getSuperAdminSession, refreshSuperAdminSession } from '../auth/superAdminAuthService'
+import { useSuperAdminAuthStore } from '../auth/superAdminAuthStore'
 import {
     canRefreshSuperAdminSession,
     isSuperAdminAccessTokenExpired,
 } from '../auth/superAdminSession'
+import {
+    isDefinitiveSuperAdminAuthFailure,
+    restoreSuperAdminSession,
+} from '../auth/superAdminSessionCoordinator'
 import type {
     SuperAdminApiErrorResponse,
     SuperAdminApiSuccessResponse,
@@ -52,13 +51,10 @@ function createRequestId(): string {
 
 function redirectToSuperAdminLogin(): void {
     useSuperAdminAuthStore.getState().logout()
+}
 
-    if (window.location.pathname.startsWith('/super-admin/login')) {
-        return
-    }
-
-    const redirectTarget = `${window.location.pathname}${window.location.search}`
-    window.location.assign(`/super-admin/login?redirect=${encodeURIComponent(redirectTarget)}`)
+export function shouldInvalidateSuperAdminSession(statusCode: number | undefined): boolean {
+    return statusCode === 401
 }
 
 function normalizeHttpError(error: unknown): SuperAdminHttpError {
@@ -157,12 +153,14 @@ class SuperAdminApiClient {
                         await this.refreshAccessToken()
                         return this.client(originalRequest)
                     } catch (refreshError) {
-                        redirectToSuperAdminLogin()
+                        if (isDefinitiveSuperAdminAuthFailure(refreshError)) {
+                            redirectToSuperAdminLogin()
+                        }
                         throw normalizeHttpError(refreshError)
                     }
                 }
 
-                if (statusCode === 401 || statusCode === 403) {
+                if (shouldInvalidateSuperAdminSession(statusCode)) {
                     redirectToSuperAdminLogin()
                 }
 
@@ -180,29 +178,8 @@ class SuperAdminApiClient {
             throw new SuperAdminHttpError('Super Admin session has expired.', { status: 401 })
         }
 
-        const tokenVersionResult = getStoredSuperAdminTokenVersion()
-
-        let tokenVersion: number | undefined
-        if (tokenVersionResult !== undefined && typeof tokenVersionResult === 'object') {
-            console.error(
-                '[SuperAdmin] Token version could not be read from storage, failing closed:',
-                tokenVersionResult.error,
-            )
-            redirectToSuperAdminLogin()
-            throw new SuperAdminHttpError('Super Admin token version authority is unavailable.', { status: 401 })
-        } else {
-            tokenVersion = tokenVersionResult
-        }
-
-        const authorityRevisionAtStart = getSuperAdminAuthorityRevision()
-
-        this.refreshPromise = refreshSuperAdminSession({ tokenVersion })
-            .then(() => getSuperAdminSession())
+        this.refreshPromise = restoreSuperAdminSession()
             .then((session) => {
-                if (authorityRevisionAtStart !== getSuperAdminAuthorityRevision()) {
-                    throw new SuperAdminHttpError('Super Admin actor changed during refresh.', { status: 401 })
-                }
-
                 useSuperAdminAuthStore.getState().setSession(session)
             })
             .finally(() => {

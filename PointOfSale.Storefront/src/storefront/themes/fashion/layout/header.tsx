@@ -11,8 +11,7 @@ const FashionHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
         <>
             <header className="sticky top-0 z-30 border-b border-white/10 bg-[#161311] text-white shadow-[0_18px_40px_rgba(0,0,0,0.22)]">
                 <div className="mx-auto max-w-7xl px-4 py-3 sm:py-4">
-                    <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.32em] text-white/60">
-                        <span>Editorial storefront</span>
+                    <div className="flex items-center justify-end text-[11px] uppercase tracking-[0.32em] text-white/60">
                         <div className="hidden items-center gap-2 md:flex">
                             <LanguageSlot variant="text" size="sm" className="text-white/60 hover:text-white" />
                             <div className="border-l border-white/10 pl-3">
@@ -45,11 +44,7 @@ const FashionHeader: React.FC<HeaderPresentationProps> = ({ model, slots }) => {
                             {storeName}
                         </AffiliateLink>
 
-                        <div className="hidden md:flex md:flex-1 md:justify-end">
-                            <span className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-white/60">
-                                New season
-                            </span>
-                        </div>
+                        <div className="hidden md:block md:flex-1" aria-hidden="true" />
                     </div>
 
                     <NavigationSlot

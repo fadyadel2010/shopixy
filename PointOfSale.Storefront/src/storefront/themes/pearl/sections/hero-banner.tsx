@@ -36,7 +36,7 @@ const HeroBanner: React.FC<any> = ({
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
-                                    alt={title || 'Pearl boutique hero image'}
+                                    alt={title || ''}
                                     className="h-full w-full object-contain p-4"
                                 />
                             ) : (
@@ -76,11 +76,6 @@ const HeroBanner: React.FC<any> = ({
                         </ThemeHeroCTA>
                     )}
 
-                    <div className="mx-auto mt-12 grid max-w-xl grid-cols-3 gap-4 border-y border-[#C9A863]/25 py-5 text-[10px] font-semibold uppercase tracking-[0.26em] text-[#313E61] lg:mx-0">
-                        <span>crafted</span>
-                        <span>gift-ready</span>
-                        <span>private edit</span>
-                    </div>
                 </div>
             </div>
         </section>

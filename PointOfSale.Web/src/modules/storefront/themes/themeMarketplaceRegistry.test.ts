@@ -4,6 +4,7 @@ import {
     getAvailableMarketplaceThemes,
     getMarketplaceThemeById,
     getDefaultMarketplaceTheme,
+    getThemeArtworkStyle,
 } from './themeMarketplaceRegistry';
 
 const PEARL_ID = 'pearl';
@@ -39,5 +40,11 @@ describe('Pearl theme — Marketplace registry (Phase T1.0 scaffold)', () => {
 
         expect(getAvailableMarketplaceThemes().map((theme) => theme.id)).toEqual(canonicalMarketplaceIds);
         expect(getAvailableMarketplaceThemes().map((theme) => theme.id)).not.toContain('electronics');
+    });
+
+    it('uses each manifest accent as the preview artwork background', () => {
+        for (const theme of getAvailableMarketplaceThemes()) {
+            expect(getThemeArtworkStyle(theme)).toEqual({ backgroundColor: theme.accent });
+        }
     });
 });

@@ -76,6 +76,37 @@ describe('Phase 2 Theme Runtime architecture enforcement', () => {
         }
     });
 
+    it('prevents theme presentation from inventing merchant content or payment support', () => {
+        const sharedPresentationSources = [
+            read('components/theme-components/ThemeComponents.tsx'),
+            read('storefront/commerce/CommerceBrowsingExperience.tsx'),
+        ];
+        const sources = [
+            ...installedThemeSources.map(({ source }) => source),
+            ...sharedPresentationSources,
+        ];
+        const forbiddenContent = [
+            'Campaign story',
+            'Editorial storefront',
+            'New season',
+            'private collection showcase',
+            'La Femmea',
+            'Cash on Delivery',
+            '>Visa<',
+            '>Mastercard<',
+            'Collection {String(index + 1)',
+            'Drop {String(index + 1)',
+            'HYPE-{String(index + 1)',
+            'CAT-{String(index + 1)',
+        ];
+
+        for (const source of sources) {
+            for (const content of forbiddenContent) {
+                expect(source).not.toContain(content);
+            }
+        }
+    });
+
     it('requires every active custom header to place every runtime-owned capability slot', () => {
         const requiredSlots = [
             'NavigationSlot',

@@ -322,12 +322,22 @@ public sealed class DomainAuthorityCacheTests
             where T : class => GetOrCreateOwnedAsync(key, cacheType, string.Empty, ttl, factory, maxProjectionLag, cancellationToken);
 
         public async Task<T?> GetOrCreateOwnedAsync<T>(string key, string cacheType, string invalidationGenerationKey, TimeSpan ttl, Func<CancellationToken, Task<CachePopulationResult<T>>> factory, TimeSpan? maxProjectionLag = null, CancellationToken cancellationToken = default)
+            where T : class => (await GetOrCreateOwnedWithStatusAsync(
+                key,
+                cacheType,
+                invalidationGenerationKey,
+                ttl,
+                factory,
+                maxProjectionLag,
+                cancellationToken)).Value;
+
+        public async Task<CacheReadResult<T>> GetOrCreateOwnedWithStatusAsync<T>(string key, string cacheType, string invalidationGenerationKey, TimeSpan ttl, Func<CancellationToken, Task<CachePopulationResult<T>>> factory, TimeSpan? maxProjectionLag = null, CancellationToken cancellationToken = default)
             where T : class
         {
             var cached = Get<T>(key, invalidationGenerationKey);
             if (cached != null)
             {
-                return cached;
+                return new CacheReadResult<T>(cached, Refreshed: false);
             }
 
             var gate = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
@@ -337,7 +347,7 @@ public sealed class DomainAuthorityCacheTests
                 cached = Get<T>(key, invalidationGenerationKey);
                 if (cached != null)
                 {
-                    return cached;
+                    return new CacheReadResult<T>(cached, Refreshed: false);
                 }
 
                 var generation = Generation(invalidationGenerationKey);
@@ -347,7 +357,7 @@ public sealed class DomainAuthorityCacheTests
                     _entries[key] = new Entry(population.Value, generation);
                 }
 
-                return population.Value;
+                return new CacheReadResult<T>(population.Value, Refreshed: true);
             }
             finally
             {

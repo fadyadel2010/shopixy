@@ -10,6 +10,7 @@ using Npgsql;
 using PointOfSale.API.DTOs.Admin;
 using PointOfSale.API.Services.Cms;
 using PointOfSale.API.Services.Homepage;
+using PointOfSale.Core.Constants;
 using PointOfSale.Core.Entities;
 using PointOfSale.Core.Enums;
 using PointOfSale.Core.Events;
@@ -122,7 +123,8 @@ public sealed class CmsSeedService : ICmsSeedService
                 storeConfig.CustomizationJson,
                 "StoreConfig customization JSON is invalid.");
             var navigationExists = ResolveNavigationExists(customizationRoot);
-            var homepageExists = await _dbContext.HomepageSections
+            var storefrontHomepageExists = ResolveStorefrontHomepageExists(customizationRoot);
+            var marketplaceHomepageExists = await _dbContext.HomepageSections
                 .AsNoTracking()
                 .AnyAsync(
                     section => section.TenantId == tenantId &&
@@ -141,7 +143,11 @@ public sealed class CmsSeedService : ICmsSeedService
             var missingPageRequests = BuildDefaultPages()
                 .Where(request => !existingPageGroups.ContainsKey(request.Slug))
                 .ToList();
-            if (missingPageRequests.Count == 0 && navigationExists && homepageExists && footerExists)
+            if (missingPageRequests.Count == 0 &&
+                navigationExists &&
+                storefrontHomepageExists &&
+                marketplaceHomepageExists &&
+                footerExists)
             {
                 throw SeedError(
                     StatusCodes.Status409Conflict,
@@ -176,27 +182,58 @@ public sealed class CmsSeedService : ICmsSeedService
             if (!navigationExists)
             {
                 AddDefaultNavigation(customizationRoot, existingPageGroups, now);
+                navigationCreated = true;
+            }
+
+            var storefrontHomepageCreated = false;
+            if (!storefrontHomepageExists)
+            {
+                AddDefaultStorefrontHomepage(customizationRoot, tenantId, now);
+                storefrontHomepageCreated = true;
+            }
+
+            if (navigationCreated || storefrontHomepageCreated)
+            {
                 storeConfig.CustomizationJson = customizationRoot.ToJsonString(JsonOptions);
                 storeConfig.UpdatedAtUtc = now;
-                var navigationVersion = AppendNavigationVersion(storeConfig, now);
-                navigationCreated = true;
+                var storeConfigVersion = AppendStoreConfigVersion(storeConfig, now);
+
+                if (navigationCreated)
+                {
                 events.Add(new NavigationPublishedEvent
                 {
                     TenantId = tenantId,
                     StoreConfigId = storeConfig.Id,
-                    EventVersion = navigationVersion,
+                        EventVersion = storeConfigVersion,
                     PublishedAtUtc = now,
                     CorrelationId = traceId,
-                    IdempotencyKey = $"NAVIGATION_PUBLISHED:{tenantId:N}:{storeConfig.Id:N}:{navigationVersion}"
+                        IdempotencyKey = $"NAVIGATION_PUBLISHED:{tenantId:N}:{storeConfig.Id:N}:{storeConfigVersion}"
                 });
+                }
+
+                if (storefrontHomepageCreated)
+                {
+                    events.Add(new StoreConfigPublishedEvent
+                    {
+                        TenantId = tenantId,
+                        StoreConfigId = storeConfig.Id,
+                        ThemeId = storeConfig.ThemeId,
+                        StoreName = storeConfig.StoreName,
+                        UpdatedAtUtc = now,
+                        ConfigVersion = storeConfigVersion,
+                        EventVersion = storeConfigVersion,
+                        CorrelationId = traceId,
+                        IdempotencyKey = $"STOREFRONT_CONFIG_PUBLISHED:{tenantId:N}:{storeConfig.Id:N}:{storeConfigVersion}"
+                    });
+                }
             }
 
-            var homepageCreated = false;
-            if (!homepageExists)
+            var marketplaceHomepageCreated = false;
+            if (!marketplaceHomepageExists)
             {
                 var homepageSections = CreateHomepageSections(tenantId, now);
                 _dbContext.HomepageSections.AddRange(homepageSections);
-                homepageCreated = true;
+                marketplaceHomepageCreated = true;
                 events.Add(new HomepageSectionsPublishedEvent
                 {
                     TenantId = tenantId,
@@ -211,7 +248,7 @@ public sealed class CmsSeedService : ICmsSeedService
             var footerCreated = false;
             if (!footerExists)
             {
-                _dbContext.StorefrontFooterSections.Add(CreateFooter(tenantId, now));
+                _dbContext.StorefrontFooterSections.Add(CreateFooter(tenantId, existingPageGroups, now));
                 footerCreated = true;
                 events.Add(new StorefrontFooterUpdatedEvent
                 {
@@ -237,11 +274,12 @@ public sealed class CmsSeedService : ICmsSeedService
             }
 
             _logger.LogInformation(
-                "CMS seed committed | TenantId: {TenantId} | Pages: {PageCount} | Navigation: {NavigationCreated} | Homepage: {HomepageCreated} | Footer: {FooterCreated} | TraceId: {TraceId}",
+                "CMS seed committed | TenantId: {TenantId} | Pages: {PageCount} | Navigation: {NavigationCreated} | StorefrontHomepage: {StorefrontHomepageCreated} | MarketplaceHomepage: {MarketplaceHomepageCreated} | Footer: {FooterCreated} | TraceId: {TraceId}",
                 tenantId,
                 seededPages.Count,
                 navigationCreated,
-                homepageCreated,
+                storefrontHomepageCreated,
+                marketplaceHomepageCreated,
                 footerCreated,
                 traceId);
 
@@ -251,7 +289,7 @@ public sealed class CmsSeedService : ICmsSeedService
                 Status = "Seeded",
                 SeededPages = seededPages,
                 NavigationCreated = navigationCreated,
-                HomepageCreated = homepageCreated,
+                HomepageCreated = storefrontHomepageCreated || marketplaceHomepageCreated,
                 FooterCreated = footerCreated,
                 Message = $"CMS seed completed with {seededPages.Count} new page(s)."
             };
@@ -309,9 +347,9 @@ public sealed class CmsSeedService : ICmsSeedService
         {
             return await _dbContext.StoreConfigs
                 .FromSqlInterpolated($"""
-                    SELECT *
-                    FROM "StoreConfigs"
-                    WHERE "TenantId" = {tenantId}
+                    SELECT sc.*, sc.xmin
+                    FROM "StoreConfigs" AS sc
+                    WHERE sc."TenantId" = {tenantId}
                     FOR UPDATE
                     """)
                 .SingleOrDefaultAsync(cancellationToken);
@@ -417,6 +455,37 @@ public sealed class CmsSeedService : ICmsSeedService
         return true;
     }
 
+    private static bool ResolveStorefrontHomepageExists(JsonObject customizationRoot)
+    {
+        if (!customizationRoot.TryGetPropertyValue("pages", out var pagesNode))
+        {
+            return false;
+        }
+
+        if (pagesNode is not JsonObject pages)
+        {
+            throw SeedError(
+                StatusCodes.Status422UnprocessableEntity,
+                "CMS_SEED_VALIDATION_FAILED",
+                "StoreConfig pages JSON is invalid.");
+        }
+
+        if (!pages.TryGetPropertyValue("home", out var homepageNode))
+        {
+            return false;
+        }
+
+        if (homepageNode is not JsonObject)
+        {
+            throw SeedError(
+                StatusCodes.Status422UnprocessableEntity,
+                "CMS_SEED_VALIDATION_FAILED",
+                "StoreConfig Homepage JSON is invalid.");
+        }
+
+        return true;
+    }
+
     private static void AddDefaultNavigation(
         JsonObject customizationRoot,
         IReadOnlyDictionary<string, Guid> pageGroups,
@@ -458,7 +527,93 @@ public sealed class CmsSeedService : ICmsSeedService
         };
     }
 
-    private static int AppendNavigationVersion(StoreConfig config, DateTime now)
+    private static void AddDefaultStorefrontHomepage(JsonObject customizationRoot, Guid tenantId, DateTime now)
+    {
+        var pages = customizationRoot["pages"] as JsonObject ?? new JsonObject();
+        var sections = new JsonArray
+        {
+            CreateStorefrontHomepageSection(
+                tenantId,
+                "hero",
+                "hero-banner",
+                0,
+                new Dictionary<string, object?>
+                {
+                    ["title"] = "Welcome to Shopixy",
+                    ["subtitle"] = "Discover amazing products",
+                    ["height"] = "large"
+                }),
+            CreateStorefrontHomepageSection(
+                tenantId,
+                "featured-products",
+                "featured-products",
+                1),
+            CreateStorefrontHomepageSection(
+                tenantId,
+                "categories",
+                "category-grid",
+                2),
+            CreateStorefrontHomepageSection(
+                tenantId,
+                "newsletter",
+                "newsletter-signup",
+                3)
+        };
+        var homepage = new JsonObject
+        {
+            ["sections"] = sections
+        };
+
+        pages["home"] = new JsonObject
+        {
+            ["draft"] = homepage.DeepClone(),
+            ["live"] = homepage,
+            ["lastPublishedAt"] = now.ToString("O")
+        };
+        customizationRoot["pages"] = pages;
+    }
+
+    private static JsonObject CreateStorefrontHomepageSection(
+        Guid tenantId,
+        string key,
+        string type,
+        int order,
+        IReadOnlyDictionary<string, object?>? overrides = null)
+    {
+        var definition = StorefrontSectionContracts.All.Single(section =>
+            string.Equals(section.Type, type, StringComparison.OrdinalIgnoreCase));
+        var settings = definition.DefaultSettings.ToDictionary(
+            entry => entry.Key,
+            entry => entry.Value,
+            StringComparer.Ordinal);
+
+        if (overrides != null)
+        {
+            foreach (var (settingKey, value) in overrides)
+            {
+                settings[settingKey] = value;
+            }
+        }
+
+        if (!StorefrontSectionContracts.TryValidateSettingsStrict(type, settings, out var diagnostics))
+        {
+            throw SeedError(
+                StatusCodes.Status422UnprocessableEntity,
+                "CMS_SEED_VALIDATION_FAILED",
+                diagnostics.FirstOrDefault() ?? $"Default Homepage section '{type}' is invalid.");
+        }
+
+        return new JsonObject
+        {
+            ["id"] = $"section_{CreateDeterministicGuid(tenantId, $"storefront-homepage:{key}"):N}",
+            ["type"] = type,
+            ["enabled"] = true,
+            ["order"] = order,
+            ["settings"] = JsonSerializer.SerializeToNode(settings, JsonOptions)
+        };
+    }
+
+    private static int AppendStoreConfigVersion(StoreConfig config, DateTime now)
     {
         var versions = ParseArray(config.VersionsJson, "StoreConfig version history JSON is invalid.");
         var maximumVersion = versions
@@ -478,7 +633,7 @@ public sealed class CmsSeedService : ICmsSeedService
             ["Version"] = nextVersion,
             ["PublishedAt"] = now,
             ["PublishedBy"] = "CMS Seed",
-            ["ChangeType"] = "Navigation Seeded",
+            ["ChangeType"] = "CMS Seeded",
             ["ThemePresetKey"] = config.ThemeLivePresetKey,
             ["ThemeLiveOverridesJson"] = config.ThemeLiveOverridesJson,
             ["CustomizationJson"] = config.CustomizationJson
@@ -554,7 +709,10 @@ public sealed class CmsSeedService : ICmsSeedService
         }).ToList();
     }
 
-    private static StorefrontFooterSection CreateFooter(Guid tenantId, DateTime now)
+    private static StorefrontFooterSection CreateFooter(
+        Guid tenantId,
+        IReadOnlyDictionary<string, Guid> pageGroups,
+        DateTime now)
     {
         var sectionId = CreateDeterministicGuid(tenantId, "footer-section:information");
         var links = new (string Label, string Slug)[]
@@ -580,6 +738,7 @@ public sealed class CmsSeedService : ICmsSeedService
                 SectionId = sectionId,
                 Label = link.Label,
                 LinkType = FooterLinkType.Cms,
+                CmsPageGroupId = pageGroups[link.Slug],
                 CmsPageSlug = link.Slug,
                 SortOrder = index,
                 IsActive = true,

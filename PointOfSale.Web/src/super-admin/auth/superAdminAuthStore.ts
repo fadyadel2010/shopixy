@@ -126,21 +126,37 @@ function purgeSuperAdminRuntimeAuthority(): void {
     superAdminQueryClient.clear()
 }
 
+function hasSameSuperAdminIdentity(
+    current: SuperAdminIdentity | null,
+    next: SuperAdminIdentity,
+): boolean {
+    return current === next || JSON.stringify(current) === JSON.stringify(next)
+}
+
 export const useSuperAdminAuthStore = create<SuperAdminAuthState>()(
-    (set) => ({
+    (set, get) => ({
         user: null,
         isAuthenticated: false,
         hasHydrated: false,
 
         setSession: (session) => {
             const authority = requireSuperAdminSessionAuthority(session)
+            const nextIdentity = mapSessionToIdentity(authority)
+            const currentState = get()
             superAdminAuthorityRevision += 1
             clearLegacySuperAdminTokenStorage()
             storeSuperAdminTokenVersion(authority.tokenVersion)
             storeSuperAdminSessionExpirations(authority)
 
+            if (currentState.isAuthenticated && hasSameSuperAdminIdentity(currentState.user, nextIdentity)) {
+                if (!currentState.hasHydrated) {
+                    set({ hasHydrated: true })
+                }
+                return
+            }
+
             set({
-                user: mapSessionToIdentity(authority),
+                user: nextIdentity,
                 isAuthenticated: true,
                 hasHydrated: true,
             })
@@ -165,11 +181,20 @@ export const useSuperAdminAuthStore = create<SuperAdminAuthState>()(
             }
 
             const authority = requireSuperAdminSessionAuthority(session)
+            const nextIdentity = mapSessionToIdentity(authority)
+            const currentState = get()
             storeSuperAdminTokenVersion(authority.tokenVersion)
             storeSuperAdminSessionExpirations(authority)
 
+            if (currentState.isAuthenticated && hasSameSuperAdminIdentity(currentState.user, nextIdentity)) {
+                if (!currentState.hasHydrated) {
+                    set({ hasHydrated: true })
+                }
+                return
+            }
+
             set({
-                user: mapSessionToIdentity(authority),
+                user: nextIdentity,
                 isAuthenticated: true,
                 hasHydrated: true,
             })

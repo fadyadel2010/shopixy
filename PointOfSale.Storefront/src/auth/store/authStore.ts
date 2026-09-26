@@ -24,6 +24,7 @@ import type {
 import * as authApi from '../api/authApi';
 import { isForceLogoutError } from '../types';
 import { clearSession, setCustomerId } from '@/bootstrap';
+import { isThemePreviewMode } from '@/storefront/preview/themePreviewMode';
 import {
     emitAuthDegradedRecovery,
     emitAuthStateDegraded,
@@ -504,6 +505,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
      * Load available social providers
      */
     loadProviders: async () => {
+        if (isThemePreviewMode()) {
+            set({ availableProviders: { google: false, facebook: false } });
+            return;
+        }
+
         try {
             const providers = await authApi.getProviders();
             set({ availableProviders: providers });

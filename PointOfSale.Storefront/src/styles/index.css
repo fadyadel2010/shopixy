@@ -29,6 +29,9 @@
   --color-background: #ffffff;
   --color-text: #020617;
   --color-muted: #64748b;
+  --color-primary-rgb: 37, 99, 235;
+  --color-secondary-rgb: 15, 23, 42;
+  --color-text-muted: var(--color-muted);
 
   /* Typography */
   --font-family: 'Inter', system-ui, -apple-system, sans-serif;

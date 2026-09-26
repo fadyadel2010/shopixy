@@ -6,6 +6,7 @@ import VariantOptionsBuilder from './VariantOptionsBuilder'
 import VariantBulkActions from './VariantBulkActions'
 import VariantMatrixTable from './VariantMatrixTable'
 import { toProductAuthoringVariant } from '../utils/productAuthoringVariants'
+import { fallbackVariantSku, normalizeSkuPart, productSkuBase } from './productSku'
 
 const SAFE_COMBINATION_LIMIT = 100
 const INFO_COMBINATION_LIMIT = 300
@@ -70,11 +71,6 @@ function normalizeKeyPart(value) {
     return normalizeText(value).toLowerCase()
 }
 
-function normalizeSkuPart(value) {
-    return normalizeText(value)
-        .replace(/[^a-z0-9]+/gi, '-')
-        .replace(/^-+|-+$/g, '')
-}
 
 function normalizeToken(value) {
     return normalizeText(value)
@@ -528,6 +524,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
         casing: 'upper',
         pattern: ''
     })
+    const skuDraftIdRef = useRef(crypto.randomUUID())
     const [excludedRules, setExcludedRules] = useState([])
     const [draftExclusionRule, setDraftExclusionRule] = useState({})
     const [confirmedGenerationSignature, setConfirmedGenerationSignature] = useState('')
@@ -985,10 +982,15 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
 
     const buildSkuForRow = (row, index) => {
         const separator = skuBuilder.separator || '-'
-        // WAVE 4: a non-Latin (e.g. Arabic) product name normalizes to '' —
-        // never let the contextual prefix silently disappear into a bare
-        // value-only SKU. The 'VARIANT' fallback is certified behavior.
-        const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix || 'VARIANT') || 'VARIANT'
+        const normalizedProductName = normalizeSkuPart(productSkuPrefix)
+        // An untransliteratable name cannot establish product identity. Use the
+        // persisted product GUID (or a stable draft UUID) as the SKU namespace.
+        // This also overrides a prefix-less custom pattern, so it cannot emit
+        // the same bare candidate for several unrelated Arabic products.
+        if (/[^\x00-\x7F]/.test(productSkuPrefix) || (!normalizedProductName && !normalizeSkuPart(skuBuilder.prefix))) {
+            return fallbackVariantSku(productSkuBase(productId, skuDraftIdRef.current), index)
+        }
+        const prefix = normalizeSkuPart(skuBuilder.prefix || productSkuPrefix)
         const attributes = row.attributes || []
         const tokenValues = attributes.reduce((acc, attribute) => {
             acc[normalizeToken(attribute.name)] = normalizeSkuPart(attribute.value)
@@ -1020,7 +1022,7 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
             const suffixParts = attributes
             .map(attribute => normalizeSkuPart(attribute.value))
             .filter(Boolean)
-            sku = [prefix, ...suffixParts].filter(Boolean).join(separator) || `VARIANT${separator}${index + 1}`
+            sku = [prefix, ...suffixParts].filter(Boolean).join(separator) || fallbackVariantSku(productSkuBase(productId, skuDraftIdRef.current), index)
         }
 
         if (skuBuilder.casing === 'lower') {
@@ -1430,6 +1432,17 @@ const ProductVariantsTab = forwardRef(function ProductVariantsTab({
     }
 
     useImperativeHandle(ref, () => ({
+        replaceGeneratedSkus(replacements) {
+            setRowDrafts(prev => {
+                const next = { ...prev }
+                matrixRows.forEach(row => {
+                    if (replacements[row.sku]) {
+                        next[row.key] = { ...(next[row.key] || {}), sku: replacements[row.sku] }
+                    }
+                })
+                return next
+            })
+        },
         hasPendingChanges() {
             return isMatrixMode && hasUnsavedChanges
         },

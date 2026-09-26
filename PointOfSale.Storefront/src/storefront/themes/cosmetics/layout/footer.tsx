@@ -46,7 +46,7 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                     href={link.href}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="block text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
+                                    className="block min-w-0 break-words text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
                                 >
                                     {link.label}
                                 </AffiliateLink>
@@ -65,7 +65,7 @@ const CosmeticsFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                     href={link.href}
                                     target={link.openInNewTab ? '_blank' : undefined}
                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                    className="block text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
+                                    className="block min-w-0 break-words text-sm text-[#D15F61]/85 transition-opacity hover:opacity-70"
                                 >
                                     {link.label}
                                 </AffiliateLink>

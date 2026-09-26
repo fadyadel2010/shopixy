@@ -84,7 +84,7 @@ const HeroBanner: React.FC<any> = ({
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
-                                    alt={title || 'Technical product hero'}
+                                    alt={title || ''}
                                     className="h-full w-full object-contain p-8"
                                 />
                             ) : (

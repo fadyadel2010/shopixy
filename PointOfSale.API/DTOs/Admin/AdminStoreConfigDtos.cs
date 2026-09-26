@@ -214,6 +214,7 @@ public class AdminThemeViewDto
     public string PresetKey { get; set; } = "default";
     public AdminThemeViewColorsDto Colors { get; set; } = new();
     public string Font { get; set; } = "Inter";
+    public string BaseSize { get; set; } = "16px";
     public int BorderRadius { get; set; } = 8;
 }
 

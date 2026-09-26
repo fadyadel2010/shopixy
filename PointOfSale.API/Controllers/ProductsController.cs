@@ -314,6 +314,20 @@ public class ProductsController : ControllerBase
     /// <summary>
     /// Get minimal product data for lookups (id, name, sku only)
     /// </summary>
+    [HttpGet("lookup/selected")]
+    public async Task<IActionResult> GetSelectedProductsLookup([FromQuery] Guid[] ids)
+    {
+        if (ids.Length > 50 || ids.Any(id => id == Guid.Empty))
+            return BadRequest("Select at most 50 valid products.");
+
+        // The Product global query filter enforces both tenant ownership and soft deletion.
+        var products = await _context.Products.AsNoTracking()
+            .Where(product => ids.Contains(product.Id))
+            .Select(product => new { product.Id, product.Name, product.NameAr, product.SKU, product.HasVariants, product.IsActive })
+            .ToListAsync();
+        return Ok(products);
+    }
+
     [HttpGet("lookup")]
     public async Task<ActionResult<IEnumerable<object>>> GetProductsLookup(
         [FromQuery] string? search,
@@ -348,12 +362,15 @@ public class ProductsController : ControllerBase
             .ThenBy(p => p.Id)
             .Skip(PaginationGuard.GetSkip(page, pageSize))
             .Take(pageSize)
-            .Select(p => new
-            {
-                id = p.Id,
-                name = p.Name,
-                sku = p.SKU
-            })
+             .Select(p => new
+             {
+                 id = p.Id,
+                 name = p.Name,
+                 nameAr = p.NameAr,
+                 sku = p.SKU,
+                 hasVariants = p.HasVariants,
+                 isActive = p.IsActive
+             })
             .ToListAsync();
 
         var totalPages = totalCount == 0

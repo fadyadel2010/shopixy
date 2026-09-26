@@ -135,6 +135,63 @@ public sealed class StorefrontThemeRuntimeTokenTests
     }
 
     [Fact]
+    public void TenantAppearanceOverridesApplyAcrossEveryActiveOfficialRuntimeTheme()
+    {
+        Assert.Equal(10, StorefrontThemes.All.Count);
+
+        foreach (var theme in StorefrontThemes.All)
+        {
+            var config = CreateConfig(
+                theme.Id,
+                themeLiveOverridesJson: """
+                {
+                  "colors": {
+                    "primary": "#123456",
+                    "secondary": "#234567",
+                    "background": "#fefefe",
+                    "text": "#101112",
+                    "muted": "#787878"
+                  },
+                  "typography": {
+                    "fontFamily": "Cairo",
+                    "baseSize": "19px"
+                  },
+                  "borderRadius": 13
+                }
+                """);
+
+            var runtime = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
+
+            Assert.Equal(theme.Id, runtime.StorefrontTheme);
+            Assert.Equal("#123456", runtime.Theme.Colors.Primary);
+            Assert.Equal("#234567", runtime.Theme.Colors.Secondary);
+            Assert.Equal("#fefefe", runtime.Theme.Colors.Background);
+            Assert.Equal("#101112", runtime.Theme.Colors.Text);
+            Assert.Equal("#787878", runtime.Theme.Colors.Muted);
+            Assert.Equal("Cairo", runtime.Theme.Font.Family);
+            Assert.Equal("19px", runtime.Theme.Font.BaseSize);
+            Assert.Equal("13px", runtime.Theme.Ui.BorderRadius);
+        }
+    }
+
+    [Fact]
+    public void DraftAppearanceDoesNotLeakIntoLiveProjection()
+    {
+        var config = CreateConfig("modern", """{"colors":{"primary":"#111111"},"typography":{"fontFamily":"Inter","baseSize":"16px"}}""");
+        config.ThemeDraftOverridesJson = """{"colors":{"primary":"#abcdef"},"typography":{"fontFamily":"Cairo","baseSize":"22px"}}""";
+
+        var live = StorefrontDraftConfigMapper.MapLive(config, null, "EGP", "EG");
+        var draft = StorefrontDraftConfigMapper.Map(config, null, "EGP", "EG");
+
+        Assert.Equal("#111111", live.Theme.Colors.Primary);
+        Assert.Equal("Inter", live.Theme.Font.Family);
+        Assert.Equal("16px", live.Theme.Font.BaseSize);
+        Assert.Equal("#abcdef", draft.Theme.Colors.Primary);
+        Assert.Equal("Cairo", draft.Theme.Font.Family);
+        Assert.Equal("22px", draft.Theme.Font.BaseSize);
+    }
+
+    [Fact]
     public void LegacyStoreThemeCustomizationsRemainTenantOverrides()
     {
         var config = CreateConfig("fashion");

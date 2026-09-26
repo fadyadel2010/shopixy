@@ -11,9 +11,10 @@ public sealed class CmsPageIdentityAuthorityCertificationTests
         var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/services/cmsService.js");
 
         Assert.Contains("deriveCurrentCmsPageListPresentation(data, currentUser)", list, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(data, currentUser, { expectedPageId: id })", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(savedPage, currentUser", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(published, currentUser", editor, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(data, id)", editor, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(", editor, StringComparison.Ordinal);
+        Assert.Contains("savedPage,", editor, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(published, targetPage.id", editor, StringComparison.Ordinal);
         Assert.Contains("expectedPageId", authority, StringComparison.Ordinal);
         Assert.Contains("tenantId !== currentTenantId", authority, StringComparison.Ordinal);
         Assert.Contains("slug !== currentVersion.slug", authority, StringComparison.Ordinal);

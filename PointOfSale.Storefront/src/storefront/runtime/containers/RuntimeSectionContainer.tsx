@@ -24,7 +24,7 @@ import type {
 } from '@/storefront/presentation/models';
 
 const GUID_PATTERN =
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const PRODUCT_CATALOG_HREF = '/products';
 
 interface RuntimeSectionContainerProps {
@@ -143,11 +143,17 @@ function ProductGridRuntimeContainer({
         () => products.map((product) => ({ id: product.id })),
         [products]
     );
-    const emptyStateTitle = isCuratedConfig ? 'No curated products yet' : t('home.noProductsYet');
-    const emptyStateMessage = isCuratedConfig
-        ? 'Pick storefront products to populate this section.'
+    const emptyStateTitle = isCuratedSelectionInvalid
+        ? t('home.invalidProductSelection')
+        : isCuratedConfig
+          ? t('home.noSelectedProductsYet')
+          : t('home.noProductsYet');
+    const emptyStateMessage = isCuratedSelectionInvalid
+        ? t('home.invalidProductSelectionHelp')
+        : isCuratedConfig
+          ? t('home.selectProductsToPopulate')
         : collectionSource === 'random'
-          ? 'Random shelves pull from your current storefront catalog automatically.'
+          ? t('home.randomProductsWillAppear')
           : t('home.productsWillAppear');
     const viewAllHref = shouldSuppressActionHref(sectionProps, PRODUCT_CATALOG_HREF)
         ? null
@@ -225,11 +231,11 @@ function CategoryGridRuntimeContainer({
         href: `/products?category=${category.id}`,
         title: language === 'ar' && category.nameAr ? category.nameAr : category.name,
     }));
-    const emptyStateTitle = hasCuratedSelection ? 'No curated categories yet' : t('home.noCategoriesYet');
+    const emptyStateTitle = hasCuratedSelection ? t('home.noSelectedCategoriesYet') : t('home.noCategoriesYet');
     const emptyStateMessage = hasCuratedSelection
-        ? 'Pick storefront categories to populate this section.'
+        ? t('home.selectCategoriesToPopulate')
         : collectionSource === 'random'
-          ? 'Random category grids pull from your storefront category tree automatically.'
+          ? t('home.randomCategoriesWillAppear')
           : t('home.categoriesWillAppear');
     const categoryGridModel: CategoryGridPresentationModel = {
         title: displayTitle,
@@ -285,9 +291,9 @@ function SubcategoryGridRuntimeContainer({ component: Component, sectionProps }:
         isLoading,
         error,
         hasCuratedSelection,
-        emptyStateTitle: hasCuratedSelection ? 'No curated subcategories yet' : t('home.noCategoriesYet'),
+        emptyStateTitle: hasCuratedSelection ? t('home.noSelectedSubcategoriesYet') : t('home.noCategoriesYet'),
         emptyStateMessage: hasCuratedSelection
-            ? 'Pick storefront subcategories to populate this section.'
+            ? t('home.selectSubcategoriesToPopulate')
             : t('home.categoriesWillAppear'),
         labels: {
             eyebrowCategories: t('category.subcategories'),

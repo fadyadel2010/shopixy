@@ -47,7 +47,7 @@ export const Footer: React.FC<FooterPresentationProps> = ({ model }) => {
                                                 href={link.href}
                                                 target={link.openInNewTab ? '_blank' : undefined}
                                                 rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                                className="inline-flex items-center gap-2 text-sm text-white/60 transition-colors hover:text-white"
+                                                className="inline-flex min-w-0 items-center gap-2 break-words text-sm text-white/60 transition-colors hover:text-white"
                                             >
                                                 {link.label}
                                             </AffiliateLink>
@@ -70,7 +70,7 @@ export const Footer: React.FC<FooterPresentationProps> = ({ model }) => {
                                                     href={link.href}
                                                     target={link.openInNewTab ? '_blank' : undefined}
                                                     rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                                    className="inline-flex items-center gap-2 text-sm text-white/60 transition-colors hover:text-white"
+                                                    className="inline-flex min-w-0 items-center gap-2 break-words text-sm text-white/60 transition-colors hover:text-white"
                                                 >
                                                     <span className="h-1.5 w-1.5 rounded-full bg-primary opacity-0 transition-opacity group-hover:opacity-100" />
                                                     {link.label}

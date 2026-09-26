@@ -1,16 +1,17 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import {
-    SUPER_ADMIN_AUTH_STORAGE_KEY,
     SUPER_ADMIN_SESSION_LOGOUT_STORAGE_KEY,
     getSuperAdminAuthorityRevision,
     useSuperAdminAuthStore,
 } from './superAdminAuthStore'
 import { useSuperAdminSessionBootstrap } from './useSuperAdminSessionBootstrap'
-import { getSuperAdminSession } from './superAdminAuthService'
+import {
+    isDefinitiveSuperAdminAuthFailure,
+    restoreSuperAdminSession,
+} from './superAdminSessionCoordinator'
 
 const SUPER_ADMIN_AUTH_STORAGE_KEYS = new Set([
-    SUPER_ADMIN_AUTH_STORAGE_KEY,
     SUPER_ADMIN_SESSION_LOGOUT_STORAGE_KEY,
 ])
 const SUPER_ADMIN_SESSION_REVALIDATION_INTERVAL_MS = 60000
@@ -19,8 +20,7 @@ export default function SuperAdminProtectedRoute() {
     const location = useLocation()
     const { user, isAuthenticated, hydrateSession, logout } = useSuperAdminAuthStore()
     const hasHydrated = useSuperAdminSessionBootstrap()
-    const [isRouteAuthorityValidating, setIsRouteAuthorityValidating] = useState(false)
-    const routeValidationCount = useRef(0)
+    const revalidationPromise = useRef<Promise<void> | null>(null)
 
     const hasValidSession =
         isAuthenticated &&
@@ -45,30 +45,32 @@ export default function SuperAdminProtectedRoute() {
 
         let active = true
 
-        const revalidateSession = async (withholdRoutePresentation = false) => {
-            if (withholdRoutePresentation) {
-                routeValidationCount.current += 1
-                setIsRouteAuthorityValidating(true)
+        const revalidateSession = () => {
+            if (revalidationPromise.current) {
+                return revalidationPromise.current
             }
 
             const authorityRevisionAtStart = getSuperAdminAuthorityRevision()
-            try {
-                const session = await getSuperAdminSession()
-                if (active && authorityRevisionAtStart === getSuperAdminAuthorityRevision()) {
-                    hydrateSession(session)
-                }
-            } catch {
-                if (active && authorityRevisionAtStart === getSuperAdminAuthorityRevision()) {
-                    hydrateSession(null)
-                }
-            } finally {
-                if (withholdRoutePresentation) {
-                    routeValidationCount.current = Math.max(0, routeValidationCount.current - 1)
-                    if (active && routeValidationCount.current === 0) {
-                        setIsRouteAuthorityValidating(false)
+            revalidationPromise.current = restoreSuperAdminSession()
+                .then((session) => {
+                    if (active && authorityRevisionAtStart === getSuperAdminAuthorityRevision()) {
+                        hydrateSession(session)
                     }
-                }
-            }
+                })
+                .catch((error) => {
+                    if (
+                        active &&
+                        authorityRevisionAtStart === getSuperAdminAuthorityRevision() &&
+                        isDefinitiveSuperAdminAuthFailure(error)
+                    ) {
+                        hydrateSession(null)
+                    }
+                })
+                .finally(() => {
+                    revalidationPromise.current = null
+                })
+
+            return revalidationPromise.current
         }
 
         const revalidationInterval = window.setInterval(() => {
@@ -77,17 +79,17 @@ export default function SuperAdminProtectedRoute() {
 
         const handleVisibility = () => {
             if (document.visibilityState === 'visible') {
-                void revalidateSession(true)
+                void revalidateSession()
             }
         }
 
         const handleRouteLifecycle = () => {
-            void revalidateSession(true)
+            void revalidateSession()
         }
 
         const handlePageShow = (event: PageTransitionEvent) => {
             if (event.persisted) {
-                void revalidateSession(true)
+                void revalidateSession()
             }
         }
 
@@ -108,7 +110,7 @@ export default function SuperAdminProtectedRoute() {
         }
     }, [hasValidSession, hydrateSession])
 
-    if (!hasHydrated || isRouteAuthorityValidating) {
+    if (!hasHydrated) {
         return (
             <div className="flex min-h-screen items-center justify-center bg-slate-950 text-sm text-slate-300">
                 Checking secure Super Admin session...

@@ -20,7 +20,10 @@ namespace PointOfSale.Tests.Admin;
 
 public sealed class AdminStoreConfigThemeContractTests
 {
-    private static InMemoryDatabaseRoot CreateInMemoryDatabaseRoot() => new();
+    // Database names already isolate test data. Reuse the EF provider root to avoid
+    // crossing EF Core's internal service-provider limit in combined StoreConfig runs.
+    private static readonly InMemoryDatabaseRoot SharedDatabaseRoot = new();
+    private static InMemoryDatabaseRoot CreateInMemoryDatabaseRoot() => SharedDatabaseRoot;
 
     [Fact]
     public async Task GetStoreConfigAsync_ReturnsMaterializedDraftAndLiveThemes()
@@ -64,12 +67,14 @@ public sealed class AdminStoreConfigThemeContractTests
         Assert.Equal("#ff0055", response.DraftTheme.Colors.Primary);
         Assert.Equal("#556677", response.DraftTheme.Colors.Muted);
         Assert.Equal("Poppins", response.DraftTheme.Font);
+        Assert.Equal("16px", response.DraftTheme.BaseSize);
         Assert.Equal(18, response.DraftTheme.BorderRadius);
 
         Assert.Equal("dark-minimal", response.LiveTheme.PresetKey);
         Assert.Equal("#010203", response.LiveTheme.Colors.Background);
         Assert.Equal("#3b82f6", response.LiveTheme.Colors.Primary);
         Assert.Equal("Inter", response.LiveTheme.Font);
+        Assert.Equal("16px", response.LiveTheme.BaseSize);
         Assert.Equal(12, response.LiveTheme.BorderRadius);
     }
 
@@ -122,7 +127,10 @@ public sealed class AdminStoreConfigThemeContractTests
                 "primary": "#111111",
                 "secondary": "#222222"
               },
-              "font": "Outfit",
+              "typography": {
+                "fontFamily": "Outfit",
+                "baseSize": "19px"
+              },
               "borderRadius": 20
             }
             """,
@@ -134,6 +142,7 @@ public sealed class AdminStoreConfigThemeContractTests
         Assert.Equal("#111111", response.DraftTheme.Colors.Primary);
         Assert.Equal("#222222", response.DraftTheme.Colors.Secondary);
         Assert.Equal("Outfit", response.DraftTheme.Font);
+        Assert.Equal("19px", response.DraftTheme.BaseSize);
         Assert.Equal(20, response.DraftTheme.BorderRadius);
         Assert.DoesNotContain("presetKey", response.ThemeDraftOverridesJson, StringComparison.OrdinalIgnoreCase);
 
@@ -186,7 +195,10 @@ public sealed class AdminStoreConfigThemeContractTests
                 "primary": "#445566",
                 "background": "#101820"
               },
-              "font": "Tajawal",
+              "typography": {
+                "fontFamily": "Tajawal",
+                "baseSize": "21px"
+              },
               "borderRadius": 22
             }
             """,
@@ -200,6 +212,7 @@ public sealed class AdminStoreConfigThemeContractTests
         Assert.Equal("#445566", response.LiveTheme.Colors.Primary);
         Assert.Equal("#101820", response.LiveTheme.Colors.Background);
         Assert.Equal("Tajawal", response.LiveTheme.Font);
+        Assert.Equal("21px", response.LiveTheme.BaseSize);
         Assert.Equal(22, response.LiveTheme.BorderRadius);
 
         await using var verifyContext = CreateDbContext(databaseName, tenantId, databaseRoot);
@@ -402,6 +415,126 @@ public sealed class AdminStoreConfigThemeContractTests
                 CancellationToken.None));
 
         Assert.Contains("not supported", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" #abc")]
+    [InlineData("#abcd")]
+    [InlineData("#11223344")]
+    [InlineData("rgb(1,2,3)")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("red; background:url(javascript:alert(1))")]
+    public async Task UpdateThemeOverridesAsync_RejectsMalformedOrUnsafeColorsWithoutPersistence(string value)
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var databaseRoot = CreateInMemoryDatabaseRoot();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        SeedThemePresets(seedContext);
+        seedContext.StoreConfigs.Add(CreateStoreConfig(tenantId));
+        await seedContext.SaveChangesAsync();
+
+        await using var context = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var service = CreateService(context);
+        var payload = JsonSerializer.Serialize(new { colors = new { primary = value } });
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateThemeOverridesAsync(
+                tenantId,
+                payload,
+                "trace-invalid-color",
+                CancellationToken.None));
+
+        Assert.Contains("supported hex color", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("{}", (await context.StoreConfigs.SingleAsync()).ThemeDraftOverridesJson);
+    }
+
+    [Fact]
+    public async Task UpdateThemeOverridesAsync_AcceptsShorthandHexAndPreservesAuthoredCase()
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var databaseRoot = CreateInMemoryDatabaseRoot();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        SeedThemePresets(seedContext);
+        seedContext.StoreConfigs.Add(CreateStoreConfig(tenantId));
+        await seedContext.SaveChangesAsync();
+
+        await using var context = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var service = CreateService(context);
+        var response = await service.UpdateThemeOverridesAsync(
+            tenantId,
+            """{"colors":{"primary":"#AbC","secondary":"#A1b2C3"}}""",
+            "trace-valid-shorthand",
+            CancellationToken.None);
+
+        Assert.Equal("#AbC", response.DraftTheme.Colors.Primary);
+        Assert.Equal("#A1b2C3", response.DraftTheme.Colors.Secondary);
+    }
+
+    [Theory]
+    [InlineData("11px")]
+    [InlineData("25px")]
+    [InlineData("16rem")]
+    [InlineData("16px; color:red")]
+    public async Task UpdateThemeOverridesAsync_RejectsUnsupportedBaseSize(string baseSize)
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var databaseRoot = CreateInMemoryDatabaseRoot();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        SeedThemePresets(seedContext);
+        seedContext.StoreConfigs.Add(CreateStoreConfig(tenantId));
+        await seedContext.SaveChangesAsync();
+
+        await using var context = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var service = CreateService(context);
+        var payload = JsonSerializer.Serialize(new { typography = new { baseSize } });
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateThemeOverridesAsync(
+                tenantId,
+                payload,
+                "trace-invalid-base-size",
+                CancellationToken.None));
+
+        Assert.Contains("between 12px and 24px", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("{}", (await context.StoreConfigs.SingleAsync()).ThemeDraftOverridesJson);
+    }
+
+    [Theory]
+    [InlineData("Jost")]
+    [InlineData("Inter, sans-serif")]
+    [InlineData("url(javascript:alert(1))")]
+    [InlineData("A" + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public async Task UpdateThemeOverridesAsync_RejectsUnsupportedFontFamily(string fontFamily)
+    {
+        var databaseName = Guid.NewGuid().ToString("N");
+        var tenantId = Guid.NewGuid();
+        var databaseRoot = CreateInMemoryDatabaseRoot();
+
+        await using var seedContext = CreateDbContext(databaseName, tenantId, databaseRoot);
+        SeedThemePresets(seedContext);
+        seedContext.StoreConfigs.Add(CreateStoreConfig(tenantId));
+        await seedContext.SaveChangesAsync();
+
+        await using var context = CreateDbContext(databaseName, tenantId, databaseRoot);
+        var service = CreateService(context);
+        var payload = JsonSerializer.Serialize(new { typography = new { fontFamily } });
+
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.UpdateThemeOverridesAsync(
+                tenantId,
+                payload,
+                "trace-invalid-font",
+                CancellationToken.None));
+
+        Assert.Contains("not supported", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("{}", (await context.StoreConfigs.SingleAsync()).ThemeDraftOverridesJson);
     }
 
     private static ApplicationDbContext CreateDbContext(string databaseName, Guid tenantId, InMemoryDatabaseRoot databaseRoot)

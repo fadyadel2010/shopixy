@@ -33,6 +33,7 @@ import {
     type BootstrapError
 } from './bootstrapErrors';
 import { useStoreConfigStore } from '@/store';
+import { getThemePreviewToken } from '@/storefront/preview/themePreviewMode';
 import { resolveActiveTheme } from '@/storefront/themes/ThemeResolver';
 import {
     invalidateStoreConfigRuntimeCache,
@@ -42,16 +43,6 @@ import { applyTheme } from '@/theme';
 import { DEFAULT_STORE_CONFIG } from '@/types/storeConfig';
 import type { AxiosError } from 'axios';
 import type { ApiErrorResponse } from '@/types';
-
-function getThemePreviewToken(): string | null {
-    if (typeof window === 'undefined') {
-        return null;
-    }
-
-    const token = new URLSearchParams(window.location.search).get('themePreviewToken');
-    const normalized = token?.trim();
-    return normalized ? normalized : null;
-}
 
 /**
  * Bootstrap result type

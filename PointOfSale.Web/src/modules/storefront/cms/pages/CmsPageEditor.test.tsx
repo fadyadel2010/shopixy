@@ -29,7 +29,26 @@ vi.mock('react-router-dom', () => ({
     useNavigate: () => navigate,
     useParams: () => ({ pageId: 'page-1' }),
 }))
-vi.mock('react-i18next', () => ({ useTranslation: () => ({ i18n: { language: 'en' } }) }))
+vi.mock('react-i18next', () => ({
+    useTranslation: () => ({
+        i18n: { language: 'en' },
+        t: (key: string, options?: { defaultValue?: string }) => ({
+            'storefront.homepageEditor.status.draft': 'Draft',
+            'storefront.homepageEditor.status.dirty': 'Unsaved changes',
+            'storefront.homepageEditor.status.published': 'Published',
+            'storefront.homepageEditor.keepEditing': 'Keep editing',
+            'storefront.homepageEditor.cancel': 'Cancel',
+            'storefront.homepageEditor.unsavedChanges': 'Unsaved changes',
+            'storefront.homepageEditor.leaveWarning': 'Leaving now will discard changes that have not been saved.',
+            'storefront.homepageEditor.discardAndLeave': 'Discard and leave',
+            'storefront.homepageEditor.newerVersion': 'A newer version is available',
+            'storefront.homepageEditor.concurrentChange': 'Someone else changed this content while you were editing. Your draft is still here.',
+            'storefront.homepageEditor.conflictHint': 'Choose Load Latest to adopt the accepted server version, or Retry My Draft to reapply your retained changes against it.',
+            'storefront.homepageEditor.loadLatest': 'Load Latest',
+            'storefront.homepageEditor.retryDraft': 'Retry My Draft',
+        }[key] || options?.defaultValue || key),
+    }),
+}))
 vi.mock('../services', () => ({ cmsService, extractCmsConflict }))
 vi.mock('../cmsPageIdentityAuthority', () => ({
     deriveCurrentCmsPageIdentityPresentation: (value: unknown) => value,
@@ -57,6 +76,14 @@ function page(version: number, title = 'About', published = false) {
         draft: published ? null : snapshot,
         published: published ? snapshot : null,
     }
+}
+
+function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((resolvePromise) => {
+        resolve = resolvePromise
+    })
+    return { promise, resolve }
 }
 
 describe('CmsPageEditor authoring UX', () => {
@@ -171,6 +198,36 @@ describe('CmsPageEditor authoring UX', () => {
         await waitFor(() => expect(cmsService.updatePage).toHaveBeenCalledWith(
             'page-1',
             expect.objectContaining({ title: 'Backend title edited', expectedVersion: 2 }),
+        ))
+    })
+
+    it('does not let an older save response overwrite edits made while the request is in flight', async () => {
+        const pendingSave = deferred<ReturnType<typeof page>>()
+        cmsService.updatePage
+            .mockImplementationOnce(() => pendingSave.promise)
+            .mockImplementationOnce(async (_id, request) => page(3, request.title))
+
+        render(<CmsPageEditor />)
+        await screen.findByText('Draft')
+
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Submitted title' } })
+        fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
+        await waitFor(() => expect(cmsService.updatePage).toHaveBeenCalledWith(
+            'page-1',
+            expect.objectContaining({ title: 'Submitted title', expectedVersion: 1 }),
+        ))
+
+        fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Newer local title' } })
+        pendingSave.resolve(page(2, 'Submitted title'))
+
+        await screen.findByText('Draft saved. Newer unsaved edits were retained.')
+        expect(screen.getByLabelText('Title')).toHaveValue('Newer local title')
+        expect(screen.getByText('Unsaved changes')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'Save Draft' }))
+        await waitFor(() => expect(cmsService.updatePage).toHaveBeenLastCalledWith(
+            'page-1',
+            expect.objectContaining({ title: 'Newer local title', expectedVersion: 2 }),
         ))
     })
 })

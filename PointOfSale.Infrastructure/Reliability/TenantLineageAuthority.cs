@@ -27,22 +27,22 @@ public static class TenantLineageAuthority
     public static async Task<bool> IsActiveTenantAsync(
         ApplicationDbContext dbContext,
         Guid tenantId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default)
     {
         if (tenantId == Guid.Empty)
         {
             return false;
         }
 
-        return await dbContext.Tenants
-            .AsNoTracking()
-            .IgnoreQueryFilters()
-            .AnyAsync(
-                tenant => tenant.Id == tenantId &&
-                          tenant.IsActive &&
-                          tenant.Status == TenantStatus.Active &&
-                          tenant.DeletedAtUtc == null,
-                cancellationToken);
+        if (Tenancy.TenantAuthorityMemo.TryGetMemoized(dbContext, tenantId, out var memoized))
+        {
+            return memoized is not null;
+        }
+
+        return await Tenancy.TenantAuthorityMemo.GetTenantByIdAsync(
+            dbContext,
+            tenantId,
+            cancellationToken) is not null;
     }
 
     public static async Task<TenantLineageValidation> ValidateCurrentTenantOwnerAsync<TEntity>(

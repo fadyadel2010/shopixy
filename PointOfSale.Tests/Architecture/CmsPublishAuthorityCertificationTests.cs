@@ -27,16 +27,16 @@ public sealed class CmsPublishAuthorityCertificationTests
         Assert.Contains("draftPage.PublishedAt = now;", service, StringComparison.Ordinal);
         Assert.Contains("StageStorefrontCmsPagePublishedEventAsync", service, StringComparison.Ordinal);
         Assert.Contains("IdempotencyKey = $\"STOREFRONT_CMS_PUBLISHED", service, StringComparison.Ordinal);
-        Assert.Contains("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("InvalidatePublishedScopeAsync", service, StringComparison.Ordinal);
 
         Assert.Contains("async publishPage(pageId, expectedVersion)", frontendService, StringComparison.Ordinal);
         Assert.Contains("'If-Match': `\"${expectedVersion}\"`", frontendService, StringComparison.Ordinal);
         Assert.DoesNotContain("publishedAtUtc:", frontendService, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("publishedVersion:", frontendService, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("const expectedVersion = targetPage.draft?.version", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(published", editor, StringComparison.Ordinal);
-        Assert.Contains("await cmsService.publishPage(page.id, page.draftVersion)", list, StringComparison.Ordinal);
-        Assert.Contains("await loadPages()", list, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(published, targetPage.id", editor, StringComparison.Ordinal);
+        Assert.DoesNotContain("cmsService.publishPage", list, StringComparison.Ordinal);
+        Assert.Contains("The list never publishes content.", list, StringComparison.Ordinal);
         Assert.Contains("const published = page.published == null ? null : admitCmsPageVersion(page.published)", admission, StringComparison.Ordinal);
     }
 

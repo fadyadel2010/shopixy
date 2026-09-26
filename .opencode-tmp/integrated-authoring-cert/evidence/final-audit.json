@@ -1,0 +1,645 @@
+{
+  "startedAtUtc": "2026-09-26T22:54:10.7137457Z",
+  "baselineSha256": "1A20F55CF9C1D63AEFE6249599DB5DA447AC04380799A84FA458489BBD4B9EA7",
+  "checks": [
+    "Pre-mutation Admin/public content matches immutable baseline",
+    "Theme/Homepage shared StoreConfig RowVersion rejected stale cross-surface write with 409",
+    "Disposable CMS draft stayed private and publication converged immediately",
+    "Published CMS page resolved from Navigation and Dedicated Footer with new-tab intent",
+    "Navigation and Dedicated Footer followed the current slug through stable CMS PageGroupId authority",
+    "Homepage, CMS, Navigation, and Appearance retained unsaved edits across tab/focus/visibility/copy/paste/network-revalidation events without Restoring session UI or unsafe draft storage",
+    "Two fresh public contexts and a second Admin read converged; forged header failed 403; trusted isolation host remained tenant B",
+    "StoreConfig, Footer, and CMS stale revisions all failed closed; independent Footer/CMS writes survived StoreConfig mutations",
+    "CMS deletion unpublished the page and Navigation/Footer CMS references failed closed; this CMS contract has no republish-after-delete operation"
+  ],
+  "crossSurfaceMatrix": [
+    {
+      "surface": "Theme",
+      "passed": true,
+      "evidence": "Only storefrontTheme changed; Appearance, Homepage, Navigation, Footer preserved"
+    },
+    {
+      "surface": "Colors/Typography",
+      "passed": true,
+      "evidence": "Draft stayed private; publish changed CSS authority without changing theme identity"
+    },
+    {
+      "surface": "Homepage",
+      "passed": true,
+      "evidence": "Draft/live worked and Navigation, Footer, CMS remained unchanged"
+    },
+    {
+      "surface": "Navigation",
+      "passed": true,
+      "evidence": "Header Navigation changed; Dedicated Footer remained exact"
+    },
+    {
+      "surface": "Dedicated Footer",
+      "passed": true,
+      "evidence": "Immediate-live Footer changed; Header Navigation remained exact"
+    },
+    {
+      "surface": "CMS canonical rename",
+      "navigationFollowedCurrentPageIdentity": true,
+      "footerFollowedCurrentPageIdentity": true,
+      "footerFailedClosed": false
+    }
+  ],
+  "themeMatrix": [
+    {
+      "theme": "modern",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "modern",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AhramStore\nHome\nShop\nIntegrated Cert 20260926\nIntegrated Cert 20260926 Product\nIntegrated Cert 20260926 Category\nIntegrated Cert 20260926 External\nCtrl\u002BK\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nslug test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop by Category\n01\nSmartPhones\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\nAhramStore\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nQUICK LINKS\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nIntegrated Cert 20260926\n\n\u00A9 2026 AhramStore. All rights reserved."
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-modern-en-desktop.png"
+    },
+    {
+      "theme": "modern",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "modern",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AhramStore\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nslug test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n01\nSmartPhones\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\nAhramStore\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629."
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-modern-ar-mobile.png"
+    },
+    {
+      "theme": "minimal",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "minimal",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AHRAMSTORE\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\nslug test\n\nSMARTPHONES\n\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\niPhone 17 Pro Max\n\nAPPLE\n\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\nShop by Category\nSmartPhones\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nIntegrated Cert 20260926"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-minimal-en-desktop.png"
+    },
+    {
+      "theme": "minimal",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "minimal",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\nslug test\n\nSMARTPHONES\n\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\niPhone 17 Pro Max\n\nAPPLE\n\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSmartPhones\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-minimal-ar-mobile.png"
+    },
+    {
+      "theme": "fashion",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "fashion",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLOGIN\nSIGN UP\nAHRAMSTORE\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\nWELCOME TO\nINTEGRATED CERT 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nSHOP BY CATEGORY\n\n01\n\nSMARTPHONES\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nAHRAMSTORE\n\nCustomer Service"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-fashion-en-desktop.png"
+    },
+    {
+      "theme": "fashion",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "fashion",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nINTEGRATED CERT 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n01\n\nSMARTPHONES\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\nAHRAMSTORE\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-fashion-ar-mobile.png"
+    },
+    {
+      "theme": "pearl",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "pearl",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nAHRAMSTORE\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nslug test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop by Category\nSmartPhones\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nCUSTOMER SERVICE\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nContact\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nFollow Us"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-pearl-en-desktop.png"
+    },
+    {
+      "theme": "pearl",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "pearl",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\nAHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nslug test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSmartPhones\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0627\u062A\u0635\u0644 \u0628\u0646\u0627\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062A\u0627\u0628\u0639\u0646\u0627"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-pearl-ar-mobile.png"
+    },
+    {
+      "theme": "phoenix",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "phoenix",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nAHRAMSTORE\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nSHOP BY CATEGORY\nSMARTPHONES\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nCUSTOMER SERVICE\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nContact\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nFollow Us"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-phoenix-en-desktop.png"
+    },
+    {
+      "theme": "phoenix",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "phoenix",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\nAHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSMARTPHONES\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0627\u062A\u0635\u0644 \u0628\u0646\u0627\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062A\u0627\u0628\u0639\u0646\u0627"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-phoenix-ar-mobile.png"
+    },
+    {
+      "theme": "hype",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "hype",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nAHRAMSTORE\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nHome\nShop\nIntegrated Cert 20260926\nIntegrated Cert 20260926 Product\nIntegrated Cert 20260926 Category\nIntegrated Cert 20260926 External\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\nslug test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\niPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop by Category\nSMARTPHONES\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nCUSTOMER SERVICE\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nContact\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nFollow Us"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-hype-en-desktop.png"
+    },
+    {
+      "theme": "hype",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "hype",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\nAHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\nslug test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\niPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSMARTPHONES\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0627\u062A\u0635\u0644 \u0628\u0646\u0627\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062A\u0627\u0628\u0639\u0646\u0627"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-hype-ar-mobile.png"
+    },
+    {
+      "theme": "alizon",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "alizon",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nAHRAMSTORE\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nHome\nShop\nIntegrated Cert 20260926\nIntegrated Cert 20260926 Product\nIntegrated Cert 20260926 Category\nIntegrated Cert 20260926 External\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\nslug test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\niPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop by Category\nSmartPhones\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nCUSTOMER SERVICE\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nContact\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nFollow Us"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-alizon-en-desktop.png"
+    },
+    {
+      "theme": "alizon",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "alizon",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\nAHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\nslug test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\niPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSmartPhones\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0627\u062A\u0635\u0644 \u0628\u0646\u0627\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062A\u0627\u0628\u0639\u0646\u0627"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-alizon-ar-mobile.png"
+    },
+    {
+      "theme": "sharp",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "sharp",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nLIMITED EDITION COLLECTION\u2726\nAHRAMSTORE\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\nWELCOME TO\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nslug test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop by Category\nSmartPhones\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\n\nCUSTOMER SERVICE\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nContact\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nFollow Us"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-sharp-en-desktop.png"
+    },
+    {
+      "theme": "sharp",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "sharp",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\n\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\u2726\nAHRAMSTORE\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nIntegrated Cert 20260926\n\nDiscover amazing products\n\nShop Now\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nslug test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\niPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSmartPhones\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621\n\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0627\u062A\u0635\u0644 \u0628\u0646\u0627\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062A\u0627\u0628\u0639\u0646\u0627"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-sharp-ar-mobile.png"
+    },
+    {
+      "theme": "cosmetics",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "cosmetics",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "LIMITED EDITION COLLECTION\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\nAhramStore\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nINTEGRATED CERT 20260926\n\nDISCOVER AMAZING PRODUCTS\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nSlug Test\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\nIPhone 17 Pro Max\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nShop By Category\nSMARTPHONES\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\nAhramStore\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nQUICK LINKS\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nIntegrated Cert 20260926"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-cosmetics-en-desktop.png"
+    },
+    {
+      "theme": "cosmetics",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "cosmetics",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "\u062A\u0634\u0643\u064A\u0644\u0629 \u0625\u0635\u062F\u0627\u0631 \u0645\u062D\u062F\u0648\u062F\nAhramStore\nINTEGRATED CERT 20260926\n\nDISCOVER AMAZING PRODUCTS\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\nSlug Test\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\nIPhone 17 Pro Max\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\nSMARTPHONES\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\nAhramStore\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\nINTEGRATED CERT 20260926\nAbout Us\nContact\nPrivacy Policy\nTerms \u0026 Conditions\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-cosmetics-ar-mobile.png"
+    },
+    {
+      "theme": "seven",
+      "scenario": "en-desktop",
+      "result": "PASS",
+      "metrics": {
+        "lang": "en",
+        "dir": "ltr",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "seven",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AhramStore\nHOME\nSHOP\nINTEGRATED CERT 20260926\nINTEGRATED CERT 20260926 PRODUCT\nINTEGRATED CERT 20260926 CATEGORY\nINTEGRATED CERT 20260926 EXTERNAL\n\u0627\u0644\u0639\u0631\u0628\u064A\u0629\nLogin\nSign Up\nWELCOME TO\nINTEGRATED CERT 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\nView All \u2192\nFeatured\nOUT OF STOCK\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\nOUT OF STOCK\n\u002B\nADD TO CART\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\nMultiple options\nSELECT OPTIONS\n\u002B\nADD TO CART\n\nSHOP BY CATEGORY\n\nSHOP BY CATEGORY\n\n01\n\nSMARTPHONES\nStay in the loop\n\nSubscribe to our newsletter for exclusive offers and updates.\n\nSubscribe\nJoin Our Community\n\nCreate an account to enjoy personalized shopping, order tracking, and exclusive member benefits.\n\nCreate Account\nSign In\nTrack your orders\nSave your favorites\nFaster checkout\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. All rights reserved.\n\nQUICK LINKS\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\n\nFOLLOW US\n\nCustomer Service"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-seven-en-desktop.png"
+    },
+    {
+      "theme": "seven",
+      "scenario": "ar-mobile",
+      "result": "PASS",
+      "metrics": {
+        "lang": "ar",
+        "dir": "rtl",
+        "headerCount": 1,
+        "footerCount": 1,
+        "overflow": false,
+        "productTheme": "seven",
+        "primary": "#7c3aed",
+        "font": "Inter",
+        "body": "AhramStore\nEN\n\u0645\u0631\u062D\u0628\u0627\u064B \u0628\u0643 \u0641\u064A\nINTEGRATED CERT 20260926\n\nDiscover amazing products\n\nSHOP NOW\nFeatured Products\n\u0639\u0631\u0636 \u0627\u0644\u0643\u0644 \u2192\nFeatured\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\nSMARTPHONES\n\nSLUG TEST\nEGP 100.00\n\u063A\u064A\u0631 \u0645\u062A\u0648\u0641\u0631\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\nFeatured\n\nAPPLE\n\nIPHONE 17 PRO MAX\n\u0645\u062A\u0639\u062F\u062F \u0627\u0644\u0627\u062E\u062A\u064A\u0627\u0631\u0627\u062A\nSELECT OPTIONS\n\u002B\n\u0625\u0636\u0627\u0641\u0629 \u0625\u0644\u0649 \u0627\u0644\u0633\u0644\u0629\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n\u062A\u0633\u0648\u0642 \u062D\u0633\u0628 \u0627\u0644\u0642\u0633\u0645\n\n01\n\nSMARTPHONES\nStay in the loop\n\n\u0627\u0634\u062A\u0631\u0643 \u0641\u064A \u0646\u0634\u0631\u062A\u0646\u0627 \u0627\u0644\u0625\u062E\u0628\u0627\u0631\u064A\u0629 \u0644\u0644\u062D\u0635\u0648\u0644 \u0639\u0644\u0649 \u0639\u0631\u0648\u0636 \u0648\u062A\u062D\u062F\u064A\u062B\u0627\u062A \u062D\u0635\u0631\u064A\u0629.\n\n\u0627\u0634\u062A\u0631\u0627\u0643\n\u0627\u0646\u0636\u0645 \u0625\u0644\u0649 \u0645\u062C\u062A\u0645\u0639\u0646\u0627\n\n\u0623\u0646\u0634\u0626 \u062D\u0633\u0627\u0628\u064B\u0627 \u0644\u0644\u0627\u0633\u062A\u0645\u062A\u0627\u0639 \u0628\u062A\u062C\u0631\u0628\u0629 \u062A\u0633\u0648\u0642 \u0645\u062E\u0635\u0635\u0629\u060C \u0648\u0645\u062A\u0627\u0628\u0639\u0629 \u0627\u0644\u0637\u0644\u0628\u0627\u062A\u060C \u0648\u0645\u0632\u0627\u064A\u0627 \u062D\u0635\u0631\u064A\u0629 \u0644\u0644\u0623\u0639\u0636\u0627\u0621.\n\n\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\n\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644\n\u062A\u062A\u0628\u0639 \u0637\u0644\u0628\u0627\u062A\u0643\n\u0627\u062D\u0641\u0638 \u0645\u0646\u062A\u062C\u0627\u062A\u0643 \u0627\u0644\u0645\u0641\u0636\u0644\u0629\n\u0625\u062A\u0645\u0627\u0645 \u0627\u0644\u0634\u0631\u0627\u0621 \u0628\u0634\u0643\u0644 \u0623\u0633\u0631\u0639\nAHRAMSTORE\n\n\u00A9 2026 AhramStore. \u062C\u0645\u064A\u0639 \u0627\u0644\u062D\u0642\u0648\u0642 \u0645\u062D\u0641\u0648\u0638\u0629.\n\n\u0631\u0648\u0627\u0628\u0637 \u0633\u0631\u064A\u0639\u0629\n\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\nINTEGRATED CERT 20260926\nABOUT US\nCONTACT\nPRIVACY POLICY\nTERMS \u0026 CONDITIONS\n\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644\n\n\u062A\u0627\u0628\u0639\u0646\u0627\n\n\u062E\u062F\u0645\u0629 \u0627\u0644\u0639\u0645\u0644\u0627\u0621"
+      },
+      "screenshot": "C:\\Users\\fadya\\source\\repos\\PointOfSale\\.opencode-tmp\\integrated-authoring-cert\\evidence\\screenshots\\theme-seven-ar-mobile.png"
+    }
+  ],
+  "blockers": [],
+  "status": "PASS",
+  "cmsDependencyPublic": {
+    "storeConfig": {
+      "tenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "storeName": "AhramStore",
+      "storefrontTheme": "modern",
+      "themeId": "default",
+      "theme": {
+        "colors": {
+          "primary": "#7c3aed",
+          "secondary": "#0f172a",
+          "background": "#ffffff",
+          "text": "#020617",
+          "muted": "#64748b"
+        },
+        "font": {
+          "family": "Inter",
+          "baseSize": "16px"
+        },
+        "ui": {
+          "borderRadius": "8px",
+          "buttonStyle": "solid"
+        },
+        "layout": {
+          "productCardVariant": "default",
+          "headerVariant": "standard"
+        }
+      },
+      "behavior": {
+        "enableGuestCheckout": true,
+        "showOutOfStockProducts": false,
+        "enableSearch": true,
+        "failCheckoutOnPromotionError": true
+      },
+      "storefrontStatus": "live",
+      "updatedAtUtc": "2026-09-26T22:54:26.758581Z",
+      "pages": {
+        "home": {
+          "sections": [
+            {
+              "id": "section_59dbdb72acf455958a366b2024148be9",
+              "type": "hero-banner",
+              "enabled": true,
+              "order": 0,
+              "settings": {
+                "title": "Integrated Cert 20260926",
+                "subtitle": "Discover amazing products",
+                "ctaText": "Shop Now",
+                "ctaLink": "/products",
+                "backgroundImage": "https://m.media-amazon.com/images/I/61Ud8rdu8sL._AC_SL1500_.jpg",
+                "backgroundColor": "#111827",
+                "overlayOpacity": 40,
+                "textColor": "#ffffff",
+                "alignment": "left",
+                "height": "large",
+                "highlights": []
+              }
+            },
+            {
+              "id": "section_238ebcf3f65759afacee660dca783b42",
+              "type": "featured-products",
+              "enabled": true,
+              "order": 1,
+              "settings": {
+                "title": "Featured Products",
+                "subtitle": "",
+                "displayStyle": "carousel",
+                "source": "all",
+                "maxItems": 8,
+                "productIds": [],
+                "showBadge": true,
+                "badgeText": "Featured"
+              }
+            },
+            {
+              "id": "section_f59399355bc55d3bba01b1cd8f8bfc29",
+              "type": "category-grid",
+              "enabled": true,
+              "order": 2,
+              "settings": {
+                "title": "Shop by Category",
+                "subtitle": "",
+                "source": "all",
+                "maxItems": 6,
+                "categoryIds": [],
+                "columns": 3
+              }
+            },
+            {
+              "id": "section_e4fe6ded2cf258d5b9a281775ce0dc1c",
+              "type": "newsletter-signup",
+              "enabled": true,
+              "order": 3,
+              "settings": {
+                "heading": "Stay in the loop",
+                "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+                "buttonText": "Subscribe",
+                "backgroundColor": "#111827",
+                "textColor": "#ffffff"
+              }
+            }
+          ]
+        },
+        "product": {
+          "sections": []
+        },
+        "category": {
+          "sections": []
+        }
+      },
+      "productTemplates": {},
+      "currency": "EGP",
+      "defaultCountryCode": "EG",
+      "commerceAiEnabled": false,
+      "commerceAiWidgetStyle": "minimal",
+      "commerceAiWidgetPosition": "bottom-right",
+      "commerceAiAutoGreetingEnabled": false,
+      "commerceAiAutoGreetingMessage": "",
+      "commerceAiPersonality": "friendly"
+    },
+    "navigation": {
+      "header": {
+        "links": [
+          {
+            "label": "Home",
+            "labelAr": "",
+            "type": "internal",
+            "path": "/",
+            "slug": "",
+            "openInNewTab": false
+          },
+          {
+            "label": "Shop",
+            "labelAr": "",
+            "type": "internal",
+            "path": "/products",
+            "slug": "",
+            "openInNewTab": false
+          },
+          {
+            "label": "Integrated Cert 20260926",
+            "labelAr": "\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644",
+            "type": "cms",
+            "slug": "integrated-cert-20260926225410",
+            "openInNewTab": false
+          },
+          {
+            "label": "Integrated Cert 20260926 Product",
+            "labelAr": "",
+            "type": "internal",
+            "path": "/products/iphone-17-pro-max",
+            "slug": "iphone-17-pro-max",
+            "openInNewTab": false
+          },
+          {
+            "label": "Integrated Cert 20260926 Category",
+            "labelAr": "",
+            "type": "category",
+            "slug": "apple",
+            "openInNewTab": false
+          },
+          {
+            "label": "Integrated Cert 20260926 External",
+            "labelAr": "",
+            "type": "external",
+            "path": "https://example.com/integrated-certification",
+            "slug": "",
+            "openInNewTab": true
+          }
+        ]
+      },
+      "footer": {
+        "links": [
+          {
+            "label": "About Us",
+            "labelAr": "",
+            "type": "cms",
+            "slug": "about",
+            "openInNewTab": false
+          },
+          {
+            "label": "Contact",
+            "labelAr": "",
+            "type": "cms",
+            "slug": "contact",
+            "openInNewTab": false
+          },
+          {
+            "label": "Privacy Policy",
+            "labelAr": "",
+            "type": "cms",
+            "slug": "privacy",
+            "openInNewTab": false
+          },
+          {
+            "label": "Terms \u0026 Conditions",
+            "labelAr": "",
+            "type": "cms",
+            "slug": "terms",
+            "openInNewTab": false
+          }
+        ]
+      },
+      "updatedAtUtc": "2026-09-26T22:54:26.758581Z"
+    },
+    "footer": {
+      "footerSource": "Tenant",
+      "socialSource": "None",
+      "sections": [
+        {
+          "title": "Integrated Cert 20260926",
+          "sortOrder": 0,
+          "links": [
+            {
+              "label": "About Us",
+              "type": "Cms",
+              "url": "/about",
+              "openInNewTab": false
+            },
+            {
+              "label": "Contact",
+              "type": "Cms",
+              "url": "/contact",
+              "openInNewTab": false
+            },
+            {
+              "label": "Privacy Policy",
+              "type": "Cms",
+              "url": "/privacy",
+              "openInNewTab": false
+            },
+            {
+              "label": "Terms \u0026 Conditions",
+              "type": "Cms",
+              "url": "/terms",
+              "openInNewTab": false
+            },
+            {
+              "label": "Integrated Cert 20260926",
+              "labelAr": "\u0627\u0639\u062A\u0645\u0627\u062F \u0645\u062A\u0643\u0627\u0645\u0644",
+              "type": "Cms",
+              "url": "/integrated-cert-20260926225410",
+              "openInNewTab": true
+            }
+          ]
+        }
+      ],
+      "socialLinks": [],
+      "generatedAtUtc": "2026-09-26T22:54:28.4851514Z"
+    }
+  },
+  "restoration": "PASS_EXACT_CONTENT_AUTHORITY",
+  "completedAtUtc": "2026-09-26T22:55:36.7831337Z",
+  "restored": true
+}

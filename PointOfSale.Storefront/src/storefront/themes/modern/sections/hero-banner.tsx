@@ -25,6 +25,7 @@ const HeroBanner: React.FC<any> = ({
     textColor,
     alignment,
     height,
+    highlights,
 }) => {
     const { t } = useTranslation();
     const resolvedOverlayOpacity = Math.min(Math.max(Number(overlayOpacity ?? 50), 0), 100) / 100;
@@ -44,12 +45,12 @@ const HeroBanner: React.FC<any> = ({
                         {t('home.welcome', { storeName: '' })}
                     </div>
 
-                    <h1 className="max-w-2xl text-balance text-5xl font-semibold leading-[0.98] tracking-tight text-slate-950 sm:text-6xl lg:text-7xl">
+                    <h1 className="max-w-2xl text-balance text-5xl font-semibold leading-[0.98] tracking-tight sm:text-6xl lg:text-7xl">
                         {title || t('home.welcome', { storeName: '' })}
                     </h1>
 
                     {subtitle && (
-                        <p className="mt-6 max-w-xl text-lg leading-8 text-slate-600">
+                        <p className="mt-6 max-w-xl text-lg leading-8 opacity-80">
                             {subtitle}
                         </p>
                     )}
@@ -65,20 +66,16 @@ const HeroBanner: React.FC<any> = ({
                         </ThemeHeroCTA>
                     )}
 
-                    <div className="mt-10 grid max-w-xl grid-cols-3 gap-3 border-t border-slate-200 pt-6 text-left">
-                        <div>
-                            <p className="text-2xl font-semibold text-slate-950">24h</p>
-                            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">fresh edits</p>
+                    {Array.isArray(highlights) && highlights.length > 0 && (
+                        <div className="mt-10 grid max-w-xl grid-cols-3 gap-3 border-t border-slate-200 pt-6 text-left">
+                            {highlights.map((item: { value: string; label: string }, index: number) => (
+                                <div key={index}>
+                                    <p className="text-2xl font-semibold">{item.value}</p>
+                                    <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] opacity-75">{item.label}</p>
+                                </div>
+                            ))}
                         </div>
-                        <div>
-                            <p className="text-2xl font-semibold text-slate-950">3x</p>
-                            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">easy scan</p>
-                        </div>
-                        <div>
-                            <p className="text-2xl font-semibold text-slate-950">1</p>
-                            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">clear cart</p>
-                        </div>
-                    </div>
+                    )}
                 </div>
 
                 <div className="relative">
@@ -88,17 +85,13 @@ const HeroBanner: React.FC<any> = ({
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
-                                    alt={title || 'Featured storefront collection'}
+                                    alt={title || ''}
                                     className="h-full w-full object-cover"
                                 />
                             ) : (
                                 <div className="h-full w-full bg-[linear-gradient(135deg,#0f172a_0%,#2563eb_48%,#f97316_100%)]" />
                             )}
                             <div className="absolute inset-0 bg-slate-950" style={{ opacity: resolvedOverlayOpacity * 0.28 }} />
-                        </div>
-                        <div className="absolute inset-x-5 bottom-5 rounded-md border border-white/15 bg-white/12 p-4 text-white backdrop-blur-md">
-                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/70">Featured collection</p>
-                            <p className="mt-2 text-2xl font-semibold">Ready to shop</p>
                         </div>
                     </div>
                 </div>

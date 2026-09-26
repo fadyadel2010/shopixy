@@ -1,0 +1,399 @@
+{
+  "capturedAtUtc": "2026-09-25T15:54:50.33715Z",
+  "environment": "MAIN/PRIMARY development",
+  "tenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+  "database": "PosEcommerceDb_Baseline",
+  "databaseHost": "192.168.1.5",
+  "tenant": {
+    "Id": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+    "Name": "AhramStore",
+    "Slug": "ahramstore",
+    "IsActive": true,
+    "Status": 1,
+    "DeletedAtUtc": null
+  },
+  "storeConfig": {
+    "Id": "9cd01634-f469-4b76-ad20-13a74b88cf13",
+    "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+    "StoreName": "AhramStore",
+    "StorefrontStatus": "live",
+    "ThemeId": "default",
+    "ThemePresetKey": "default",
+    "ThemeLivePresetKey": "default",
+    "ThemeDraftOverridesJson": "{\u0022colors\u0022:{\u0022primary\u0022:\u0022#2563eb\u0022,\u0022secondary\u0022:\u0022#0f172a\u0022,\u0022background\u0022:\u0022#ffffff\u0022,\u0022text\u0022:\u0022#020617\u0022,\u0022muted\u0022:\u0022#64748b\u0022},\u0022font\u0022:\u0022Inter\u0022,\u0022borderRadius\u0022:8}",
+    "ThemeLiveOverridesJson": "{\u0022colors\u0022:{\u0022primary\u0022:\u0022#2563eb\u0022,\u0022secondary\u0022:\u0022#0f172a\u0022,\u0022background\u0022:\u0022#ffffff\u0022,\u0022text\u0022:\u0022#020617\u0022,\u0022muted\u0022:\u0022#64748b\u0022},\u0022font\u0022:\u0022Inter\u0022,\u0022borderRadius\u0022:8}",
+    "RowVersion": "6069029",
+    "CustomizationHash": "6bb40670bc0a519c5faea848f0413ca4"
+  },
+  "sections": [
+    {
+      "Id": "8d1a249e-7e79-45e4-a96d-127bd04438c9",
+      "TenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+      "Title": "Information",
+      "TitleAr": null,
+      "SortOrder": 0,
+      "IsActive": true,
+      "CreatedAt": "2026-09-24T17:19:28.046058Z",
+      "UpdatedAt": "2026-09-24T17:19:28.046058Z"
+    }
+  ],
+  "links": [
+    {
+      "Id": "8858d0b4-d753-438b-83e9-f587583bc3a9",
+      "SectionId": "8d1a249e-7e79-45e4-a96d-127bd04438c9",
+      "Label": "About Us",
+      "LabelAr": null,
+      "LinkType": "Cms",
+      "Url": null,
+      "CmsPageSlug": "about",
+      "OpenInNewTab": false,
+      "SortOrder": 0,
+      "IsActive": true,
+      "CreatedAt": "2026-09-24T17:19:28.046058Z",
+      "UpdatedAt": "2026-09-24T17:19:28.046058Z"
+    },
+    {
+      "Id": "33872a08-6044-4c34-8752-787a5234e2f8",
+      "SectionId": "8d1a249e-7e79-45e4-a96d-127bd04438c9",
+      "Label": "Contact",
+      "LabelAr": null,
+      "LinkType": "Cms",
+      "Url": null,
+      "CmsPageSlug": "contact",
+      "OpenInNewTab": false,
+      "SortOrder": 1,
+      "IsActive": true,
+      "CreatedAt": "2026-09-24T17:19:28.046058Z",
+      "UpdatedAt": "2026-09-24T17:19:28.046058Z"
+    },
+    {
+      "Id": "f1890eef-634d-42da-9c1f-03d56d05e3b9",
+      "SectionId": "8d1a249e-7e79-45e4-a96d-127bd04438c9",
+      "Label": "Privacy Policy",
+      "LabelAr": null,
+      "LinkType": "Cms",
+      "Url": null,
+      "CmsPageSlug": "privacy",
+      "OpenInNewTab": false,
+      "SortOrder": 2,
+      "IsActive": true,
+      "CreatedAt": "2026-09-24T17:19:28.046058Z",
+      "UpdatedAt": "2026-09-24T17:19:28.046058Z"
+    },
+    {
+      "Id": "c7ddba5a-6917-4ef9-b577-b84d68b434d5",
+      "SectionId": "8d1a249e-7e79-45e4-a96d-127bd04438c9",
+      "Label": "Terms \u0026 Conditions",
+      "LabelAr": null,
+      "LinkType": "Cms",
+      "Url": null,
+      "CmsPageSlug": "terms",
+      "OpenInNewTab": false,
+      "SortOrder": 3,
+      "IsActive": true,
+      "CreatedAt": "2026-09-24T17:19:28.046058Z",
+      "UpdatedAt": "2026-09-24T17:19:28.046058Z"
+    }
+  ],
+  "socialLinks": [],
+  "publishedCmsPages": [
+    {
+      "PageGroupId": "04899853-5c84-5dab-b25a-f56bd7d6f6b2",
+      "Slug": "about",
+      "Title": "About Us",
+      "Version": 9,
+      "IsDraft": false,
+      "IsPublished": true,
+      "PublishedAt": "2026-09-24T17:59:58.719288Z",
+      "UpdatedAt": "2026-09-24T17:59:58.719288Z"
+    },
+    {
+      "PageGroupId": "a7f6f34e-f508-51d8-a874-11bda02f2f04",
+      "Slug": "contact",
+      "Title": "Contact Us",
+      "Version": 1,
+      "IsDraft": false,
+      "IsPublished": true,
+      "PublishedAt": "2026-09-24T15:55:25.067094Z",
+      "UpdatedAt": "2026-09-24T15:55:25.067094Z"
+    },
+    {
+      "PageGroupId": "ea226064-75cc-54a2-bd52-804ae60c168f",
+      "Slug": "privacy",
+      "Title": "Privacy Policy",
+      "Version": 1,
+      "IsDraft": false,
+      "IsPublished": true,
+      "PublishedAt": "2026-09-24T15:55:25.067094Z",
+      "UpdatedAt": "2026-09-24T15:55:25.067094Z"
+    },
+    {
+      "PageGroupId": "6f8955d1-895d-5ae9-a83c-e8379cc6ad0b",
+      "Slug": "terms",
+      "Title": "Terms \u0026 Conditions",
+      "Version": 1,
+      "IsDraft": false,
+      "IsPublished": true,
+      "PublishedAt": "2026-09-24T15:55:25.067094Z",
+      "UpdatedAt": "2026-09-24T15:55:25.067094Z"
+    }
+  ],
+  "isolationFingerprint": {
+    "FooterSections": "7e55d004b8b6f3f5c115933ccf7ee551",
+    "FooterLinks": "86f7ab86af9c150d9ba53c4966f2afe4",
+    "SocialLinks": "d41d8cd98f00b204e9800998ecf8427e",
+    "StoreConfig": "6bb40670bc0a519c5faea848f0413ca4",
+    "Homepage": "9853d83d2cfcddea4199f5ce7342d804",
+    "CmsPages": "797ade753534d6cac81e912dc39d1fc4",
+    "Products": "112783509c2ce24e8ea802ad1ae273ad"
+  },
+  "publicFooterEn": {
+    "footerSource": "Tenant",
+    "socialSource": "None",
+    "sections": [
+      {
+        "title": "Information",
+        "sortOrder": 0,
+        "links": [
+          {
+            "label": "About Us",
+            "type": "Cms",
+            "url": "/about",
+            "openInNewTab": false
+          },
+          {
+            "label": "Contact",
+            "type": "Cms",
+            "url": "/contact",
+            "openInNewTab": false
+          },
+          {
+            "label": "Privacy Policy",
+            "type": "Cms",
+            "url": "/privacy",
+            "openInNewTab": false
+          },
+          {
+            "label": "Terms \u0026 Conditions",
+            "type": "Cms",
+            "url": "/terms",
+            "openInNewTab": false
+          }
+        ]
+      }
+    ],
+    "socialLinks": [],
+    "generatedAtUtc": "2026-09-25T15:54:50.6781537Z"
+  },
+  "publicFooterAr": {
+    "footerSource": "Tenant",
+    "socialSource": "None",
+    "sections": [
+      {
+        "title": "Information",
+        "sortOrder": 0,
+        "links": [
+          {
+            "label": "About Us",
+            "type": "Cms",
+            "url": "/about",
+            "openInNewTab": false
+          },
+          {
+            "label": "Contact",
+            "type": "Cms",
+            "url": "/contact",
+            "openInNewTab": false
+          },
+          {
+            "label": "Privacy Policy",
+            "type": "Cms",
+            "url": "/privacy",
+            "openInNewTab": false
+          },
+          {
+            "label": "Terms \u0026 Conditions",
+            "type": "Cms",
+            "url": "/terms",
+            "openInNewTab": false
+          }
+        ]
+      }
+    ],
+    "socialLinks": [],
+    "generatedAtUtc": "2026-09-25T15:54:50.8182355Z"
+  },
+  "publicNavigation": {
+    "header": {
+      "links": [
+        {
+          "label": "Home",
+          "labelAr": "",
+          "type": "internal",
+          "path": "/",
+          "slug": "",
+          "openInNewTab": false
+        },
+        {
+          "label": "Shop",
+          "labelAr": "",
+          "type": "internal",
+          "path": "/products",
+          "slug": "",
+          "openInNewTab": false
+        }
+      ]
+    },
+    "footer": {
+      "links": [
+        {
+          "label": "About Us",
+          "labelAr": "",
+          "type": "cms",
+          "slug": "about",
+          "openInNewTab": false
+        },
+        {
+          "label": "Contact",
+          "labelAr": "",
+          "type": "cms",
+          "slug": "contact",
+          "openInNewTab": false
+        },
+        {
+          "label": "Privacy Policy",
+          "labelAr": "",
+          "type": "cms",
+          "slug": "privacy",
+          "openInNewTab": false
+        },
+        {
+          "label": "Terms \u0026 Conditions",
+          "labelAr": "",
+          "type": "cms",
+          "slug": "terms",
+          "openInNewTab": false
+        }
+      ]
+    },
+    "updatedAtUtc": "2026-09-25T14:03:26.462806Z"
+  },
+  "publicStoreConfig": {
+    "tenantId": "c9c5c1ae-949e-498e-bc63-07242daeb49d",
+    "storeName": "AhramStore",
+    "storefrontTheme": "alizon",
+    "themeId": "default",
+    "theme": {
+      "colors": {
+        "primary": "#2563eb",
+        "secondary": "#0f172a",
+        "background": "#ffffff",
+        "text": "#020617",
+        "muted": "#64748b"
+      },
+      "font": {
+        "family": "Inter",
+        "baseSize": "16px"
+      },
+      "ui": {
+        "borderRadius": "8px",
+        "buttonStyle": "solid"
+      },
+      "layout": {
+        "productCardVariant": "compact",
+        "headerVariant": "standard"
+      }
+    },
+    "behavior": {
+      "enableGuestCheckout": true,
+      "showOutOfStockProducts": false,
+      "enableSearch": true,
+      "failCheckoutOnPromotionError": true
+    },
+    "storefrontStatus": "live",
+    "updatedAtUtc": "2026-09-25T14:03:26.462806Z",
+    "pages": {
+      "home": {
+        "sections": [
+          {
+            "id": "section_59dbdb72acf455958a366b2024148be9",
+            "type": "hero-banner",
+            "enabled": true,
+            "order": 0,
+            "settings": {
+              "title": "Welcome to Shopixy",
+              "subtitle": "Discover amazing products",
+              "ctaText": "Shop Now",
+              "ctaLink": "/products",
+              "backgroundImage": "https://m.media-amazon.com/images/I/61Ud8rdu8sL._AC_SL1500_.jpg",
+              "backgroundColor": "#111827",
+              "overlayOpacity": 40,
+              "textColor": "#ffffff",
+              "alignment": "left",
+              "height": "large",
+              "highlights": []
+            }
+          },
+          {
+            "id": "section_238ebcf3f65759afacee660dca783b42",
+            "type": "featured-products",
+            "enabled": true,
+            "order": 1,
+            "settings": {
+              "title": "Featured Products",
+              "subtitle": "",
+              "displayStyle": "carousel",
+              "source": "all",
+              "maxItems": 8,
+              "productIds": [],
+              "showBadge": true,
+              "badgeText": "Featured"
+            }
+          },
+          {
+            "id": "section_f59399355bc55d3bba01b1cd8f8bfc29",
+            "type": "category-grid",
+            "enabled": true,
+            "order": 2,
+            "settings": {
+              "title": "Shop by Category",
+              "subtitle": "",
+              "source": "all",
+              "maxItems": 6,
+              "categoryIds": [],
+              "columns": 3
+            }
+          },
+          {
+            "id": "section_e4fe6ded2cf258d5b9a281775ce0dc1c",
+            "type": "newsletter-signup",
+            "enabled": true,
+            "order": 3,
+            "settings": {
+              "heading": "Stay in the loop",
+              "subheading": "Subscribe to our newsletter for exclusive offers and updates",
+              "buttonText": "Subscribe",
+              "backgroundColor": "#111827",
+              "textColor": "#ffffff"
+            }
+          }
+        ]
+      },
+      "product": {
+        "sections": []
+      },
+      "category": {
+        "sections": []
+      }
+    },
+    "productTemplates": {},
+    "currency": "EGP",
+    "defaultCountryCode": "EG",
+    "commerceAiEnabled": false,
+    "commerceAiWidgetStyle": "minimal",
+    "commerceAiWidgetPosition": "bottom-right",
+    "commerceAiAutoGreetingEnabled": false,
+    "commerceAiAutoGreetingMessage": "",
+    "commerceAiPersonality": "friendly"
+  }
+}

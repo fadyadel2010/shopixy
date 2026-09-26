@@ -122,6 +122,8 @@ public static class StorefrontSectionContracts
         {
             if (!settings.TryGetValue(field.Key, out var value))
             {
+                // Existing hero drafts predate the optional authored highlight strip.
+                if (canonicalType == "hero-banner" && field.Key == "highlights") continue;
                 errors.Add($"Section setting '{field.Key}' is required for section type '{canonicalType}'.");
                 continue;
             }

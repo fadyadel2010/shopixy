@@ -244,7 +244,6 @@ export function FooterConfigScreen({
                 subtitle={`${description} Changes on this surface are committed live; there is no separate publish step.`}
                 backAction={{ label: 'Back', onClick: () => requestNavigation('/storefront') }}
                 status={<AuthoringStatusBadge state={isSaving ? 'saving' : isDirty ? 'dirty' : 'live'} />}
-                historyAction={{ label: 'StoreConfig History', onClick: () => requestNavigation('/storefront/storeconfig-version-history') }}
                 discardAction={{ label: 'Discard', onClick: () => setIsDiscardConfirmOpen(true), disabled: !isDirty || isSaving }}
                 publishAction={{ label: 'Save live Footer', busyLabel: 'Saving…', onClick: () => setIsSaveConfirmOpen(true), disabled: !isDirty || validationIssues.length > 0, busy: isSaving }}
             />
@@ -274,7 +273,7 @@ export function FooterConfigScreen({
             ) : null}
 
             <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                     <div>
                         <h2 className="text-lg font-semibold text-slate-900">Footer Sections</h2>
                         <p className="mt-1 text-sm text-slate-500">Create ordered sections and decide which links stay active.</p>
@@ -320,6 +319,8 @@ export function FooterConfigScreen({
                                             </div>
                                         ) : null}
                                         <input
+                                            aria-label={`Section title ${activeLanguage.toUpperCase()}`}
+                                            dir={localized && activeLanguage === 'ar' ? 'rtl' : 'ltr'}
                                             value={localized ? (section.titleLocalized?.[activeLanguage] || '') : section.title}
                                             onChange={(event) => updateSection(section._key, (currentSection) => ({
                                                 ...currentSection,
@@ -337,13 +338,13 @@ export function FooterConfigScreen({
                                         />
                                     </div>
                                     <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                                        <input type="checkbox" checked={section.isActive !== false} onChange={(event) => updateSection(section._key, (currentSection) => ({ ...currentSection, isActive: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                        <input aria-label={`Section ${sectionIndex + 1} active`} type="checkbox" checked={section.isActive !== false} onChange={(event) => updateSection(section._key, (currentSection) => ({ ...currentSection, isActive: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
                                         Section active
                                     </label>
                                 </div>
                                 <div className="flex items-start gap-2">
-                                    <button onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'up') }))} disabled={sectionIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
-                                    <button onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'down') }))} disabled={sectionIndex === draft.sections.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
+                                    <button type="button" aria-label={`Move section ${sectionIndex + 1} up`} onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'up') }))} disabled={sectionIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
+                                    <button type="button" aria-label={`Move section ${sectionIndex + 1} down`} onClick={() => setDraft((value) => ({ ...value, sections: moveItem(value.sections, sectionIndex, 'down') }))} disabled={sectionIndex === draft.sections.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
                                     <button type="button" aria-label={`Delete section ${section.title || sectionIndex + 1}`} onClick={() => confirmDelete('Delete this footer section and all of its links?', () => setDraft((value) => ({ ...value, sections: value.sections.filter((item) => item._key !== section._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                                 </div>
                             </div>
@@ -381,6 +382,8 @@ export function FooterConfigScreen({
                                                     </div>
                                                 ) : null}
                                                 <input
+                                                    aria-label={`Link ${linkIndex + 1} label ${activeLanguage.toUpperCase()}`}
+                                                    dir={localized && activeLanguage === 'ar' ? 'rtl' : 'ltr'}
                                                     value={localized ? (link.labelLocalized?.[activeLanguage] || '') : link.label}
                                                     onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({
                                                         ...currentLink,
@@ -397,13 +400,14 @@ export function FooterConfigScreen({
                                                     placeholder="Label"
                                                 />
                                             </div>
-                                            <select value={link.type} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, type: event.target.value, url: event.target.value === 'Cms' ? '' : currentLink.url, cmsPageSlug: event.target.value === 'Cms' ? currentLink.cmsPageSlug : '' }))} className={inputClassName}>
+                                            <select aria-label={`Link ${linkIndex + 1} type`} value={link.type} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, type: event.target.value, url: event.target.value === 'Cms' ? '' : currentLink.url, cmsPageSlug: event.target.value === 'Cms' ? currentLink.cmsPageSlug : '' }))} className={inputClassName}>
                                                 {LINK_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
                                             </select>
                                             {link.type === 'Cms' ? (
                                                 allowCmsSlugEntry ? (
                                                     <div>
                                                         <input
+                                                            aria-label={`Link ${linkIndex + 1} CMS page slug`}
                                                             value={link.cmsPageSlug}
                                                             onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, cmsPageSlug: event.target.value }))}
                                                             className={inputClassName}
@@ -421,25 +425,25 @@ export function FooterConfigScreen({
                                                         ) : null}
                                                     </div>
                                                 ) : (
-                                                    <select value={link.cmsPageSlug} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, cmsPageSlug: event.target.value }))} className={inputClassName}>
+                                                    <select aria-label={`Link ${linkIndex + 1} CMS page`} value={link.cmsPageSlug} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, cmsPageSlug: event.target.value }))} className={inputClassName}>
                                                         <option value="">Select CMS page</option>
                                                         {cmsOptions.map((page) => <option key={page.slug} value={page.slug}>{page.title} ({page.slug})</option>)}
                                                     </select>
                                                 )
                                             ) : (
-                                                <input value={link.url} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, url: event.target.value }))} className={inputClassName} placeholder={link.type === 'External' ? 'https://example.com' : '/about'} />
+                                                <input aria-label={`Link ${linkIndex + 1} URL`} value={link.url} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, url: event.target.value }))} className={inputClassName} placeholder={link.type === 'External' ? 'https://example.com' : '/about'} />
                                             )}
                                             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                                                <input type="checkbox" checked={link.isActive !== false} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, isActive: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                                <input aria-label={`Link ${linkIndex + 1} active`} type="checkbox" checked={link.isActive !== false} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, isActive: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
                                                 Active
                                             </label>
                                             <div className="flex items-center gap-2">
                                                 <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-                                                    <input type="checkbox" checked={Boolean(link.openInNewTab)} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, openInNewTab: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                                    <input aria-label={`Link ${linkIndex + 1} opens in new tab`} type="checkbox" checked={Boolean(link.openInNewTab)} onChange={(event) => updateLink(section._key, link._key, (currentLink) => ({ ...currentLink, openInNewTab: event.target.checked }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
                                                     New tab
                                                 </label>
-                                                <button onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
-                                                <button onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'down') }))} disabled={linkIndex === section.links.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
+                                                <button type="button" aria-label={`Move link ${linkIndex + 1} up`} onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
+                                                <button type="button" aria-label={`Move link ${linkIndex + 1} down`} onClick={() => updateSection(section._key, (currentSection) => ({ ...currentSection, links: moveItem(currentSection.links, linkIndex, 'down') }))} disabled={linkIndex === section.links.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
                                                 <button type="button" aria-label={`Delete link ${link.label || linkIndex + 1}`} onClick={() => confirmDelete('Delete this footer link?', () => updateSection(section._key, (currentSection) => ({ ...currentSection, links: currentSection.links.filter((item) => item._key !== link._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                                             </div>
                                         </div>
@@ -457,7 +461,7 @@ export function FooterConfigScreen({
             </div>
 
             <div className="rounded-[24px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
                     <div>
                         <h2 className="text-lg font-semibold text-slate-900">Social Links</h2>
                         <p className="mt-1 text-sm text-slate-500">Only active links with valid URLs should be rendered.</p>
@@ -472,16 +476,16 @@ export function FooterConfigScreen({
                     {draft.socialLinks.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center text-sm text-slate-500">No social links configured yet.</div> : null}
                     {draft.socialLinks.map((link, linkIndex) => (
                         <div key={link._key} className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-4 xl:grid-cols-6">
-                            <input value={link.platform} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, platform: event.target.value } : item) }))} className={inputClassName} placeholder="Platform" />
-                            <input value={link.url} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, url: event.target.value } : item) }))} className={inputClassName} placeholder="https://instagram.com/brand" />
-                            <input value={link.icon} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, icon: event.target.value } : item) }))} className={inputClassName} placeholder="Icon" />
+                            <input aria-label={`Social link ${linkIndex + 1} platform`} value={link.platform} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, platform: event.target.value } : item) }))} className={inputClassName} placeholder="Platform" />
+                            <input aria-label={`Social link ${linkIndex + 1} URL`} value={link.url} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, url: event.target.value } : item) }))} className={inputClassName} placeholder="https://instagram.com/brand" />
+                            <input aria-label={`Social link ${linkIndex + 1} icon`} value={link.icon} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, icon: event.target.value } : item) }))} className={inputClassName} placeholder="Icon" />
                             <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-                                <input type="checkbox" checked={link.isActive !== false} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, isActive: event.target.checked } : item) }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
+                                <input aria-label={`Social link ${linkIndex + 1} active`} type="checkbox" checked={link.isActive !== false} onChange={(event) => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.map((item) => item._key === link._key ? { ...item, isActive: event.target.checked } : item) }))} className="h-4 w-4 rounded border-slate-300 text-sky-600" />
                                 Active
                             </label>
-                            <button onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
+                            <button type="button" aria-label={`Move social link ${linkIndex + 1} up`} onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'up') }))} disabled={linkIndex === 0} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronUp size={16} /></button>
                             <div className="flex items-center gap-2">
-                                <button onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'down') }))} disabled={linkIndex === draft.socialLinks.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
+                                <button type="button" aria-label={`Move social link ${linkIndex + 1} down`} onClick={() => setDraft((value) => ({ ...value, socialLinks: moveItem(value.socialLinks, linkIndex, 'down') }))} disabled={linkIndex === draft.socialLinks.length - 1} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-600 disabled:opacity-40"><ChevronDown size={16} /></button>
                                 <button type="button" aria-label={`Delete social link ${link.platform || linkIndex + 1}`} onClick={() => confirmDelete('Delete this social link?', () => setDraft((value) => ({ ...value, socialLinks: value.socialLinks.filter((item) => item._key !== link._key) })))} className="rounded-lg border border-rose-200 bg-white p-2 text-rose-700"><Trash2 size={16} /></button>
                             </div>
                         </div>

@@ -81,6 +81,14 @@ describe('storefront runtime section contract certification', () => {
         })).toThrow(/invalid enum value/);
     });
 
+    it('renders backend-generated GUIDs as valid curated storefront identities', () => {
+        expect(() => validateSectionSettingsStrict('featured-products', {
+            ...getSectionDefaultSettings('featured-products'),
+            source: 'curated',
+            productIds: ['d4807be1-bf1f-d3e8-f1e8-53afe614d11d'],
+        })).not.toThrow();
+    });
+
     it('rejects legacy aliases instead of repairing persisted layouts during runtime', () => {
         expect(() => validateSectionSettingsStrict('products', {
             title: 'Legacy Products',

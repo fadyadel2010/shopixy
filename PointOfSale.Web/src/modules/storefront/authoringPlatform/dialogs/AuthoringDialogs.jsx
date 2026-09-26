@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Loader2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 
 import { getAuthoringFocusableElements } from '../accessibility/focus'
 import { AUTHORING_BUTTON_TONES } from '../contracts/authoringContracts'
@@ -95,11 +96,12 @@ export function AuthoringDialog({
 }
 
 export function AuthoringConfirmDialog({ open, title, description, confirmLabel = 'Continue', confirmTone = 'primary', busy = false, onConfirm, onClose }) {
+    const { t } = useTranslation()
     const cancelRef = useRef(null)
     return (
         <AuthoringDialog open={open} title={title} description={description} onClose={busy ? undefined : onClose} initialFocusRef={cancelRef}>
             <div className="mt-6 flex justify-end gap-2">
-                <button ref={cancelRef} type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50`}>Keep editing</button>
+                <button ref={cancelRef} type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50`}>{t('storefront.homepageEditor.keepEditing')}</button>
                 <button type="button" onClick={onConfirm} disabled={busy} aria-busy={busy || undefined} className={`${AUTHORING_BUTTON_TONES[confirmTone] || AUTHORING_BUTTON_TONES.primary} inline-flex min-h-10 items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50`}>
                     {busy ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : null}
                     {confirmLabel}
@@ -110,6 +112,7 @@ export function AuthoringConfirmDialog({ open, title, description, confirmLabel 
 }
 
 export function AuthoringPromptDialog({ open, title, description, label, value, placeholder, confirmLabel = 'Continue', busy = false, onChange, onConfirm, onClose }) {
+    const { t } = useTranslation()
     const inputRef = useRef(null)
     return (
         <AuthoringDialog open={open} title={title} description={description} onClose={busy ? undefined : onClose} initialFocusRef={inputRef}>
@@ -130,7 +133,7 @@ export function AuthoringPromptDialog({ open, title, description, label, value, 
                 />
             </label>
             <div className="mt-6 flex justify-end gap-2">
-                <button type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>Cancel</button>
+                <button type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>{t('storefront.homepageEditor.cancel')}</button>
                 <button type="button" onClick={onConfirm} disabled={busy || !value.trim()} className={`${AUTHORING_BUTTON_TONES.primary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>{confirmLabel}</button>
             </div>
         </AuthoringDialog>
@@ -138,12 +141,13 @@ export function AuthoringPromptDialog({ open, title, description, label, value, 
 }
 
 export function UnsavedChangesDialog({ open, busy = false, onDiscard, onClose }) {
+    const { t } = useTranslation()
     return (
         <AuthoringConfirmDialog
             open={open}
-            title={busy ? 'Authoring action in progress' : 'Unsaved changes'}
-            description={busy ? 'Wait for the current action to finish before leaving this screen.' : 'Leaving now will discard changes that have not been saved.'}
-            confirmLabel="Discard and leave"
+            title={t(busy ? 'storefront.homepageEditor.actionInProgress' : 'storefront.homepageEditor.unsavedChanges')}
+            description={t(busy ? 'storefront.homepageEditor.waitForAction' : 'storefront.homepageEditor.leaveWarning')}
+            confirmLabel={t('storefront.homepageEditor.discardAndLeave')}
             confirmTone="danger"
             busy={busy}
             onConfirm={onDiscard}
@@ -153,20 +157,21 @@ export function UnsavedChangesDialog({ open, busy = false, onDiscard, onClose })
 }
 
 export function AuthoringConflictDialog({ open, message, hasLatest = true, canRetry = true, busy = false, onLoadLatest, onRetry, onClose }) {
+    const { t } = useTranslation()
     const closeRef = useRef(null)
     return (
         <AuthoringDialog
             open={open}
-            title="A newer version is available"
-            description={message || 'Someone else changed this content while you were editing. Your draft is still here.'}
+            title={t('storefront.homepageEditor.newerVersion')}
+            description={message || t('storefront.homepageEditor.concurrentChange')}
             onClose={busy ? undefined : onClose}
             initialFocusRef={closeRef}
         >
-            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">Choose Load Latest to adopt the accepted server version, or Retry My Draft to reapply your retained changes against it.</p>
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900" role="status">{t('storefront.homepageEditor.conflictHint')}</p>
             <div className="mt-6 flex flex-wrap justify-end gap-2">
-                <button ref={closeRef} type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>Keep editing</button>
-                <button type="button" onClick={onLoadLatest} disabled={busy || !hasLatest} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>Load Latest</button>
-                {canRetry ? <button type="button" onClick={onRetry} disabled={busy || !hasLatest} className={`${AUTHORING_BUTTON_TONES.primary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>Retry My Draft</button> : null}
+                <button ref={closeRef} type="button" onClick={onClose} disabled={busy} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>{t('storefront.homepageEditor.keepEditing')}</button>
+                <button type="button" onClick={onLoadLatest} disabled={busy || !hasLatest} className={`${AUTHORING_BUTTON_TONES.secondary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>{t('storefront.homepageEditor.loadLatest')}</button>
+                {canRetry ? <button type="button" onClick={onRetry} disabled={busy || !hasLatest} className={`${AUTHORING_BUTTON_TONES.primary} min-h-10 rounded-lg px-4 py-2 text-sm font-medium disabled:opacity-50`}>{t('storefront.homepageEditor.retryDraft')}</button> : null}
             </div>
         </AuthoringDialog>
     )

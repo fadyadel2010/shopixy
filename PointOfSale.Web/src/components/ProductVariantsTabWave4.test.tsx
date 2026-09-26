@@ -357,7 +357,7 @@ describe('Wave 4 contextual generated SKU (suggestion-only, authority-preserving
         })
     })
 
-    it('falls back to the certified VARIANT prefix when the product name is non-Latin', async () => {
+    it('uses an ASCII product-scoped namespace and stable variant ordinals for Arabic names', async () => {
         const { container } = renderVariantTab({ productSkuPrefix: 'منتج تجريبي' })
         await buildSizeMatrix(container)
 
@@ -366,9 +366,52 @@ describe('Wave 4 contextual generated SKU (suggestion-only, authority-preserving
 
         await waitFor(() => {
             const [first, second] = skuInputs(container)
-            expect(first.value).toBe('VARIANT-256')
-            expect(second.value).toBe('VARIANT-512')
+            expect(first.value).toMatch(/^PX-[0-9A-F]{32}-V01$/)
+            expect(second.value).toBe(first.value.replace('-V01', '-V02'))
         })
+    })
+
+    it('separates Arabic products even when their option values match', async () => {
+        const first = renderVariantTab({ productId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', productSkuPrefix: 'منتج' })
+        await buildSizeMatrix(first.container)
+        fireEvent.click(first.container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 2 Selected' }))
+        const firstSku = skuInputs(first.container)[0].value
+        first.unmount()
+
+        const second = renderVariantTab({ productId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', productSkuPrefix: 'منتج' })
+        await buildSizeMatrix(second.container)
+        fireEvent.click(second.container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 2 Selected' }))
+        const secondSku = skuInputs(second.container)[0].value
+        expect(firstSku).toBe('PX-AAAAAAAAAAAA4AAA8AAAAAAAAAAAAAAA-V01')
+        expect(secondSku).toBe('PX-BBBBBBBBBBBB4BBB8BBBBBBBBBBBBBBB-V01')
+        expect(firstSku).not.toBe(secondSku)
+    })
+
+    it('numbers many Arabic variants independently of their Arabic attribute values', async () => {
+        const { container } = renderVariantTab({ productSkuPrefix: 'حاسوب' })
+        await addOptionGroupViaPrimary(container, 'اللون')
+        for (const color of ['أحمر', 'أزرق', 'أسود', 'أبيض', 'أخضر']) {
+            await addOptionValue(container, 0, color)
+        }
+        await waitForRowName('اللون: أخضر')
+        fireEvent.click(container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 5 Selected' }))
+        const skus = (Array.from(container.querySelectorAll('table input[type="text"]')) as HTMLInputElement[])
+            .filter((_, index) => index % 2 === 0).map(input => input.value)
+        expect(skus.map(sku => sku.slice(-3))).toEqual(['V01', 'V02', 'V03', 'V04', 'V05'])
+        expect(new Set(skus).size).toBe(5)
+        expect(skus.every(sku => /^[\x20-\x7E]+$/.test(sku))).toBe(true)
+    })
+
+    it('does not treat ASCII digits in an Arabic product name as a unique product identity', async () => {
+        const { container } = renderVariantTab({ productSkuPrefix: 'منتج 20260924' })
+        await buildSizeMatrix(container)
+        fireEvent.click(container.querySelector('thead input[type="checkbox"]') as HTMLInputElement)
+        fireEvent.click(screen.getByRole('button', { name: 'Generate SKU for 2 Selected' }))
+        await waitFor(() => expect(skuInputs(container)[0].value).toMatch(/^PX-[0-9A-F]{32}-V01$/))
+        expect(skuInputs(container)[1].value).toBe(skuInputs(container)[0].value.replace('-V01', '-V02'))
     })
 
     it('restores product context for prefix-less custom patterns instead of emitting a bare value', async () => {

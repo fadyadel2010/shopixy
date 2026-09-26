@@ -76,11 +76,11 @@ public sealed class StorefrontThemePreviewService : IStorefrontThemePreviewServi
 
         var preset = await _dbContext.ThemePresets
             .AsNoTracking()
-            .Where(item => item.Key == authority.Config.ThemeLivePresetKey || item.Key == "default")
-            .OrderByDescending(item => item.Key == authority.Config.ThemeLivePresetKey)
+            .Where(item => item.Key == authority.Config.ThemePresetKey || item.Key == "default")
+            .OrderByDescending(item => item.Key == authority.Config.ThemePresetKey)
             .FirstOrDefaultAsync(cancellationToken);
 
-        var config = StorefrontDraftConfigMapper.MapLive(
+        var config = StorefrontDraftConfigMapper.Map(
             authority.Config,
             preset,
             authority.Tenant.Currency.Trim().ToUpperInvariant(),
@@ -91,8 +91,6 @@ public sealed class StorefrontThemePreviewService : IStorefrontThemePreviewServi
                 tenantId,
                 operation),
             storefrontThemeOverride: themeId);
-
-        config.StorefrontTheme = themeId;
 
         return new StorefrontThemePreviewConfigResult
         {

@@ -24,7 +24,8 @@ public sealed class CmsSeoAuthorityCertificationTests
         Assert.Contains("canonicalUrl", frontendTests, StringComparison.Ordinal);
         Assert.Contains("robots", frontendTests, StringComparison.Ordinal);
         Assert.Contains("structuredData", frontendTests, StringComparison.Ordinal);
-        Assert.Contains("setForm(fromPageResponse(admittedPage))", editor, StringComparison.Ordinal);
+        Assert.Contains("const acceptedForm = fromPageResponse(admittedPage)", editor, StringComparison.Ordinal);
+        Assert.Contains("setForm(acceptedForm)", editor, StringComparison.Ordinal);
     }
 
     [Fact]

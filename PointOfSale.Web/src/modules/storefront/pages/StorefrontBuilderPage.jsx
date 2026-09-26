@@ -101,7 +101,6 @@ export function StorefrontBuilderPage() {
     const [lastSavedAt, setLastSavedAt] = useState(null)
 
     // Refs
-    const saveTimeoutRef = useRef(null)
     const saveAbortControllerRef = useRef(null)
     const loadAbortControllerRef = useRef(null)
     const previewAbortControllerRef = useRef(null)
@@ -130,13 +129,8 @@ export function StorefrontBuilderPage() {
         [isProductTemplatePage, targetPage, templateIdFromUrl]
     )
 
-    const clearScheduledSave = useCallback((abortRequest = false) => {
-        if (saveTimeoutRef.current) {
-            clearTimeout(saveTimeoutRef.current)
-            saveTimeoutRef.current = null
-        }
-
-        if (abortRequest && saveAbortControllerRef.current) {
+    const abortPendingSave = useCallback(() => {
+        if (saveAbortControllerRef.current) {
             saveAbortControllerRef.current.abort()
             saveAbortControllerRef.current = null
             setSaving(false)
@@ -303,28 +297,10 @@ export function StorefrontBuilderPage() {
         void loadPageData(targetPage, templateIdFromUrl)
     }, [loadPageData, targetPage, templateIdFromUrl])
 
-    useEffect(() => {
-        const syncThemePreview = () => {
-            if (document.visibilityState === 'hidden') {
-                return
-            }
-
-            if (!isDirty && !isSaving && !isPublishing) {
-                void loadPageData(targetPage, templateIdFromUrl)
-            }
-        }
-
-        window.addEventListener('focus', syncThemePreview)
-        document.addEventListener('visibilitychange', syncThemePreview)
-
-        return () => {
-            window.removeEventListener('focus', syncThemePreview)
-            document.removeEventListener('visibilitychange', syncThemePreview)
-        }
-    }, [isDirty, isPublishing, isSaving, loadPageData, targetPage, templateIdFromUrl])
-
     const persistPageLayout = useCallback(async (sectionsToSave = sections, rowVersionOverride = null) => {
-        clearScheduledSave(true)
+        if (saveAbortControllerRef.current) {
+            return { saved: false, error: 'A draft save is already in progress.' }
+        }
 
         const rowVersion = rowVersionOverride || requireWorkspaceAdmission()
         if (!rowVersion) {
@@ -378,6 +354,12 @@ export function StorefrontBuilderPage() {
             }
 
             setStoreConfig(acceptedConfig)
+            // The editor remains interactive during the request. Never replace newer edits
+            // with the accepted snapshot of an earlier Save Draft operation.
+            if (useBuilderStore.getState().sections !== sectionsToSave) {
+                setSaveStatus('unsaved')
+                return { saved: false, error: 'The draft changed while saving. Save the latest changes before continuing.' }
+            }
             admitSections(
                 filterSectionsForPage(
                     getAcceptedSectionsFromConfig(acceptedConfig, targetPage, templateIdFromUrl),
@@ -389,7 +371,7 @@ export function StorefrontBuilderPage() {
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
             setConflict(null)
-            setFeedback({ kind: 'success', title: 'Draft saved', message: 'Your accepted draft is up to date.' })
+            setFeedback({ kind: 'success', title: t('storefront.homepageEditor.draftSaved'), message: t('storefront.homepageEditor.draftUpToDate') })
             return { saved: true, config: acceptedConfig }
         } catch (error) {
             if (isRequestCanceled(error)) {
@@ -414,24 +396,7 @@ export function StorefrontBuilderPage() {
                 setSaving(false)
             }
         }
-    }, [admitSections, admitWorkspaceConfig, buildIfMatchOptions, clearScheduledSave, getAcceptedSectionsFromConfig, getActiveStorageKey, isProductTemplatePage, isRTL, markClean, requireWorkspaceAdmission, saveError, sections, setSaving, storeConfig, targetPage, templateIdFromUrl])
-
-    // Debounced auto-save
-    const debouncedSave = useCallback((sectionsToSave) => {
-        clearScheduledSave(true)
-        setSaveStatus('unsaved')
-        setSaveError(null)
-        saveTimeoutRef.current = setTimeout(() => {
-            void persistPageLayout(sectionsToSave)
-        }, 1500)
-    }, [clearScheduledSave, persistPageLayout])
-
-    // Trigger auto-save when sections change
-    useEffect(() => {
-        if (isDirty) {
-            debouncedSave(sections)
-        }
-    }, [sections, isDirty, debouncedSave])
+    }, [admitSections, admitWorkspaceConfig, buildIfMatchOptions, getAcceptedSectionsFromConfig, getActiveStorageKey, isProductTemplatePage, isRTL, markClean, requireWorkspaceAdmission, saveError, sections, setSaving, storeConfig, targetPage, templateIdFromUrl])
 
     const handleSave = useCallback(async () => {
         await persistPageLayout(sections)
@@ -444,12 +409,12 @@ export function StorefrontBuilderPage() {
     // Cleanup
     useEffect(() => {
         return () => {
-            clearScheduledSave(true)
+            abortPendingSave()
             loadAbortControllerRef.current?.abort()
             previewAbortControllerRef.current?.abort()
             reset()
         }
-    }, [clearScheduledSave, reset])
+    }, [abortPendingSave, reset])
 
     useAuthoringShortcuts([
         { key: 'z', ctrlOrMeta: true, onInvoke: () => useBuilderStore.getState().undo() },
@@ -506,7 +471,9 @@ export function StorefrontBuilderPage() {
         setIsLoadingPreview(true)
 
         try {
-            const result = await persistPageLayout(sections)
+            const result = isDirty
+                ? await persistPageLayout(sections)
+                : { saved: true, config: storeConfig }
             if (!result.saved) {
                 if (!controller.signal.aborted) {
                     setPreviewError(
@@ -550,11 +517,13 @@ export function StorefrontBuilderPage() {
                 setIsLoadingPreview(false)
             }
         }
-    }, [currentUser, isRTL, persistPageLayout, saveError, sections])
+    }, [currentUser, isDirty, isRTL, persistPageLayout, sections, storeConfig])
 
     const handlePublish = async () => {
         try {
-            const result = await persistPageLayout(sections)
+            const result = isDirty
+                ? await persistPageLayout(sections)
+                : { saved: true, config: storeConfig }
             if (!result.saved) {
                 return
             }
@@ -566,6 +535,7 @@ export function StorefrontBuilderPage() {
                 return
             }
 
+            const sectionsAtPublish = useBuilderStore.getState().sections
             const response = await storeConfigService.publishPage(
                 getActiveStorageKey(),
                 buildIfMatchOptions(publishRowVersion),
@@ -577,14 +547,23 @@ export function StorefrontBuilderPage() {
 
             setStoreConfig(acceptedConfig)
             setIsPublishConfirmOpen(false)
+            if (useBuilderStore.getState().sections !== sectionsAtPublish) {
+                setSaveStatus('unsaved')
+                setFeedback({
+                    kind: 'info',
+                    title: t('storefront.homepageEditor.homepagePublished'),
+                    message: t('storefront.homepageEditor.concurrentEdits'),
+                })
+                return
+            }
             markClean()
             setLastSavedAt(new Date().toISOString())
             setSaveStatus('saved')
             setSaveError(null)
             setFeedback({
                 kind: 'success',
-                title: isProductTemplatePage ? 'Product Template published' : 'Homepage published',
-                message: 'The accepted page draft is now live.',
+                title: isProductTemplatePage ? t('storefront.homepageEditor.templatePublished') : t('storefront.homepageEditor.homepagePublished'),
+                message: t('storefront.homepageEditor.pageLive'),
             })
         } catch (error) {
             console.error('Publish failed:', error)
@@ -619,7 +598,7 @@ export function StorefrontBuilderPage() {
     })
 
     const handleDiscard = useCallback(() => {
-        clearScheduledSave(true)
+        abortPendingSave()
         admitSections(
             filterSectionsForPage(
                 getAcceptedSectionsFromConfig(storeConfig, targetPage, templateIdFromUrl),
@@ -629,13 +608,13 @@ export function StorefrontBuilderPage() {
         markClean()
         setSaveError(null)
         setSaveStatus('idle')
-        setFeedback({ kind: 'info', title: 'Changes discarded', message: 'The accepted server draft has been restored.' })
-    }, [admitSections, clearScheduledSave, getAcceptedSectionsFromConfig, markClean, storeConfig, targetPage, templateIdFromUrl])
+        setFeedback({ kind: 'info', title: t('storefront.homepageEditor.changesDiscarded'), message: t('storefront.homepageEditor.serverDraftRestored') })
+    }, [abortPendingSave, admitSections, getAcceptedSectionsFromConfig, markClean, storeConfig, targetPage, templateIdFromUrl])
 
     const handleLoadLatest = useCallback(async () => {
         setConflict(null)
         await loadPageData(targetPage, templateIdFromUrl)
-        setFeedback({ kind: 'info', title: 'Latest version loaded', message: 'The accepted server draft replaced your local candidate.' })
+        setFeedback({ kind: 'info', title: t('storefront.homepageEditor.latestLoaded'), message: t('storefront.homepageEditor.latestReplaced') })
     }, [loadPageData, targetPage, templateIdFromUrl])
 
     const handleRetryConflict = useCallback(async () => {
@@ -701,7 +680,7 @@ export function StorefrontBuilderPage() {
             navigate('/storefront/catalog/product-template?templateId=default')
         } catch (error) {
             console.error('Delete product template failed:', error)
-            setFeedback({ kind: 'error', title: 'Template not deleted', message: error?.response?.data?.message || 'Failed to delete template.' })
+            setFeedback({ kind: 'error', title: t('storefront.homepageEditor.templateNotDeleted'), message: error?.response?.data?.message || t('storefront.prompts.deleteTemplateFailed') })
         }
     }
 
@@ -869,9 +848,9 @@ export function StorefrontBuilderPage() {
                 {/* Modals */}
                 <AuthoringConfirmDialog
                     open={isPublishConfirmOpen}
-                    title={isProductTemplatePage ? 'Publish Product Template?' : 'Publish Homepage?'}
-                    description="Publishing makes the accepted draft live. Other Storefront surfaces are not changed."
-                    confirmLabel={isProductTemplatePage ? 'Publish Product Template' : 'Publish Homepage'}
+                    title={isProductTemplatePage ? t('storefront.homepageEditor.confirmTemplate') : t('storefront.homepageEditor.confirmHomepage')}
+                    description={t('storefront.homepageEditor.publishExplanation')}
+                    confirmLabel={isProductTemplatePage ? t('storefront.homepageEditor.publishTemplate') : t('storefront.homepageEditor.publishHomepage')}
                     confirmTone="publish"
                     busy={isPublishing}
                     onClose={() => setIsPublishConfirmOpen(false)}
@@ -879,21 +858,21 @@ export function StorefrontBuilderPage() {
                 />
                 <AuthoringConfirmDialog
                     open={isDeleteConfirmOpen}
-                    title="Delete Product Template?"
-                    description="This danger action deletes only the selected product template. It cannot be undone from this editor."
-                    confirmLabel="Delete Product Template"
+                    title={t('storefront.homepageEditor.deleteTemplateTitle')}
+                    description={t('storefront.homepageEditor.deleteTemplateExplanation')}
+                    confirmLabel={t('storefront.homepageEditor.deleteTemplate')}
                     confirmTone="danger"
                     onClose={() => setIsDeleteConfirmOpen(false)}
                     onConfirm={confirmDeleteTemplate}
                 />
                 <AuthoringPromptDialog
                     open={isCreateTemplateOpen}
-                    title="Create Product Template"
-                    description="Create a new Product Template draft. It remains unpublished until Publish Product Template is chosen."
-                    label="Template name"
+                    title={t('storefront.prompts.createTemplateTitle')}
+                    description={t('storefront.homepageEditor.createTemplateExplanation')}
+                    label={t('storefront.prompts.templateNameLabel')}
                     value={newTemplateName}
-                    placeholder="e.g. Featured product"
-                    confirmLabel="Create Template"
+                    placeholder={t('storefront.homepageEditor.templatePlaceholder')}
+                    confirmLabel={t('storefront.prompts.createTemplateTitle')}
                     onChange={setNewTemplateName}
                     onClose={() => setIsCreateTemplateOpen(false)}
                     onConfirm={confirmCreateTemplate}

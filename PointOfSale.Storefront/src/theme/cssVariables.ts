@@ -17,6 +17,9 @@ export const CSS_VARIABLES = {
     COLOR_BACKGROUND: '--color-background',
     COLOR_TEXT: '--color-text',
     COLOR_MUTED: '--color-muted',
+    COLOR_PRIMARY_RGB: '--color-primary-rgb',
+    COLOR_SECONDARY_RGB: '--color-secondary-rgb',
+    COLOR_TEXT_MUTED: '--color-text-muted',
 
     // Typography
     FONT_FAMILY: '--font-family',
@@ -26,6 +29,21 @@ export const CSS_VARIABLES = {
     // UI
     BORDER_RADIUS: '--border-radius',
 } as const;
+
+const hexToRgbChannels = (color: string, fallback: string): string => {
+    const match = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (!match) {
+        return fallback;
+    }
+
+    const expanded = match[1].length === 3
+        ? match[1].split('').map(channel => channel + channel).join('')
+        : match[1];
+
+    return [0, 2, 4]
+        .map(offset => Number.parseInt(expanded.slice(offset, offset + 2), 16))
+        .join(', ');
+};
 
 /**
  * Generate CSS variable object from theme config
@@ -64,6 +82,9 @@ export const themeToCssVariables = (theme: ThemeConfig): Record<string, string> 
         [CSS_VARIABLES.COLOR_BACKGROUND]: theme.colors.background,
         [CSS_VARIABLES.COLOR_TEXT]: theme.colors.text,
         [CSS_VARIABLES.COLOR_MUTED]: theme.colors.muted,
+        [CSS_VARIABLES.COLOR_PRIMARY_RGB]: hexToRgbChannels(theme.colors.primary, '37, 99, 235'),
+        [CSS_VARIABLES.COLOR_SECONDARY_RGB]: hexToRgbChannels(theme.colors.secondary, '15, 23, 42'),
+        [CSS_VARIABLES.COLOR_TEXT_MUTED]: theme.colors.muted,
         [CSS_VARIABLES.FONT_FAMILY]: theme.font.family,
         [CSS_VARIABLES.FONT_FAMILY_AR]: `${arabicFontFamily}, ${theme.font.family}`,
         [CSS_VARIABLES.FONT_BASE_SIZE]: theme.font.baseSize,

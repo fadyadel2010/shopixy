@@ -10,6 +10,9 @@ public sealed class CacheEnvelope<T>
     public int SchemaVersion { get; set; } = 1;
 }
 
+public readonly record struct CacheReadResult<T>(T? Value, bool Refreshed)
+    where T : class;
+
 public sealed class CachePopulationResult<T>
     where T : class
 {

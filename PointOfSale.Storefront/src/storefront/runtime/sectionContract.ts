@@ -49,7 +49,7 @@ export interface SectionContract {
 
 export const sectionContracts = sectionAuthority.sectionContracts as SectionContract[];
 
-const GUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const GUID_PATTERN = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const HEX_COLOR_PATTERN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 const DEFAULT_TEXT_MAX_LENGTH = 500;
 const DEFAULT_LONG_TEXT_MAX_LENGTH = 5000;

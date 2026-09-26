@@ -9,6 +9,7 @@ import { deriveCurrentStoreIdentityPresentation } from '../../../auth/commerceHu
 import {
     getAvailableMarketplaceThemes,
     getMarketplaceThemeById,
+    getThemeArtworkStyle,
 } from '../themes/themeMarketplaceRegistry'
 import {
     AuthoringActionBar,
@@ -33,7 +34,10 @@ const buildIfMatchOptions = (rowVersion) => {
 
 function ThemePreviewArtwork({ theme }) {
     return (
-        <div className={`relative h-40 overflow-hidden rounded-2xl bg-gradient-to-br ${theme.accent}`}>
+        <div
+            className="relative h-40 overflow-hidden rounded-2xl"
+            style={getThemeArtworkStyle(theme)}
+        >
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.32),transparent_42%)]" />
             <div className="absolute inset-x-4 bottom-4 rounded-2xl border border-white/30 bg-white/15 p-4 backdrop-blur-sm">
                 <div className="mb-2 flex items-center justify-between text-white">
@@ -201,7 +205,13 @@ export function ThemeMarketplacePage() {
             setStoreConfig(updatedConfig)
             setPendingThemeId('')
             setConflict(null)
-            setFeedback({ kind: 'success', title: 'Theme activated', message: `${getMarketplaceThemeById(themeId)?.name || themeId} is now the live Theme.` })
+            setFeedback({
+                kind: 'success',
+                title: isRTL ? 'تم تفعيل الثيم' : 'Theme activated',
+                message: isRTL
+                    ? `أصبح ${getMarketplaceThemeById(themeId)?.name || themeId} هو الثيم المباشر الآن.`
+                    : `${getMarketplaceThemeById(themeId)?.name || themeId} is now the live Theme.`,
+            })
             showSuccess(
                 isRTL
                     ? `تم تفعيل ثيم ${getMarketplaceThemeById(themeId)?.name || themeId}`
@@ -213,23 +223,29 @@ export function ThemeMarketplacePage() {
                 setPendingThemeId('')
                 setConflict({ themeId, message: error?.response?.data?.message })
             }
-            else setFeedback({ kind: 'error', title: 'Theme not activated', message: error?.response?.data?.message || 'Failed to activate theme.' })
+            else setFeedback({
+                kind: 'error',
+                title: isRTL ? 'لم يتم تفعيل الثيم' : 'Theme not activated',
+                message: error?.response?.data?.message || (isRTL ? 'فشل تفعيل الثيم.' : 'Failed to activate theme.'),
+            })
         } finally {
             setActivatingThemeId('')
         }
     }
 
     if (loading) {
-        return <AuthoringLoadingState label="Loading Themes…" />
+        return <AuthoringLoadingState label={isRTL ? 'جارٍ تحميل الثيمات…' : 'Loading Themes…'} />
     }
 
     return (
         <div className="mx-auto max-w-7xl">
             <AuthoringActionBar
-                title="Themes"
-                subtitle="Preview a signed, read-only Theme candidate, then explicitly activate one Theme live. Theme activation does not publish content."
-                backAction={{ label: 'Back', onClick: () => navigate('/storefront') }}
-                status={<AuthoringStatusBadge state={activeTheme ? 'live' : 'draft'}>{activeTheme ? `${activeTheme.name} active` : 'No active Theme'}</AuthoringStatusBadge>}
+                title={isRTL ? 'الثيمات' : 'Themes'}
+                subtitle={isRTL
+                    ? 'عاين ثيمًا مرشحًا بتوقيع وصلاحية قراءة فقط، ثم فعّل ثيمًا واحدًا بشكل صريح. تفعيل الثيم لا ينشر المحتوى.'
+                    : 'Preview a signed, read-only Theme candidate, then explicitly activate one Theme live. Theme activation does not publish content.'}
+                backAction={{ label: isRTL ? 'رجوع' : 'Back', onClick: () => navigate('/storefront') }}
+                status={<AuthoringStatusBadge state={activeTheme ? 'live' : 'draft'}>{activeTheme ? (isRTL ? `${activeTheme.name} نشط` : `${activeTheme.name} active`) : (isRTL ? 'لا يوجد ثيم نشط' : 'No active Theme')}</AuthoringStatusBadge>}
                 leading={<button
                     type="button"
                     onClick={() => navigate('/storefront/appearance/colors-typography')}
@@ -260,7 +276,10 @@ export function ThemeMarketplacePage() {
                         activeBadge={isRTL ? 'الثيم النشط' : 'Active Theme'}
                     />
                 ) : (
-                    <AuthoringEmptyState title="No active Theme" description="Choose a Theme below. Preview is read-only; activation requires explicit confirmation." />
+                    <AuthoringEmptyState
+                        title={isRTL ? 'لا يوجد ثيم نشط' : 'No active Theme'}
+                        description={isRTL ? 'اختر ثيمًا أدناه. المعاينة للقراءة فقط، ويتطلب التفعيل تأكيدًا صريحًا.' : 'Choose a Theme below. Preview is read-only; activation requires explicit confirmation.'}
+                    />
                 )}
             </section>
 
@@ -287,13 +306,18 @@ export function ThemeMarketplacePage() {
                         />
                     ))}
                 </div>
-                {installedThemes.length === 0 ? <AuthoringEmptyState title="No additional Themes" description="The active Theme is the only Theme currently available." /> : null}
+                {installedThemes.length === 0 ? (
+                    <AuthoringEmptyState
+                        title={isRTL ? 'لا توجد ثيمات إضافية' : 'No additional Themes'}
+                        description={isRTL ? 'الثيم النشط هو الثيم الوحيد المتاح حاليًا.' : 'The active Theme is the only Theme currently available.'}
+                    />
+                ) : null}
             </section>
             <AuthoringConfirmDialog
                 open={Boolean(pendingThemeId)}
-                title="Activate theme now?"
-                description="Activation immediately changes the live Theme only. It does not publish Homepage, Pages, Navigation, Footer, or Product Template."
-                confirmLabel="Activate theme now"
+                title={isRTL ? 'تفعيل الثيم الآن؟' : 'Activate theme now?'}
+                description={isRTL ? 'يغيّر التفعيل الثيم المباشر فقط فورًا. ولا ينشر الصفحة الرئيسية أو الصفحات أو التنقل أو التذييل أو قالب المنتج.' : 'Activation immediately changes the live Theme only. It does not publish Homepage, Pages, Navigation, Footer, or Product Template.'}
+                confirmLabel={isRTL ? 'تفعيل الثيم الآن' : 'Activate theme now'}
                 confirmTone="publish"
                 busy={Boolean(activatingThemeId)}
                 onClose={() => setPendingThemeId('')}

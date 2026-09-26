@@ -141,6 +141,7 @@ public sealed class StorefrontFooterProjectionConsumer : IConsumer<StorefrontFoo
                     LabelAr = link.LabelAr,
                     Type = link.LinkType,
                     Url = link.Url,
+                    CmsPageGroupId = link.CmsPageGroupId,
                     CmsPageSlug = link.CmsPageSlug,
                     OpenInNewTab = link.OpenInNewTab,
                     SortOrder = link.SortOrder,

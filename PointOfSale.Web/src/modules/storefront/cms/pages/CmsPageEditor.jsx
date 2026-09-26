@@ -116,6 +116,8 @@ export function CmsPageEditor() {
     const [isHistoryOpen, setIsHistoryOpen] = useState(false)
     const [isHistoryLoading, setIsHistoryLoading] = useState(false)
     const [rollbackState, setRollbackState] = useState({ version: null, reason: '', confirmed: false, isRollingBack: false })
+    const formRef = useRef(form)
+    formRef.current = form
 
     const currentUser = useAuthStore((state) => state.user)
     const currentFingerprint = useMemo(() => getPageFormFingerprint(form), [form])
@@ -189,14 +191,22 @@ export function CmsPageEditor() {
 
         try {
             const payload = toRequestPayload(form)
+            const submittedFingerprint = JSON.stringify(payload)
             if (!isNewPage) {
                 payload.expectedVersion = expectedVersionOverride ?? page?.draft?.version ?? page?.published?.version
             }
             const savedPage = isNewPage
                 ? await cmsService.createPage(payload)
                 : await cmsService.updatePage(pageId, payload)
-            const admittedPage = adoptAuthoritativePage(savedPage, isNewPage ? undefined : pageId)
-            setNotice(isRTL ? 'تم حفظ المسودة واعتماد استجابة الخادم.' : 'Draft saved and backend response adopted.')
+            const hasNewerLocalEdits = getPageFormFingerprint(formRef.current) !== submittedFingerprint
+            const admittedPage = adoptAuthoritativePage(
+                savedPage,
+                isNewPage ? undefined : pageId,
+                { preserveLocalCandidate: hasNewerLocalEdits },
+            )
+            setNotice(hasNewerLocalEdits
+                ? (isRTL ? 'تم حفظ المسودة مع الاحتفاظ بالتعديلات الأحدث غير المحفوظة.' : 'Draft saved. Newer unsaved edits were retained.')
+                : (isRTL ? 'تم حفظ المسودة واعتماد استجابة الخادم.' : 'Draft saved and backend response adopted.'))
 
             if (isNewPage) {
                 navigate(`/storefront/content/pages/${admittedPage.id}`, { replace: true })
@@ -234,9 +244,13 @@ export function CmsPageEditor() {
             if (!expectedVersion) {
                 throw new Error('The page does not have a draft version to publish.')
             }
+            const publishedCandidateFingerprint = getPageFormFingerprint(fromPageResponse(targetPage))
             const published = await cmsService.publishPage(targetPage.id, expectedVersion)
-            adoptAuthoritativePage(published, targetPage.id)
-            setNotice(isRTL ? 'تم نشر الصفحة بنجاح.' : 'Page published successfully.')
+            const hasNewerLocalEdits = getPageFormFingerprint(formRef.current) !== publishedCandidateFingerprint
+            adoptAuthoritativePage(published, targetPage.id, { preserveLocalCandidate: hasNewerLocalEdits })
+            setNotice(hasNewerLocalEdits
+                ? (isRTL ? 'تم نشر المسودة المحفوظة مع الاحتفاظ بالتعديلات الأحدث غير المحفوظة.' : 'Saved draft published. Newer unsaved edits were retained.')
+                : (isRTL ? 'تم نشر الصفحة بنجاح.' : 'Page published successfully.'))
             setIsPublishConfirmOpen(false)
         } catch (err) {
             console.error('Failed to publish CMS page', err)
@@ -278,7 +292,7 @@ export function CmsPageEditor() {
         }
     }
 
-    function adoptAuthoritativePage(response, expectedPageId = pageId) {
+    function adoptAuthoritativePage(response, expectedPageId = pageId, { preserveLocalCandidate = false } = {}) {
         const admittedPage = deriveCurrentCmsPageIdentityPresentation(response, currentUser, {
             expectedPageId: expectedPageId === 'new' ? undefined : expectedPageId,
         })
@@ -288,8 +302,10 @@ export function CmsPageEditor() {
 
         const acceptedForm = fromPageResponse(admittedPage)
         setPage(admittedPage)
-        setForm(acceptedForm)
         setAcceptedFingerprint(getPageFormFingerprint(acceptedForm))
+        if (!preserveLocalCandidate) {
+            setForm(acceptedForm)
+        }
         setConflict(null)
         return admittedPage
     }

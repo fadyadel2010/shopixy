@@ -111,6 +111,133 @@ public sealed class StorefrontNavigationRuntimeTests
         Assert.Equal("footer-navigation", navigation.Footer.Links.Single().Slug);
     }
 
+    [Fact]
+    public async Task GetNavigation_RecomposesEntityRoutesFromCurrentTenantIdentityAndSuppressesHiddenTargets()
+    {
+        var tenantId = Guid.NewGuid();
+        await using var context = CreateDbContext(tenantId);
+        var category = new Category
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "Renamed Phones",
+            CreatedAt = DateTime.UtcNow
+        };
+        var arabicCategory = new Category
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Name = "هواتف",
+            CreatedAt = DateTime.UtcNow
+        };
+        var product = new Product
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CategoryId = category.Id,
+            Name = "Current Product",
+            Slug = "current-product",
+            IsActive = true,
+            IsOnlineVisible = true,
+            PublishStatus = PublishStatus.Published,
+            CreatedAt = DateTime.UtcNow
+        };
+        var hiddenProduct = new Product
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            CategoryId = category.Id,
+            Name = "Hidden Product",
+            Slug = "hidden-product",
+            IsActive = true,
+            IsOnlineVisible = false,
+            PublishStatus = PublishStatus.Published,
+            CreatedAt = DateTime.UtcNow
+        };
+        var pageGroupId = Guid.NewGuid();
+
+        context.Tenants.Add(new Tenant
+        {
+            Id = tenantId,
+            Name = "Identity Navigation Store",
+            Slug = $"identity-navigation-{tenantId:N}",
+            IsActive = true,
+            Status = TenantStatus.Active
+        });
+        context.Categories.AddRange(category, arabicCategory);
+        context.Products.AddRange(product, hiddenProduct);
+        context.CmsPages.Add(new CmsPage
+        {
+            Id = Guid.NewGuid(),
+            PageGroupId = pageGroupId,
+            TenantId = tenantId,
+            Slug = "current-about",
+            Title = "Current About",
+            Content = "<p>About</p>",
+            ContentType = CmsPageContentType.RichText,
+            Version = 2,
+            SchemaVersion = 1,
+            IsDraft = false,
+            IsPublished = true,
+            PublishedAt = DateTime.UtcNow,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow
+        });
+        context.StoreConfigs.Add(new StoreConfig
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            StoreName = "Identity Navigation Store",
+            ThemeId = "default",
+            ThemePresetKey = "default",
+            StorefrontStatus = "live",
+            CustomizationJson = $$"""
+                {
+                  "navigation": {
+                    "live": {
+                      "header": { "links": [
+                        { "label": "Category", "authoringType": "category", "type": "category", "targetId": "{{category.Id:D}}", "slug": "old-phones" },
+                        { "label": "Arabic Category", "authoringType": "category", "type": "category", "targetId": "{{arabicCategory.Id:D}}", "slug": "" },
+                        { "label": "Product", "authoringType": "product", "type": "internal", "targetId": "{{product.Id:D}}", "path": "/products/old-product" },
+                        { "label": "Hidden Product", "authoringType": "product", "type": "internal", "targetId": "{{hiddenProduct.Id:D}}", "path": "/products/hidden-product" }
+                      ] },
+                      "footer": { "links": [
+                        { "label": "About", "authoringType": "cms", "type": "cms", "targetId": "{{pageGroupId:D}}", "slug": "old-about" }
+                      ] }
+                    }
+                  }
+                }
+                """,
+            UpdatedAtUtc = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var controller = CreateController(context, tenantId);
+        var result = await controller.GetNavigation(CancellationToken.None);
+        var navigation = Assert.IsType<NavigationDto>(Assert.IsType<OkObjectResult>(result).Value);
+
+        Assert.Equal(["Category", "Arabic Category", "Product"], navigation.Header.Links.Select(link => link.Label));
+        Assert.Equal("renamed-phones", navigation.Header.Links[0].Slug);
+        Assert.Equal(arabicCategory.Id.ToString("D"), navigation.Header.Links[1].Slug);
+        Assert.Equal("/products/current-product", navigation.Header.Links[2].Path);
+        Assert.Equal("current-about", navigation.Footer.Links.Single().Slug);
+    }
+
+    private static StorefrontNavigationController CreateController(ApplicationDbContext context, Guid tenantId) => new(
+        context,
+        NullLogger<StorefrontNavigationController>.Instance)
+    {
+        ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                RequestServices = new ServiceCollection()
+                    .AddSingleton<ITenantContext>(new TestTenantContext(tenantId))
+                    .BuildServiceProvider()
+            }
+        }
+    };
+
     private static ApplicationDbContext CreateDbContext(Guid tenantId)
     {
         var options = new DbContextOptionsBuilder<ApplicationDbContext>()

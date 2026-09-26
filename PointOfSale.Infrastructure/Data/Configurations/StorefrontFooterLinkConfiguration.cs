@@ -26,6 +26,8 @@ public sealed class StorefrontFooterLinkConfiguration : IEntityTypeConfiguration
         builder.Property(link => link.Url)
             .HasMaxLength(1000);
 
+        builder.Property(link => link.CmsPageGroupId);
+
         builder.Property(link => link.CmsPageSlug)
             .HasMaxLength(160);
 
@@ -46,6 +48,9 @@ public sealed class StorefrontFooterLinkConfiguration : IEntityTypeConfiguration
 
         builder.HasIndex(link => new { link.SectionId, link.SortOrder })
             .HasDatabaseName("IX_StorefrontFooterLinks_SectionId_SortOrder");
+
+        builder.HasIndex(link => link.CmsPageGroupId)
+            .HasDatabaseName("IX_StorefrontFooterLinks_CmsPageGroupId");
 
         builder.ToTable(table =>
         {

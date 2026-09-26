@@ -56,12 +56,13 @@ describe('storefront builder workspace authority', () => {
         expect(source).not.toContain('runtimeFallback = storeConfig')
     })
 
-    it('keeps draft autosave and preview backend-authoritative', () => {
+    it('keeps explicit draft saves and preview backend-authoritative', () => {
         const source = readSource(builderPagePath)
 
-        expect(source).toContain('Debounced auto-save')
-        expect(source).toContain('void persistPageLayout(sectionsToSave)')
-        expect(source).toContain('const result = await persistPageLayout(sections)')
+        expect(source).toContain('const handleSave = useCallback(async () =>')
+        expect(source).toContain('await persistPageLayout(sections)')
+        expect(source).toContain('useBuilderStore.getState().sections !== sectionsToSave')
+        expect(source).not.toContain('Debounced auto-save')
         expect(source).toContain('if (!result.saved)')
         expect(source).toContain('storeConfigService.getPreviewConfig')
         expect(source).toContain('Draft preview could not be loaded. No live content was shown.')

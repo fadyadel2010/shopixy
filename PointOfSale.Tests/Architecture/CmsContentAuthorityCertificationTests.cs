@@ -32,10 +32,11 @@ public sealed class CmsContentAuthorityCertificationTests
         var service = CertificationSource.ReadRepoFile("PointOfSale.Web/src/modules/storefront/cms/services/cmsService.js");
 
         Assert.Contains("const payload = toRequestPayload(form)", editor, StringComparison.Ordinal);
-        Assert.Contains("payload.expectedVersion = page?.draft?.version ?? page?.published?.version", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(savedPage, currentUser", editor, StringComparison.Ordinal);
-        Assert.Contains("setForm(fromPageResponse(admittedPage))", editor, StringComparison.Ordinal);
-        Assert.Contains("deriveCurrentCmsPageIdentityPresentation(published, currentUser", editor, StringComparison.Ordinal);
+        Assert.Contains("payload.expectedVersion = expectedVersionOverride ?? page?.draft?.version ?? page?.published?.version", editor, StringComparison.Ordinal);
+        Assert.Contains("const admittedPage = adoptAuthoritativePage(", editor, StringComparison.Ordinal);
+        Assert.Contains("const acceptedForm = fromPageResponse(admittedPage)", editor, StringComparison.Ordinal);
+        Assert.Contains("setForm(acceptedForm)", editor, StringComparison.Ordinal);
+        Assert.Contains("adoptAuthoritativePage(published, targetPage.id", editor, StringComparison.Ordinal);
         Assert.Contains("contentType: workingVersion.contentType", editor, StringComparison.Ordinal);
         Assert.Contains("CMS_CONTENT_TYPES", authority, StringComparison.Ordinal);
         Assert.Contains("'Cache-Control': 'no-store'", service, StringComparison.Ordinal);

@@ -5,7 +5,6 @@ import type { FooterPresentationProps } from '@/storefront/presentation/models';
 
 const SevenFooter: React.FC<FooterPresentationProps> = ({ model }) => {
     const { copyright, labels, navigation, sections, socialLinks, storeName } = model;
-    const sectionLinks = sections.flatMap((section) => section.links);
 
     return (
         <footer className="mt-auto bg-[#9D7877] text-white">
@@ -13,7 +12,7 @@ const SevenFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                 <div className="grid gap-10 md:grid-cols-[1.3fr,1fr]">
                     <div>
                         <h2 className="text-3xl font-medium uppercase tracking-[-0.02em] md:text-4xl">
-                            {storeName || 'La Femmea'}
+                            {storeName}
                         </h2>
                         <p className="mt-4 max-w-xl text-sm leading-7 text-white/80">
                             {copyright}
@@ -30,33 +29,35 @@ const SevenFooter: React.FC<FooterPresentationProps> = ({ model }) => {
                                         href={link.href}
                                         target={link.openInNewTab ? '_blank' : undefined}
                                         rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                        className="block text-sm uppercase tracking-[0.16em] text-white/75 transition-colors hover:text-white"
+                                        className="block min-w-0 break-words text-sm uppercase tracking-[0.16em] text-white/75 transition-colors hover:text-white"
                                     >
                                         {link.label}
                                     </AffiliateLink>
                                 ))}
                             </div>
-                            {sectionLinks.length > 0 ? (
-                                <div className="mt-6 space-y-3 border-t border-white/10 pt-5">
-                                    <p className="text-xs uppercase tracking-[0.3em] text-white/40">
-                                        {sections[0]?.title || labels.customerService}
-                                    </p>
-                                    {sectionLinks.map((link) => (
-                                        <AffiliateLink
-                                            key={`section-${link.key}`}
-                                            href={link.href}
-                                            target={link.openInNewTab ? '_blank' : undefined}
-                                            rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
-                                            className="block text-sm uppercase tracking-[0.16em] text-white/55 transition-colors hover:text-white"
-                                        >
-                                            {link.label}
-                                        </AffiliateLink>
+                            {sections.length > 0 ? (
+                                <div className="mt-6 space-y-6 border-t border-white/10 pt-5">
+                                    {sections.map((section) => (
+                                        <section key={section.key} className="min-w-0 space-y-3">
+                                            <h3 className="text-xs uppercase tracking-[0.3em] text-white/40">{section.title}</h3>
+                                            {section.links.map((link) => (
+                                                <AffiliateLink
+                                                    key={link.key}
+                                                    href={link.href}
+                                                    target={link.openInNewTab ? '_blank' : undefined}
+                                                    rel={link.openInNewTab ? 'noopener noreferrer' : undefined}
+                                                    className="block min-w-0 break-words text-sm uppercase tracking-[0.16em] text-white/55 transition-colors hover:text-white"
+                                                >
+                                                    {link.label}
+                                                </AffiliateLink>
+                                            ))}
+                                        </section>
                                     ))}
                                 </div>
                             ) : null}
                         </div>
                         <div>
-                            <p className="text-xs uppercase tracking-[0.3em] text-white/50">Connect</p>
+                            <p className="text-xs uppercase tracking-[0.3em] text-white/50">{labels.followUs}</p>
                             {socialLinks.length > 0 ? (
                                 <div className="mt-4 flex flex-wrap gap-3">
                                     {socialLinks.map((link) => (

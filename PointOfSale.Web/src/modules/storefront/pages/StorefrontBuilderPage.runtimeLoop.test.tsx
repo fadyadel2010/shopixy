@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { StorefrontBuilderPage } from './StorefrontBuilderPage'
 import { useBuilderStore } from '../store'
@@ -24,7 +24,9 @@ vi.mock('../../../store/authStore', () => ({
 }))
 
 vi.mock('../components/builder', () => ({
-    BuilderTopBar: () => null,
+    BuilderTopBar: ({ onSave, onDiscard }: { onSave: () => void; onDiscard: () => void }) => (
+        <><button onClick={onSave}>Save Draft</button><button onClick={onDiscard}>Discard</button></>
+    ),
     SectionPalette: () => null,
     BuilderCanvas: ({ storeConfig }: { storeConfig?: { storeName?: string } | null }) => (
         <div data-testid="builder-canvas">{storeConfig?.storeName}</div>
@@ -94,5 +96,56 @@ describe('StorefrontBuilderPage runtime load stability', () => {
 
         expect(storeConfigService.getStoreConfig).toHaveBeenCalledTimes(1)
         expect(storeConfigService.getRuntimeStoreConfig).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps unsaved work local across focus and visibility changes until Save Draft', async () => {
+        vi.mocked(storeConfigService.getStoreConfig).mockResolvedValue(admittedConfig())
+        vi.mocked(storeConfigService.getRuntimeStoreConfig).mockResolvedValue(admittedConfig())
+
+        render(<MemoryRouter initialEntries={['/storefront/homepage']}><Routes>
+            <Route path="/storefront/homepage" element={<StorefrontBuilderPage />} />
+        </Routes></MemoryRouter>)
+        await screen.findByTestId('builder-canvas')
+        act(() => useBuilderStore.getState().addSection('text-block', undefined, {
+            get: () => ({ type: 'text-block' }),
+        }))
+        expect(useBuilderStore.getState().isDirty).toBe(true)
+        act(() => {
+            window.dispatchEvent(new Event('blur'))
+            window.dispatchEvent(new Event('focus'))
+            document.dispatchEvent(new Event('visibilitychange'))
+        })
+        await new Promise((resolve) => setTimeout(resolve, 1700))
+        expect(storeConfigService.updatePageLayout).not.toHaveBeenCalled()
+        expect(storeConfigService.getStoreConfig).toHaveBeenCalledTimes(1)
+        expect(useBuilderStore.getState().sections).toHaveLength(1)
+        fireEvent.click(screen.getByText('Discard'))
+        expect(useBuilderStore.getState().sections).toHaveLength(0)
+    })
+
+    it('does not overwrite an edit made while a Save Draft request is in flight', async () => {
+        vi.mocked(storeConfigService.getStoreConfig).mockResolvedValue(admittedConfig())
+        vi.mocked(storeConfigService.getRuntimeStoreConfig).mockResolvedValue(admittedConfig())
+        let resolveSave!: (value: ReturnType<typeof admittedConfig>) => void
+        vi.mocked(storeConfigService.updatePageLayout).mockImplementation(() => new Promise((resolve) => {
+            resolveSave = resolve
+        }))
+
+        render(<MemoryRouter initialEntries={['/storefront/homepage']}><Routes>
+            <Route path="/storefront/homepage" element={<StorefrontBuilderPage />} />
+        </Routes></MemoryRouter>)
+        await screen.findByTestId('builder-canvas')
+        act(() => useBuilderStore.getState().addSection('text-block', undefined, {
+            get: () => ({ type: 'text-block' }),
+        }))
+        const firstId = useBuilderStore.getState().sections[0].id
+        fireEvent.click(screen.getByText('Save Draft'))
+        await waitFor(() => expect(storeConfigService.updatePageLayout).toHaveBeenCalledTimes(1))
+        act(() => useBuilderStore.getState().updateSectionSettings(firstId, { text: 'newer edit' }))
+        await act(async () => resolveSave(admittedConfig({ rowVersion: '2', pages: {
+            home: { sections: [{ ...useBuilderStore.getState().sections[0], settings: { text: 'older edit' } }] },
+        } })))
+        expect(useBuilderStore.getState().sections[0].settings.text).toBe('newer edit')
+        expect(useBuilderStore.getState().isDirty).toBe(true)
     })
 })

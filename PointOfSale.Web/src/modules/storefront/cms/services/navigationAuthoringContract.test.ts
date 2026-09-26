@@ -136,6 +136,74 @@ describe('canonical Navigation authoring contract', () => {
         expect(mapNavigationDraftToRequest(admitted).footer[3]).not.toHaveProperty('validationStatus')
     })
 
+    it('admits an unresolved entity link only when an exact backend repair warning accompanies it', () => {
+        const response = buildSnapshot('41')
+        response.draft.footer.push({
+            label: 'Missing CMS page',
+            type: 'cms',
+            slug: 'missing-page',
+            enabled: true,
+            validationStatus: 'invalid',
+            validationCode: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
+            validationMessage: 'The selected CMS page no longer exists.',
+        })
+        response.validationWarnings = [{
+            code: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
+            message: 'The selected CMS page no longer exists.',
+            snapshot: 'draft',
+            menu: 'footer',
+            index: 3,
+            field: 'targetId',
+            linkType: 'cms',
+            status: 'invalid',
+        }]
+
+        const admitted = admitNavigationSnapshot(response)
+
+        expect(admitted.draft.footer[3]).toMatchObject({
+            label: 'Missing CMS page',
+            type: 'cms',
+            targetId: null,
+            validationStatus: 'invalid',
+            validationCode: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
+        })
+        expect(() => mapNavigationDraftToRequest(admitted)).toThrow('requires a selected cms target')
+
+        response.validationWarnings[0].index = 2
+        expect(() => admitNavigationSnapshot(response)).toThrow('backend-issued target identity')
+    })
+
+    it.each([
+        ['snapshot', 'live'],
+        ['menu', 'header'],
+        ['linkType', 'product'],
+        ['code', 'NAVIGATION_CMS_PAGE_DELETED'],
+        ['status', 'warning'],
+    ])('rejects unresolved entity links when the backend repair warning mismatches %s', (field, value) => {
+        const response = buildSnapshot('41')
+        response.draft.footer.push({
+            label: 'Missing CMS page',
+            type: 'cms',
+            slug: 'missing-page',
+            enabled: true,
+            validationStatus: 'invalid',
+            validationCode: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
+        })
+        response.validationWarnings = [{
+            code: 'NAVIGATION_CMS_PAGE_NOT_FOUND',
+            message: 'The selected CMS page no longer exists.',
+            snapshot: 'draft',
+            menu: 'footer',
+            index: 3,
+            field: 'targetId',
+            linkType: 'cms',
+            status: 'invalid',
+            [field]: value,
+        }]
+
+        expect(() => admitNavigationSnapshot(response)).toThrow('backend-issued target identity')
+    })
+
     it('fails closed when load or mutation responses include an invalid backend RowVersion', () => {
         expect(() => admitNavigationSnapshot(buildSnapshot('0'))).toThrow('usable backend RowVersion')
 

@@ -42,7 +42,7 @@ const HeroBanner: React.FC<any> = ({
                 {backgroundImage ? (
                     <img
                         src={backgroundImage}
-                        alt={title || 'Seven hero background'}
+                        alt={title || ''}
                         className="h-full w-full object-cover"
                     />
                 ) : (
@@ -53,10 +53,6 @@ const HeroBanner: React.FC<any> = ({
 
             <div className={`relative mx-auto grid h-full max-w-7xl grid-cols-1 px-6 py-14 sm:px-8 lg:grid-cols-[0.22fr_0.78fr] lg:px-12 ${resolvedAlignmentClass}`}>
                 <div className="hidden border-r border-white/20 pr-6 pt-4 lg:block">
-                    <p className="font-mono text-sm text-white/60">01</p>
-                    <p className="mt-6 [writing-mode:vertical-rl] text-xs font-black uppercase tracking-[0.38em] text-white/70">
-                        Campaign story
-                    </p>
                 </div>
                 <div className="mt-auto max-w-4xl lg:pl-12">
                     <div className="mb-5 inline-flex border-b-2 border-white pb-2 text-sm font-black uppercase tracking-[0.38em] text-white/80">

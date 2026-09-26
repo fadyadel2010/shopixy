@@ -67,7 +67,7 @@ const HeroBanner: React.FC<any> = ({
                             {backgroundImage ? (
                                 <img
                                     src={backgroundImage}
-                                    alt={title || 'Alizon hero image'}
+                                    alt={title || ''}
                                     className="h-full w-full object-contain p-4"
                                 />
                             ) : (

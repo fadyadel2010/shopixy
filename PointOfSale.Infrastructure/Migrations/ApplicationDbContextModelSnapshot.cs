@@ -20818,6 +20818,9 @@ namespace PointOfSale.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("CmsPageGroupId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("CmsPageSlug")
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
@@ -20859,6 +20862,9 @@ namespace PointOfSale.Infrastructure.Migrations
                         .HasColumnType("character varying(1000)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("CmsPageGroupId")
+                        .HasDatabaseName("IX_StorefrontFooterLinks_CmsPageGroupId");
 
                     b.HasIndex("SectionId", "SortOrder")
                         .HasDatabaseName("IX_StorefrontFooterLinks_SectionId_SortOrder");

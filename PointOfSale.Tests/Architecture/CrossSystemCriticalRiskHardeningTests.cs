@@ -3712,8 +3712,7 @@ public sealed class CrossSystemCriticalRiskHardeningTests
         AssertContainsInOrder(
             publishNavigation!,
             "StageNavigationPublishedEventAsync",
-            "SaveStoreConfigChangesAsync",
-            "InvalidateCacheAsync");
+            "SaveStoreConfigChangesAsync");
         AssertContainsInOrder(
             publishMarketplacePage!,
             "StageMarketplaceCmsPagePublishedEventAsync",

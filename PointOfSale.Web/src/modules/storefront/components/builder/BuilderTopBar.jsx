@@ -36,7 +36,7 @@ export function BuilderTopBar({
     lastSavedAt = null,
     onRetrySave,
 }) {
-    const { i18n } = useTranslation()
+    const { i18n, t } = useTranslation()
     const isRTL = i18n.language === 'ar'
     const [isPageDropdownOpen, setIsPageDropdownOpen] = useState(false)
     const currentPage = useBuilderStore((state) => state.currentPage)
@@ -48,7 +48,7 @@ export function BuilderTopBar({
     const canUndo = useBuilderStore((state) => state.canUndo())
     const canRedo = useBuilderStore((state) => state.canRedo())
     const currentPageOption = PAGE_OPTIONS.find((page) => page.key === currentPage) || PAGE_OPTIONS[0]
-    const title = showTemplateControls ? `Product Template · ${activeTemplateId}` : 'Homepage'
+    const title = showTemplateControls ? `${t('storefront.ia.productTemplate')} · ${activeTemplateId}` : t('storefront.ia.homepage')
     const lastSavedLabel = formatSavedAt(lastSavedAt)
 
     const statusState = isPublishing
@@ -61,7 +61,7 @@ export function BuilderTopBar({
                     ? 'dirty'
                     : 'draft'
     const statusLabel = saveStatus === 'saved' && lastSavedLabel && !isDirty
-        ? `Draft saved ${lastSavedLabel}`
+        ? t('storefront.homepageEditor.draftSavedAt', { time: lastSavedLabel })
         : undefined
 
     const handlePageChange = (option) => {
@@ -78,7 +78,7 @@ export function BuilderTopBar({
                 </button>
                 {isPageDropdownOpen ? (
                     <>
-                        <button type="button" aria-label="Close page menu" className="fixed inset-0 z-10" onClick={() => setIsPageDropdownOpen(false)} />
+                        <button type="button" aria-label={t('storefront.homepageEditor.closeMenu')} className="fixed inset-0 z-10" onClick={() => setIsPageDropdownOpen(false)} />
                         <div role="menu" className={`absolute top-full z-20 mt-1 w-52 rounded-lg border border-gray-200 bg-white py-1 shadow-xl ${isRTL ? 'right-0' : 'left-0'}`}>
                             {PAGE_OPTIONS.map((option) => (
                                 <button type="button" role="menuitem" key={option.key} onClick={() => handlePageChange(option)} className={`w-full px-3 py-2 text-sm hover:bg-gray-100 ${isRTL ? 'text-right' : 'text-left'} ${option.key === currentPage ? 'bg-indigo-50 text-indigo-700' : 'text-gray-900'}`}>
@@ -92,34 +92,34 @@ export function BuilderTopBar({
 
             {showTemplateControls ? (
                 <>
-                    <select value={activeTemplateId} onChange={(event) => onTemplateChange?.(event.target.value)} aria-label="Product template" className="min-h-10 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
+                    <select value={activeTemplateId} onChange={(event) => onTemplateChange?.(event.target.value)} aria-label={t('storefront.ia.productTemplate')} className="min-h-10 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900">
                         {templateOptions.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
                     </select>
-                    <button type="button" onClick={onCreateTemplate} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"><Plus size={16} aria-hidden="true" />New Template</button>
-                    <button type="button" onClick={onDeleteTemplate} disabled={activeTemplateId === 'default'} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" />Delete</button>
+                    <button type="button" onClick={onCreateTemplate} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"><Plus size={16} aria-hidden="true" />{t('storefront.homepageEditor.newTemplate')}</button>
+                    <button type="button" onClick={onDeleteTemplate} disabled={activeTemplateId === 'default'} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" />{t('storefront.homepageEditor.delete')}</button>
                 </>
             ) : null}
 
-            <div className="flex items-center" role="group" aria-label="Editing history">
-                <button type="button" onClick={undo} disabled={!canUndo} className="rounded-lg p-2 hover:bg-gray-100 disabled:opacity-30" aria-label="Undo"><Undo2 size={18} aria-hidden="true" /></button>
-                <button type="button" onClick={redo} disabled={!canRedo} className="rounded-lg p-2 hover:bg-gray-100 disabled:opacity-30" aria-label="Redo"><Redo2 size={18} aria-hidden="true" /></button>
+            <div className="flex items-center" role="group" aria-label={t('storefront.homepageEditor.editHistory')}>
+                <button type="button" onClick={undo} disabled={!canUndo} className="rounded-lg p-2 hover:bg-gray-100 disabled:opacity-30" aria-label={t('storefront.homepageEditor.undo')}><Undo2 size={18} aria-hidden="true" /></button>
+                <button type="button" onClick={redo} disabled={!canRedo} className="rounded-lg p-2 hover:bg-gray-100 disabled:opacity-30" aria-label={t('storefront.homepageEditor.redo')}><Redo2 size={18} aria-hidden="true" /></button>
             </div>
-            {saveStatus === 'error' && saveError ? <button type="button" onClick={onRetrySave} className="inline-flex items-center gap-1.5 rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200"><AlertCircle size={12} aria-hidden="true" />Save failed · Retry</button> : null}
+            {saveStatus === 'error' && saveError ? <button type="button" onClick={onRetrySave} className="inline-flex items-center gap-1.5 rounded bg-red-100 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-200"><AlertCircle size={12} aria-hidden="true" />{t('storefront.homepageEditor.saveRetry')}</button> : null}
         </div>
     )
 
     return (
         <AuthoringActionBar
             title={title}
-            subtitle="Changes stay in draft until this page is explicitly published."
-            backAction={{ label: 'Back', onClick: onBack }}
+            subtitle={t('storefront.homepageEditor.draftExplanation')}
+            backAction={{ label: t('storefront.homepageEditor.back'), onClick: onBack }}
             status={<AuthoringStatusBadge state={statusState}>{statusLabel}</AuthoringStatusBadge>}
             leading={leading}
-            previewAction={{ label: 'Preview Saved Draft', onClick: onPreview, disabled: isSaving || isPublishing, title: 'Saves this draft before opening preview' }}
-            historyAction={{ label: 'StoreConfig History', onClick: onHistory, disabled: isSaving || isPublishing }}
-            discardAction={{ label: 'Discard', onClick: onDiscard, disabled: !isDirty || isSaving || isPublishing }}
-            saveAction={{ label: 'Save Draft', busyLabel: 'Saving…', onClick: onSave, disabled: !isDirty || isPublishing, busy: isSaving }}
-            publishAction={{ label: showTemplateControls ? 'Publish Product Template' : 'Publish Homepage', busyLabel: 'Publishing…', onClick: onPublish, disabled: isSaving, busy: isPublishing }}
+            previewAction={{ label: t('storefront.homepageEditor.previewDraft'), onClick: onPreview, disabled: isSaving || isPublishing, title: t('storefront.homepageEditor.previewHint') }}
+            historyAction={{ label: t('storefront.homepageEditor.history'), onClick: onHistory, disabled: isSaving || isPublishing }}
+            discardAction={{ label: t('storefront.homepageEditor.discard'), onClick: onDiscard, disabled: !isDirty || isSaving || isPublishing }}
+            saveAction={{ label: t('storefront.saveDraft'), busyLabel: t('storefront.homepageEditor.saving'), onClick: onSave, disabled: !isDirty || isPublishing, busy: isSaving }}
+            publishAction={{ label: showTemplateControls ? t('storefront.homepageEditor.publishTemplate') : t('storefront.homepageEditor.publishHomepage'), busyLabel: t('storefront.homepageEditor.publishing'), onClick: onPublish, disabled: isSaving, busy: isPublishing }}
         />
     )
 }

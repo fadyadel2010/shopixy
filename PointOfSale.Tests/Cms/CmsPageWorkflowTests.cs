@@ -398,7 +398,17 @@ public sealed class CmsPageWorkflowTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
 
-        return new ApplicationDbContext(options);
+        return new CmsWorkflowTestDbContext(options);
+    }
+
+    private sealed class CmsWorkflowTestDbContext(DbContextOptions<ApplicationDbContext> options)
+        : ApplicationDbContext(options)
+    {
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<CmsPage>().HasQueryFilter(page => !page.IsDeleted);
+        }
     }
 
     private static CmsPageService CreatePageService(ApplicationDbContext dbContext)

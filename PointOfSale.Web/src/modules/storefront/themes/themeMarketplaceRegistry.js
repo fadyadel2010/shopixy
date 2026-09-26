@@ -27,6 +27,10 @@ export function getDefaultMarketplaceTheme() {
     return THEME_MARKETPLACE_REGISTRY.find((theme) => theme.isDefault)
 }
 
+export function getThemeArtworkStyle(theme) {
+    return { backgroundColor: theme.accent }
+}
+
 function validateThemeMarketplaceRegistry(themes) {
     const seen = new Set()
     const defaults = themes.filter((theme) => theme.isDefault)

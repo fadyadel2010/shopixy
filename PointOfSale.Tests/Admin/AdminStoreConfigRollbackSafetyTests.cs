@@ -131,7 +131,10 @@ public sealed class AdminStoreConfigRollbackSafetyTests
                     new Dictionary<string, object>
                     {
                         ["id"] = "hero",
-                        ["type"] = "hero-banner"
+                        ["type"] = "hero-banner",
+                        ["settings"] = PointOfSale.Core.Constants.StorefrontSectionContracts.All
+                            .Single(section => section.Type == "hero-banner")
+                            .DefaultSettings
                     }
                 }
             },

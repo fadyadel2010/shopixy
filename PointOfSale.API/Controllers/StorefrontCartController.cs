@@ -988,13 +988,6 @@ public class StorefrontCartController : ControllerBase
                 traceId,
                 cancellationToken);
 
-            cart = await RevalidateCouponForResponseAsync(
-                cart,
-                validation.TenantId.Value,
-                validation.CustomerId,
-                traceId,
-                cancellationToken);
-
             return Ok(cart);
         }
         catch (UnauthorizedAccessException ex) when (IsTenantMismatch(ex))
@@ -1373,6 +1366,16 @@ public class StorefrontCartController : ControllerBase
         string traceId,
         CancellationToken cancellationToken)
     {
+        if ((!customerId.HasValue || customerId.Value == Guid.Empty) &&
+            string.IsNullOrWhiteSpace(cart.AppliedCouponCode) &&
+            cart.AppliedCoupon == null &&
+            cart.DiscountTotal == 0m)
+        {
+            // Coupon application requires an authenticated customer, so a clean
+            // guest cart cannot have valid persisted coupon state to hydrate.
+            return cart;
+        }
+
         var persistedState = await LoadPersistedCouponStateAsync(tenantId, cart.CartId, cancellationToken);
         ApplyPersistedCouponState(cart, persistedState);
 

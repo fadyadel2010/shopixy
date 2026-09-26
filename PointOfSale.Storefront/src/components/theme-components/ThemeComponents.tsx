@@ -816,9 +816,6 @@ export function ThemeCategoryCard({
                     <div className={cx('absolute inset-3 transition-transform duration-slow group-hover:scale-[1.03]', artClass)} />
                     <div className="absolute inset-3 bg-[linear-gradient(180deg,rgba(255,255,255,0.08)_0%,rgba(15,23,42,0.58)_100%)]" />
                     <div className="absolute inset-x-6 bottom-6 border-t border-white/40 pt-4 text-center">
-                        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-white/70">
-                            Collection {String(index + 1).padStart(2, '0')}
-                        </p>
                         <h3 className="overflow-hidden font-serif text-xl font-normal leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] sm:text-2xl">{title}</h3>
                     </div>
                 </article>
@@ -834,9 +831,6 @@ export function ThemeCategoryCard({
                 <article className="relative aspect-[4/3] min-h-[13rem] overflow-hidden border border-black/10">
                     <div className={cx('absolute inset-0 transition-transform duration-700 group-hover:scale-105', artClass)} />
                     <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(19,19,22,0.04)_0%,rgba(19,19,22,0.76)_100%)]" />
-                    <div className="absolute left-4 top-4 border border-white/30 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-white/90">
-                        Drop {String(index + 1).padStart(2, '0')}
-                    </div>
                     <div className="absolute inset-x-4 bottom-4">
                         <h3 className="overflow-hidden text-2xl font-black uppercase leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{title}</h3>
                     </div>
@@ -853,9 +847,6 @@ export function ThemeCategoryCard({
                 <article className="relative aspect-[4/3] min-h-[12rem] overflow-hidden rounded-md">
                     <div className={cx('absolute inset-0 transition-transform duration-normal group-hover:scale-[1.03]', artClass)} />
                     <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(20,18,24,0.72)_0%,rgba(20,18,24,0.18)_100%)]" />
-                    <div className="absolute left-3 top-3 rounded-sm border border-white/20 bg-black/25 px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-white/80">
-                        HYPE-{String(index + 1).padStart(2, '0')}
-                    </div>
                     <div className="absolute inset-x-4 bottom-4">
                         <h3 className="overflow-hidden text-xl font-black uppercase leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{title}</h3>
                     </div>
@@ -872,9 +863,6 @@ export function ThemeCategoryCard({
                 <article className="relative aspect-[4/3] min-h-[12rem] overflow-hidden rounded-sm">
                     <div className={cx('absolute inset-0 transition-transform duration-normal group-hover:scale-[1.03]', artClass)} />
                     <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(2,6,23,0.72)_0%,rgba(2,6,23,0.18)_100%)]" />
-                    <div className="absolute left-3 top-3 rounded-sm border border-white/20 bg-black/25 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.08em] text-white/80">
-                        CAT-{String(index + 1).padStart(2, '0')}
-                    </div>
                     <div className="absolute inset-x-4 bottom-4">
                         <h3 className="overflow-hidden font-mono text-lg font-black uppercase leading-tight text-white [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2] sm:text-xl">{title}</h3>
                     </div>

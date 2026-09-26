@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { getSuperAdminSession } from './superAdminAuthService'
+import { restoreSuperAdminSession } from './superAdminSessionCoordinator'
 import {
     clearLegacySuperAdminTokenStorage,
     getSuperAdminAuthorityRevision,
@@ -25,7 +25,7 @@ export function useSuperAdminSessionBootstrap(): boolean {
             // Restricted storage cannot be session authority.
         }
 
-        getSuperAdminSession()
+        restoreSuperAdminSession()
             .then((session) => {
                 if (active && authorityRevisionAtStart === getSuperAdminAuthorityRevision()) {
                     hydrateSession(session)

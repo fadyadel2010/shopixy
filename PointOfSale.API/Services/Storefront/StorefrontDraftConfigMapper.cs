@@ -17,7 +17,8 @@ internal static class StorefrontDraftConfigMapper
         ThemePreset? themePreset,
         string currency,
         string defaultCountryCode,
-        Action<Exception, string>? errorCallback = null)
+        Action<Exception, string>? errorCallback = null,
+        string? storefrontThemeOverride = null)
     {
         return Map(
             config,
@@ -25,7 +26,7 @@ internal static class StorefrontDraftConfigMapper
             currency,
             defaultCountryCode,
             useDraftContent: true,
-            storefrontThemeOverride: null,
+            storefrontThemeOverride: storefrontThemeOverride,
             errorCallback: errorCallback);
     }
 
@@ -508,7 +509,7 @@ internal static class StorefrontDraftConfigMapper
             section.Settings = StorefrontSectionContracts.GetFields(canonicalSectionType)
                 .ToDictionary(
                     field => field.Key,
-                    field => normalizedSettings[field.Key]!,
+                     field => normalizedSettings.TryGetValue(field.Key, out var value) ? value! : field.DefaultValue!,
                     StringComparer.OrdinalIgnoreCase);
             normalizedSections.Add(section);
         }

@@ -55,10 +55,11 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
 
         var publishedPages = await LoadPublishedPagesAsync(tenantId, cancellationToken);
         var pagesBySlug = publishedPages.ToDictionary(page => page.Slug, StringComparer.OrdinalIgnoreCase);
+        var pagesByGroupId = publishedPages.ToDictionary(page => page.PageGroupId);
 
         var tenantSections = await LoadSqlSectionsAsync(tenantId, cancellationToken);
         var tenantSocialLinks = await LoadSqlSocialLinksAsync(tenantId, cancellationToken);
-        var mappedSections = MapSections(tenantSections, pagesBySlug);
+        var mappedSections = MapSections(tenantSections, pagesByGroupId, pagesBySlug);
         var footerSource = mappedSections.Count > 0 ? "Tenant" : string.Empty;
 
         List<StorefrontFooterSection>? globalSections = null;
@@ -66,7 +67,7 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
         if (mappedSections.Count == 0)
         {
             globalSections = await LoadSqlSectionsAsync(null, cancellationToken);
-            mappedSections = MapSections(globalSections, pagesBySlug);
+            mappedSections = MapSections(globalSections, pagesByGroupId, pagesBySlug);
             footerSource = mappedSections.Count > 0 ? "Global" : string.Empty;
         }
 
@@ -146,7 +147,7 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
                 .OrderByDescending(page => page.Version)
                 .ThenByDescending(page => page.PublishedAt)
                 .First())
-            .Select(page => new StorefrontPageReference(page.Slug, page.Title, page.UpdatedAt))
+            .Select(page => new StorefrontPageReference(page.PageGroupId, page.Slug, page.Title, page.UpdatedAt))
             .ToList();
     }
 
@@ -187,6 +188,7 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
 
     private static List<StorefrontFooterSectionDto> MapSections(
         IReadOnlyList<StorefrontFooterSection> sections,
+        IReadOnlyDictionary<Guid, StorefrontPageReference> pagesByGroupId,
         IReadOnlyDictionary<string, StorefrontPageReference> pagesBySlug)
     {
         if (sections.Count == 0)
@@ -206,7 +208,7 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
                          .Where(item => item.IsActive)
                          .OrderBy(item => item.SortOrder))
             {
-                var mapped = MapLink(link, pagesBySlug);
+                var mapped = MapLink(link, pagesByGroupId, pagesBySlug);
                 if (mapped != null)
                 {
                     mappedLinks.Add(mapped);
@@ -285,6 +287,7 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
 
     private static StorefrontFooterLinkDto? MapLink(
         StorefrontFooterLink link,
+        IReadOnlyDictionary<Guid, StorefrontPageReference> pagesByGroupId,
         IReadOnlyDictionary<string, StorefrontPageReference> pagesBySlug)
     {
         return link.LinkType switch
@@ -305,20 +308,30 @@ public sealed class StorefrontFooterReadService : IStorefrontFooterReadService
                 Url = link.Url!,
                 OpenInNewTab = link.OpenInNewTab
             },
-            FooterLinkType.Cms when !string.IsNullOrWhiteSpace(link.CmsPageSlug)
-                && pagesBySlug.TryGetValue(CmsPageReadService.NormalizeSlug(link.CmsPageSlug), out var page) => new StorefrontFooterLinkDto
-            {
-                Label = string.IsNullOrWhiteSpace(link.Label) ? page.Title : link.Label,
-                LabelAr = link.LabelAr,
-                Type = link.LinkType,
-                Url = $"/{page.Slug}",
-                OpenInNewTab = false
-            },
+            FooterLinkType.Cms when link.CmsPageGroupId.HasValue
+                && pagesByGroupId.TryGetValue(link.CmsPageGroupId.Value, out var page) => MapCmsLink(link, page),
+            FooterLinkType.Cms when !link.CmsPageGroupId.HasValue
+                && !string.IsNullOrWhiteSpace(link.CmsPageSlug)
+                && pagesBySlug.TryGetValue(CmsPageReadService.NormalizeSlug(link.CmsPageSlug), out var legacyPage) => MapCmsLink(link, legacyPage),
             _ => null
         };
     }
 
-    private sealed record StorefrontPageReference(string Slug, string Title, DateTime UpdatedAt);
+    private static StorefrontFooterLinkDto MapCmsLink(
+        StorefrontFooterLink link,
+        StorefrontPageReference page)
+    {
+        return new StorefrontFooterLinkDto
+        {
+            Label = string.IsNullOrWhiteSpace(link.Label) ? page.Title : link.Label,
+            LabelAr = link.LabelAr,
+            Type = link.LinkType,
+            Url = $"/{page.Slug}",
+            OpenInNewTab = link.OpenInNewTab
+        };
+    }
+
+    private sealed record StorefrontPageReference(Guid PageGroupId, string Slug, string Title, DateTime UpdatedAt);
 
     private sealed record DerivedStorefrontFooterSectionsResult(
         List<StorefrontFooterSectionDto> Sections,

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using PointOfSale.Core.Enums;
 
 namespace PointOfSale.API.DTOs.Storefront;
@@ -50,6 +51,15 @@ public class NavigationLinkDto
     public string? Path { get; set; }
     public string? Slug { get; set; }
     public bool OpenInNewTab { get; set; }
+
+    [JsonIgnore]
+    public string AuthoringType { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public Guid? TargetId { get; set; }
+
+    [JsonIgnore]
+    public string? CollectionKey { get; set; }
 }
 
 public static class CmsApiErrorResponse

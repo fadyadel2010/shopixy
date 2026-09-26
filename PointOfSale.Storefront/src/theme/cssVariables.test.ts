@@ -33,6 +33,23 @@ describe('theme CSS variable projection', () => {
             expect(fashion[variable]).not.toBe(pearl[variable]);
         }
     });
+
+    it('derives RGB channels and the muted alias used by catalog hover states', () => {
+        const variables = themeToCssVariables(themeConfig({
+            primary: '#AbC',
+            secondary: '#102030',
+            background: '#ffffff',
+            text: '#111111',
+            muted: '#778899',
+            family: 'Cairo',
+            baseSize: '18px',
+            borderRadius: '12px',
+        }));
+
+        expect(variables[CSS_VARIABLES.COLOR_PRIMARY_RGB]).toBe('170, 187, 204');
+        expect(variables[CSS_VARIABLES.COLOR_SECONDARY_RGB]).toBe('16, 32, 48');
+        expect(variables[CSS_VARIABLES.COLOR_TEXT_MUTED]).toBe('#778899');
+    });
 });
 
 function themeConfig(tokens: {

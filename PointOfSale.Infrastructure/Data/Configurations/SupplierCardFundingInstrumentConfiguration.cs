@@ -10,7 +10,6 @@ public sealed class SupplierCardFundingInstrumentConfiguration : IEntityTypeConf
     {
         builder.ToTable("SupplierCardFundingInstruments", table =>
         {
-            table.HasCheckConstraint("CK_SupplierCardFundingInstrument_Last4", "\"Last4\" IS NULL OR \"Last4\" ~ '^[0-9]{4}$'");
             table.HasCheckConstraint("CK_SupplierCardFundingInstrument_AuthorityVersion", "\"AuthorityVersion\" > 0");
         });
         builder.HasKey(instrument => instrument.Id);

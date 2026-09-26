@@ -7,6 +7,14 @@ import { useToast } from './Toast'
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 const ALLOWED_VIDEO_TYPES = new Set(['video/mp4'])
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+const MAX_VIDEO_BYTES = 100 * 1024 * 1024
+const FILE_EXTENSIONS = {
+    'image/jpeg': ['jpg', 'jpeg'],
+    'image/png': ['png'],
+    'image/webp': ['webp'],
+    'video/mp4': ['mp4']
+}
 
 function sortMedia(items) {
     return [...items].sort((left, right) => {
@@ -57,8 +65,12 @@ function getErrorMessage(error, fallback) {
         return 'Your session expired or this account is not allowed to manage product media. Please sign in again.'
     }
 
-    return error?.response?.data?.error
-        || error?.response?.data?.message
+    const data = error?.response?.data
+    const details = Object.values(data?.details || data?.data || {}).flat().filter(value => typeof value === 'string').join(' ')
+    return (data?.message === 'The request payload is invalid.' ? details : null)
+        || data?.error
+        || data?.message
+        || details
         || fallback
 }
 
@@ -217,14 +229,26 @@ export default function ProductMediaManager({ productId }) {
                 showError(message)
                 return
             }
+            const extension = file.name.split('.').pop()?.toLowerCase()
+            if (!FILE_EXTENSIONS[file.type]?.includes(extension)) {
+                const message = 'File extension does not match its image or video type.'
+                setError(message)
+                showError(message)
+                return
+            }
+            if (file.size > (ALLOWED_VIDEO_TYPES.has(file.type) ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES)) {
+                const message = ALLOWED_VIDEO_TYPES.has(file.type)
+                    ? 'Video size exceeds 100MB limit.' : 'Image size exceeds 10MB limit.'
+                setError(message)
+                showError(message)
+                return
+            }
         }
 
         setUploading(true)
         setError('')
 
         try {
-            const nextMedia = [...media]
-
             for (const file of selectedFiles) {
                 const formData = new FormData()
                 formData.append('file', file)
@@ -242,21 +266,23 @@ export default function ProductMediaManager({ productId }) {
                     url: uploadResponse.data?.url,
                     mediaType: isVideo ? 'video' : 'image',
                     provider: isVideo ? 'mp4' : null
+                }, {
+                    idempotencyKey: crypto.randomUUID()
                 })
 
-                nextMedia.push(registerResponse.data)
+                setMedia(current => sortMedia([...current, registerResponse.data]))
             }
 
-            setMedia(sortMedia(nextMedia))
             showSuccess(selectedFiles.length === 1 ? 'Media uploaded successfully.' : `${selectedFiles.length} media files uploaded successfully.`)
         } catch (err) {
             const message = getErrorMessage(err, 'Failed to upload media.')
             setError(message)
             showError(message)
+            await loadMedia(false)
         } finally {
             setUploading(false)
         }
-    }, [media, productId, showError, showSuccess])
+    }, [productId, showError, showSuccess, loadMedia])
 
     const handleDelete = useCallback(async (mediaId) => {
         const confirmed = await confirm({
@@ -279,7 +305,7 @@ export default function ProductMediaManager({ productId }) {
         ))
 
         try {
-            await api.delete(`/admin/products/${productId}/media/${mediaId}`)
+            await api.delete(`/admin/products/${productId}/media/${mediaId}`, { idempotencyKey: crypto.randomUUID() })
             showSuccess('Media deleted successfully.')
         } catch (err) {
             setMedia(previousMedia)
@@ -302,7 +328,7 @@ export default function ProductMediaManager({ productId }) {
         try {
             const response = await api.put(`/admin/products/${productId}/media/reorder`, {
                 mediaIds: normalizedMedia.map(item => item.id)
-            })
+            }, { idempotencyKey: crypto.randomUUID() })
 
             setMedia(sortMedia(response.data || normalizedMedia))
             return true
@@ -348,6 +374,8 @@ export default function ProductMediaManager({ productId }) {
                 url: youtubeUrl.trim(),
                 mediaType: 'video',
                 provider: 'youtube'
+            }, {
+                idempotencyKey: crypto.randomUUID()
             })
 
             setMedia(current => sortMedia([...current, response.data]))
